@@ -1,68 +1,16 @@
-import Image from "next/image";
+import Link from "next/link";
+import { ArrowRight, Bot, BriefcaseBusiness, ChevronRight, CircleCheck, Store } from "lucide-react";
 
 export default function Home() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
+    <div className="landing-shell min-h-screen overflow-hidden">
+      <header className="relative z-10 mx-auto flex w-full max-w-7xl items-center justify-between px-6 py-7 lg:px-10">
+        <Link href="/" className="flex items-center gap-3 text-[#11211c]"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#1c6b52] text-white shadow-[0_8px_20px_rgba(28,107,82,0.22)]"><Store size={18} /></span><span className="text-xl font-semibold tracking-[-0.04em]">일잇다</span></Link>
+        <span className="hidden rounded-full border border-[#cdd8ca] bg-white/65 px-4 py-2 text-xs font-semibold tracking-[0.08em] text-[#537064] sm:block">일하는 순간을 잇다</span>
+      </header>
+      <main className="relative mx-auto flex min-h-[calc(100vh-88px)] w-full max-w-7xl flex-col justify-center px-6 pb-14 pt-8 lg:px-10 lg:pb-24">
+        <div className="pointer-events-none absolute -right-32 top-14 h-96 w-96 rounded-full border-[36px] border-[#d8e4d1]/65" /><div className="pointer-events-none absolute bottom-14 left-[-14rem] h-80 w-80 rounded-full border-[28px] border-[#e5d6bd]/60" />
+        <section className="relative grid items-end gap-12 lg:grid-cols-[1fr_0.86fr] lg:gap-24"><div className="max-w-2xl"><div className="mb-7 inline-flex items-center gap-2 rounded-full bg-[#dce8d8] px-3 py-1.5 text-xs font-bold text-[#2d644e]"><Bot size={14} /> 매장 운영을 더 가볍게</div><h1 className="text-5xl font-semibold leading-[1.06] tracking-[-0.07em] text-[#11211c] sm:text-7xl">사장님과 알바생,<br /><span className="text-[#1c6b52]">일로 이어지다.</span></h1><p className="mt-7 max-w-lg text-base leading-7 text-[#60736b] sm:text-lg">매장마다 다른 업무 노하우는 차곡차곡 쌓고,<br className="hidden sm:block" /> 오늘의 질문에는 가장 빠르게 답해드려요.</p><div className="mt-11 flex flex-col gap-3 sm:flex-row"><Link href="/boss" className="group flex h-14 items-center justify-between gap-8 rounded-2xl bg-[#1c6b52] px-5 text-sm font-bold text-white shadow-[0_12px_28px_rgba(28,107,82,0.2)] transition-transform hover:-translate-y-0.5 sm:justify-start"><BriefcaseBusiness size={18} /> 사장님 모드 <ArrowRight className="transition-transform group-hover:translate-x-1" size={17} /></Link><Link href="/staff" className="flex h-14 items-center justify-between gap-8 rounded-2xl border border-[#c8d4c5] bg-white/70 px-5 text-sm font-bold text-[#26483b] transition-colors hover:bg-white sm:justify-start"><Bot size={18} /> 알바생 모드 <ArrowRight size={17} /></Link></div><div className="mt-8 flex items-center gap-5 text-xs font-medium text-[#72837b]"><span className="flex items-center gap-1.5"><CircleCheck size={14} className="text-[#1c6b52]" /> 5분 만에 시작</span><span className="flex items-center gap-1.5"><CircleCheck size={14} className="text-[#1c6b52]" /> 매장 맞춤 AI</span></div></div><div className="relative mx-auto w-full max-w-md lg:mb-8"><div className="relative rounded-[2rem] border border-white/80 bg-[#f7f8f1]/90 p-3 shadow-[0_24px_70px_rgba(43,74,59,0.13)] backdrop-blur-sm"><div className="rounded-[1.5rem] bg-[#e7efe4] p-6 sm:p-8"><div className="flex items-center justify-between"><span className="text-xs font-bold tracking-[0.08em] text-[#5d796b]">TODAY AT MOONLIGHT</span><span className="h-2 w-2 rounded-full bg-[#df9a59]" /></div><div className="mt-10 flex items-end justify-between"><div><p className="text-sm font-semibold text-[#608071]">오늘의 매장 컨디션</p><p className="mt-2 text-4xl font-semibold tracking-[-0.06em] text-[#183e30]">아주 좋아요</p></div><div className="flex h-16 w-16 items-center justify-center rounded-full border-[7px] border-[#c1d8bd] text-sm font-bold text-[#32705a]">92%</div></div><div className="mt-9 space-y-3"><div className="h-2 rounded-full bg-[#d1ded0]"><div className="h-2 w-[92%] rounded-full bg-[#318266]" /></div><div className="flex justify-between text-xs font-medium text-[#71877b]"><span>오늘의 체크리스트</span><span>11 / 12 완료</span></div></div><div className="mt-8 rounded-2xl bg-white/80 p-4"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#f3e5d2] text-[#bd7437]"><Bot size={17} /></span><p className="text-xs font-semibold leading-5 text-[#476356]">궁금한 게 생기면<br />언제든 물어보세요.</p><ChevronRight className="ml-auto text-[#9bb0a3]" size={17} /></div></div></div></div><div className="absolute -bottom-5 -left-5 rounded-2xl border border-[#e2d6c4] bg-[#fffaf2] px-4 py-3 text-xs font-bold text-[#765d44] shadow-lg shadow-[#b29d7d]/10"><span className="mr-2 inline-block h-2 w-2 rounded-full bg-[#df9a59]" />새로운 매장 가이드가 도착했어요</div></div></section>
       </main>
     </div>
   );

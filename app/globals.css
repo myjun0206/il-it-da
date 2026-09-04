@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f5f7f1;
+  --foreground: #24362e;
 }
 
 @theme inline {
@@ -12,15 +12,24 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), sans-serif;
+}
+
+button, a, input {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.landing-shell {
+  background: radial-gradient(circle at 80% 20%, rgba(220, 234, 216, 0.7), transparent 28%), linear-gradient(135deg, #f7f8f2 0%, #edf4ea 100%);
+}
+
+.dashboard-shell {
+  background: #f7f9f5;
+}
+
+.chat-shell {
+  background: radial-gradient(circle at 12% 20%, rgba(219, 234, 215, 0.65), transparent 25%), #f5f7f2;
 }
