@@ -1,6 +1,6 @@
 -- 일잇다 PoC: 승인된 프랜차이즈 매뉴얼 기반 RAG 스키마
 
-create extension if not exists vector with schema extensions;
+create extension if not exists vector with schema public;
 
 create table if not exists public.manuals (
   id uuid primary key default gen_random_uuid(),
@@ -19,7 +19,7 @@ create table if not exists public.manual_chunks (
   manual_id uuid not null references public.manuals(id) on delete cascade,
   chunk_index integer not null check (chunk_index >= 0),
   content text not null,
-  embedding extensions.vector(1536),
+  embedding public.vector(1536),
   created_at timestamptz not null default now(),
   constraint manual_chunks_manual_id_chunk_index_key unique (manual_id, chunk_index)
 );
@@ -45,10 +45,10 @@ create index if not exists manual_chunks_manual_id_idx
 -- Cosine distance (<=>) 기반 근접 검색용 인덱스입니다.
 create index if not exists manual_chunks_embedding_hnsw_idx
   on public.manual_chunks
-  using hnsw (embedding extensions.vector_cosine_ops);
+  using hnsw (embedding public.vector_cosine_ops);
 
 create or replace function public.match_manual_chunks(
-  query_embedding extensions.vector(1536),
+  query_embedding public.vector(1536),
   match_count integer default 5
 )
 returns table (
@@ -61,7 +61,7 @@ returns table (
 )
 language sql
 stable
-set search_path = public, extensions
+set search_path = public
 as $$
   select
     mc.id as chunk_id,
