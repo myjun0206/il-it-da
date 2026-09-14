@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "test:rag": "tsc -p tsconfig.test.json && node --test tests/rag/chunk-manual.test.ts",
     "start": "next start",
     "lint": "eslint"
   },
