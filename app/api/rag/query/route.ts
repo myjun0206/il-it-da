@@ -23,7 +23,7 @@ function getOpenAiApiKey() { // OPENAI_API_KEY 환경변수 존재 여부 확인
   const value = process.env.OPENAI_API_KEY;
 
   if (!value) {
-    throw new Error("Missing OPENAI_API_KEY.");
+    throw new Error("Missing OPENAI_API_KEY."); // ii
   }
 
   return value;
