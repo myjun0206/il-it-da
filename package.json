@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "test:rag": "tsc -p tsconfig.test.json && node --test tests/rag/chunk-manual.test.ts",
+    "test:rag": "tsc -p tsconfig.test.json && node --import ./tests/register.mjs --test tests/rag/chunk-manual.test.ts tests/rag/query-rag.test.ts",
     "start": "next start",
     "lint": "eslint"
   },

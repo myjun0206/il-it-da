@@ -1,13 +1,18 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"]
+    },
     "allowImportingTsExtensions": true,
     "incremental": false,
     "noEmit": true
   },
   "include": [
-    "tests/rag/chunk-manual.test.ts",
-    "lib/rag/chunk-manual.ts"
+    "tests/rag/**/*.ts",
+    "lib/**/*.ts",
+    "app/api/rag/**/*.ts"
   ],
   "exclude": ["node_modules"]
 }
