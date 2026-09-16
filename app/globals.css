@@ -1,8 +1,49 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f5f7f1;
-  --foreground: #24362e;
+  /* Primary Colors (Green) */
+  --color-primary: #1c6b52;
+  --color-primary-hover: #154d3f;
+  --color-primary-light: #e3eee0;
+  --color-primary-accent: #0C9D81;
+
+  /* Secondary Colors (Deep Navy) */
+  --color-secondary: #1A3A4A;
+  --color-secondary-hover: #132d38;
+  --color-secondary-light: #e5f1f5;
+
+  /* Text Colors */
+  --color-text-primary: #0d1117;
+  --color-text-secondary: #60736b;
+  --color-text-tertiary: #8aa097;
+  --color-text-inverse: #ffffff;
+
+  /* Status Colors */
+  --color-status-success: #1c6b52;
+  --color-status-warning: #e8a745;
+  --color-status-error: #c53030;
+  --color-status-info: #0066cc;
+
+  /* Background Colors */
+  --color-bg-default: #f7f9f5;
+  --color-bg-surface: #ffffff;
+  --color-bg-light-mint: #f0f9f6;
+
+  /* Border Colors */
+  --color-border: #dfe7dc;
+  --color-border-light: #e9ede8;
+
+  /* Neutral Colors */
+  --color-neutral-white: #ffffff;
+  --color-neutral-off-white: #f9fafb;
+  --color-neutral-light-gray: #f3f4f6;
+  --color-neutral-gray: #e5e7eb;
+  --color-neutral-dark-gray: #6b7280;
+  --color-neutral-black: #111827;
+
+  /* Legacy (호환성 유지) */
+  --background: var(--color-bg-default);
+  --foreground: var(--color-text-primary);
 }
 
 @theme inline {
@@ -12,14 +53,34 @@
   --font-mono: var(--font-geist-mono);
 }
 
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: auto;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), sans-serif;
+  min-height: 100vh;
 }
 
-button, a, input {
+button,
+a,
+input,
+textarea {
   -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid rgba(12, 157, 129, 0.38);
+  outline-offset: 2px;
 }
 
 .landing-shell {
