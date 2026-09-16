@@ -20,7 +20,7 @@ export default function SignupOrganizationPage() {
     if (!savedRole) {
       router.push("/signup/role");
     } else if (savedRole !== "hq") {
-      // 본사가 아니면 이 페이지 스킵
+      // 본사가 아니면 stores로 리다이렉트 (조직 선택은 본사만)
       router.push("/signup/stores");
     }
   }, [router]);
@@ -60,7 +60,7 @@ export default function SignupOrganizationPage() {
               <span className="text-sm font-medium">이전</span>
             </Link>
             <div className="text-sm text-[var(--color-text-tertiary)]">
-              4단계 / 6단계
+              5단계 / 7단계
             </div>
           </div>
         </div>

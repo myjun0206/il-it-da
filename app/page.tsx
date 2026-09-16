@@ -177,19 +177,12 @@ export default function LoginPage() {
                 로그인
               </Button>
 
-              <div className="flex justify-center gap-4 text-sm">
+              <div className="flex justify-center">
                 <Link
-                  href="/find-account?tab=id"
-                  className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
+                  href="/find-account"
+                  className="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors"
                 >
-                  아이디 찾기
-                </Link>
-                <span className="text-[var(--color-border)]">|</span>
-                <Link
-                  href="/find-account?tab=password"
-                  className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
-                >
-                  비밀번호 찾기
+                  아이디 · 비밀번호 찾기
                 </Link>
               </div>
 
@@ -378,19 +371,12 @@ export default function LoginPage() {
                 로그인
               </Button>
 
-              <div className="flex justify-center gap-3 text-xs">
+              <div className="flex justify-center">
                 <Link
-                  href="/login"
-                  className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                  href="/find-account"
+                  className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors"
                 >
-                  아이디 찾기
-                </Link>
-                <span className="text-[var(--color-border)]">|</span>
-                <Link
-                  href="/login"
-                  className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
-                >
-                  비밀번호 찾기
+                  아이디 · 비밀번호 찾기
                 </Link>
               </div>
 

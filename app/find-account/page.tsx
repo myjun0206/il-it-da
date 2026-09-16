@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 import React, { useState, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronLeft, Check } from "lucide-react";
+import { ChevronLeft, Check, Copy } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 
@@ -49,6 +49,7 @@ interface FindPasswordState {
   // After verification
   isInfoVerified: boolean;
   tempPassword: string;
+  isCopied: boolean;
 }
 
 // Main content component using useSearchParams
@@ -87,6 +88,7 @@ function FindAccountContent() {
     infoError: "",
     isInfoVerified: false,
     tempPassword: "A8x2Jk9mL",
+    isCopied: false,
   });
 
   const handleSendEmailVerification = async () => {
@@ -313,6 +315,24 @@ function FindAccountContent() {
         isCheckingInfo: false,
         infoError: "정보 확인 중 오류가 발생했습니다.",
       });
+    }
+  };
+
+  const handleCopyPassword = async () => {
+    try {
+      await navigator.clipboard.writeText(findPasswordState.tempPassword);
+      setFindPasswordState({
+        ...findPasswordState,
+        isCopied: true,
+      });
+      setTimeout(() => {
+        setFindPasswordState((prev) => ({
+          ...prev,
+          isCopied: false,
+        }));
+      }, 2000);
+    } catch {
+      console.error("클립보드 복사 실패");
     }
   };
 
@@ -763,43 +783,68 @@ function FindAccountContent() {
                     isLoading={findPasswordState.isCheckingInfo}
                     className="w-full mt-8"
                   >
-                    가입 정보 확인
+                    본인 인증하기
                   </Button>
                 </div>
               )}
 
               {findPasswordState.isInfoVerified && (
-                <div className="text-center">
-                  <div className="mb-8 flex justify-center">
-                    <div className="w-12 h-12 rounded-full bg-[var(--color-primary)] flex items-center justify-center">
-                      <Check size={24} className="text-white" strokeWidth={3} />
+                <div className="mt-10 sm:mt-12">
+                  {/* Result Card */}
+                  <div className="w-full border border-[var(--color-border)] rounded-[14px] bg-white/55 backdrop-blur-sm px-6 sm:px-8 py-8 sm:py-9">
+                    {/* Success Section */}
+                    <div className="text-center mb-7 sm:mb-8">
+                      <div className="mb-4 flex justify-center">
+                        <div className="w-12 h-12 rounded-full bg-[var(--color-primary)] flex items-center justify-center">
+                          <Check size={24} className="text-white" strokeWidth={3} />
+                        </div>
+                      </div>
+
+                      <h2 className="text-[22px] sm:text-[24px] font-bold text-[var(--color-text-primary)] mb-1">
+                        본인 인증이 완료되었습니다.
+                      </h2>
+
+                      <p className="text-[15px] sm:text-[16px] text-[var(--color-text-secondary)]">
+                        1회용 비밀번호가 발급되었습니다.
+                      </p>
                     </div>
+
+                    {/* Password Section */}
+                    <div className="mb-6">
+                      <p className="text-sm text-[var(--color-text-secondary)] font-medium mb-3">
+                        1회용 비밀번호
+                      </p>
+                      <div className="relative h-[72px] sm:h-[76px] w-full bg-white border border-[var(--color-primary)]/30 rounded-[10px] flex items-center px-4 sm:px-5">
+                        <p className="absolute left-1/2 -translate-x-1/2 text-[24px] sm:text-[26px] font-mono font-bold text-[var(--color-text-primary)] tracking-wider">
+                          {findPasswordState.tempPassword}
+                        </p>
+                        <button
+                          onClick={handleCopyPassword}
+                          className="absolute right-4 sm:right-5 top-1/2 -translate-y-1/2 h-[44px] px-4 border border-[var(--color-primary)] rounded-lg bg-white text-[var(--color-primary)] hover:bg-[var(--color-primary)]/5 transition-colors flex items-center gap-2 font-semibold text-sm sm:text-base whitespace-nowrap"
+                          title="비밀번호 복사"
+                        >
+                          <Copy size={18} />
+                          <span>{findPasswordState.isCopied ? "복사됨" : "복사"}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Info Section */}
+                    <div className="bg-[var(--color-primary)]/5 border border-[var(--color-primary)]/20 rounded-lg px-4 sm:px-5 py-3.5 mb-6">
+                      <p className="text-[14px] sm:text-[15px] text-[var(--color-text-secondary)] leading-relaxed">
+                        1회용 비밀번호로 로그인한 후,<br />
+                        보안을 위해 새 비밀번호로 변경해주세요.
+                      </p>
+                    </div>
+
+                    {/* Login Button */}
+                    <button
+                      onClick={handleLoginWithTempPassword}
+                      className="w-full h-[54px] sm:h-[56px] bg-[var(--color-primary)] text-white font-semibold text-base rounded-lg hover:bg-[var(--color-primary-hover)] transition-colors"
+                    >
+                      로그인하러 가기
+                    </button>
                   </div>
-
-                  <h2 className="text-xl sm:text-2xl font-bold text-[var(--color-text-primary)] mb-4">
-                    임시 비밀번호가 발급되었어요
-                  </h2>
-
-                  <p className="text-sm text-[var(--color-text-secondary)] mb-8">
-                    아래 임시 비밀번호로 로그인한 뒤<br />
-                    본인 인증을 통해 새 비밀번호를 설정해주세요.
-                  </p>
-
-                  <div className="mb-8 p-6 bg-[var(--color-primary-light)]/20 border border-[var(--color-primary)]/20 rounded-lg">
-                    <p className="text-sm text-[var(--color-text-secondary)] mb-2">
-                      임시 비밀번호
-                    </p>
-                    <p className="text-lg font-mono font-bold text-[var(--color-text-primary)]">
-                      {findPasswordState.tempPassword}
-                    </p>
-                  </div>
-
-                  <button
-                    onClick={handleLoginWithTempPassword}
-                    className="w-full h-12 bg-[var(--color-primary)] text-white font-semibold rounded-lg hover:bg-[var(--color-primary-hover)] transition-colors mb-6"
-                  >
-                    임시 비밀번호로 로그인하기
-                  </button>
                 </div>
               )}
             </div>

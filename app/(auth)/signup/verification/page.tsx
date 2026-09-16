@@ -101,14 +101,14 @@ export default function SignupVerificationPage() {
         <div className="border-b border-[var(--color-border)] bg-[var(--color-bg-surface)]">
           <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
             <Link
-              href="/signup/stores"
+              href="/signup/organization"
               className="flex items-center gap-1 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
             >
               <ChevronLeft size={20} />
               <span className="text-sm font-medium">이전</span>
             </Link>
             <div className="text-sm text-[var(--color-text-tertiary)]">
-              {role === "hq" ? "6단계" : "5단계"} / 6단계
+              6단계 / 7단계
             </div>
           </div>
         </div>

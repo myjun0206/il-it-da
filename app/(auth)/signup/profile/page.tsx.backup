@@ -8,14 +8,14 @@ import { Input, PasswordInput } from "@/components/common/Input";
 import type { UserRole } from "@/lib/types/user";
 
 // Mock franchise domains - 실제 DB/API로 교체 가능
-const FRANCHISE_DOMAINS: Record<string, { name: string; id: string }> = {
+const FRANCHISE_DOMAINS: Record<string, { name: string; id: string; logo?: string }> = {
   "kyochon.com": { name: "교촌치킨", id: "brand_001" },
   "bhc.com": { name: "BHC 치킨", id: "brand_002" },
   "nene.com": { name: "네네치킨", id: "brand_003" },
   "companiongroup.com": { name: "Companion Group", id: "brand_004" },
 };
 
-// ============= HQ 전용 기본정보 화면 =============
+// HQ 전용 기본정보 컴포넌트
 function HQSignupProfile() {
   const router = useRouter();
   const [formData, setFormData] = useState({
@@ -44,21 +44,6 @@ function HQSignupProfile() {
   } | null>(null);
   const [franchiseConfirmed, setFranchiseConfirmed] = useState(false);
   const [franchiseNotFound, setFranchiseNotFound] = useState(false);
-
-  // 페이지 로드 시 sessionStorage에서 저장된 프랜차이즈 정보 복구
-  useEffect(() => {
-    const savedFranchise = sessionStorage.getItem("signupFranchise");
-    if (savedFranchise) {
-      try {
-        const franchise = JSON.parse(savedFranchise);
-        setFranchiseConfirmation(franchise);
-        setFranchiseConfirmed(true);
-        setEmailVerified(true);
-      } catch (e) {
-        console.error("프랜차이즈 정보 로드 실패:", e);
-      }
-    }
-  }, []);
 
   const isValidEmail = (email: string): boolean => {
     return email.includes("@") && email.length > 0;
@@ -137,6 +122,7 @@ function HQSignupProfile() {
   const handleConfirmFranchise = () => {
     if (franchiseConfirmation) {
       setFranchiseConfirmed(true);
+      // 상태 저장
       sessionStorage.setItem(
         "signupFranchise",
         JSON.stringify(franchiseConfirmation)
@@ -201,6 +187,7 @@ function HQSignupProfile() {
     if (!validateForm()) return;
 
     setIsLoading(true);
+    // Mock save
     setTimeout(() => {
       sessionStorage.setItem("signupProfile", JSON.stringify(formData));
       setIsLoading(false);
@@ -239,7 +226,10 @@ function HQSignupProfile() {
               3 / 5
             </span>
             <div className="w-20 sm:w-28 h-2 bg-[var(--color-border-light)] rounded-full overflow-hidden flex-shrink-0">
-              <div className="h-full bg-[var(--color-primary)] rounded-full transition-all duration-300" style={{ width: "60%" }} />
+              <div
+                className="h-full bg-[var(--color-primary)] rounded-full transition-all duration-300"
+                style={{ width: "60%" }}
+              />
             </div>
           </div>
         </div>
@@ -250,18 +240,29 @@ function HQSignupProfile() {
         <div className="w-full max-w-6xl">
           {/* Title Section */}
           <div className="mb-6 sm:mb-8 lg:mb-10 text-center">
-            <h1 className="mb-4 sm:mb-5 lg:mb-6 font-bold text-[var(--color-text-primary)]" style={{ fontSize: "clamp(32px, 2.5vw, 42px)", fontWeight: 800 }}>
+            <h1
+              className="mb-4 sm:mb-5 lg:mb-6 font-bold text-[var(--color-text-primary)]"
+              style={{
+                fontSize: "clamp(32px, 2.5vw, 42px)",
+                fontWeight: 800,
+              }}
+            >
               기본 정보를 입력해주세요
             </h1>
-            <p className="text-[var(--color-text-secondary)]" style={{ fontSize: "clamp(16px, 1.2vw, 20px)" }}>
+            <p
+              className="text-[var(--color-text-secondary)]"
+              style={{
+                fontSize: "clamp(16px, 1.2vw, 20px)",
+              }}
+            >
               본사 직원 인증을 위해 회사 이메일을 확인해주세요.
             </p>
           </div>
 
           {/* Form Container */}
           <div className="mx-auto w-full max-w-[860px]">
-            <form>
-              {/* Company Email */}
+            <form className="">
+              {/* Company Email with Verification */}
               <div className="mb-6">
                 <label className="block text-base font-semibold text-[var(--color-text-primary)] mb-2.5">
                   본사 직원 이메일
@@ -348,7 +349,7 @@ function HQSignupProfile() {
                 )}
               </div>
 
-              {/* Franchise Confirmation */}
+              {/* Franchise Confirmation UI */}
               {emailVerified && franchiseConfirmation && !franchiseConfirmed && (
                 <div className="mb-8 p-6 sm:p-8 border border-[var(--color-primary)]/20 rounded-[12px] bg-white">
                   <div className="text-center mb-6">
@@ -390,7 +391,7 @@ function HQSignupProfile() {
                 </div>
               )}
 
-              {/* Franchise Confirmed */}
+              {/* Franchise Confirmed Status */}
               {franchiseConfirmed && (
                 <div className="mb-8 p-6 sm:p-8 border border-[var(--color-primary)]/20 rounded-[12px] bg-white">
                   <div className="text-center">
@@ -410,7 +411,7 @@ function HQSignupProfile() {
                 </div>
               )}
 
-              {/* Franchise Not Found */}
+              {/* Franchise Not Found Error */}
               {franchiseNotFound && (
                 <div className="mb-8 p-6 sm:p-8 border border-red-200 rounded-[12px] bg-red-50">
                   <div className="text-center">
@@ -467,7 +468,9 @@ function HQSignupProfile() {
                 <PasswordInput
                   placeholder="8글자 이상 입력해주세요"
                   value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, password: e.target.value })
+                  }
                   error={errors.password}
                 />
               </div>
@@ -480,7 +483,9 @@ function HQSignupProfile() {
                 <PasswordInput
                   placeholder="비밀번호를 다시 입력해주세요"
                   value={formData.passwordConfirm}
-                  onChange={(e) => setFormData({ ...formData, passwordConfirm: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, passwordConfirm: e.target.value })
+                  }
                   error={errors.passwordConfirm}
                 />
               </div>
@@ -505,30 +510,9 @@ function HQSignupProfile() {
   );
 }
 
-// ============= 점주/직원 기본정보 화면 (기존) =============
-function OwnerStaffSignupProfile() {
-  const router = useRouter();
-  const [formData, setFormData] = useState({
-    email: "",
-    name: "",
-    phone: "",
-    password: "",
-    passwordConfirm: "",
-  });
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [isLoading, setIsLoading] = useState(false);
+// 기존 점주/직원용 컴포넌트
 
-  // Email verification states
-  const [emailDuplicateChecked, setEmailDuplicateChecked] = useState(false);
-  const [emailDuplicateError, setEmailDuplicateError] = useState("");
-  const [emailVerified, setEmailVerified] = useState(false);
-  const [emailVerificationSent, setEmailVerificationSent] = useState(false);
-  const [verificationCode, setVerificationCode] = useState("");
-  const [verificationError, setVerificationError] = useState("");
-  const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
-  const [isSendingVerification, setIsSendingVerification] = useState(false);
-  const [isVerifying, setIsVerifying] = useState(false);
-
+  // 이메일 값 변경 시 확인 상태 초기화
   const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({ ...formData, email: e.target.value });
     setEmailDuplicateChecked(false);
@@ -540,10 +524,12 @@ function OwnerStaffSignupProfile() {
     setErrors({ ...errors, email: "" });
   };
 
+  // 이메일 형식 검증
   const isValidEmail = (email: string): boolean => {
     return email.includes("@") && email.length > 0;
   };
 
+  // TODO: 실제 이메일 중복 확인 API 연결
   const handleCheckEmailDuplicate = async () => {
     if (!isValidEmail(formData.email)) {
       setEmailDuplicateError("올바른 이메일 주소를 입력해주세요.");
@@ -554,6 +540,15 @@ function OwnerStaffSignupProfile() {
     setEmailDuplicateError("");
 
     try {
+      // TODO: Supabase 또는 backend에서 이메일 중복 확인
+      // const response = await fetch('/api/auth/check-email', {
+      //   method: 'POST',
+      //   body: JSON.stringify({ email: formData.email })
+      // });
+      // const data = await response.json();
+
+      // Mock implementation for UI development
+      // 실제 backend 구현 후 교체
       setTimeout(() => {
         setEmailDuplicateChecked(true);
         setEmailDuplicateError("");
@@ -565,11 +560,20 @@ function OwnerStaffSignupProfile() {
     }
   };
 
+  // TODO: 실제 인증번호 발송 API 연결
   const handleSendVerificationCode = async () => {
     setIsSendingVerification(true);
     setVerificationError("");
 
     try {
+      // TODO: Supabase 또는 backend에서 인증번호 발송
+      // const response = await fetch('/api/auth/send-verification', {
+      //   method: 'POST',
+      //   body: JSON.stringify({ email: formData.email })
+      // });
+      // const data = await response.json();
+
+      // Mock implementation for UI development
       setTimeout(() => {
         setEmailVerificationSent(true);
         setIsSendingVerification(false);
@@ -580,6 +584,7 @@ function OwnerStaffSignupProfile() {
     }
   };
 
+  // TODO: 실제 인증 확인 API 연결
   const handleVerifyCode = async () => {
     if (!verificationCode || verificationCode.length < 6) {
       setVerificationError("인증번호를 정확히 입력해주세요.");
@@ -590,6 +595,14 @@ function OwnerStaffSignupProfile() {
     setVerificationError("");
 
     try {
+      // TODO: Supabase 또는 backend에서 인증번호 확인
+      // const response = await fetch('/api/auth/verify-code', {
+      //   method: 'POST',
+      //   body: JSON.stringify({ email: formData.email, code: verificationCode })
+      // });
+      // const data = await response.json();
+
+      // Mock implementation for UI development
       setTimeout(() => {
         setEmailVerified(true);
         setVerificationError("");
@@ -608,6 +621,11 @@ function OwnerStaffSignupProfile() {
       newErrors.email = "이메일을 입력해주세요";
     } else if (!formData.email.includes("@")) {
       newErrors.email = "올바른 이메일 형식이 아닙니다";
+    }
+
+    if (!emailVerified) {
+      // 현재는 선택사항, 추후 필수로 변경 가능
+      // newErrors.email = newErrors.email || "이메일 인증이 필요합니다";
     }
 
     if (!formData.name) {
@@ -640,10 +658,11 @@ function OwnerStaffSignupProfile() {
     if (!validateForm()) return;
 
     setIsLoading(true);
+    // Mock save
     setTimeout(() => {
       sessionStorage.setItem("signupProfile", JSON.stringify(formData));
       setIsLoading(false);
-      router.push("/signup/stores");
+      router.push("/signup/organization");
     }, 800);
   };
 
@@ -656,6 +675,7 @@ function OwnerStaffSignupProfile() {
       {/* Header */}
       <header className="relative border-b border-[var(--color-border)] bg-[var(--color-bg-surface)]">
         <div className="flex items-center justify-between px-5 sm:px-8 lg:px-12 xl:px-16 h-16 lg:h-[68px]">
+          {/* LEFT: Back Link */}
           <button
             onClick={handlePrevious}
             className="flex items-center gap-2 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors flex-shrink-0 bg-none border-none cursor-pointer"
@@ -665,6 +685,7 @@ function OwnerStaffSignupProfile() {
             <span className="text-base font-semibold sm:hidden">이전</span>
           </button>
 
+          {/* CENTER: Logo (Absolute Centered) - Wordmark */}
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex-shrink-0">
             <img
               src="/logo/ilitda-wordmark.png"
@@ -673,12 +694,17 @@ function OwnerStaffSignupProfile() {
             />
           </div>
 
+          {/* RIGHT: Progress */}
           <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
             <span className="text-base sm:text-lg lg:text-[17px] font-semibold text-[var(--color-text-secondary)]">
-              3 / 6
+              3 / 5
             </span>
+            {/* Progress Bar */}
             <div className="w-20 sm:w-28 h-2 bg-[var(--color-border-light)] rounded-full overflow-hidden flex-shrink-0">
-              <div className="h-full bg-[var(--color-primary)] rounded-full transition-all duration-300" style={{ width: "50%" }} />
+              <div
+                className="h-full bg-[var(--color-primary)] rounded-full transition-all duration-300"
+                style={{ width: "60%" }}
+              />
             </div>
           </div>
         </div>
@@ -689,23 +715,35 @@ function OwnerStaffSignupProfile() {
         <div className="w-full max-w-6xl">
           {/* Title Section */}
           <div className="mb-6 sm:mb-8 lg:mb-10 text-center">
-            <h1 className="mb-4 sm:mb-5 lg:mb-6 font-bold text-[var(--color-text-primary)]" style={{ fontSize: "clamp(32px, 2.5vw, 42px)", fontWeight: 800 }}>
+            <h1
+              className="mb-4 sm:mb-5 lg:mb-6 font-bold text-[var(--color-text-primary)]"
+              style={{
+                fontSize: "clamp(32px, 2.5vw, 42px)",
+                fontWeight: 800,
+              }}
+            >
               기본 정보를 입력해주세요
             </h1>
-            <p className="text-[var(--color-text-secondary)]" style={{ fontSize: "clamp(16px, 1.2vw, 20px)" }}>
+            <p
+              className="text-[var(--color-text-secondary)]"
+              style={{
+                fontSize: "clamp(16px, 1.2vw, 20px)",
+              }}
+            >
               서비스 이용에 필요한 기본 정보를 입력해주세요.
             </p>
           </div>
 
           {/* Form Container */}
           <div className="mx-auto w-full max-w-[860px]">
-            <form>
+            <form className="">
               {/* Email with Duplicate Check */}
               <div className="mb-6">
                 <label className="block text-base font-semibold text-[var(--color-text-primary)] mb-2.5">
                   이메일
                 </label>
-
+                
+                {/* Email Input + Check Button Row */}
                 <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_156px] gap-3.5 w-full">
                   <Input
                     type="email"
@@ -729,7 +767,7 @@ function OwnerStaffSignupProfile() {
                   </button>
                 </div>
 
-                {/* Duplicate Check Success */}
+                {/* Duplicate Check Success Message */}
                 {emailDuplicateChecked && !emailDuplicateError && (
                   <div className="flex items-center gap-2 mt-2.5 text-sm sm:text-base">
                     <div className="w-5 h-5 rounded-full bg-[var(--color-primary)] flex items-center justify-center flex-shrink-0">
@@ -769,7 +807,7 @@ function OwnerStaffSignupProfile() {
                   <label className="block text-base font-semibold text-[var(--color-text-primary)] mb-2.5">
                     인증번호
                   </label>
-
+                  
                   <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_156px] gap-3.5 w-full">
                     <Input
                       type="text"
@@ -796,7 +834,7 @@ function OwnerStaffSignupProfile() {
                     </button>
                   </div>
 
-                  {/* Verification Success */}
+                  {/* Verification Success Message */}
                   {emailVerified && (
                     <div className="flex items-center gap-2 mt-2.5 text-sm sm:text-base">
                       <div className="w-5 h-5 rounded-full bg-[var(--color-primary)] flex items-center justify-center flex-shrink-0">
@@ -846,7 +884,9 @@ function OwnerStaffSignupProfile() {
                 <PasswordInput
                   placeholder="8글자 이상 입력해주세요"
                   value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, password: e.target.value })
+                  }
                   error={errors.password}
                 />
               </div>
@@ -859,7 +899,9 @@ function OwnerStaffSignupProfile() {
                 <PasswordInput
                   placeholder="비밀번호를 다시 입력해주세요"
                   value={formData.passwordConfirm}
-                  onChange={(e) => setFormData({ ...formData, passwordConfirm: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, passwordConfirm: e.target.value })
+                  }
                   error={errors.passwordConfirm}
                 />
               </div>
@@ -882,35 +924,4 @@ function OwnerStaffSignupProfile() {
       </div>
     </div>
   );
-}
-
-// ============= 메인 export: 역할별 분기 =============
-export default function SignupProfilePage() {
-  const router = useRouter();
-  const [role, setRole] = useState<UserRole | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
-    if (!savedRole) {
-      router.push("/signup/role");
-      return;
-    }
-    setRole(savedRole);
-    setIsLoading(false);
-  }, [router]);
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-[var(--color-bg-default)] flex items-center justify-center">
-        <p className="text-[var(--color-text-secondary)]">로딩 중...</p>
-      </div>
-    );
-  }
-
-  if (role === "hq") {
-    return <HQSignupProfile />;
-  }
-
-  return <OwnerStaffSignupProfile />;
 }
