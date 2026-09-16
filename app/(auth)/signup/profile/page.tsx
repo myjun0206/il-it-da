@@ -9,7 +9,6 @@ import type { UserRole } from "@/lib/types/user";
 
 export default function SignupProfilePage() {
   const router = useRouter();
-  const [role, setRole] = useState<UserRole | null>(null);
   const [formData, setFormData] = useState({
     email: "",
     name: "",
@@ -36,8 +35,6 @@ export default function SignupProfilePage() {
     const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
     if (!savedRole) {
       router.push("/signup/role");
-    } else {
-      setRole(savedRole);
     }
   }, [router]);
 
@@ -83,7 +80,7 @@ export default function SignupProfilePage() {
         setEmailDuplicateError("");
         setIsCheckingDuplicate(false);
       }, 600);
-    } catch (error) {
+    } catch {
       setEmailDuplicateError("중복 확인 중 오류가 발생했습니다.");
       setIsCheckingDuplicate(false);
     }
@@ -107,7 +104,7 @@ export default function SignupProfilePage() {
         setEmailVerificationSent(true);
         setIsSendingVerification(false);
       }, 600);
-    } catch (error) {
+    } catch {
       setVerificationError("인증번호 발송 중 오류가 발생했습니다.");
       setIsSendingVerification(false);
     }
@@ -137,7 +134,7 @@ export default function SignupProfilePage() {
         setVerificationError("");
         setIsVerifying(false);
       }, 600);
-    } catch (error) {
+    } catch {
       setVerificationError("인증 확인 중 오류가 발생했습니다.");
       setIsVerifying(false);
     }

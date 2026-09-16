@@ -13,7 +13,6 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { Card } from "@/components/common/Card";
-import { Button } from "@/components/common/Button";
 
 export default function OwnerHomePage() {
   return (

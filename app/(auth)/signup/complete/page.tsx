@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useLayoutEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CheckCircle, Clock, Mail } from "lucide-react";
@@ -10,25 +10,21 @@ import type { UserRole } from "@/lib/types/user";
 
 export default function SignupCompletePage() {
   const router = useRouter();
-  const [role, setRole] = useState<UserRole | null>(null);
-  const [status, setStatus] = useState<"completed" | "pending">("pending");
+  const [mounted] = useState(() => typeof window !== 'undefined');
 
-  useEffect(() => {
-    const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
-    if (!savedRole) {
+  useLayoutEffect(() => {
+    const role = sessionStorage.getItem("signupRole") as UserRole | null;
+    if (!role) {
       router.push("/signup/role");
-      return;
-    }
-
-    setRole(savedRole);
-
-    // Mock: 본사는 즉시 완료, 나머지는 대기
-    if (savedRole === "hq") {
-      setStatus("completed");
-    } else {
-      setStatus("pending");
     }
   }, [router]);
+
+  if (!mounted) {
+    return null;
+  }
+
+  const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
+  const status = savedRole === "hq" ? "completed" : "pending";
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-default)]">

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useLayoutEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ArrowRight, Building2 } from "lucide-react";
@@ -11,21 +11,25 @@ import { mockBrands } from "@/lib/data/mockStores";
 
 export default function SignupOrganizationPage() {
   const router = useRouter();
-  const [role, setRole] = useState<UserRole | null>(null);
   const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [mounted] = useState(() => typeof window !== 'undefined');
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
     if (!savedRole) {
       router.push("/signup/role");
     } else if (savedRole !== "hq") {
       // 본사가 아니면 이 페이지 스킵
       router.push("/signup/stores");
-    } else {
-      setRole(savedRole);
     }
   }, [router]);
+
+  if (!mounted) {
+    return null;
+  }
+
+  const role = sessionStorage.getItem("signupRole") as UserRole | null;
 
   const handleContinue = async () => {
     if (!selectedBrand) return;

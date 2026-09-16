@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, ChevronLeft, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
@@ -85,23 +85,28 @@ const getInitialTermsState = (role: Role): Record<TermsKey, boolean> => {
 
 export default function SignupTermsPage() {
   const router = useRouter();
-  const [role, setRole] = useState<Role>("hq");
-  const [currentTerms, setCurrentTerms] = useState<Term[]>(getTermsByRole("hq"));
-  const [termsAccepted, setTermsAccepted] = useState<Record<TermsKey, boolean>>(
-    getInitialTermsState("hq")
-  );
-  const [selectedTermModal, setSelectedTermModal] = useState<TermsKey | null>(null);
-
-  // sessionStorage에서 role 읽기
-  useEffect(() => {
+  const [mounted] = useState(() => typeof window !== 'undefined');
+  
+  // Initialize terms based on role from sessionStorage
+  const getInitialTermsData = () => {
+    if (typeof window === 'undefined') {
+      return { role: "hq" as Role, terms: getTermsByRole("hq"), accepted: getInitialTermsState("hq") };
+    }
     const storedRole = sessionStorage.getItem("signupRole") as Role | null;
     if (storedRole && ["hq", "owner", "staff"].includes(storedRole)) {
-      setRole(storedRole);
-      const terms = getTermsByRole(storedRole);
-      setCurrentTerms(terms);
-      setTermsAccepted(getInitialTermsState(storedRole));
+      return { role: storedRole, terms: getTermsByRole(storedRole), accepted: getInitialTermsState(storedRole) };
     }
-  }, []);
+    return { role: "hq" as Role, terms: getTermsByRole("hq"), accepted: getInitialTermsState("hq") };
+  };
+
+  const initialData = getInitialTermsData();
+  const [currentTerms, setCurrentTerms] = useState<Term[]>(initialData.terms);
+  const [termsAccepted, setTermsAccepted] = useState<Record<TermsKey, boolean>>(initialData.accepted);
+  const [selectedTermModal, setSelectedTermModal] = useState<TermsKey | null>(null);
+
+  if (!mounted) {
+    return null;
+  }
 
   // 동적으로 required 약관이 모두 동의되었는지 확인
   const requiredAccepted = currentTerms

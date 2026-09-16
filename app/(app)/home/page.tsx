@@ -4,7 +4,6 @@ import React from "react";
 import Link from "next/link";
 import { BookOpen, MessageSquare, HelpCircle, ArrowRight } from "lucide-react";
 import { Card } from "@/components/common/Card";
-import { Button } from "@/components/common/Button";
 
 export default function StaffHomePage() {
   return (
@@ -129,7 +128,7 @@ export default function StaffHomePage() {
           </h3>
           <p className="text-[var(--color-text-secondary)]">
             AI 상담에 정확한 질문을 할수록 더 좋은 답변을 받을 수 있습니다.
-            예를 들어, "POS 매출 현황"이 "사용법이 뭔데?" 보다 더 유용한 답변을 받습니다.
+            예를 들어, &quot;POS 매출 현황&quot;이 &quot;사용법이 뭔데?&quot; 보다 더 유용한 답변을 받습니다.
           </p>
         </div>
       </Card>

@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useLayoutEffect, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ArrowRight, Mail } from "lucide-react";
+import { ChevronLeft, Mail } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 import { Card } from "@/components/common/Card";
@@ -11,26 +11,30 @@ import type { UserRole } from "@/lib/types/user";
 
 export default function SignupVerificationPage() {
   const router = useRouter();
-  const [role, setRole] = useState<UserRole | null>(null);
-  const [email, setEmail] = useState("");
+  const [email] = useState(() => {
+    if (typeof window === 'undefined') return "";
+    const profileData = sessionStorage.getItem("signupProfile");
+    if (profileData) {
+      try {
+        const parsed = JSON.parse(profileData);
+        return parsed.email || "";
+      } catch {
+        return "";
+      }
+    }
+    return "";
+  });
   const [verificationCode, setVerificationCode] = useState("");
   const [isCodeSent, setIsCodeSent] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [mounted] = useState(() => typeof window !== 'undefined');
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
     if (!savedRole) {
       router.push("/signup/role");
-    } else {
-      setRole(savedRole);
-    }
-
-    const profileData = sessionStorage.getItem("signupProfile");
-    if (profileData) {
-      const parsed = JSON.parse(profileData);
-      setEmail(parsed.email);
     }
   }, [router]);
 
@@ -41,6 +45,12 @@ export default function SignupVerificationPage() {
       return () => clearTimeout(timer);
     }
   }, [timeLeft]);
+
+  if (!mounted) {
+    return null;
+  }
+
+  const role = sessionStorage.getItem("signupRole") as UserRole | null;
 
   const handleSendCode = async () => {
     setErrors({});

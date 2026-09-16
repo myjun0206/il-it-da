@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { Store, Mail, Lock, Globe, MessageCircle } from "lucide-react";
+import { Store, Mail, Globe, MessageCircle } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input, PasswordInput } from "@/components/common/Input";
 import { Card } from "@/components/common/Card";

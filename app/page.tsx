@@ -179,14 +179,14 @@ export default function LoginPage() {
 
               <div className="flex justify-center gap-4 text-sm">
                 <Link
-                  href="/login"
+                  href="/find-account?tab=id"
                   className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
                 >
                   아이디 찾기
                 </Link>
                 <span className="text-[var(--color-border)]">|</span>
                 <Link
-                  href="/login"
+                  href="/find-account?tab=password"
                   className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
                 >
                   비밀번호 찾기
