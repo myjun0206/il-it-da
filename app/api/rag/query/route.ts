@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 
 import { searchManualChunks } from "@/lib/rag/search-manual-chunks";
 import type { ManualChunkMatch, RagQueryResponse, RagSource, RagStatus } from "@/lib/rag/types";
@@ -6,8 +6,8 @@ import type { ManualChunkMatch, RagQueryResponse, RagSource, RagStatus } from "@
 export const runtime = "nodejs";
 
 const MAX_QUESTION_LENGTH = 2_000;
-const ANSWERED_THRESHOLD = 0.78;
-const CAUTIOUS_THRESHOLD = 0.65;
+const ANSWERED_THRESHOLD = 0.60;
+const CAUTIOUS_THRESHOLD = 0.40;
 const GPT_TIMEOUT_MS = 30_000;
 const GPT_MAX_OUTPUT_TOKENS = 500; // 현장 직원용 간결한 답변에 맞춘 보수적 상한
 const NO_MANUAL_ANSWER =
@@ -24,6 +24,16 @@ type QueryBody = { //사용자가 보낸 질문 양식
 type OpenAiChatResponse = { //답변글
   choices?: Array<{ message?: { content?: string | null } }>;
 };
+
+function getSafeErrorDetails(error: unknown): { name: string; message: string } {
+  const name = error instanceof Error ? error.name : "UnknownError";
+  const rawMessage = error instanceof Error ? error.message : "Unknown error";
+  const message = rawMessage
+    .replace(/sk-[A-Za-z0-9_-]+/g, "[REDACTED]")
+    .replace(/(api[_ -]?key|password|secret|token)\s*[:=]\s*\S+/gi, "$1=[REDACTED]");
+
+  return { name, message };
+}
 
 function getOpenAiApiKey() { // OPENAI_API_KEY 환경변수 존재 여부 확인 후 반환
   const value = process.env.OPENAI_API_KEY;
@@ -77,10 +87,27 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
         similarity: null,
         source: null,
         status: "insufficient",
+        matches: [],
       });
     }
 
     const topMatch = searchResults[0];
+    const matches = searchResults.map((match) => ({
+      title: match.title,
+      category: match.category,
+      similarity: match.similarity_score,
+      rawSimilarity: match.raw_similarity_score,
+      keywordBoost: match.keyword_boost,
+    }));
+
+    console.info("RAG search result", {
+      question,
+      topManualTitle: topMatch.title,
+      rawSimilarity: topMatch.raw_similarity_score,
+      keywordBoost: topMatch.keyword_boost,
+      finalSimilarity: topMatch.similarity_score,
+    });
+
     const status = resolveStatus(topMatch.similarity_score);
 
     if (status === "insufficient") {
@@ -90,6 +117,7 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
         similarity: topMatch.similarity_score,
         source: null,
         status: "insufficient",
+        matches,
       });
     }
 
@@ -108,9 +136,10 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
       similarity: topMatch.similarity_score,
       source: toRagSource(topMatch), // searchManualChunks() 스네이크 필드명 -> 응답 규격 필드명 명시적 매핑
       status,
+      matches,
     });
   } catch (error) {
-    console.error("RAG query failed:", error instanceof Error ? error.message : "Unknown error");
+    console.error("RAG query failed:", getSafeErrorDetails(error));
     return NextResponse.json({ error: "Unable to answer the question." }, { status: 500 });
   }
 }
