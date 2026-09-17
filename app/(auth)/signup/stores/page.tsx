@@ -2,9 +2,13 @@
 
 import React, { useState, useLayoutEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, Search, MapPin, X } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 import { Button } from "@/components/common/Button";
+import StoreSearchDropdown from "@/components/signup/StoreSearchDropdown";
+import StoreMap from "@/components/signup/StoreMap";
+import SelectedStoreDisplay from "@/components/signup/SelectedStoreDisplay";
 import type { UserRole } from "@/lib/types/user";
+import type { Store } from "@/lib/types/store";
 import { mockStores } from "@/lib/data/mockStores";
 
 export interface SelectedStore {
@@ -18,9 +22,10 @@ export default function SignupStoresPage() {
   const router = useRouter();
   const [role, setRole] = useState<UserRole | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedStores, setSelectedStores] = useState<SelectedStore[]>([]);
+  const [selectedStores, setSelectedStores] = useState<Store[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [isAddMode, setIsAddMode] = useState(false);
 
   useLayoutEffect(() => {
     const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
@@ -34,6 +39,55 @@ export default function SignupStoresPage() {
       return;
     }
     setRole(savedRole);
+
+    // query parameter 확인 (add mode인지 여부)
+    const params = new URLSearchParams(window.location.search);
+    const mode = params.get("mode");
+    if (mode === "add") {
+      setIsAddMode(true);
+    }
+
+    // 이전에 선택한 매장들 복원 (우선순위: signupSelectedStores > signupStores)
+    // signupSelectedStores: Store[] 형식 (API 결과 또는 돌아올 때)
+    // signupStores: SelectedStore[] 형식 (서버 저장 형식)
+    let restoredStores: Store[] = [];
+    
+    const savedSelectedStores = sessionStorage.getItem("signupSelectedStores");
+    if (savedSelectedStores) {
+      try {
+        const parsed = JSON.parse(savedSelectedStores);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          restoredStores = parsed;
+        }
+      } catch (e) {
+        console.error("Failed to parse signupSelectedStores:", e);
+      }
+    }
+
+    // signupSelectedStores가 없으면, signupStores에서 복원 시도 (mockStores 매칭)
+    if (restoredStores.length === 0) {
+      const savedStores = sessionStorage.getItem("signupStores");
+      if (savedStores) {
+        try {
+          const parsed = JSON.parse(savedStores);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            restoredStores = parsed
+              .map((item: any) => {
+                const foundStore = mockStores.find((s) => s.id === item.storeId);
+                return foundStore;
+              })
+              .filter(Boolean) as Store[];
+          }
+        } catch (e) {
+          console.error("Failed to parse signupStores:", e);
+        }
+      }
+    }
+
+    if (restoredStores.length > 0) {
+      setSelectedStores(restoredStores);
+    }
+
     setMounted(true);
   }, [router]);
 
@@ -41,64 +95,63 @@ export default function SignupStoresPage() {
     return null;
   }
 
-  // 검색 필터링
-  const filteredStores = (mockStores as unknown as any[]).filter((store) => {
-    if (!searchQuery) return true;
-    const query = searchQuery.toLowerCase();
-    return (
-      store.brandName?.toLowerCase().includes(query) ||
-      store.name?.toLowerCase().includes(query) ||
-      store.address?.toLowerCase().includes(query)
-    );
-  });
-
-  // 매장 추가/제거
-  const toggleStore = (store: any) => {
-    const storeId = store.id;
-    const alreadySelected = selectedStores.find((s) => s.storeId === storeId);
-
-    if (alreadySelected) {
-      setSelectedStores(selectedStores.filter((s) => s.storeId !== storeId));
-    } else {
-      // 새로운 매장 추가
-      const newStore: SelectedStore = {
-        storeId: store.id,
-        franchiseName: store.brandName,
-        storeName: store.name,
-        address: store.address,
-      };
-      setSelectedStores([...selectedStores, newStore]);
+  // 매장 선택 핸들러 (중복 방지)
+  const handleStoreSelect = (store: Store) => {
+    // 이미 선택된 매장인지 확인
+    if (selectedStores.some((s) => s.id === store.id)) {
+      return; // 이미 선택되어 있으면 추가하지 않음
     }
+
+    // 새로운 매장 추가
+    setSelectedStores((prev) => [...prev, store]);
+    // 검색창 비우기
+    setSearchQuery("");
   };
 
-  const removeStore = (storeId: string) => {
-    setSelectedStores(selectedStores.filter((s) => s.storeId !== storeId));
+  // 매장 삭제
+  const handleRemoveStore = (storeId: string) => {
+    setSelectedStores((prev) => prev.filter((s) => s.id !== storeId));
   };
 
+  // 다음 단계로 진행
   const handleContinue = async () => {
     if (selectedStores.length === 0) return;
 
     setIsLoading(true);
     setTimeout(() => {
-      sessionStorage.setItem("signupStores", JSON.stringify(selectedStores));
+      // 배열 형태로 저장 (복수 매장 대응)
+      const storeDataArray: SelectedStore[] = selectedStores.map((store) => ({
+        storeId: store.id,
+        franchiseName: store.brandName,
+        storeName: store.name,
+        address: store.address,
+      }));
+      sessionStorage.setItem("signupStores", JSON.stringify(storeDataArray));
       setIsLoading(false);
-      router.push("/signup/verification");
+      // 선택한 Store 객체들도 sessionStorage에 저장 (approval 페이지에서 사용)
+      sessionStorage.setItem("signupSelectedStores", JSON.stringify(selectedStores));
+      router.push("/signup/approval");
     }, 800);
   };
 
   const handlePrevious = () => {
-    router.push("/signup/profile");
+    // add mode에서는 approval 페이지로 직접 돌아가기
+    if (isAddMode) {
+      router.push("/signup/approval");
+    } else {
+      router.push("/signup/profile");
+    }
   };
 
-  // 진행 단계 (점주/직원: 4 / 6)
+  // 진행 단계 (점주/직원: 4 / 5)
   const currentStep = 4;
-  const totalSteps = 6;
+  const totalSteps = 5;
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-default)]">
       <div className="flex flex-col min-h-screen">
         {/* Header */}
-        <header className="border-b border-[var(--color-border)] bg-[var(--color-bg-surface)]">
+        <header className="relative border-b border-[var(--color-border)] bg-[var(--color-bg-surface)]">
           <div className="flex items-center justify-between px-5 sm:px-8 lg:px-12 xl:px-16 h-16 lg:h-[68px]">
             <button
               onClick={handlePrevious}
@@ -115,7 +168,7 @@ export default function SignupStoresPage() {
               <img
                 src="/logo/ilitda-wordmark.png"
                 alt="일잇다"
-                className="w-[76px] sm:w-[88px] lg:w-[100px] h-auto object-contain"
+                className="h-8 sm:h-9 w-auto object-contain"
               />
             </div>
 
@@ -135,7 +188,7 @@ export default function SignupStoresPage() {
 
         {/* Main Content */}
         <div className="flex-1 flex flex-col px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
-          <div className="w-full max-w-5xl mx-auto">
+          <div className="w-full max-w-6xl mx-auto">
             {/* Title Section */}
             <div className="mb-6 sm:mb-8">
               <h1 className="text-3xl sm:text-4xl font-bold text-[var(--color-text-primary)] mb-2">
@@ -148,223 +201,34 @@ export default function SignupStoresPage() {
               </p>
             </div>
 
-            {/* Search Bar */}
+            {/* Search Bar with Dropdown */}
             <div className="mb-8">
-              <div className="relative">
-                <Search
-                  size={20}
-                  className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)]"
+              <StoreSearchDropdown
+                searchQuery={searchQuery}
+                onSearchChange={setSearchQuery}
+                onStoreSelect={handleStoreSelect}
+                selectedStoreIds={selectedStores.map((s) => s.id)}
+              />
+            </div>
+
+            {/* Map + Selected Store 2-Column Layout */}
+            <div className="mb-8 grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6 items-stretch">
+              {/* Left Panel: Selected Stores Display */}
+              <SelectedStoreDisplay
+                selectedStores={selectedStores}
+                onRemoveStore={handleRemoveStore}
+              />
+
+              {/* Right Panel: Map */}
+              <div className="h-[400px] rounded-lg overflow-hidden border border-[var(--color-border)]">
+                <StoreMap
+                  stores={selectedStores}
+                  selectedStoreIds={selectedStores.map((s) => s.id)}
+                  onStoreSelect={handleStoreSelect}
+                  centerStore={selectedStores[0] || undefined}
                 />
-                <input
-                  type="text"
-                  placeholder="매장명, 지점명 또는 주소를 검색해주세요"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full h-14 pl-12 pr-5 rounded-lg border-2 border-[var(--color-border)] bg-white text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/30 transition-colors"
-                />
               </div>
             </div>
-
-            {/* Map Area (Mock) */}
-            <div className="mb-8 bg-white border border-[var(--color-border)] rounded-lg overflow-hidden">
-              <div className="w-full h-96 sm:h-[480px] bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center relative">
-                {/* Mock Map with Store Markers */}
-                <svg className="w-full h-full" viewBox="0 0 800 400">
-                  {/* Map background */}
-                  <rect width="800" height="400" fill="#f3f4f6" />
-
-                  {/* Grid */}
-                  <g stroke="#e5e7eb" strokeWidth="1" opacity="0.5">
-                    {Array.from({ length: 8 }).map((_, i) => (
-                      <line
-                        key={`v-${i}`}
-                        x1={i * 100}
-                        y1="0"
-                        x2={i * 100}
-                        y2="400"
-                      />
-                    ))}
-                    {Array.from({ length: 4 }).map((_, i) => (
-                      <line
-                        key={`h-${i}`}
-                        x1="0"
-                        y1={i * 100}
-                        x2="800"
-                        y2={i * 100}
-                      />
-                    ))}
-                  </g>
-
-                  {/* Store Markers */}
-                  {filteredStores.slice(0, 8).map((store, idx) => {
-                    const isSelected = selectedStores.some(
-                      (s) => s.storeId === store.id
-                    );
-                    const x = 100 + (idx % 4) * 150 + Math.random() * 50;
-                    const y = 80 + Math.floor(idx / 4) * 150 + Math.random() * 50;
-
-                    return (
-                      <g key={store.id}>
-                        {/* Marker Pin */}
-                        <circle
-                          cx={x}
-                          cy={y}
-                          r={isSelected ? 12 : 8}
-                          fill={
-                            isSelected
-                              ? "var(--color-primary)"
-                              : "var(--color-primary-light)"
-                          }
-                          stroke="white"
-                          strokeWidth="2"
-                          style={{cursor: "pointer"}}
-                          onClick={() => toggleStore(store)}
-                        />
-                        {isSelected && (
-                          <circle
-                            cx={x}
-                            cy={y}
-                            r="16"
-                            fill="none"
-                            stroke="var(--color-primary)"
-                            strokeWidth="1"
-                            opacity="0.3"
-                          />
-                        )}
-                      </g>
-                    );
-                  })}
-
-                  {/* Map Label */}
-                  <text
-                    x="400"
-                    y="20"
-                    textAnchor="middle"
-                    fontSize="14"
-                    fill="#9ca3af"
-                    fontWeight="500"
-                  >
-                    지도 뷰 (매장 위치 표시)
-                  </text>
-                </svg>
-
-                {/* Map Overlay Info */}
-                <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                  <div className="text-center text-[var(--color-text-secondary)] bg-white/80 backdrop-blur px-4 py-2 rounded-lg">
-                    <p className="text-sm font-medium">
-                      검색 결과: {filteredStores.length}개 매장
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Store List Section */}
-            <div className="mb-8">
-              <h2 className="text-lg sm:text-xl font-bold text-[var(--color-text-primary)] mb-4">
-                {filteredStores.length > 0
-                  ? `검색 결과 (${filteredStores.length}개)`
-                  : "검색 결과 없음"}
-              </h2>
-
-              {filteredStores.length > 0 ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-                  {filteredStores.map((store) => {
-                    const isSelected = selectedStores.some(
-                      (s) => s.storeId === store.id
-                    );
-                    return (
-                      <div
-                        key={store.id}
-                        onClick={() => toggleStore(store)}
-                        className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
-                          isSelected
-                            ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/10 shadow-md"
-                            : "border-[var(--color-border)] bg-white hover:border-[var(--color-primary)] hover:shadow-sm"
-                        }`}
-                      >
-                        <div className="flex gap-3">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => {}}
-                            className="h-5 w-5 mt-0.5 rounded border-[var(--color-border)] accent-[var(--color-primary)]"
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-start justify-between gap-2">
-                              <div>
-                                <p className="text-xs font-medium text-[var(--color-text-secondary)] mb-1">
-                                  [{store.brandName}]
-                                </p>
-                                <h3 className="font-semibold text-[var(--color-text-primary)] mb-1">
-                                  {store.name}
-                                </h3>
-                                <p className="text-sm text-[var(--color-text-tertiary)] flex items-center gap-1">
-                                  <MapPin size={14} />
-                                  {store.address}
-                                </p>
-                              </div>
-                              {isSelected && (
-                                <div className="flex-shrink-0 text-[var(--color-primary)]">
-                                  ✓
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="p-8 text-center bg-[var(--color-bg-surface)] rounded-lg border border-[var(--color-border)]">
-                  <p className="text-[var(--color-text-secondary)]">
-                    검색 결과가 없습니다.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* Selected Stores Section */}
-            {selectedStores.length > 0 && (
-              <div className="mb-8">
-                <h2 className="text-lg sm:text-xl font-bold text-[var(--color-text-primary)] mb-4">
-                  선택한 매장 {selectedStores.length}
-                </h2>
-
-                <div className="space-y-3 mb-6">
-                  {selectedStores.map((store) => (
-                    <div
-                      key={store.storeId}
-                      className="flex items-center justify-between p-4 bg-white border border-[var(--color-border)] rounded-lg"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-[var(--color-text-secondary)] mb-1">
-                          [{store.franchiseName}]
-                        </p>
-                        <p className="font-semibold text-[var(--color-text-primary)]">
-                          {store.storeName}
-                        </p>
-                        <p className="text-sm text-[var(--color-text-tertiary)]">
-                          {store.address}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => removeStore(store.storeId)}
-                        className="ml-4 flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full hover:bg-red-100 transition-colors"
-                        title="제거"
-                      >
-                        <X
-                          size={20}
-                          className="text-red-600 hover:text-red-700"
-                        />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
 
             {/* Button Group */}
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
@@ -373,7 +237,7 @@ export default function SignupStoresPage() {
                 variant="outline"
                 size="lg"
                 onClick={handlePrevious}
-                className="w-full sm:w-auto"
+                className="w-full sm:w-48"
               >
                 <ChevronLeft size={18} />
                 이전
@@ -384,7 +248,7 @@ export default function SignupStoresPage() {
                 size="lg"
                 onClick={handleContinue}
                 disabled={selectedStores.length === 0 || isLoading}
-                className="w-full sm:w-auto"
+                className="w-full sm:w-48"
               >
                 {isLoading ? "처리 중..." : "다음"}
               </Button>

@@ -2,13 +2,23 @@
 
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, Check } from "lucide-react";
+import { ChevronLeft, Check, Building2 } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input, PasswordInput } from "@/components/common/Input";
 import type { UserRole } from "@/lib/types/user";
+import {
+  mockFranchises,
+  DEV_TEST_EMAILS,
+  DEV_TEST_VERIFICATION_CODE,
+  getFranchiseByDomain,
+} from "@/lib/data/mockFranchises";
+
+// 개발 환경 여부 확인
+const isDev = () => typeof window !== 'undefined' && process.env.NODE_ENV === "development";
 
 // Mock franchise domains - 실제 DB/API로 교체 가능
 const FRANCHISE_DOMAINS: Record<string, { name: string; id: string }> = {
+  "megamgc.com": { name: "메가MGC커피", id: "brand_mega" },
   "kyochon.com": { name: "교촌치킨", id: "brand_001" },
   "bhc.com": { name: "BHC 치킨", id: "brand_002" },
   "nene.com": { name: "네네치킨", id: "brand_003" },
@@ -45,20 +55,46 @@ function HQSignupProfile() {
   const [franchiseConfirmed, setFranchiseConfirmed] = useState(false);
   const [franchiseNotFound, setFranchiseNotFound] = useState(false);
 
-  // 페이지 로드 시 sessionStorage에서 저장된 프랜차이즈 정보 복구
+  // 페이지 로드 시 sessionStorage에서 저장된 상태 복구
   useEffect(() => {
+    // 이전에 입력한 개인정보 복구
+    const savedProfile = sessionStorage.getItem("signupHQProfile");
+    if (savedProfile) {
+      try {
+        const profile = JSON.parse(savedProfile);
+        setFormData(profile);
+        // 이메일이 있으면 인증 완료 상태로 표시
+        if (profile.companyEmail) {
+          setEmailVerified(true);
+        }
+      } catch (e) {
+        console.error("프로필 데이터 로드 실패:", e);
+      }
+    }
+
+    // 이전에 확인한 프랜차이즈 정보 복구
     const savedFranchise = sessionStorage.getItem("signupFranchise");
+    const savedConfirmed = sessionStorage.getItem("signupFranchiseConfirmed");
     if (savedFranchise) {
       try {
         const franchise = JSON.parse(savedFranchise);
         setFranchiseConfirmation(franchise);
-        setFranchiseConfirmed(true);
-        setEmailVerified(true);
+        // 이전에 확인된 프랜차이즈라면 상태 복구
+        if (savedConfirmed === "true") {
+          setFranchiseConfirmed(true);
+        }
       } catch (e) {
         console.error("프랜차이즈 정보 로드 실패:", e);
       }
     }
   }, []);
+
+  // formData가 변경될 때마다 sessionStorage에 저장
+  useEffect(() => {
+    if (formData.name || formData.phone || formData.password || formData.passwordConfirm) {
+      sessionStorage.setItem("signupHQProfile", JSON.stringify(formData));
+    }
+  }, [formData]);
 
   const isValidEmail = (email: string): boolean => {
     return email.includes("@") && email.length > 0;
@@ -82,6 +118,18 @@ function HQSignupProfile() {
       return;
     }
 
+    // 개발 환경: 테스트 이메일 확인
+    const domain = formData.companyEmail.split("@")[1]?.toLowerCase();
+    if (isDev() && DEV_TEST_EMAILS.some((email) => email.endsWith("@" + domain))) {
+      setIsSendingVerification(true);
+      setVerificationError("");
+      setTimeout(() => {
+        setEmailVerificationSent(true);
+        setIsSendingVerification(false);
+      }, 600);
+      return;
+    }
+
     setIsSendingVerification(true);
     setVerificationError("");
 
@@ -100,6 +148,34 @@ function HQSignupProfile() {
   const handleVerifyCode = async () => {
     if (!verificationCode || verificationCode.length < 6) {
       setVerificationError("인증번호를 정확히 입력해주세요.");
+      return;
+    }
+
+    // 테스트 인증번호 확인 (개발/테스트용)
+    if (verificationCode === DEV_TEST_VERIFICATION_CODE) {
+      setIsVerifying(true);
+      setVerificationError("");
+
+      setTimeout(() => {
+        setEmailVerified(true);
+        setIsVerifying(false);
+
+        // 도메인 추출
+        const domain = formData.companyEmail.split("@")[1].toLowerCase();
+        const franchise = FRANCHISE_DOMAINS[domain];
+
+        if (franchise) {
+          setFranchiseConfirmation({
+            domain,
+            name: franchise.name,
+            id: franchise.id,
+          });
+          setFranchiseNotFound(false);
+        } else {
+          setFranchiseNotFound(true);
+          setFranchiseConfirmation(null);
+        }
+      }, 600);
       return;
     }
 
@@ -141,6 +217,8 @@ function HQSignupProfile() {
         "signupFranchise",
         JSON.stringify(franchiseConfirmation)
       );
+      // 다른 필드 입력 시에도 프랜차이즈 정보가 유지되도록 보장
+      sessionStorage.setItem("signupFranchiseConfirmed", "true");
     }
   };
 
@@ -167,7 +245,10 @@ function HQSignupProfile() {
         newErrors.companyEmail || "이메일 인증이 필요합니다";
     }
 
-    if (!franchiseConfirmed) {
+    // franchiseConfirmation이 있으면 프랜차이즈가 이미 확인된 것
+    // state 동기화 문제를 피하기 위해 sessionStorage에서 직접 확인
+    const savedFranchiseConfirmed = sessionStorage.getItem("signupFranchiseConfirmed");
+    if (!savedFranchiseConfirmed || savedFranchiseConfirmed !== "true") {
       newErrors.franchise = "프랜차이즈 확인이 필요합니다";
     }
 
@@ -198,14 +279,81 @@ function HQSignupProfile() {
   };
 
   const handleContinue = async () => {
+    // 기본 validation
     if (!validateForm()) return;
 
+    // sessionStorage 데이터 확인 - state 비동기 업데이트 문제 해결
+    const savedFranchise = sessionStorage.getItem("signupFranchise");
+    const savedFranchiseConfirmed = sessionStorage.getItem("signupFranchiseConfirmed");
+    
+    if (!savedFranchise || savedFranchiseConfirmed !== "true") {
+      setErrors({ franchise: "프랜차이즈 확인이 필요합니다" });
+      return;
+    }
+
+    // 현재 역할 확인
+    const currentRole = sessionStorage.getItem("signupRole");
+
+    // 사용자가 입력한 데이터 저장 (임시 회원가입 상태)
+    sessionStorage.setItem("signupHQProfile", JSON.stringify(formData));
+    
+    // 프랜차이즈 정보도 저장 (완료 화면에서 사용)
+    try {
+      const franchise = JSON.parse(savedFranchise);
+      if (franchise && franchise.name) {
+        sessionStorage.setItem("signupFranchiseName", franchise.name);
+      }
+    } catch (e) {
+      console.error("프랜차이즈 정보 파싱 실패:", e);
+    }
+
+    // 실제 등록된 계정 정보 저장 (로그인 시 사용)
+    try {
+      const accountsJson = sessionStorage.getItem("registeredAccounts");
+      let registeredAccounts = accountsJson ? JSON.parse(accountsJson) : [];
+      
+      // 같은 이메일의 계정이 있는지 확인
+      const existingIndex = registeredAccounts.findIndex(
+        (acc: any) => acc.companyEmail === formData.companyEmail && acc.role === currentRole
+      );
+
+      // 프랜차이즈 정보 추가
+      let franchiseName = "";
+      try {
+        const franchise = JSON.parse(savedFranchise);
+        franchiseName = franchise.name || "";
+      } catch (e) {
+        console.error("프랜차이즈 정보 파싱 실패:", e);
+      }
+
+      const newAccount = {
+        ...formData,
+        role: currentRole,
+        franchiseName: franchiseName,
+        registeredAt: new Date().toISOString(),
+      };
+
+      if (existingIndex >= 0) {
+        // 기존 계정 업데이트
+        registeredAccounts[existingIndex] = newAccount;
+      } else {
+        // 새 계정 추가
+        registeredAccounts.push(newAccount);
+      }
+
+      sessionStorage.setItem("registeredAccounts", JSON.stringify(registeredAccounts));
+    } catch (e) {
+      console.error("등록된 계정 저장 실패:", e);
+    }
+    
+    // 로딩 상태 설정 (UI 표시)
     setIsLoading(true);
-    setTimeout(() => {
-      sessionStorage.setItem("signupProfile", JSON.stringify(formData));
-      setIsLoading(false);
-      router.push("/signup/organization");
-    }, 800);
+    
+    // 아주 짧은 지연 후 네비게이션 (UI 업데이트 완료 대기)
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
+    // HQ는 이메일 인증이 profile에서 완료되었으므로 바로 가입 완료로 이동
+    router.push("/signup/complete");
   };
 
   const handlePrevious = () => {
@@ -236,10 +384,10 @@ function HQSignupProfile() {
 
           <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
             <span className="text-base sm:text-lg lg:text-[17px] font-semibold text-[var(--color-text-secondary)]">
-              3 / 5
+              2 / 3
             </span>
             <div className="w-20 sm:w-28 h-2 bg-[var(--color-border-light)] rounded-full overflow-hidden flex-shrink-0">
-              <div className="h-full bg-[var(--color-primary)] rounded-full transition-all duration-300" style={{ width: "60%" }} />
+              <div className="h-full bg-[var(--color-primary)] rounded-full transition-all duration-300" style={{ width: "66%" }} />
             </div>
           </div>
         </div>
@@ -275,7 +423,7 @@ function HQSignupProfile() {
                     onChange={handleCompanyEmailChange}
                     error={errors.companyEmail || verificationError}
                     className="h-[72px]"
-                    disabled={emailVerified}
+                    disabled={emailVerified && formData.companyEmail.length > 0}
                   />
                   <button
                     type="button"
@@ -352,17 +500,13 @@ function HQSignupProfile() {
               {emailVerified && franchiseConfirmation && !franchiseConfirmed && (
                 <div className="mb-8 p-6 sm:p-8 border border-[var(--color-primary)]/20 rounded-[12px] bg-white">
                   <div className="text-center mb-6">
-                    <div className="flex items-center justify-center gap-2 mb-4">
-                      <div className="w-6 h-6 rounded-full bg-[var(--color-primary)] flex items-center justify-center">
-                        <Check size={16} className="text-white" strokeWidth={3} />
+                    {/* Franchise Logo/Icon */}
+                    <div className="flex justify-center mb-4">
+                      <div className="p-3 bg-[var(--color-primary-light)] rounded-lg">
+                        <Building2 size={32} className="text-[var(--color-primary)]" />
                       </div>
-                      <span className="text-sm sm:text-base font-medium text-[var(--color-primary)]">
-                        이메일 인증이 완료되었습니다.
-                      </span>
                     </div>
-                  </div>
 
-                  <div className="text-center mb-6">
                     <h3 className="text-lg sm:text-xl font-bold text-[var(--color-text-primary)] mb-4">
                       {franchiseConfirmation.name}
                     </h3>
@@ -390,22 +534,28 @@ function HQSignupProfile() {
                 </div>
               )}
 
-              {/* Franchise Confirmed */}
-              {franchiseConfirmed && (
+              {/* Franchise Confirmation Completed */}
+              {emailVerified && franchiseConfirmation && franchiseConfirmed && (
                 <div className="mb-8 p-6 sm:p-8 border border-[var(--color-primary)]/20 rounded-[12px] bg-white">
                   <div className="text-center">
-                    <div className="flex items-center justify-center gap-2 mb-4">
-                      <div className="w-6 h-6 rounded-full bg-[var(--color-primary)] flex items-center justify-center">
-                        <Check size={16} className="text-white" strokeWidth={3} />
+                    {/* Check Icon */}
+                    <div className="flex justify-center mb-4">
+                      <div className="p-3 bg-[var(--color-primary)] rounded-full">
+                        <Check size={32} className="text-white" />
                       </div>
-                      <span className="text-sm sm:text-base font-medium text-[var(--color-primary)]">
-                        본사 확인 완료
-                      </span>
                     </div>
-                    <h4 className="text-base sm:text-lg font-bold text-[var(--color-text-primary)]">
-                      {franchiseConfirmation?.name}
-                    </h4>
-                    <p className="text-sm text-[var(--color-text-secondary)] mt-1">본사 관리자</p>
+
+                    <h3 className="text-lg sm:text-xl font-bold text-[var(--color-text-primary)] mb-4">
+                      본사 직원 확인 완료
+                    </h3>
+
+                    <p className="text-sm sm:text-base font-bold text-[var(--color-text-primary)] mb-1">
+                      {franchiseConfirmation.name}
+                    </p>
+
+                    <p className="text-sm sm:text-base text-[var(--color-text-secondary)]">
+                      {franchiseConfirmation.name} 본사 직원으로 확인되었습니다.
+                    </p>
                   </div>
                 </div>
               )}
@@ -529,6 +679,24 @@ function OwnerStaffSignupProfile() {
   const [isSendingVerification, setIsSendingVerification] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
 
+  // 페이지 로드 시 sessionStorage에서 저장된 데이터 복원
+  useEffect(() => {
+    const savedProfile = sessionStorage.getItem("signupProfile");
+    if (savedProfile) {
+      try {
+        const profile = JSON.parse(savedProfile);
+        setFormData(profile);
+        // 이메일이 있으면 중복 확인 완료 상태로 표시
+        if (profile.email) {
+          setEmailDuplicateChecked(true);
+          setEmailVerified(true);
+        }
+      } catch (e) {
+        console.error("프로필 데이터 로드 실패:", e);
+      }
+    }
+  }, []);
+
   const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({ ...formData, email: e.target.value });
     setEmailDuplicateChecked(false);
@@ -583,6 +751,19 @@ function OwnerStaffSignupProfile() {
   const handleVerifyCode = async () => {
     if (!verificationCode || verificationCode.length < 6) {
       setVerificationError("인증번호를 정확히 입력해주세요.");
+      return;
+    }
+
+    // 개발 환경: 테스트 인증번호 확인
+    if (isDev() && verificationCode === DEV_TEST_VERIFICATION_CODE) {
+      setIsVerifying(true);
+      setVerificationError("");
+
+      setTimeout(() => {
+        setEmailVerified(true);
+        setVerificationError("");
+        setIsVerifying(false);
+      }, 600);
       return;
     }
 
@@ -675,10 +856,10 @@ function OwnerStaffSignupProfile() {
 
           <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
             <span className="text-base sm:text-lg lg:text-[17px] font-semibold text-[var(--color-text-secondary)]">
-              3 / 6
+              3 / 5
             </span>
             <div className="w-20 sm:w-28 h-2 bg-[var(--color-border-light)] rounded-full overflow-hidden flex-shrink-0">
-              <div className="h-full bg-[var(--color-primary)] rounded-full transition-all duration-300" style={{ width: "50%" }} />
+              <div className="h-full bg-[var(--color-primary)] rounded-full transition-all duration-300" style={{ width: "60%" }} />
             </div>
           </div>
         </div>

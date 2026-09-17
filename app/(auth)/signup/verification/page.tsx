@@ -8,6 +8,10 @@ import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 import { Card } from "@/components/common/Card";
 import type { UserRole } from "@/lib/types/user";
+import { DEV_TEST_VERIFICATION_CODE } from "@/lib/data/mockFranchises";
+
+// 개발 환경 여부 확인
+const isDev = () => typeof window !== 'undefined' && process.env.NODE_ENV === "development";
 
 export default function SignupVerificationPage() {
   const router = useRouter();
@@ -35,6 +39,9 @@ export default function SignupVerificationPage() {
     const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
     if (!savedRole) {
       router.push("/signup/role");
+    } else if (savedRole === "hq") {
+      // 본사는 profile에서 이메일 인증이 완료되었으므로 이 페이지를 건너뜀
+      router.push("/signup/complete");
     }
   }, [router]);
 
@@ -101,14 +108,14 @@ export default function SignupVerificationPage() {
         <div className="border-b border-[var(--color-border)] bg-[var(--color-bg-surface)]">
           <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
             <Link
-              href="/signup/organization"
+              href="/signup/stores"
               className="flex items-center gap-1 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
             >
               <ChevronLeft size={20} />
               <span className="text-sm font-medium">이전</span>
             </Link>
             <div className="text-sm text-[var(--color-text-tertiary)]">
-              6단계 / 7단계
+              5 / 5
             </div>
           </div>
         </div>
@@ -167,6 +174,12 @@ export default function SignupVerificationPage() {
                     maxLength={6}
                     error={errors.code}
                   />
+                  {/* 개발 환경용 인증번호 힌트 */}
+                  {isDev() && isCodeSent && (
+                    <p className="mt-2 text-xs text-[var(--color-text-tertiary)]/60 font-normal">
+                      개발용 인증번호: {DEV_TEST_VERIFICATION_CODE}
+                    </p>
+                  )}
                 </div>
 
                 {/* Timer */}

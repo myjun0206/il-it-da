@@ -1,112 +1,120 @@
 "use client";
 
-import React, { useLayoutEffect, useState } from "react";
+import React, { useLayoutEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CheckCircle, Clock, Mail } from "lucide-react";
+import { CheckCircle, Clock, Mail, Check, ChevronLeft } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Card } from "@/components/common/Card";
 import type { UserRole } from "@/lib/types/user";
 
 export default function SignupCompletePage() {
   const router = useRouter();
-  const [mounted] = useState(() => typeof window !== 'undefined');
+  const [mounted, setMounted] = useState(false);
+  const [role, setRole] = useState<UserRole | null>(null);
+  const [franchiseName, setFranchiseName] = useState<string | null>(null);
 
   useLayoutEffect(() => {
-    const role = sessionStorage.getItem("signupRole") as UserRole | null;
-    if (!role) {
+    setMounted(true);
+    const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
+    const savedFranchiseName = sessionStorage.getItem("signupFranchiseName");
+    
+    if (!savedRole) {
       router.push("/signup/role");
+      return;
     }
+
+    setRole(savedRole);
+    setFranchiseName(savedFranchiseName);
+  }, [router]);
+
+  // 로그인 화면으로 이동 - 임시 회원가입 상태 초기화
+  const handleGoToLogin = useCallback(() => {
+    // 회원가입 진행 임시 상태 모두 삭제
+    // 실제 계정 정보는 registeredAccounts에서 관리
+    sessionStorage.removeItem("signupRole");
+    sessionStorage.removeItem("signupHQProfile");
+    sessionStorage.removeItem("signupFranchise");
+    sessionStorage.removeItem("signupFranchiseConfirmed");
+    sessionStorage.removeItem("signupFranchiseName");
+    sessionStorage.removeItem("signupStores");
+    sessionStorage.removeItem("signupSelectedStores");
+    sessionStorage.removeItem("signupApprovalStatus");
+    sessionStorage.removeItem("signupApprovalSubmittedAt");
+    
+    // 로그인 페이지로 이동
+    router.push("/");
   }, [router]);
 
   if (!mounted) {
     return null;
   }
 
-  const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
-  const status = savedRole === "hq" ? "completed" : "pending";
+  const isHQ = role === "hq";
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-default)]">
       <div className="flex flex-col min-h-screen">
-        {/* Content */}
+        {/* Header */}
+        {!isHQ && (
+          <header className="relative border-b border-[var(--color-border)] bg-[var(--color-bg-surface)]">
+            <div className="flex items-center justify-between px-5 sm:px-8 lg:px-12 xl:px-16 h-16 lg:h-[68px]">
+              <button
+                onClick={() => router.push("/signup/profile")}
+                className="flex items-center gap-2 text-[var(--color-text-primary)] hover:text-[var(--color-primary)] transition-colors"
+              >
+                <ChevronLeft size={24} />
+                <span className="hidden sm:inline text-base font-semibold">이전</span>
+              </button>
+              <img src="/logo.svg" alt="일잇다" className="h-8 lg:h-9" />
+              <div className="text-sm sm:text-base font-semibold text-[var(--color-text-secondary)]">
+                3 / 3
+              </div>
+            </div>
+          </header>
+        )}
+
+        {/* Main Content */}
         <div className="flex-1 flex items-center justify-center px-4 py-8 sm:py-12">
           <div className="w-full max-w-2xl">
-            {status === "completed" ? (
-              // 완료 상태
-              <Card className="text-center" padding="lg">
+            {isHQ ? (
+              // 본사 관리자 완료 화면
+              <div className="text-center">
+                {/* Check Icon */}
                 <div className="flex justify-center mb-6">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[var(--color-primary-light)]">
-                    <CheckCircle
-                      size={40}
-                      className="text-[var(--color-primary)]"
-                    />
+                  <div className="p-3 bg-[var(--color-primary)] rounded-full">
+                    <Check size={40} className="text-white" strokeWidth={3} />
                   </div>
                 </div>
 
-                <h1 className="text-3xl font-bold text-[var(--color-text-primary)] mb-2">
-                  가입 완료!
+                {/* Main Title */}
+                <h1 className="text-2xl sm:text-3xl font-bold text-[var(--color-text-primary)] mb-3">
+                  회원가입이 완료되었습니다.
                 </h1>
-                <p className="text-lg text-[var(--color-text-secondary)] mb-8">
-                  일잇다에 오신 것을 환영합니다.
+
+                {/* Franchise Info */}
+                <p className="text-base sm:text-lg font-semibold text-[var(--color-text-primary)] mb-2">
+                  {franchiseName ? `${franchiseName} 본사 관리자로 가입되었습니다.` : "본사 관리자로 가입되었습니다."}
                 </p>
 
-                <div className="bg-[var(--color-primary-light)] p-6 rounded-lg mb-8 text-left">
-                  <h3 className="font-semibold text-[var(--color-text-primary)] mb-4">
-                    지금부터 할 수 있는 것들:
-                  </h3>
-                  <ul className="space-y-3">
-                    <li className="flex items-start gap-3">
-                      <div className="mt-1 h-5 w-5 rounded-full bg-[var(--color-primary)] flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
-                        ✓
-                      </div>
-                      <span className="text-[var(--color-text-primary)]">
-                        매장 및 직원 관리
-                      </span>
-                    </li>
-                    <li className="flex items-start gap-3">
-                      <div className="mt-1 h-5 w-5 rounded-full bg-[var(--color-primary)] flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
-                        ✓
-                      </div>
-                      <span className="text-[var(--color-text-primary)]">
-                        매뉴얼 배포 및 관리
-                      </span>
-                    </li>
-                    <li className="flex items-start gap-3">
-                      <div className="mt-1 h-5 w-5 rounded-full bg-[var(--color-primary)] flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
-                        ✓
-                      </div>
-                      <span className="text-[var(--color-text-primary)]">
-                        AI 상담 활용
-                      </span>
-                    </li>
-                  </ul>
-                </div>
+                {/* Description */}
+                <p className="text-sm sm:text-base text-[var(--color-text-secondary)] mb-8">
+                  로그인 후 일잇다의 본사 관리 기능을 이용할 수 있어요.
+                </p>
 
-                <Link href="/login" className="block">
-                  <Button
-                    type="button"
-                    variant="primary"
-                    size="md"
-                    className="w-full"
-                  >
-                    로그인하기
-                  </Button>
-                </Link>
-
-                <Link href="/" className="block mt-3">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="md"
-                    className="w-full"
-                  >
-                    홈으로 돌아가기
-                  </Button>
-                </Link>
-              </Card>
+                {/* Login Button */}
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="lg"
+                  className="w-full"
+                  onClick={handleGoToLogin}
+                >
+                  로그인하러 가기
+                </Button>
+              </div>
             ) : (
-              // 대기 상태
+              // Owner/Staff 대기 상태
               <Card className="text-center" padding="lg">
                 <div className="flex justify-center mb-6">
                   <div className="flex h-16 w-16 items-center justify-center rounded-full bg-orange-100">

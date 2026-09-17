@@ -1,22 +1,56 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useLayoutEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input, PasswordInput } from "@/components/common/Input";
+import { createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [mounted, setMounted] = useState(false);
+
+  // Check if user is already logged in on mount
+  useLayoutEffect(() => {
+    setMounted(true);
+    
+    const checkSession = async () => {
+      try {
+        const supabase = createClient();
+        const { data } = await supabase.auth.getSession();
+        
+        if (data.session?.user) {
+          const role = data.session.user.user_metadata?.role;
+          
+          // Redirect based on role
+          if (role === "hq") {
+            router.push("/hq");
+          } else if (role === "owner") {
+            router.push("/boss");
+          } else if (role === "staff") {
+            router.push("/staff");
+          }
+        }
+      } catch (e) {
+        console.error("Session check failed:", e);
+      }
+    };
+    
+    checkSession();
+  }, [router]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrors({});
 
+    // Validation
     if (!email) {
       setErrors((prev) => ({ ...prev, email: "이메일을 입력해주세요" }));
       return;
@@ -27,10 +61,48 @@ export default function LoginPage() {
     }
 
     setIsLoading(true);
-    setTimeout(() => {
-      console.log("Login attempt:", { email, password, rememberMe });
+
+    try {
+      const supabase = createClient();
+      
+      // Real Supabase Auth login
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) {
+        setIsLoading(false);
+        setErrors((prev) => ({
+          ...prev,
+          email: error.message || "아이디 또는 비밀번호를 확인해주세요.",
+        }));
+        return;
+      }
+
+      if (data.user) {
+        const role = data.user.user_metadata?.role;
+        
+        // Role-based redirect
+        if (role === "hq") {
+          router.push("/hq");
+        } else if (role === "owner") {
+          router.push("/boss");
+        } else if (role === "staff") {
+          router.push("/staff");
+        } else {
+          // Unknown role, redirect to home
+          router.push("/");
+        }
+      }
+    } catch (e) {
       setIsLoading(false);
-    }, 1000);
+      console.error("Login error:", e);
+      setErrors((prev) => ({
+        ...prev,
+        email: "로그인 중 오류가 발생했습니다.",
+      }));
+    }
   };
 
   return (
