@@ -101,10 +101,7 @@ export async function indexApprovedManual(
     throw new Error(`Manual produced too many chunks: limit is ${MAX_CHUNK_COUNT}.`);
   }
 
-  const embeddingInputs = chunks.map(
-    (chunk) =>
-      `브랜드: ${manual.brand_name}\n제목: ${manual.title}\n카테고리: ${manual.category}\n내용: ${chunk}`,
-  );
+  const embeddingInputs = chunks.map((chunk) => `${manual.title}\n${chunk}`);
 
   const embeddings = await createEmbeddings(embeddingInputs);
 

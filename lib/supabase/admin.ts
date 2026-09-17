@@ -4,12 +4,12 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 export function createAdminClient(): SupabaseClient {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY;
+  const supabaseSecretKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY;
 
   if (!supabaseUrl || !supabaseSecretKey) {
     const missing = [
       !supabaseUrl && "NEXT_PUBLIC_SUPABASE_URL",
-      !supabaseSecretKey && "SUPABASE_SECRET_KEY",
+      !supabaseSecretKey && "SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SECRET_KEY",
     ].filter(Boolean);
 
     throw new Error(`Missing Supabase admin environment variables: ${missing.join(", ")}`);

@@ -73,7 +73,8 @@ export default function StaffPage() {
         message.similarity = payload.similarity;
       }
       setMessages(current => [...current, message]);
-    } catch {
+    } catch (err) {
+      console.error("Client sendMessage Error:", err);
       // 기술적인 에러 메시지 대신 사용자 관점의 안내 문구만 노출합니다.
       setErrorMessage("답변을 불러오지 못했어요. 잠시 후 다시 시도해주세요.");
     } finally {

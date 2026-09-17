@@ -94,7 +94,13 @@ export async function searchManualChunks(
   });
 
   if (error) {
-    throw new Error(`Supabase match_manual_chunks RPC failed: ${error.message}`);
+    console.error("Supabase RPC Error Details:", {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    });
+    throw new Error(`RPC match_manual_chunks failed: ${error.message}`);
   }
 
   return parseChunkMatches(data);

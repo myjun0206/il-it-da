@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 
 import { searchManualChunks } from "@/lib/rag/search-manual-chunks";
 import type { ManualChunkMatch, RagQueryResponse, RagSource, RagStatus } from "@/lib/rag/types";
@@ -6,8 +6,8 @@ import type { ManualChunkMatch, RagQueryResponse, RagSource, RagStatus } from "@
 export const runtime = "nodejs";
 
 const MAX_QUESTION_LENGTH = 2_000;
-const ANSWERED_THRESHOLD = 0.78;
-const CAUTIOUS_THRESHOLD = 0.65;
+const ANSWERED_THRESHOLD = 0.65;
+const CAUTIOUS_THRESHOLD = 0.55;
 const GPT_TIMEOUT_MS = 30_000;
 const GPT_MAX_OUTPUT_TOKENS = 500; // 현장 직원용 간결한 답변에 맞춘 보수적 상한
 const NO_MANUAL_ANSWER =
@@ -110,7 +110,7 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
       status,
     });
   } catch (error) {
-    console.error("RAG query failed:", error instanceof Error ? error.message : "Unknown error");
+    console.error("RAG query failed:", error);
     return NextResponse.json({ error: "Unable to answer the question." }, { status: 500 });
   }
 }
