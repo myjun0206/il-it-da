@@ -8,6 +8,7 @@ export type RagSource = {
 
 export type RagQueryRequest = {
   question: string;
+  storeId: string;
 };
 
 export type RagSearchMatch = {
