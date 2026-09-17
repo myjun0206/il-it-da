@@ -1,6 +1,7 @@
 "use client";
 
-import React from "react";
+import React, { useLayoutEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Building2,
@@ -16,8 +17,45 @@ import {
 } from "lucide-react";
 import { Card } from "@/components/common/Card";
 import { Button } from "@/components/common/Button";
+import { createClient } from "@/lib/supabase/client";
 
 export default function HQHomePage() {
+  const router = useRouter();
+  const [mounted, setMounted] = useState(false);
+
+  useLayoutEffect(() => {
+    setMounted(true);
+
+    const checkAuth = async () => {
+      try {
+        const supabase = createClient();
+        const { data } = await supabase.auth.getSession();
+        
+        if (!data.session?.user) {
+          router.push("/");
+          return;
+        }
+
+        const role = data.session.user.user_metadata?.role;
+
+        // Verify user is HQ
+        if (role !== "hq") {
+          router.push("/");
+          return;
+        }
+      } catch (e) {
+        console.error("Auth check failed:", e);
+        router.push("/");
+      }
+    };
+
+    checkAuth();
+  }, [router]);
+
+  if (!mounted) {
+    return null;
+  }
+
   return (
     <div className="space-y-8">
       {/* Welcome Section */}
