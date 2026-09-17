@@ -1,50 +1,17 @@
 "use client";
 
-import React, { useState, useLayoutEffect } from "react";
-import { useRouter } from "next/navigation";
+import React, { useState } from "react";
 import Link from "next/link";
 import { Check } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input, PasswordInput } from "@/components/common/Input";
-import { createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [mounted, setMounted] = useState(false);
-
-  // Check if user is already logged in on mount
-  useLayoutEffect(() => {
-    setMounted(true);
-    
-    const checkSession = async () => {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-        
-        if (data.session?.user) {
-          const role = data.session.user.user_metadata?.role;
-          
-          // Redirect based on role
-          if (role === "hq") {
-            router.push("/home-hq");
-          } else if (role === "owner") {
-            router.push("/home-owner");
-          } else if (role === "staff") {
-            router.push("/staff");
-          }
-        }
-      } catch (e) {
-        console.error("Session check failed:", e);
-      }
-    };
-    
-    checkSession();
-  }, [router]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -60,48 +27,10 @@ export default function LoginPage() {
     }
 
     setIsLoading(true);
-
-    try {
-      const supabase = createClient();
-      
-      // Real Supabase Auth login
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) {
-        setIsLoading(false);
-        setErrors((prev) => ({
-          ...prev,
-          email: error.message || "아이디 또는 비밀번호를 확인해주세요.",
-        }));
-        return;
-      }
-
-      if (data.user) {
-        const role = data.user.user_metadata?.role;
-        
-        // Role-based redirect
-        if (role === "hq") {
-          router.push("/home-hq");
-        } else if (role === "owner") {
-          router.push("/home-owner");
-        } else if (role === "staff") {
-          router.push("/staff");
-        } else {
-          // Unknown role, redirect to home
-          router.push("/");
-        }
-      }
-    } catch (e) {
+    setTimeout(() => {
+      console.log("Login attempt:", { email, password, rememberMe });
       setIsLoading(false);
-      console.error("Login error:", e);
-      setErrors((prev) => ({
-        ...prev,
-        email: "로그인 중 오류가 발생했습니다. 다시 시도해주세요.",
-      }));
-    }
+    }, 1000);
   };
 
   return (

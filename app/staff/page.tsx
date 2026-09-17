@@ -1,11 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, startTransition, useEffect, useState, useLayoutEffect } from "react";
-import { useRouter } from "next/navigation";
+import { FormEvent, startTransition, useEffect, useState } from "react";
 import { ArrowLeft, Bot, Clock3, FileText, MoreHorizontal, Paperclip, Send, Store, UserRound } from "lucide-react";
 import { DEMO_STORES, findDemoStore, type DemoStore } from "@/lib/data/demoStores";
-import { createClient } from "@/lib/supabase/client";
 import type { RagSource, RagStatus } from "@/lib/rag/types";
 
 type Message = {
@@ -45,58 +43,11 @@ function normalizeSource(value: unknown): Message["source"] {
 }
 
 export default function StaffPage() {
-  const router = useRouter();
-  const [mounted, setMounted] = useState(false);
   const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [selectedStore, setSelectedStore] = useState<DemoStore | null>(null);
-
-  // Auth check with Supabase
-  useLayoutEffect(() => {
-    setMounted(true);
-
-    const checkAuth = async () => {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-        
-        if (!data.session?.user) {
-          router.push("/");
-          return;
-        }
-
-        const role = data.session.user.user_metadata?.role;
-
-        // Verify user is staff
-        if (role !== "staff") {
-          router.push("/");
-          return;
-        }
-      } catch (e) {
-        console.error("Auth check failed:", e);
-        router.push("/");
-      }
-    };
-
-    checkAuth();
-  }, [router]);
-
-  const handleLogout = async () => {
-    try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
-      router.push("/");
-    } catch (e) {
-      console.error("Logout failed:", e);
-      router.push("/");
-    }
-  };
-
-  if (!mounted) {
-    return null;
-  }
 
   useEffect(() => {
     // PoC demo selection only. Real authorization must resolve the user's permitted store server-side.
@@ -196,7 +147,7 @@ export default function StaffPage() {
             </div>
           </div>
 
-          <button aria-label="더 보기" onClick={handleLogout} className="flex h-11 w-11 items-center justify-center rounded-full text-[#5a6e78] transition-colors hover:bg-[#edf5f3]">
+          <button aria-label="더 보기" className="flex h-11 w-11 items-center justify-center rounded-full text-[#5a6e78] transition-colors hover:bg-[#edf5f3]">
             <MoreHorizontal size={19} />
           </button>
         </header>

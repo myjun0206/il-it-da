@@ -1,7 +1,6 @@
 "use client";
 
-import React, { useLayoutEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import React from "react";
 import Link from "next/link";
 import {
   Store,
@@ -14,45 +13,8 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { Card } from "@/components/common/Card";
-import { createClient } from "@/lib/supabase/client";
 
 export default function OwnerHomePage() {
-  const router = useRouter();
-  const [mounted, setMounted] = useState(false);
-
-  useLayoutEffect(() => {
-    setMounted(true);
-
-    const checkAuth = async () => {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-        
-        if (!data.session?.user) {
-          router.push("/");
-          return;
-        }
-
-        const role = data.session.user.user_metadata?.role;
-
-        // Verify user is owner
-        if (role !== "owner") {
-          router.push("/");
-          return;
-        }
-      } catch (e) {
-        console.error("Auth check failed:", e);
-        router.push("/");
-      }
-    };
-
-    checkAuth();
-  }, [router]);
-
-  if (!mounted) {
-    return null;
-  }
-
   return (
     <div className="space-y-8">
       {/* Welcome Section */}

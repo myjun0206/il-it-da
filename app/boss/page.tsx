@@ -1,10 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState, useLayoutEffect } from "react";
-import { useRouter } from "next/navigation";
+import { FormEvent, useState } from "react";
 import { Bell, BookOpen, ChevronRight, FileText, LayoutDashboard, LogOut, MoreHorizontal, Plus, Search, Settings2, ShieldCheck, Store, UploadCloud, Users } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
 
 const tabs = ["대시보드", "매장 가이드", "수칙 문서", "알바생 관리"];
 const staff = [
@@ -16,57 +14,10 @@ const staff = [
 type UploadState = "idle" | "loading" | "success" | "error";
 
 export default function BossPage() {
-  const router = useRouter();
-  const [mounted, setMounted] = useState(false);
   const [activeTab, setActiveTab] = useState("대시보드");
   const [guideText, setGuideText] = useState("");
   const [uploadState, setUploadState] = useState<UploadState>("idle");
   const [uploadMessage, setUploadMessage] = useState("");
-
-  // Auth check with Supabase
-  useLayoutEffect(() => {
-    setMounted(true);
-
-    const checkAuth = async () => {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-        
-        if (!data.session?.user) {
-          router.push("/");
-          return;
-        }
-
-        const role = data.session.user.user_metadata?.role;
-
-        // Verify user is owner
-        if (role !== "owner") {
-          router.push("/");
-          return;
-        }
-      } catch (e) {
-        console.error("Auth check failed:", e);
-        router.push("/");
-      }
-    };
-
-    checkAuth();
-  }, [router]);
-
-  const handleLogout = async () => {
-    try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
-      router.push("/");
-    } catch (e) {
-      console.error("Logout failed:", e);
-      router.push("/");
-    }
-  };
-
-  if (!mounted) {
-    return null;
-  }
 
   async function uploadGuide(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -120,7 +71,7 @@ export default function BossPage() {
           <button type="button" aria-label="설정 열기" className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-[#789086] transition-colors hover:bg-[#edf3ea] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#0C9D81]">
             <Settings2 size={17} /> 설정
           </button>
-          <button type="button" aria-label="로그아웃" onClick={handleLogout} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-[#789086] transition-colors hover:bg-[#edf3ea] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#0C9D81]">
+          <button type="button" aria-label="로그아웃" className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-[#789086] transition-colors hover:bg-[#edf3ea] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#0C9D81]">
             <LogOut size={17} /> 로그아웃
           </button>
         </div>
