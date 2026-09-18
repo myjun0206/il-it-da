@@ -3,7 +3,6 @@
 import React from "react";
 import Link from "next/link";
 import { Bell, User, LogOut } from "lucide-react";
-import clsx from "clsx";
 
 export default function HQHeader() {
   const [showNotifications, setShowNotifications] = React.useState(false);

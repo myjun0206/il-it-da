@@ -100,7 +100,7 @@ export default function SignupTermsPage() {
   };
 
   const initialData = getInitialTermsData();
-  const [currentTerms, setCurrentTerms] = useState<Term[]>(initialData.terms);
+  const [currentTerms] = useState<Term[]>(initialData.terms);
   const [termsAccepted, setTermsAccepted] = useState<Record<TermsKey, boolean>>(initialData.accepted);
   const [selectedTermModal, setSelectedTermModal] = useState<TermsKey | null>(null);
 

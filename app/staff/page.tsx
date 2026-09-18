@@ -1,7 +1,7 @@
 "use client";
 
-import Link from "next/link";
-import { FormEvent, useState, useLayoutEffect } from "react";
+
+import { FormEvent, useState, useLayoutEffect, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Bot, Clock3, FileText, MoreHorizontal, Paperclip, Send, Store, UserRound } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -40,7 +40,6 @@ function normalizeSource(value: unknown): Message["source"] {
 
 export default function StaffPage() {
   const router = useRouter();
-  const [mounted, setMounted] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     { from: "ai", text: "안녕하세요, 민지님!\n오늘도 일잇다와 함께 차근차근 시작해볼까요?", time: "오후 1:58" },
     { from: "ai", text: "매장 업무에 대해 궁금한 점을 물어보세요.\n제가 등록된 매장 가이드를 바탕으로 답해드릴게요.", time: "오후 1:58" },
@@ -50,9 +49,7 @@ export default function StaffPage() {
   const [errorMessage, setErrorMessage] = useState("");
 
   useLayoutEffect(() => {
-    setMounted(true);
-
-    // Check Supabase session
+    // Check Supabase session - redirect if needed
     const checkAuth = async () => {
       try {
         const supabase = createClient();
@@ -79,6 +76,10 @@ export default function StaffPage() {
     checkAuth();
   }, [router]);
 
+  useEffect(() => {
+    // No additional state to set after auth check
+  }, []);
+
   const handleLogout = async () => {
     try {
       const supabase = createClient();
@@ -89,10 +90,6 @@ export default function StaffPage() {
       router.push("/");
     }
   };
-
-  if (!mounted) {
-    return null;
-  }
 
   async function sendMessage(event?: FormEvent) {
     event?.preventDefault();

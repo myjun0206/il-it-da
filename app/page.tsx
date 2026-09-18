@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useLayoutEffect } from "react";
+import React, { useState, useLayoutEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
@@ -15,12 +15,9 @@ export default function LoginPage() {
   const [rememberMe, setRememberMe] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [mounted, setMounted] = useState(false);
 
   // Check if user is already logged in on mount
   useLayoutEffect(() => {
-    setMounted(true);
-    
     const checkSession = async () => {
       try {
         const supabase = createClient();

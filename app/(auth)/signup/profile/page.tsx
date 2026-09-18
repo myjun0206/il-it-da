@@ -1,16 +1,14 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useLayoutEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, Check, Building2 } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input, PasswordInput } from "@/components/common/Input";
 import type { UserRole } from "@/lib/types/user";
 import {
-  mockFranchises,
   DEV_TEST_EMAILS,
   DEV_TEST_VERIFICATION_CODE,
-  getFranchiseByDomain,
 } from "@/lib/data/mockFranchises";
 
 // 개발 환경 여부 확인
@@ -55,13 +53,23 @@ function HQSignupProfile() {
   const [franchiseConfirmed, setFranchiseConfirmed] = useState(false);
   const [franchiseNotFound, setFranchiseNotFound] = useState(false);
 
-  // 페이지 로드 시 sessionStorage에서 저장된 상태 복구
+  // 역할 확인 및 리다이렉트 (side effect)
+  useLayoutEffect(() => {
+    const savedRole = sessionStorage.getItem("signupRole");
+    if (savedRole !== "hq") {
+      router.push("/signup/role");
+      return;
+    }
+  }, [router]);
+
+  // 페이지 로드 시 sessionStorage에서 저장된 상태 복구 (state update)
   useEffect(() => {
     // 이전에 입력한 개인정보 복구
     const savedProfile = sessionStorage.getItem("signupHQProfile");
     if (savedProfile) {
       try {
         const profile = JSON.parse(savedProfile);
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setFormData(profile);
         // 이메일이 있으면 인증 완료 상태로 표시
         if (profile.companyEmail) {
@@ -310,10 +318,12 @@ function HQSignupProfile() {
     // 실제 등록된 계정 정보 저장 (로그인 시 사용)
     try {
       const accountsJson = sessionStorage.getItem("registeredAccounts");
-      let registeredAccounts = accountsJson ? JSON.parse(accountsJson) : [];
+      const registeredAccounts = accountsJson ? JSON.parse(accountsJson) : [];
       
       // 같은 이메일의 계정이 있는지 확인
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const existingIndex = registeredAccounts.findIndex(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (acc: any) => acc.companyEmail === formData.companyEmail && acc.role === currentRole
       );
 
@@ -685,6 +695,7 @@ function OwnerStaffSignupProfile() {
     if (savedProfile) {
       try {
         const profile = JSON.parse(savedProfile);
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setFormData(profile);
         // 이메일이 있으면 중복 확인 완료 상태로 표시
         if (profile.email) {
@@ -1077,6 +1088,7 @@ export default function SignupProfilePage() {
       router.push("/signup/role");
       return;
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setRole(savedRole);
     setIsLoading(false);
   }, [router]);

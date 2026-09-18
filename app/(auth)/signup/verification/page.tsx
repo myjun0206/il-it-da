@@ -57,8 +57,6 @@ export default function SignupVerificationPage() {
     return null;
   }
 
-  const role = sessionStorage.getItem("signupRole") as UserRole | null;
-
   const handleSendCode = async () => {
     setErrors({});
     setIsLoading(true);

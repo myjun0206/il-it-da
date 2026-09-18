@@ -6,11 +6,8 @@ import Link from "next/link";
 import {
   House,
   BookOpen,
-  Files,
   Store,
-  MessageSquare,
   Megaphone,
-  Bell,
   Settings,
   LogOut,
   Menu,
@@ -30,7 +27,6 @@ export default function HQSidebar({
   onLogout,
   activeMenu = "home",
 }: HQSidebarProps) {
-  const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
 
   const menuItems = [

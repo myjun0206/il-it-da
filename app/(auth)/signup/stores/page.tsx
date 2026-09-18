@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useLayoutEffect } from "react";
+import React, { useState, useLayoutEffect, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
 import { Button } from "@/components/common/Button";
@@ -24,7 +24,6 @@ export default function SignupStoresPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStores, setSelectedStores] = useState<Store[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [mounted, setMounted] = useState(false);
   const [isAddMode, setIsAddMode] = useState(false);
 
   useLayoutEffect(() => {
@@ -38,6 +37,13 @@ export default function SignupStoresPage() {
       router.push("/signup/organization");
       return;
     }
+  }, [router]);
+
+  useEffect(() => {
+    const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
+    if (!savedRole) return;
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setRole(savedRole);
 
     // query parameter 확인 (add mode인지 여부)
@@ -55,7 +61,7 @@ export default function SignupStoresPage() {
     const savedSelectedStores = sessionStorage.getItem("signupSelectedStores");
     if (savedSelectedStores) {
       try {
-        const parsed = JSON.parse(savedSelectedStores);
+        const parsed = JSON.parse(savedSelectedStores) as Store[];
         if (Array.isArray(parsed) && parsed.length > 0) {
           restoredStores = parsed;
         }
@@ -69,14 +75,14 @@ export default function SignupStoresPage() {
       const savedStores = sessionStorage.getItem("signupStores");
       if (savedStores) {
         try {
-          const parsed = JSON.parse(savedStores);
+          const parsed = JSON.parse(savedStores) as SelectedStore[];
           if (Array.isArray(parsed) && parsed.length > 0) {
             restoredStores = parsed
-              .map((item: any) => {
+              .map((item) => {
                 const foundStore = mockStores.find((s) => s.id === item.storeId);
                 return foundStore;
               })
-              .filter(Boolean) as Store[];
+              .filter((s): s is Store => Boolean(s));
           }
         } catch (e) {
           console.error("Failed to parse signupStores:", e);
@@ -87,11 +93,9 @@ export default function SignupStoresPage() {
     if (restoredStores.length > 0) {
       setSelectedStores(restoredStores);
     }
+  }, []);
 
-    setMounted(true);
-  }, [router]);
-
-  if (!mounted) {
+  if (!role) {
     return null;
   }
 

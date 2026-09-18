@@ -7,6 +7,8 @@ interface NaverSearchResult {
   category: string;
   lat: string;
   lng: string;
+  mapy: string;
+  mapx: string;
   link?: string;
 }
 
@@ -26,10 +28,14 @@ function stripHtmlTags(text: string): string {
 }
 
 // ID 생성 (이름 + 주소 + 좌표 기반)
-function generateId(result: NaverSearchResult): string {
-  const cleaned = stripHtmlTags(result.title);
-  const addr = result.roadAddress || result.address;
-  return `${cleaned}|${addr}|${result.lat}|${result.lng}`.replace(/\s+/g, "_");
+function generateId(
+  title: string,
+  address: string,
+  lat: number,
+  lng: number
+): string {
+  const cleaned = stripHtmlTags(title);
+  return `${cleaned}|${address}|${lat}|${lng}`.replace(/\s+/g, "_");
 }
 
 export async function GET(request: NextRequest) {
@@ -86,11 +92,11 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const data = await response.json();
+    const data = await response.json() as { items: NaverSearchResult[] };
 
     // 응답 정규화
-    const results: NormalizedStore[] = (data.items || [])
-      .map((item: any) => {
+    const mappedResults: Array<NormalizedStore | null> = (data.items || [])
+      .map((item: NaverSearchResult) => {
         try {
           const title = stripHtmlTags(item.title || "");
           // NAVER Local Search API는 NAVER 좌표계(단위: 1/10,000,000)를 반환
@@ -108,14 +114,7 @@ export async function GET(request: NextRequest) {
           }
 
           return {
-            id: generateId({
-              title: item.title,
-              address: item.address || "",
-              roadAddress: item.roadAddress || "",
-              category: item.category || "",
-              lat: lat.toString(),
-              lng: lng.toString(),
-            }),
+            id: generateId(title, item.address || "", lat, lng),
             name: title,
             address: item.address || "",
             roadAddress: item.roadAddress || "",
@@ -127,8 +126,14 @@ export async function GET(request: NextRequest) {
           console.warn("[StoresSearch] Failed to parse item:", item, err);
           return null;
         }
-      })
-      .filter(Boolean);
+      });
+
+    const results: NormalizedStore[] = mappedResults.reduce((acc: NormalizedStore[], item) => {
+      if (item !== null) {
+        acc.push(item);
+      }
+      return acc;
+    }, []);
 
     // 중복 제거
     const uniqueResults = Array.from(

@@ -23,7 +23,6 @@ interface ApiStore {
 }
 
 export default function StoreSearchDropdown({
-  stores,
   searchQuery,
   onSearchChange,
   onStoreSelect,
@@ -39,25 +38,28 @@ export default function StoreSearchDropdown({
   const abortControllerRef = useRef<AbortController | null>(null);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // 실제 API 검색 (debounce + AbortController)
+  // searchQuery 변경 시 상태 초기화
   useEffect(() => {
-    // Debounce timer 정리
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
-    }
-
-    if (!searchQuery.trim()) {
+    if (!searchQuery.trim() || searchQuery.trim().length < 2) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setFilteredStores([]);
       setIsOpen(false);
       setFocusedIndex(-1);
       setError(null);
+    }
+  }, [searchQuery]);
+
+  // 실제 API 검색 (debounce + AbortController)
+  useEffect(() => {
+    // 조기 종료 조건
+    const trimmedQuery = searchQuery.trim();
+    if (!trimmedQuery || trimmedQuery.length < 2) {
       return;
     }
 
-    // 1글자 이하는 API 호출하지 않음
-    if (searchQuery.trim().length < 2) {
-      setFilteredStores([]);
-      return;
+    // Debounce timer 정리
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
     }
 
     // 이전 요청 취소
@@ -68,6 +70,7 @@ export default function StoreSearchDropdown({
     // 새 AbortController 생성
     abortControllerRef.current = new AbortController();
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsLoading(true);
     setError(null);
 
@@ -108,8 +111,8 @@ export default function StoreSearchDropdown({
         setFilteredStores(convertedStores);
         setIsOpen(true);
         setFocusedIndex(-1);
-      } catch (err: any) {
-        if (err.name === "AbortError") {
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === "AbortError") {
           // 요청 취소됨 (정상)
           return;
         }

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useLayoutEffect, useState } from "react";
+import React, { useLayoutEffect, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronRight } from "lucide-react";
 import HQSidebar from "@/components/hq/HQSidebar";
@@ -31,23 +31,26 @@ const communicationMockData = {
 
 export default function CommunicationPage() {
   const router = useRouter();
-  const [mounted, setMounted] = useState(false);
   const [userName, setUserName] = useState("본사 관리자");
   const [franchiseName, setFranchiseName] = useState("프랜차이즈");
 
   useLayoutEffect(() => {
-    setMounted(true);
-
     // 로그인 상태 확인
     const loggedInRole = sessionStorage.getItem("loggedInRole");
     if (loggedInRole !== "hq") {
       router.push("/");
       return;
     }
+  }, [router]);
+
+  useEffect(() => {
+    const loggedInRole = sessionStorage.getItem("loggedInRole");
+    if (loggedInRole !== "hq") return;
 
     // 프랜차이즈 정보 가져오기
     const savedFranchiseName = sessionStorage.getItem("loggedInFranchiseName");
     if (savedFranchiseName) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setFranchiseName(savedFranchiseName);
     }
 
@@ -56,9 +59,13 @@ export default function CommunicationPage() {
       const loggedInEmail = sessionStorage.getItem("loggedInEmail");
       const accountsJson = sessionStorage.getItem("registeredAccounts");
       if (accountsJson && loggedInEmail) {
-        const accounts = JSON.parse(accountsJson);
+        const accounts = JSON.parse(accountsJson) as Array<{
+          companyEmail: string;
+          role: string;
+          name: string;
+        }>;
         const account = accounts.find(
-          (acc: any) => acc.companyEmail === loggedInEmail && acc.role === "hq"
+          (acc) => acc.companyEmail === loggedInEmail && acc.role === "hq"
         );
         if (account && account.name) {
           setUserName(account.name);
@@ -67,16 +74,14 @@ export default function CommunicationPage() {
     } catch (e) {
       console.error("사용자 정보 로드 실패:", e);
     }
-  }, [router]);
+  }, []);
 
   const handleLogout = () => {
     sessionStorage.clear();
     router.push("/");
   };
 
-  if (!mounted) {
-    return null;
-  }
+
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-default)]">

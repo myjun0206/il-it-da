@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useLayoutEffect } from "react";
+import React, { useState, useLayoutEffect, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, Trash2, Check, Plus, Store as StoreIcon } from "lucide-react";
 import { Button } from "@/components/common/Button";
@@ -41,10 +41,10 @@ export default function SignupApprovalPage() {
   const [selectedStores, setSelectedStores] = useState<Store[]>([]);
   const [storeApprovals, setStoreApprovals] = useState<StoreApprovalState[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [mounted, setMounted] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [submittingStoreIds, setSubmittingStoreIds] = useState<Set<string>>(new Set());
 
+  // 역할 확인 및 라우팅
   useLayoutEffect(() => {
     const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
     if (!savedRole) {
@@ -54,9 +54,17 @@ export default function SignupApprovalPage() {
 
     if (savedRole === "hq") {
       router.push("/signup/complete");
+    }
+  }, [router]);
+
+  // State 업데이트
+  useEffect(() => {
+    const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
+    if (!savedRole || savedRole === "hq") {
       return;
     }
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setRole(savedRole);
 
     // 프로필 데이터에서 이름 가져오기
@@ -128,11 +136,9 @@ export default function SignupApprovalPage() {
     } else {
       router.push("/signup/stores");
     }
-
-    setMounted(true);
   }, [router]);
 
-  if (!mounted || !role) {
+  if (!role) {
     return null;
   }
 

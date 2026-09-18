@@ -17,15 +17,12 @@ type UploadState = "idle" | "loading" | "success" | "error";
 
 export default function BossPage() {
   const router = useRouter();
-  const [mounted, setMounted] = useState(false);
   const [activeTab, setActiveTab] = useState("대시보드");
   const [guideText, setGuideText] = useState("");
   const [uploadState, setUploadState] = useState<UploadState>("idle");
   const [uploadMessage, setUploadMessage] = useState("");
 
   useLayoutEffect(() => {
-    setMounted(true);
-
     // Check Supabase session
     const checkAuth = async () => {
       try {
@@ -90,10 +87,6 @@ export default function BossPage() {
       router.push("/");
     }
   };
-
-  if (!mounted) {
-    return null;
-  }
 
   return (
     <div className="dashboard-shell min-h-screen w-full text-[#24362e] lg:flex">

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useLayoutEffect, useState, useCallback } from "react";
+import React, { useLayoutEffect, useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CheckCircle, Clock, Mail, Check, ChevronLeft } from "lucide-react";
@@ -10,23 +10,27 @@ import type { UserRole } from "@/lib/types/user";
 
 export default function SignupCompletePage() {
   const router = useRouter();
-  const [mounted, setMounted] = useState(false);
   const [role, setRole] = useState<UserRole | null>(null);
   const [franchiseName, setFranchiseName] = useState<string | null>(null);
 
   useLayoutEffect(() => {
-    setMounted(true);
     const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
-    const savedFranchiseName = sessionStorage.getItem("signupFranchiseName");
     
     if (!savedRole) {
       router.push("/signup/role");
-      return;
     }
-
-    setRole(savedRole);
-    setFranchiseName(savedFranchiseName);
   }, [router]);
+
+  useEffect(() => {
+    const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
+    const savedFranchiseName = sessionStorage.getItem("signupFranchiseName");
+    
+    if (savedRole) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRole(savedRole);
+      setFranchiseName(savedFranchiseName);
+    }
+  }, []);
 
   // 로그인 화면으로 이동 - 임시 회원가입 상태 초기화
   const handleGoToLogin = useCallback(() => {
@@ -44,9 +48,9 @@ export default function SignupCompletePage() {
     
     // 로그인 페이지로 이동
     router.push("/");
-  }, [router]);
+  }, []);
 
-  if (!mounted) {
+  if (!role) {
     return null;
   }
 

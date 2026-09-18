@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useLayoutEffect } from "react";
+import React, { useState, useLayoutEffect, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Plus, Store as StoreIcon } from "lucide-react";
 import { Button } from "@/components/common/Button";
@@ -38,37 +38,40 @@ export default function SignupApprovalStatusPage() {
   const router = useRouter();
   const [role, setRole] = useState<UserRole | null>(null);
   const [storeApprovals, setStoreApprovals] = useState<StoreApprovalState[]>([]);
-  const [mounted, setMounted] = useState(false);
 
+  // 역할 확인 및 라우팅
   useLayoutEffect(() => {
     const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
-    if (!savedRole) {
-      router.push("/signup/role");
+    
+    if (!savedRole || savedRole === "hq") {
+      router.push(savedRole === "hq" ? "/signup/complete" : "/signup/role");
+    }
+  }, [router]);
+
+  // State 업데이트
+  useEffect(() => {
+    const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
+    
+    if (!savedRole || savedRole === "hq") {
       return;
     }
 
-    if (savedRole === "hq") {
-      router.push("/signup/complete");
-      return;
-    }
-
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setRole(savedRole);
 
     // 승인 요청 상태 복원
     const savedApprovals = sessionStorage.getItem("signupStoreApprovals");
     if (savedApprovals) {
       try {
-        const approvals = JSON.parse(savedApprovals);
+        const approvals = JSON.parse(savedApprovals) as StoreApprovalState[];
         setStoreApprovals(approvals);
       } catch (e) {
         console.error("Failed to parse signupStoreApprovals:", e);
       }
     }
+  }, []);
 
-    setMounted(true);
-  }, [router]);
-
-  if (!mounted || !role) {
+  if (!role) {
     return null;
   }
 

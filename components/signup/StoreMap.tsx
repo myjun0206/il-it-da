@@ -11,15 +11,23 @@ interface StoreMapProps {
 }
 
 declare global {
+   
   interface Window {
     naver?: {
       maps: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         Map: any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         Marker: any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         LatLng: any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         LatLngBounds: any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         Point: any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         Event: any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         MarkerClustering: any;
       };
     };
@@ -33,10 +41,11 @@ export default function StoreMap({
   centerStore,
 }: StoreMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const markersMapRef = useRef<Map<string, any>>(new Map());
   const [hasNaverApi, setHasNaverApi] = useState(false);
-  const [mapInitialized, setMapInitialized] = useState(false);
 
   // NAVER Maps API 로드
   useEffect(() => {
@@ -44,6 +53,7 @@ export default function StoreMap({
 
     // API가 이미 로드됨
     if (window.naver?.maps) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setHasNaverApi(true);
       return;
     }
@@ -78,7 +88,7 @@ export default function StoreMap({
 
   // 지도 초기화
   useEffect(() => {
-    if (!hasNaverApi || !containerRef.current || mapInitialized) return;
+    if (!hasNaverApi || !containerRef.current) return;
     if (!window.naver?.maps) return;
 
     try {
@@ -94,12 +104,10 @@ export default function StoreMap({
       };
 
       mapRef.current = new maps.Map(containerRef.current, mapOptions);
-      setMapInitialized(true);
     } catch (error) {
       console.error("Failed to initialize NAVER Map:", error);
-      setMapInitialized(true);
     }
-  }, [hasNaverApi, stores, centerStore, mapInitialized]);
+  }, [hasNaverApi, stores, centerStore]);
 
   // 마커 업데이트 및 동기화 (selectedStoreIds 변경 시)
   useEffect(() => {

@@ -19,7 +19,7 @@ export interface NavigationItem {
 }
 
 export const Sidebar = React.forwardRef<HTMLDivElement, SidebarProps>(
-  ({ isOpen = true, navigationItems }, ref) => {
+  ({ navigationItems }, ref) => {
     return (
       <aside
         ref={ref}

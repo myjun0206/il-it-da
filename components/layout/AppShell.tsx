@@ -9,7 +9,6 @@ import {
   BarChart3,
   Store,
   MessageSquare,
-  Settings,
   HelpCircle,
 } from "lucide-react";
 import { Header } from "./Header";

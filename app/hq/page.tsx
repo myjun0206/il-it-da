@@ -1,15 +1,11 @@
 "use client";
 
-import React, { useLayoutEffect, useState } from "react";
+import React, { useLayoutEffect, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   UserCheck,
   MessageSquare,
-  Bell,
   Store,
-  BookOpen,
-  Files,
-  Megaphone,
   ChevronRight,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -100,13 +96,11 @@ const dashboardMockData = {
 
 export default function HQPage() {
   const router = useRouter();
-  const [mounted, setMounted] = useState(false);
   const [userName, setUserName] = useState("본사 관리자");
   const [franchiseName, setFranchiseName] = useState("메가MGC커피");
+  const [isReady, setIsReady] = useState(false);
 
   useLayoutEffect(() => {
-    setMounted(true);
-
     // Check Supabase session
     const checkAuth = async () => {
       try {
@@ -120,13 +114,32 @@ export default function HQPage() {
 
         const user = data.session.user;
         const role = user.user_metadata?.role;
-        const name = user.user_metadata?.name;
 
         // Verify user is HQ
         if (role !== "hq") {
           router.push("/");
           return;
         }
+      } catch (e) {
+        console.error("Auth check failed:", e);
+        router.push("/");
+      }
+    };
+
+    checkAuth();
+  }, [router]);
+
+  useEffect(() => {
+    // Set user info from metadata
+    const setUserInfo = async () => {
+      try {
+        const supabase = createClient();
+        const { data } = await supabase.auth.getSession();
+        
+        if (!data.session?.user) return;
+
+        const user = data.session.user;
+        const name = user.user_metadata?.name;
 
         // Set user name from metadata
         if (name) {
@@ -141,14 +154,16 @@ export default function HQPage() {
             setFranchiseName(parts[0]);
           }
         }
+
+        setIsReady(true);
       } catch (e) {
-        console.error("Auth check failed:", e);
-        router.push("/");
+        console.error("Set user info failed:", e);
+        setIsReady(true);
       }
     };
 
-    checkAuth();
-  }, [router]);
+    setUserInfo();
+  }, []);
 
   const handleLogout = async () => {
     try {
@@ -161,7 +176,7 @@ export default function HQPage() {
     }
   };
 
-  if (!mounted) {
+  if (!isReady) {
     return null;
   }
 
