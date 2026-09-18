@@ -1,190 +1,247 @@
 "use client";
 
-import React, { useState, useLayoutEffect } from "react";
-import Link from "next/link";
+import React, { useState, useLayoutEffect, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ArrowRight, MapPin, Users } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 import { Button } from "@/components/common/Button";
-import { Card } from "@/components/common/Card";
-import { Input } from "@/components/common/Input";
+import StoreSearchDropdown from "@/components/signup/StoreSearchDropdown";
+import StoreMap from "@/components/signup/StoreMap";
+import SelectedStoreDisplay from "@/components/signup/SelectedStoreDisplay";
 import type { UserRole } from "@/lib/types/user";
+import type { Store } from "@/lib/types/store";
 import { mockStores } from "@/lib/data/mockStores";
+
+export interface SelectedStore {
+  storeId: string;
+  franchiseName: string;
+  storeName: string;
+  address: string;
+}
 
 export default function SignupStoresPage() {
   const router = useRouter();
-  const [selectedStores, setSelectedStores] = useState<Set<string>>(new Set());
+  const [role, setRole] = useState<UserRole | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedStores, setSelectedStores] = useState<Store[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [mounted] = useState(() => typeof window !== 'undefined');
+  const [isAddMode, setIsAddMode] = useState(false);
 
   useLayoutEffect(() => {
     const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
     if (!savedRole) {
       router.push("/signup/role");
+      return;
+    }
+    if (savedRole === "hq") {
+      // HQ는 organization으로
+      router.push("/signup/organization");
+      return;
     }
   }, [router]);
 
-  if (!mounted) {
+  useEffect(() => {
+    const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
+    if (!savedRole) return;
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setRole(savedRole);
+
+    // query parameter 확인 (add mode인지 여부)
+    const params = new URLSearchParams(window.location.search);
+    const mode = params.get("mode");
+    if (mode === "add") {
+      setIsAddMode(true);
+    }
+
+    // 이전에 선택한 매장들 복원 (우선순위: signupSelectedStores > signupStores)
+    // signupSelectedStores: Store[] 형식 (API 결과 또는 돌아올 때)
+    // signupStores: SelectedStore[] 형식 (서버 저장 형식)
+    let restoredStores: Store[] = [];
+    
+    const savedSelectedStores = sessionStorage.getItem("signupSelectedStores");
+    if (savedSelectedStores) {
+      try {
+        const parsed = JSON.parse(savedSelectedStores) as Store[];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          restoredStores = parsed;
+        }
+      } catch (e) {
+        console.error("Failed to parse signupSelectedStores:", e);
+      }
+    }
+
+    // signupSelectedStores가 없으면, signupStores에서 복원 시도 (mockStores 매칭)
+    if (restoredStores.length === 0) {
+      const savedStores = sessionStorage.getItem("signupStores");
+      if (savedStores) {
+        try {
+          const parsed = JSON.parse(savedStores) as SelectedStore[];
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            restoredStores = parsed
+              .map((item) => {
+                const foundStore = mockStores.find((s) => s.id === item.storeId);
+                return foundStore;
+              })
+              .filter((s): s is Store => Boolean(s));
+          }
+        } catch (e) {
+          console.error("Failed to parse signupStores:", e);
+        }
+      }
+    }
+
+    if (restoredStores.length > 0) {
+      setSelectedStores(restoredStores);
+    }
+  }, []);
+
+  if (!role) {
     return null;
   }
 
-  const role = sessionStorage.getItem("signupRole") as UserRole | null;
-
-  const filteredStores = mockStores.filter((store) =>
-    store.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    store.address.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  const toggleStore = (storeId: string) => {
-    const newSelected = new Set(selectedStores);
-    if (newSelected.has(storeId)) {
-      newSelected.delete(storeId);
-    } else {
-      newSelected.add(storeId);
+  // 매장 선택 핸들러 (중복 방지)
+  const handleStoreSelect = (store: Store) => {
+    // 이미 선택된 매장인지 확인
+    if (selectedStores.some((s) => s.id === store.id)) {
+      return; // 이미 선택되어 있으면 추가하지 않음
     }
-    setSelectedStores(newSelected);
+
+    // 새로운 매장 추가
+    setSelectedStores((prev) => [...prev, store]);
+    // 검색창 비우기
+    setSearchQuery("");
   };
 
+  // 매장 삭제
+  const handleRemoveStore = (storeId: string) => {
+    setSelectedStores((prev) => prev.filter((s) => s.id !== storeId));
+  };
+
+  // 다음 단계로 진행
   const handleContinue = async () => {
-    if (selectedStores.size === 0) return;
+    if (selectedStores.length === 0) return;
 
     setIsLoading(true);
     setTimeout(() => {
-      sessionStorage.setItem(
-        "signupStores",
-        JSON.stringify(Array.from(selectedStores))
-      );
+      // 배열 형태로 저장 (복수 매장 대응)
+      const storeDataArray: SelectedStore[] = selectedStores.map((store) => ({
+        storeId: store.id,
+        franchiseName: store.brandName,
+        storeName: store.name,
+        address: store.address,
+      }));
+      sessionStorage.setItem("signupStores", JSON.stringify(storeDataArray));
       setIsLoading(false);
-      router.push("/signup/verification");
+      // 선택한 Store 객체들도 sessionStorage에 저장 (approval 페이지에서 사용)
+      sessionStorage.setItem("signupSelectedStores", JSON.stringify(selectedStores));
+      router.push("/signup/approval");
     }, 800);
   };
+
+  const handlePrevious = () => {
+    // add mode에서는 approval 페이지로 직접 돌아가기
+    if (isAddMode) {
+      router.push("/signup/approval");
+    } else {
+      router.push("/signup/profile");
+    }
+  };
+
+  // 진행 단계 (점주/직원: 4 / 5)
+  const currentStep = 4;
+  const totalSteps = 5;
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-default)]">
       <div className="flex flex-col min-h-screen">
         {/* Header */}
-        <div className="border-b border-[var(--color-border)] bg-[var(--color-bg-surface)]">
-          <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
-            <Link
-              href={role === "hq" ? "/signup/organization" : "/signup/terms"}
-              className="flex items-center gap-1 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
+        <header className="relative border-b border-[var(--color-border)] bg-[var(--color-bg-surface)]">
+          <div className="flex items-center justify-between px-5 sm:px-8 lg:px-12 xl:px-16 h-16 lg:h-[68px]">
+            <button
+              onClick={handlePrevious}
+              className="flex items-center gap-2 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors flex-shrink-0 bg-none border-none cursor-pointer"
             >
-              <ChevronLeft size={20} />
-              <span className="text-sm font-medium">이전</span>
-            </Link>
-            <div className="text-sm text-[var(--color-text-tertiary)]">
-              {role === "hq" ? "5단계" : "4단계"} / 6단계
+              <ChevronLeft size={24} className="flex-shrink-0" />
+              <span className="text-base sm:text-lg lg:text-[17px] font-semibold hidden sm:inline">
+                이전
+              </span>
+              <span className="text-base font-semibold sm:hidden">이전</span>
+            </button>
+
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex-shrink-0">
+              <img
+                src="/logo/ilitda-wordmark.png"
+                alt="일잇다"
+                className="h-8 sm:h-9 w-auto object-contain"
+              />
+            </div>
+
+            <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+              <span className="text-base sm:text-lg lg:text-[17px] font-semibold text-[var(--color-text-secondary)]">
+                {currentStep} / {totalSteps}
+              </span>
+              <div className="w-20 sm:w-28 h-2 bg-[var(--color-border-light)] rounded-full overflow-hidden flex-shrink-0">
+                <div
+                  className="h-full bg-[var(--color-primary)] rounded-full transition-all duration-300"
+                  style={{ width: `${(currentStep / totalSteps) * 100}%` }}
+                />
+              </div>
             </div>
           </div>
-        </div>
+        </header>
 
-        {/* Content */}
-        <div className="flex-1 flex items-center justify-center px-4 py-8 sm:py-12">
-          <div className="w-full max-w-4xl">
-            <Card className="mb-8" padding="lg">
-              {/* Title */}
-              <div className="mb-6">
-                <h1 className="text-3xl font-bold text-[var(--color-text-primary)] mb-2">
-                  매장 선택
-                </h1>
-                <p className="text-[var(--color-text-secondary)]">
-                  일할 매장을 선택해주세요. 여러 매장을 선택할 수 있습니다.
-                </p>
-              </div>
-
-              {/* Search */}
-              <Input
-                placeholder="매장명 또는 주소로 검색..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </Card>
-
-            {/* Stores List */}
-            <div className="space-y-3 mb-8">
-              {filteredStores.length > 0 ? (
-                filteredStores.map((store) => (
-                  <Card
-                    key={store.id}
-                    onClick={() => toggleStore(store.id)}
-                    padding="md"
-                    className={`cursor-pointer transition-all ${
-                      selectedStores.has(store.id)
-                        ? "ring-2 ring-[var(--color-primary)] shadow-lg"
-                        : "hover:shadow-md"
-                    }`}
-                  >
-                    <div className="flex items-start gap-4">
-                      <input
-                        type="checkbox"
-                        checked={selectedStores.has(store.id)}
-                        onChange={() => toggleStore(store.id)}
-                        className="h-5 w-5 mt-1 rounded border-[var(--color-border)] accent-[var(--color-primary)]"
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <h3 className="font-semibold text-[var(--color-text-primary)]">
-                              {store.name}
-                            </h3>
-                            <p className="text-sm text-[var(--color-text-secondary)] mt-1 flex items-center gap-1">
-                              <MapPin size={14} />
-                              {store.address}
-                            </p>
-                          </div>
-                          {selectedStores.has(store.id) && (
-                            <div className="flex-shrink-0">
-                              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--color-primary)]">
-                                <span className="text-white text-sm font-bold">
-                                  ✓
-                                </span>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Store Info */}
-                        <div className="mt-3 flex gap-4 text-xs text-[var(--color-text-tertiary)]">
-                          <span className="flex items-center gap-1">
-                            <Users size={12} />
-                            직원 {store.memberCount}명
-                          </span>
-                          <span>매뉴얼 {store.manualCount}개</span>
-                        </div>
-                      </div>
-                    </div>
-                  </Card>
-                ))
-              ) : (
-                <Card padding="lg" border={false} shadow={false}>
-                  <p className="text-center text-[var(--color-text-secondary)]">
-                    검색 결과가 없습니다.
-                  </p>
-                </Card>
-              )}
-            </div>
-
-            {/* Summary */}
-            <div className="mb-8 p-4 bg-[var(--color-primary-light)] rounded-lg">
-              <p className="text-sm text-[var(--color-text-primary)]">
-                <span className="font-semibold">선택된 매장:</span> {selectedStores.size}
-                개
+        {/* Main Content */}
+        <div className="flex-1 flex flex-col px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
+          <div className="w-full max-w-6xl mx-auto">
+            {/* Title Section */}
+            <div className="mb-6 sm:mb-8">
+              <h1 className="text-3xl sm:text-4xl font-bold text-[var(--color-text-primary)] mb-2">
+                매장을 선택해주세요
+              </h1>
+              <p className="text-base sm:text-lg text-[var(--color-text-secondary)]">
+                {role === "owner"
+                  ? "운영 중인 매장을 검색해 선택해주세요."
+                  : "근무 중인 매장을 검색해 선택해주세요."}
               </p>
             </div>
 
+            {/* Search Bar with Dropdown */}
+            <div className="mb-8">
+              <StoreSearchDropdown
+                searchQuery={searchQuery}
+                onSearchChange={setSearchQuery}
+                onStoreSelect={handleStoreSelect}
+                selectedStoreIds={selectedStores.map((s) => s.id)}
+              />
+            </div>
+
+            {/* Map + Selected Store 2-Column Layout */}
+            <div className="mb-8 grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6 items-stretch">
+              {/* Left Panel: Selected Stores Display */}
+              <SelectedStoreDisplay
+                selectedStores={selectedStores}
+                onRemoveStore={handleRemoveStore}
+              />
+
+              {/* Right Panel: Map */}
+              <div className="h-[400px] rounded-lg overflow-hidden border border-[var(--color-border)]">
+                <StoreMap
+                  stores={selectedStores}
+                  selectedStoreIds={selectedStores.map((s) => s.id)}
+                  onStoreSelect={handleStoreSelect}
+                  centerStore={selectedStores[0] || undefined}
+                />
+              </div>
+            </div>
+
             {/* Button Group */}
-            <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Button
                 type="button"
                 variant="outline"
-                size="md"
-                onClick={() =>
-                  router.push(
-                    role === "hq" ? "/signup/organization" : "/signup/terms"
-                  )
-                }
-                className="w-full sm:w-auto"
+                size="lg"
+                onClick={handlePrevious}
+                className="w-full sm:w-48"
               >
                 <ChevronLeft size={18} />
                 이전
@@ -192,14 +249,12 @@ export default function SignupStoresPage() {
               <Button
                 type="button"
                 variant="primary"
-                size="md"
+                size="lg"
                 onClick={handleContinue}
-                disabled={selectedStores.size === 0}
-                isLoading={isLoading}
-                className="w-full sm:w-auto"
+                disabled={selectedStores.length === 0 || isLoading}
+                className="w-full sm:w-48"
               >
-                다음
-                <ArrowRight size={18} />
+                {isLoading ? "처리 중..." : "다음"}
               </Button>
             </div>
           </div>

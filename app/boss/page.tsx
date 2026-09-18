@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState } from "react";
+import { FormEvent, useState, useLayoutEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Bell, BookOpen, ChevronRight, FileText, LayoutDashboard, LogOut, MoreHorizontal, Plus, Search, Settings2, ShieldCheck, Store, UploadCloud, Users } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
 
 const tabs = ["대시보드", "매장 가이드", "수칙 문서", "알바생 관리"];
 const staff = [
@@ -14,10 +16,39 @@ const staff = [
 type UploadState = "idle" | "loading" | "success" | "error";
 
 export default function BossPage() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState("대시보드");
   const [guideText, setGuideText] = useState("");
   const [uploadState, setUploadState] = useState<UploadState>("idle");
   const [uploadMessage, setUploadMessage] = useState("");
+
+  useLayoutEffect(() => {
+    // Check Supabase session
+    const checkAuth = async () => {
+      try {
+        const supabase = createClient();
+        const { data } = await supabase.auth.getSession();
+        
+        if (!data.session?.user) {
+          router.push("/");
+          return;
+        }
+
+        const role = data.session.user.user_metadata?.role;
+
+        // Verify user is owner (boss)
+        if (role !== "owner") {
+          router.push("/");
+          return;
+        }
+      } catch (e) {
+        console.error("Auth check failed:", e);
+        router.push("/");
+      }
+    };
+
+    checkAuth();
+  }, [router]);
 
   async function uploadGuide(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -46,6 +77,17 @@ export default function BossPage() {
     }
   }
 
+  const handleLogout = async () => {
+    try {
+      const supabase = createClient();
+      await supabase.auth.signOut();
+      router.push("/");
+    } catch (e) {
+      console.error("Logout failed:", e);
+      router.push("/");
+    }
+  };
+
   return (
     <div className="dashboard-shell min-h-screen w-full text-[#24362e] lg:flex">
       <aside className="hidden w-64 shrink-0 border-r border-[#dfe7dc] bg-[#f7f9f3] px-5 py-7 lg:flex lg:flex-col">
@@ -71,7 +113,7 @@ export default function BossPage() {
           <button type="button" aria-label="설정 열기" className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-[#789086] transition-colors hover:bg-[#edf3ea] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#0C9D81]">
             <Settings2 size={17} /> 설정
           </button>
-          <button type="button" aria-label="로그아웃" className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-[#789086] transition-colors hover:bg-[#edf3ea] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#0C9D81]">
+          <button type="button" onClick={handleLogout} aria-label="로그아웃" className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-[#789086] transition-colors hover:bg-[#edf3ea] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#0C9D81]">
             <LogOut size={17} /> 로그아웃
           </button>
         </div>

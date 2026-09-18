@@ -1,10 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { FormEvent, startTransition, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ArrowLeft, Bot, Clock3, FileText, MoreHorizontal, Paperclip, Send, Store, UserRound } from "lucide-react";
+
 import { DEMO_STORES, findDemoStore, type DemoStore } from "@/lib/data/demoStores";
 import type { RagSource, RagStatus } from "@/lib/rag/types";
+import { createClient } from "@/lib/supabase/client";
 
 type Message = {
   from: "ai" | "me";
@@ -43,6 +45,7 @@ function normalizeSource(value: unknown): Message["source"] {
 }
 
 export default function StaffPage() {
+  const router = useRouter();
   const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -80,6 +83,45 @@ export default function StaffPage() {
       sessionStorage.removeItem(SELECTED_STORE_STORAGE_KEY);
     }
   }
+
+  useEffect(() => {
+    // Check Supabase session - redirect if needed
+    const checkAuth = async () => {
+      try {
+        const supabase = createClient();
+        const { data } = await supabase.auth.getSession();
+        
+        if (!data.session?.user) {
+          router.push("/");
+          return;
+        }
+
+        const role = data.session.user.user_metadata?.role;
+
+        // Verify user is staff
+        if (role !== "staff") {
+          router.push("/");
+          return;
+        }
+      } catch (e) {
+        console.error("Auth check failed:", e);
+        router.push("/");
+      }
+    };
+
+    checkAuth();
+  }, [router]);
+
+  const handleLogout = async () => {
+    try {
+      const supabase = createClient();
+      await supabase.auth.signOut();
+      router.push("/");
+    } catch (e) {
+      console.error("Logout failed:", e);
+      router.push("/");
+    }
+  };
 
   async function sendMessage(event?: FormEvent) {
     event?.preventDefault();
@@ -133,9 +175,9 @@ export default function StaffPage() {
     <div className="chat-shell min-h-screen bg-[#f3f7f6] md:flex md:items-center md:justify-center md:p-8">
       <main className="mx-auto flex h-screen w-full max-w-md flex-col overflow-hidden bg-[#fffdfb] shadow-[0_24px_80px_rgba(28,50,65,0.12)] md:h-[min(820px,calc(100vh-64px))] md:max-w-[440px] md:rounded-[2rem]">
         <header className="flex h-[78px] shrink-0 items-center justify-between border-b border-[#edf2ef] bg-white px-5">
-          <Link href="/" aria-label="뒤로 가기" className="flex h-11 w-11 items-center justify-center rounded-full text-[#1C3241] transition-colors hover:bg-[#edf5f3]">
+          <button onClick={() => router.back()} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center rounded-full text-[#1C3241] transition-colors hover:bg-[#edf5f3]">
             <ArrowLeft size={19} />
-          </Link>
+          </button>
 
           <div className="flex items-center gap-2.5">
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#EAF7F3] text-[#0C9D81]"><Bot size={18} /></span>
@@ -147,7 +189,7 @@ export default function StaffPage() {
             </div>
           </div>
 
-          <button aria-label="더 보기" className="flex h-11 w-11 items-center justify-center rounded-full text-[#5a6e78] transition-colors hover:bg-[#edf5f3]">
+          <button onClick={handleLogout} aria-label="로그아웃" className="flex h-11 w-11 items-center justify-center rounded-full text-[#5a6e78] transition-colors hover:bg-[#edf5f3]">
             <MoreHorizontal size={19} />
           </button>
         </header>

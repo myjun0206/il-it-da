@@ -8,6 +8,10 @@ import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 import { Card } from "@/components/common/Card";
 import type { UserRole } from "@/lib/types/user";
+import { DEV_TEST_VERIFICATION_CODE } from "@/lib/data/mockFranchises";
+
+// 개발 환경 여부 확인
+const isDev = () => typeof window !== 'undefined' && process.env.NODE_ENV === "development";
 
 export default function SignupVerificationPage() {
   const router = useRouter();
@@ -35,6 +39,9 @@ export default function SignupVerificationPage() {
     const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
     if (!savedRole) {
       router.push("/signup/role");
+    } else if (savedRole === "hq") {
+      // 본사는 profile에서 이메일 인증이 완료되었으므로 이 페이지를 건너뜀
+      router.push("/signup/complete");
     }
   }, [router]);
 
@@ -49,8 +56,6 @@ export default function SignupVerificationPage() {
   if (!mounted) {
     return null;
   }
-
-  const role = sessionStorage.getItem("signupRole") as UserRole | null;
 
   const handleSendCode = async () => {
     setErrors({});
@@ -108,7 +113,7 @@ export default function SignupVerificationPage() {
               <span className="text-sm font-medium">이전</span>
             </Link>
             <div className="text-sm text-[var(--color-text-tertiary)]">
-              {role === "hq" ? "6단계" : "5단계"} / 6단계
+              5 / 5
             </div>
           </div>
         </div>
@@ -167,6 +172,12 @@ export default function SignupVerificationPage() {
                     maxLength={6}
                     error={errors.code}
                   />
+                  {/* 개발 환경용 인증번호 힌트 */}
+                  {isDev() && isCodeSent && (
+                    <p className="mt-2 text-xs text-[var(--color-text-tertiary)]/60 font-normal">
+                      개발용 인증번호: {DEV_TEST_VERIFICATION_CODE}
+                    </p>
+                  )}
                 </div>
 
                 {/* Timer */}
