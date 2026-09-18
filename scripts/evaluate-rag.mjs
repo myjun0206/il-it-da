@@ -12,16 +12,66 @@ const STORES = {
 };
 
 const POSITIVE_CASES = [
-  ["isu", "이수점은 평일에 언제부터 언제까지 하나요?", "지점운영"],
-  ["isu", "이수점에서 딸기청은 어디 보관되어 있나요?", "재고/발주"],
-  ["isu", "이수점 커피머신은 어디에 있나요?", "장비관리"],
-  ["isu", "이수점은 평일 중 언제 손님이 제일 많이 몰리나요?", "지점운영"],
-  ["isu", "이수점 비품 위치가 바뀐 것 같은데 예전 위치대로 그냥 써도 되나요?", "장비관리"],
-  ["soongsil", "숭실대점은 주말에 언제부터 문 여나요?", "지점운영"],
-  ["soongsil", "숭실대점에서 원두는 어디 보관하나요?", "재고/발주"],
-  ["soongsil", "숭실대점 제빙기는 어디에 있나요?", "장비관리"],
-  ["soongsil", "숭실대점은 하루 중 언제 학생 손님이 많아지나요?", "지점운영"],
-  ["soongsil", "숭실대점 오픈 근무자는 영업 시작 전에 언제까지 출근해야 하나요?", "지점운영"],
+  [
+    "isu",
+    "이수점은 평일에 언제부터 언제까지 하나요?",
+    "지점운영",
+    "이수점의 평일 영업시간은 오전 9시부터 오후 10시까지입니다.",
+  ],
+  [
+    "isu",
+    "이수점에서 딸기청은 어디 보관되어 있나요?",
+    "재고/발주",
+    "딸기청은 냉장고 오른쪽 두 번째 선반에 보관합니다.",
+  ],
+  [
+    "isu",
+    "이수점 커피머신은 어디에 있나요?",
+    "장비관리",
+    "커피 머신은 제조대 왼쪽에 있습니다.",
+  ],
+  [
+    "isu",
+    "이수점은 평일 중 언제 손님이 제일 많이 몰리나요?",
+    "지점운영",
+    "평일 12시부터 14시까지와 오후 16시부터 18시까지 주문이 증가할 수 있습니다.",
+  ],
+  [
+    "isu",
+    "이수점 비품 위치가 바뀐 것 같은데 예전 위치대로 그냥 써도 되나요?",
+    "장비관리",
+    "현재 매뉴얼만으로 정확한 위치 변경 여부를 판단할 수 없으므로 임의로 옮기지 말고 사장님 또는 매니저에게 확인해야 합니다.",
+  ],
+  [
+    "soongsil",
+    "숭실대점은 주말에 언제부터 문 여나요?",
+    "지점운영",
+    "숭실대점은 주말 오전 9시에 영업을 시작합니다.",
+  ],
+  [
+    "soongsil",
+    "숭실대점에서 원두는 어디 보관하나요?",
+    "재고/발주",
+    "원두는 제조대 아래쪽의 지정된 보관 공간에 보관합니다.",
+  ],
+  [
+    "soongsil",
+    "숭실대점 제빙기는 어디에 있나요?",
+    "장비관리",
+    "제빙기는 제조대 오른쪽에 있습니다.",
+  ],
+  [
+    "soongsil",
+    "숭실대점은 하루 중 언제 학생 손님이 많아지나요?",
+    "지점운영",
+    "오후 17시부터 20시까지 학생과 포장 주문이 증가할 수 있습니다.",
+  ],
+  [
+    "soongsil",
+    "숭실대점 오픈 근무자는 영업 시작 전에 언제까지 출근해야 하나요?",
+    "지점운영",
+    "영업 시작 30분 전까지 출근합니다. 평일은 오전 7시 30분, 주말은 오전 8시 30분까지입니다.",
+  ],
 ];
 
 const OUT_OF_SCOPE_QUESTIONS = [
@@ -34,8 +84,8 @@ const OUT_OF_SCOPE_QUESTIONS = [
 ];
 
 const CASES = [
-  ...POSITIVE_CASES.map(([storeKey, question, expectedCategory]) =>
-    createCase(storeKey, question, expectedCategory, true),
+  ...POSITIVE_CASES.map(([storeKey, question, expectedCategory, expectedAnswer]) =>
+    createCase(storeKey, question, expectedCategory, true, expectedAnswer),
   ),
   ...Object.keys(STORES).flatMap((storeKey) =>
     OUT_OF_SCOPE_QUESTIONS.map((question) =>
@@ -44,13 +94,20 @@ const CASES = [
   ),
 ];
 
-function createCase(storeKey, question, expectedCategory, positive) {
+function createCase(
+  storeKey,
+  question,
+  expectedCategory,
+  positive,
+  expectedAnswer = "-",
+) {
   const store = STORES[storeKey];
   return {
     store: store.name,
     storeId: store.storeId,
     question,
     expectedCategory,
+    expectedAnswer,
     positive,
   };
 }
@@ -80,6 +137,7 @@ async function evaluateCase(testCase) {
 
     return {
       ...testCase,
+      actualAnswer: typeof payload?.answer === "string" ? payload.answer : "",
       topTitle: typeof topMatch?.title === "string" ? topMatch.title : "-",
       topManualId: typeof payload?.source?.manualId === "string" ? payload.source.manualId : "-",
       topCategory: typeof topMatch?.category === "string" ? topMatch.category : "-",
@@ -91,6 +149,7 @@ async function evaluateCase(testCase) {
   } catch (error) {
     return {
       ...testCase,
+      actualAnswer: "",
       topTitle: "-",
       topManualId: "-",
       topCategory: "-",
@@ -100,6 +159,47 @@ async function evaluateCase(testCase) {
       status: error instanceof Error ? `error: ${error.message}` : "error: unknown",
     };
   }
+}
+
+function getPositiveReviewWarnings(result) {
+  const warnings = [];
+  if (
+    typeof result.actualAnswer !== "string" ||
+    result.actualAnswer.trim().length === 0
+  ) {
+    warnings.push("WARNING: actualAnswer is empty.");
+  }
+  if (result.topManualId === "-") {
+    warnings.push("WARNING: source is missing.");
+  }
+  return warnings;
+}
+
+function printPositiveAnswerDetails(results) {
+  console.log("\nPositive answer review details");
+
+  results
+    .filter((result) => result.positive)
+    .forEach((result, index) => {
+      const warnings = getPositiveReviewWarnings(result);
+
+      console.log(`\n[Positive QA ${index + 1}]`);
+      console.log(`store: ${result.store}`);
+      console.log(`question: ${result.question}`);
+      console.log(`expectedAnswer: ${result.expectedAnswer}`);
+      console.log(`actualAnswer: ${result.actualAnswer || "-"}`);
+      console.log(`topTitle: ${result.topTitle}`);
+      console.log(`topManualId: ${result.topManualId}`);
+      console.log(`topCategory: ${result.topCategory}`);
+      console.log(`rawSimilarity: ${formatScore(result.rawSimilarity)}`);
+      console.log(`keywordBoost: ${formatScore(result.keywordBoost)}`);
+      console.log(`finalSimilarity: ${formatScore(result.finalSimilarity)}`);
+      console.log(`status: ${result.status}`);
+
+      for (const warning of warnings) {
+        console.warn(warning);
+      }
+    });
 }
 
 function printResults(results) {
@@ -146,5 +246,6 @@ for (const testCase of CASES) {
 console.log(`RAG evaluation endpoint: ${BASE_URL}`);
 console.log(`Cases: ${results.length} (${POSITIVE_CASES.length} positive, ${results.length - POSITIVE_CASES.length} negative)`);
 printResults(results);
+printPositiveAnswerDetails(results);
 printDistribution("Positive", results.filter((result) => result.positive));
 printDistribution("Negative", results.filter((result) => !result.positive));

@@ -6,7 +6,7 @@
     "dev": "next dev",
     "eval:rag": "node scripts/evaluate-rag.mjs",
     "build": "next build",
-    "test:rag": "tsc -p tsconfig.test.json && node --test tests/rag/chunk-manual.test.ts tests/rag/search-query.test.ts tests/rag/validate-query-request.test.ts",
+    "test:rag": "tsc -p tsconfig.test.json && node --test tests/rag/answer-prompt.test.ts tests/rag/chunk-manual.test.ts tests/rag/search-query.test.ts tests/rag/validate-query-request.test.ts",
     "start": "next start",
     "lint": "eslint"
   },
