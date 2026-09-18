@@ -1,11 +1,12 @@
 "use client";
 
-
-import { FormEvent, useState, useLayoutEffect, useEffect } from "react";
+import { FormEvent, startTransition, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Bot, Clock3, FileText, MoreHorizontal, Paperclip, Send, Store, UserRound } from "lucide-react";
+
+import { DEMO_STORES, findDemoStore, type DemoStore } from "@/lib/data/demoStores";
+import type { RagSource, RagStatus } from "@/lib/rag/types";
 import { createClient } from "@/lib/supabase/client";
-import type { RagSource, RagStatus } from "../../lib/rag/types";
 
 type Message = {
   from: "ai" | "me";
@@ -22,6 +23,11 @@ const statusBadgeConfig = {
   insufficient: { label: "관리자 확인 필요", className: "border border-[#f0b7af] bg-[#fdeae8] text-[#8d3c33]" },
 } as const;
 const quickQuestions = ["오늘 마감 순서 알려줘", "재고 확인은 어떻게 해?", "지각하면 누구에게 말해?"];
+const SELECTED_STORE_STORAGE_KEY = "staffDemoStoreId";
+const INITIAL_MESSAGES: Message[] = [
+  { from: "ai", text: "안녕하세요, 민지님!\n오늘도 일잇다와 함께 차근차근 시작해볼까요?", time: "오후 1:58" },
+  { from: "ai", text: "매장 업무에 대해 궁금한 점을 물어보세요.\n제가 등록된 매장 가이드를 바탕으로 답해드릴게요.", time: "오후 1:58" },
+];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -40,15 +46,45 @@ function normalizeSource(value: unknown): Message["source"] {
 
 export default function StaffPage() {
   const router = useRouter();
-  const [messages, setMessages] = useState<Message[]>([
-    { from: "ai", text: "안녕하세요, 민지님!\n오늘도 일잇다와 함께 차근차근 시작해볼까요?", time: "오후 1:58" },
-    { from: "ai", text: "매장 업무에 대해 궁금한 점을 물어보세요.\n제가 등록된 매장 가이드를 바탕으로 답해드릴게요.", time: "오후 1:58" },
-  ]);
+  const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [selectedStore, setSelectedStore] = useState<DemoStore | null>(null);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
+    // PoC demo selection only. Real authorization must resolve the user's permitted store server-side.
+    const storedStoreId = sessionStorage.getItem(SELECTED_STORE_STORAGE_KEY);
+    if (!storedStoreId) return;
+
+    const storedStore = findDemoStore(storedStoreId);
+    if (!storedStore) {
+      sessionStorage.removeItem(SELECTED_STORE_STORAGE_KEY);
+      return;
+    }
+
+    startTransition(() => setSelectedStore(storedStore));
+  }, []);
+
+  function selectStore(storeId: string) {
+    if (isLoading) return;
+
+    const store = findDemoStore(storeId) ?? null;
+    if (selectedStore?.id !== store?.id) {
+      setMessages(INITIAL_MESSAGES);
+      setInput("");
+      setErrorMessage("");
+    }
+    setSelectedStore(store);
+
+    if (store) {
+      sessionStorage.setItem(SELECTED_STORE_STORAGE_KEY, store.id);
+    } else {
+      sessionStorage.removeItem(SELECTED_STORE_STORAGE_KEY);
+    }
+  }
+
+  useEffect(() => {
     // Check Supabase session - redirect if needed
     const checkAuth = async () => {
       try {
@@ -76,10 +112,6 @@ export default function StaffPage() {
     checkAuth();
   }, [router]);
 
-  useEffect(() => {
-    // No additional state to set after auth check
-  }, []);
-
   const handleLogout = async () => {
     try {
       const supabase = createClient();
@@ -95,6 +127,10 @@ export default function StaffPage() {
     event?.preventDefault();
     const question = input.trim();
     if (!question || isLoading) return;
+    if (!selectedStore) {
+      setErrorMessage("먼저 근무 매장을 선택해 주세요.");
+      return;
+    }
     setInput("");
     setErrorMessage("");
     setMessages(current => [...current, { from: "me", text: question, time: "방금 전" }]);
@@ -104,7 +140,7 @@ export default function StaffPage() {
       const response = await fetch("/api/rag/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({ question, storeId: selectedStore.id }),
       });
 
       const result: unknown = await response.json();
@@ -161,8 +197,22 @@ export default function StaffPage() {
         <div className="flex items-center gap-3 border-b border-[#eef2f0] bg-[#f7faf9] px-5 py-3.5">
           <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#e7f5f0] text-[#0C9D81]"><Store size={15} /></span>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[12px] font-bold text-[#1C3241]">MOONLIGHT COFFEE · 성수점</p>
-            <p className="mt-0.5 text-[11px] text-[#697B87]">매장 가이드 12개 연결됨</p>
+            <label htmlFor="staff-store" className="block text-[11px] font-semibold text-[#59707a]">근무 매장</label>
+            <select
+              id="staff-store"
+              value={selectedStore?.id ?? ""}
+              disabled={isLoading}
+              onChange={(event) => selectStore(event.target.value)}
+              className="mt-0.5 w-full bg-transparent text-[12px] font-bold text-[#1C3241] outline-none disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              <option value="">매장을 선택해 주세요</option>
+              {DEMO_STORES.map((store) => (
+                <option key={store.id} value={store.id}>{store.name}</option>
+              ))}
+            </select>
+            <p className="mt-0.5 truncate text-[11px] text-[#697B87]">
+              {selectedStore ? `M Coffee · ${selectedStore.name}` : "선택 후 매장 매뉴얼을 검색합니다"}
+            </p>
           </div>
           <FileText size={16} className="text-[#697B87]" />
         </div>
