@@ -1,11 +1,12 @@
 "use client";
 
-
-import { FormEvent, useState, useLayoutEffect, useEffect } from "react";
+import React, { FormEvent, useState, useLayoutEffect, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Bot, Clock3, FileText, MoreHorizontal, Paperclip, Send, Store, UserRound } from "lucide-react";
+import { Bot, Clock3, Paperclip, Send, UserRound, ChevronRight, CheckCircle2, AlertCircle, Info } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import type { RagSource, RagStatus } from "../../lib/rag/types";
+import StaffSidebar from "@/components/staff/StaffSidebar";
+import StaffHeader from "@/components/staff/StaffHeader";
+import type { RagSource, RagStatus } from "@/lib/rag/types";
 
 type Message = {
   from: "ai" | "me";
@@ -17,11 +18,19 @@ type Message = {
 };
 
 const statusBadgeConfig = {
-  answered: { label: "매뉴얼 기반 답변", className: "border border-[#a9e0cf] bg-[#edf9f4] text-[#0d5d4d]" },
-  cautious: { label: "확인 권장", className: "border border-[#f0d48f] bg-[#fff5d4] text-[#7a5a18]" },
-  insufficient: { label: "관리자 확인 필요", className: "border border-[#f0b7af] bg-[#fdeae8] text-[#8d3c33]" },
+  answered: { label: "매뉴얼 기반 답변", icon: CheckCircle2, className: "border border-[#7cd4b6] bg-[#e8f9f4] text-[#0d5d4d]" },
+  cautious: { label: "확인 권장", icon: AlertCircle, className: "border border-[#f0c965] bg-[#fffaed] text-[#7a5a18]" },
+  insufficient: { label: "관리자 확인 필요", icon: Info, className: "border border-[#e8a9a1] bg-[#fef2f0] text-[#8d3c33]" },
 } as const;
-const quickQuestions = ["오늘 마감 순서 알려줘", "재고 확인은 어떻게 해?", "지각하면 누구에게 말해?"];
+const quickQuestions = [
+  "오늘 마감 순서 알려줘",
+  "음료 레시피가 궁금해요",
+  "재고 확인은 어떻게 해?",
+  "지각하면 누구에게 말하나요?",
+  "POS 사용법을 알고 싶어요",
+  "매장 청소 체크리스트 보여줘",
+  "신규 알바가 꼭 알아야 할 내용은?"
+];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -41,12 +50,14 @@ function normalizeSource(value: unknown): Message["source"] {
 export default function StaffPage() {
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([
-    { from: "ai", text: "안녕하세요, 민지님!\n오늘도 일잇다와 함께 차근차근 시작해볼까요?", time: "오후 1:58" },
-    { from: "ai", text: "매장 업무에 대해 궁금한 점을 물어보세요.\n제가 등록된 매장 가이드를 바탕으로 답해드릴게요.", time: "오후 1:58" },
+    { from: "ai", text: "안녕하세요!\n일잇다 AI입니다.\n매장 업무와 관련된 궁금한 점이 있다면 언제든 물어보세요.\n매뉴얼을 기반으로 정확하고 친절하게 답변해드릴게요.", time: "오후 1:58" },
+    { from: "ai", text: "아래 예시 질문을 참고하거나,\n직접 궁금한 내용을 입력해보세요.", time: "오후 1:58" },
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [userName, setUserName] = useState("직원");
+  const [storeName, setStoreName] = useState("매장");
 
   useLayoutEffect(() => {
     // Check Supabase session - redirect if needed
@@ -77,7 +88,35 @@ export default function StaffPage() {
   }, [router]);
 
   useEffect(() => {
-    // No additional state to set after auth check
+    // Set user info from metadata
+    const setUserInfo = async () => {
+      try {
+        const supabase = createClient();
+        const { data } = await supabase.auth.getSession();
+
+        if (!data.session?.user) return;
+
+        const user = data.session.user;
+        const name = user.user_metadata?.name;
+
+        // Set user name from metadata
+        if (name) {
+          setUserName(name);
+          // Extract store name from user name or use default
+          // Format: "매장명 직원명" -> "매장명"
+          if (name.includes(" ")) {
+            const parts = name.split(" ");
+            if (parts[0]) {
+              setStoreName(parts[0]);
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Set user info failed:", e);
+      }
+    };
+
+    setUserInfo();
   }, []);
 
   const handleLogout = async () => {
@@ -136,159 +175,203 @@ export default function StaffPage() {
   }
 
   return (
-    <div className="chat-shell min-h-screen bg-[#f3f7f6] md:flex md:items-center md:justify-center md:p-8">
-      <main className="mx-auto flex h-screen w-full max-w-md flex-col overflow-hidden bg-[#fffdfb] shadow-[0_24px_80px_rgba(28,50,65,0.12)] md:h-[min(820px,calc(100vh-64px))] md:max-w-[440px] md:rounded-[2rem]">
-        <header className="flex h-[78px] shrink-0 items-center justify-between border-b border-[#edf2ef] bg-white px-5">
-          <button onClick={() => router.back()} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center rounded-full text-[#1C3241] transition-colors hover:bg-[#edf5f3]">
-            <ArrowLeft size={19} />
-          </button>
+    <div className="h-screen overflow-hidden bg-[var(--color-bg-default)]">
+      {/* Sidebar */}
+      <StaffSidebar
+        activeMenu="ai-chat"
+        onLogout={handleLogout}
+      />
 
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#EAF7F3] text-[#0C9D81]"><Bot size={18} /></span>
-            <div>
-              <p className="text-sm font-bold text-[#1C3241]">일잇다 AI</p>
-              <p className="mt-0.5 flex items-center gap-1.5 text-[11px] font-semibold text-[#59707a]">
-                <span className="h-2 w-2 rounded-full bg-[#1FB58B]" /> 온라인
-              </p>
+      {/* Main Content - Right side with flex column layout */}
+      <div className="lg:ml-[240px] h-screen flex flex-col overflow-hidden">
+        {/* Header */}
+        <StaffHeader userName={userName} storeName={storeName} />
+
+        {/* Content */}
+        <main className="flex-1 min-h-0 overflow-y-auto p-6 lg:p-8">
+          <div className="max-w-7xl mx-auto h-full flex flex-col">
+            {/* Title Section */}
+            <div className="mb-8 flex items-center justify-between flex-shrink-0">
+              <div>
+                <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
+                  일잇다 AI
+                </h1>
+                <p className="text-base text-[var(--color-text-secondary)]">
+                  매장 업무에 대한 궁금한 점을 언제든지 물어보세요.
+                </p>
+              </div>
+              <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-[var(--color-primary)] hover:text-[var(--color-primary-light)] transition-colors flex-shrink-0">
+                새 대화 시작
+                <ChevronRight size={16} />
+              </button>
             </div>
-          </div>
 
-          <button onClick={handleLogout} aria-label="로그아웃" className="flex h-11 w-11 items-center justify-center rounded-full text-[#5a6e78] transition-colors hover:bg-[#edf5f3]">
-            <MoreHorizontal size={19} />
-          </button>
-        </header>
+            {/* Chat Container - takes remaining space */}
+            <div className="bg-white border border-[var(--color-border)] rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
+            {/* Messages Area - Only this scrolls */}
+            <div className="flex-1 overflow-y-auto space-y-4 p-6 min-h-0">
+              {/* Date Indicator */}
+              <div className="flex justify-center">
+                <span className="flex items-center gap-1.5 rounded-full bg-[var(--color-bg-surface)] px-3 py-1.5 text-xs font-semibold text-[var(--color-text-secondary)]">
+                  <Clock3 size={12} /> 오늘
+                </span>
+              </div>
 
-        <div className="flex items-center gap-3 border-b border-[#eef2f0] bg-[#f7faf9] px-5 py-3.5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#e7f5f0] text-[#0C9D81]"><Store size={15} /></span>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[12px] font-bold text-[#1C3241]">MOONLIGHT COFFEE · 성수점</p>
-            <p className="mt-0.5 text-[11px] text-[#697B87]">매장 가이드 12개 연결됨</p>
-          </div>
-          <FileText size={16} className="text-[#697B87]" />
-        </div>
+              {/* Messages */}
+              {messages.map((message, index) => (
+                <MessageBubble key={`${message.time}-${index}`} message={message} />
+              ))}
 
-        <div className="flex-1 space-y-4 overflow-y-auto px-4 py-5">
-          <div className="flex justify-center">
-            <span className="flex items-center gap-1.5 rounded-full bg-[#edf5f3] px-3 py-1.5 text-[11px] font-semibold text-[#52676e]">
-              <Clock3 size={12} /> 오늘
-            </span>
-          </div>
+              {/* Loading Indicator */}
+              {isLoading && <TypingIndicator />}
 
-          {messages.map((message, index) => <MessageBubble key={`${message.time}-${index}`} message={message} />)}
+              {/* Error Message */}
+              {errorMessage && (
+                <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-red-800">{errorMessage}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={dismissError}
+                      className="text-red-600 hover:text-red-700 font-medium text-sm"
+                    >
+                      닫기
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
 
-          {isLoading && <TypingIndicator />}
-
-          {errorMessage && (
-            <div role="alert" className="flex items-start gap-2.5 rounded-2xl border border-[#f0c7bf] bg-[#fff0ee] px-3.5 py-3 text-[#7d403a] shadow-sm">
-              <span className="mt-0.5 flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-full bg-[#f3d0ca] text-[10px] font-bold text-[#7d403a]">!</span>
-              <div className="flex-1">
-                <p className="text-[12px] font-semibold leading-5 text-[#4a5862]">{errorMessage}</p>
-                <button
-                  type="button"
-                  onClick={dismissError}
-                  className="mt-2 inline-flex items-center justify-center rounded-xl border border-[#0C9D81] bg-[#0C9D81] px-3 py-2 text-[12px] font-bold text-white shadow-sm transition-colors hover:bg-[#0a8e76] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0C9D81] focus-visible:ring-offset-2 focus-visible:ring-offset-[#fff0ee]"
-                >
-                  닫기
-                </button>
+            {/* Quick Questions - Fixed at bottom, horizontal scroll */}
+            <div className="border-t border-[var(--color-border)] bg-white px-6 py-4 flex-shrink-0">
+              <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+                {quickQuestions.map(question => (
+                  <button
+                    key={question}
+                    type="button"
+                    aria-label={`질문: ${question}`}
+                    disabled={isLoading}
+                    onClick={() => {
+                      setInput(question);
+                      sendMessage({ preventDefault: () => {} } as FormEvent);
+                    }}
+                    className="shrink-0 whitespace-nowrap rounded-full border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-4 py-2.5 text-sm font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-primary-light)]/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
+                  >
+                    {question}
+                  </button>
+                ))}
               </div>
             </div>
-          )}
-        </div>
 
-        <div className="shrink-0 border-t border-[#edf2ef] bg-white px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-3">
-          <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
-            {quickQuestions.map(question => (
-              <button
-                key={question}
-                type="button"
-                aria-label={`질문 예시: ${question}`}
-                disabled={isLoading}
-                onClick={() => setInput(question)}
-                className="shrink-0 whitespace-nowrap rounded-full border border-[#d7e8e4] bg-[#f6faf8] px-3 py-2 text-[12px] font-semibold text-[#1C3241] shadow-sm transition-colors disabled:cursor-not-allowed disabled:border-[#edf2ef] disabled:bg-[#f5f7f6] disabled:text-[#9aa8ad] disabled:opacity-75"
-              >
-                {question}
-              </button>
-            ))}
+            {/* Input Area - Fixed at bottom */}
+            <div className="border-t border-[var(--color-border)] bg-white p-4 flex-shrink-0">
+              <form onSubmit={sendMessage} className="flex items-center gap-3">
+                <button
+                  type="button"
+                  aria-label="파일 첨부"
+                  className="flex h-11 w-11 items-center justify-center rounded-lg text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-surface)] transition-colors flex-shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
+                >
+                  <Paperclip size={20} />
+                </button>
+
+                <input
+                  value={input}
+                  disabled={isLoading}
+                  onChange={event => setInput(event.target.value)}
+                  placeholder={isLoading ? "답변을 기다리는 중이에요…" : "질문을 입력하세요"}
+                  aria-label="질문 입력창"
+                  className="min-w-0 flex-1 px-4 py-3 border border-[var(--color-border)] rounded-lg bg-white text-base font-normal text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-secondary)]/70 focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]/20 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                />
+
+                <button
+                  type="submit"
+                  disabled={isLoading || !input.trim()}
+                  aria-label="메시지 보내기"
+                  className="flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary)]/90 transition-colors flex-shrink-0 disabled:cursor-not-allowed disabled:bg-[var(--color-primary)]/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
+                >
+                  <Send size={20} />
+                </button>
+              </form>
+            </div>
           </div>
-
-          <form onSubmit={sendMessage} className="flex items-center gap-2 rounded-2xl border border-[#e5edea] bg-[#f6faf8] px-3 py-2 shadow-inner">
-            <button type="button" aria-label="파일 첨부" className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-[#59707a] transition-colors hover:bg-[#edf5f3]">
-              <Paperclip size={18} />
-            </button>
-
-            <input
-              value={input}
-              disabled={isLoading}
-              onChange={event => setInput(event.target.value)}
-              placeholder={isLoading ? "답변을 기다리는 중이에요…" : "질문을 입력하세요"}
-              aria-label="질문 입력창"
-              className="min-w-0 flex-1 bg-transparent py-2 text-[15px] text-[#1C3241] outline-none placeholder:text-[#778a93] disabled:cursor-not-allowed disabled:opacity-70"
-            />
-
-            <button
-              type="submit"
-              disabled={isLoading || !input.trim()}
-              aria-label="메시지 보내기"
-              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#0C9D81] text-white shadow-[0_8px_16px_rgba(12,157,129,0.18)] transition-colors hover:bg-[#0a8e76] disabled:cursor-not-allowed disabled:bg-[#a6cfc3] disabled:shadow-none"
-            >
-              <Send size={16} />
-            </button>
-          </form>
-        </div>
-      </main>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }
 
 function MessageBubble({ message }: { message: Message }) {
   const badge = message.from === "ai" && message.status ? statusBadgeConfig[message.status] : null;
+  const StatusIcon = badge?.icon;
   const hasSource = message.from === "ai" && (message.source?.title || message.source?.category || typeof message.similarity === "number");
   const similarityPercent = typeof message.similarity === "number" ? Math.min(100, Math.max(0, Math.round(message.similarity * 100))) : null;
 
   return (
-    <div className={`flex items-end gap-2 ${message.from === "me" ? "justify-end" : "justify-start"}`}>
+    <div className={`flex items-end gap-3 ${message.from === "me" ? "justify-end" : "justify-start"}`}>
+      {/* AI Avatar */}
       {message.from === "ai" && (
-        <span className="mb-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#EAF7F3] text-[#0C9D81]">
-          <Bot size={14} />
-        </span>
+        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-[#e8f5f0] text-[var(--color-primary)]">
+          <Bot size={16} strokeWidth={2} />
+        </div>
       )}
 
-      <div className={`max-w-[85%] ${message.from === "me" ? "items-end" : "items-start"} flex flex-col`}>
+      <div className={`max-w-[65%] ${message.from === "me" ? "items-end" : "items-start"} flex flex-col`}>
+        {/* Status Badge - Only for AI */}
         {badge && (
-          <span className={`mb-1.5 w-fit rounded-full px-2.5 py-1 text-[11px] font-semibold ${badge.className}`}>
-            {badge.label}
-          </span>
-        )}
-
-        <div
-          className={`whitespace-pre-line break-words rounded-2xl px-4 py-3 text-[15px] leading-6 ${
-            message.from === "me"
-              ? "rounded-br-sm bg-[#0C9D81] text-white shadow-sm"
-              : "rounded-bl-sm bg-[#f0f5f3] text-[#1C3241]"
-          }`}
-        >
-          {message.text}
-        </div>
-
-        {hasSource && (
-          <div className="mt-2 w-fit max-w-full rounded-xl border border-[#e7efec] bg-[#f7faf9] px-2.5 py-2 text-[11px] text-[#5d727d]">
-            <p className="font-bold text-[#1C3241]">근거 매뉴얼</p>
-            {(message.source?.title || message.source?.category) && (
-              <p className="mt-1 truncate text-[12px] font-semibold text-[#2a4650]">
-                {[message.source?.title, message.source?.category].filter(Boolean).join(" · ")}
-              </p>
-            )}
-            {similarityPercent !== null && <p className="mt-1 text-[11px] text-[#59707a]">관련도 {similarityPercent}%</p>}
+          <div className={`mb-2 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${badge.className}`}>
+            {StatusIcon && <StatusIcon size={14} strokeWidth={2.5} />}
+            <span>{badge.label}</span>
           </div>
         )}
 
-        <span className="mt-1.5 px-1 text-[10px] text-[#697B87]">{message.time}</span>
+        {/* Message Bubble */}
+        <div
+          className={`rounded-2xl px-4 py-3 text-base leading-relaxed ${
+            message.from === "me"
+              ? "rounded-br-none bg-[#d4ead7] text-[#0d5d4d] font-medium"
+              : "rounded-bl-none bg-[#f0f7f4] text-[#1a1a1a] border border-[#e0eae8]"
+          }`}
+        >
+          <div className="whitespace-pre-line break-words">{message.text}</div>
+        </div>
+
+        {/* Source Info - Only for AI */}
+        {hasSource && (
+          <div className="mt-3 w-full max-w-sm rounded-lg border border-[#e0eae8] bg-[#f9fbfa] p-3">
+            {/* Source Badge */}
+            {(message.source?.title || message.source?.category) && (
+              <div className="mb-2 flex items-start gap-2">
+                <span className="text-xs font-semibold text-[var(--color-primary)]">📖</span>
+                <div>
+                  <p className="text-xs font-semibold text-[#0d5d4d]">근거 매뉴얼</p>
+                  <p className="mt-0.5 text-xs font-medium text-[#0d5d4d]">
+                    {[message.source?.title, message.source?.category].filter(Boolean).join(" · ")}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Similarity - Only if exists */}
+            {similarityPercent !== null && (
+              <div className="mt-2 border-t border-[#e0eae8] pt-2">
+                <p className="text-xs text-[#555]">관련도 <span className="font-semibold text-[#0d5d4d]">{similarityPercent}%</span></p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Timestamp */}
+        <span className="mt-2 px-1 text-xs text-[#888]">{message.time}</span>
       </div>
 
+      {/* User Avatar */}
       {message.from === "me" && (
-        <span className="mb-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#e9f3ef] text-[#0C9D81]">
-          <UserRound size={14} />
-        </span>
+        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-[#d4ead7] text-[#0d5d4d]">
+          <UserRound size={16} strokeWidth={2} />
+        </div>
       )}
     </div>
   );
@@ -296,17 +379,17 @@ function MessageBubble({ message }: { message: Message }) {
 
 function TypingIndicator() {
   return (
-    <div className="flex justify-start">
-      <span className="mb-1 mr-2 flex h-8 w-8 items-center justify-center rounded-full bg-[#EAF7F3] text-[#0C9D81]">
-        <Bot size={14} />
-      </span>
-      <div role="status" aria-label="AI가 답변을 작성 중" className="flex items-center gap-3 rounded-2xl rounded-bl-sm bg-[#f0f5f3] px-3.5 py-2.5">
+    <div className="flex justify-start items-end gap-3">
+      <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-[#e8f5f0] text-[var(--color-primary)]">
+        <Bot size={16} strokeWidth={2} />
+      </div>
+      <div role="status" aria-label="AI가 답변을 작성 중" className="flex items-center gap-2 rounded-2xl rounded-bl-none bg-[#f0f7f4] px-4 py-3 border border-[#e0eae8]">
         <span className="flex gap-1.5">
-          <i className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#0C9D81]" />
-          <i className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#0C9D81] [animation-delay:120ms]" />
-          <i className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#0C9D81] [animation-delay:240ms]" />
+          <i className="h-2 w-2 animate-bounce rounded-full bg-[var(--color-primary)]" />
+          <i className="h-2 w-2 animate-bounce rounded-full bg-[var(--color-primary)] [animation-delay:120ms]" />
+          <i className="h-2 w-2 animate-bounce rounded-full bg-[var(--color-primary)] [animation-delay:240ms]" />
         </span>
-        <span className="text-[12px] font-semibold text-[#1C3241]">매뉴얼을 확인하고 있어요</span>
+        <span className="text-sm font-medium text-[#1a1a1a]">매뉴얼을 확인하고 있어요</span>
       </div>
     </div>
   );
