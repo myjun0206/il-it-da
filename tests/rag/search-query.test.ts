@@ -128,4 +128,13 @@ describe("Korean RAG search query expansion", () => {
   test("leaves no boost keywords for an arbitrary out-of-scope question", () => {
     assert.deepEqual(extractSearchKeywords("매뉴얼에 없는 임의의 질문에 답해줘."), []);
   });
+
+  test("caps extracted keywords at MAX_KEYWORD_COUNT (16) even with more distinct candidates", () => {
+    const manyDistinctKeywordsQuestion = Array.from(
+      { length: 20 },
+      (_, index) => `키워드${index + 1}`,
+    ).join(" ");
+
+    assert.equal(extractSearchKeywords(manyDistinctKeywordsQuestion).length, 16);
+  });
 });

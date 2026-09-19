@@ -34,6 +34,15 @@ describe("validateQueryRequest", () => {
     });
   });
 
+  test("accepts a question exactly at the maximum length", () => {
+    const maxLengthQuestion = "가".repeat(2_000);
+
+    assert.deepEqual(validateQueryRequest({ question: maxLengthQuestion, storeId: VALID_STORE_ID }), {
+      success: true,
+      data: { question: maxLengthQuestion, storeId: VALID_STORE_ID },
+    });
+  });
+
   test("rejects a missing storeId", () => {
     assert.equal(validateQueryRequest({ question: "영업시간을 알려주세요." }).success, false);
   });
@@ -52,6 +61,39 @@ describe("validateQueryRequest", () => {
       error: "storeId must be a valid UUID.",
       status: 400,
     });
+  });
+
+  test("accepts an uppercase UUID storeId", () => {
+    const uppercaseStoreId = VALID_STORE_ID.toUpperCase();
+
+    assert.deepEqual(validateQueryRequest({ question: "영업시간을 알려주세요.", storeId: uppercaseStoreId }), {
+      success: true,
+      data: { question: "영업시간을 알려주세요.", storeId: uppercaseStoreId },
+    });
+  });
+
+  test("rejects a UUID whose version digit is just below the allowed 1-5 range", () => {
+    const belowRangeStoreId = "57181130-4449-0299-a864-25a2098147e4";
+
+    assert.equal(validateQueryRequest({ question: "영업시간을 알려주세요.", storeId: belowRangeStoreId }).success, false);
+  });
+
+  test("rejects a UUID whose version digit is just above the allowed 1-5 range", () => {
+    const aboveRangeStoreId = "57181130-4449-6299-a864-25a2098147e4";
+
+    assert.equal(validateQueryRequest({ question: "영업시간을 알려주세요.", storeId: aboveRangeStoreId }).success, false);
+  });
+
+  test("rejects a UUID whose variant digit is just below the allowed 8/9/a/b range", () => {
+    const belowRangeStoreId = "57181130-4449-4299-7864-25a2098147e4";
+
+    assert.equal(validateQueryRequest({ question: "영업시간을 알려주세요.", storeId: belowRangeStoreId }).success, false);
+  });
+
+  test("rejects a UUID whose variant digit is just above the allowed 8/9/a/b range", () => {
+    const aboveRangeStoreId = "57181130-4449-4299-c864-25a2098147e4";
+
+    assert.equal(validateQueryRequest({ question: "영업시간을 알려주세요.", storeId: aboveRangeStoreId }).success, false);
   });
 
   test("accepts a valid question and storeId", () => {
