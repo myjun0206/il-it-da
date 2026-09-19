@@ -94,3 +94,13 @@ textarea:focus-visible {
 .chat-shell {
   background: radial-gradient(circle at 12% 20%, rgba(219, 234, 215, 0.65), transparent 25%), #f5f7f2;
 }
+
+/* Hide scrollbar while keeping scroll functionality */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}

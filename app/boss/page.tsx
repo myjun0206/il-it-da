@@ -89,8 +89,8 @@ export default function BossPage() {
   };
 
   return (
-    <div className="dashboard-shell min-h-screen w-full text-[#24362e] lg:flex">
-      <aside className="hidden w-64 shrink-0 border-r border-[#dfe7dc] bg-[#f7f9f3] px-5 py-7 lg:flex lg:flex-col">
+    <div className="dashboard-shell h-screen overflow-hidden w-full text-[#24362e] lg:flex">
+      <aside className="hidden w-64 shrink-0 border-r border-[#dfe7dc] bg-[#f7f9f3] px-5 py-7 h-screen overflow-y-auto lg:flex lg:flex-col">
         <Link href="/" className="mb-12 flex items-center gap-3 px-2">
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#1c6b52] text-white"><Store size={18} /></span>
           <span className="text-xl font-semibold tracking-[-0.04em]">일잇다</span>
@@ -119,8 +119,8 @@ export default function BossPage() {
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1">
-        <header className="flex h-[76px] items-center justify-between border-b border-[#e3e9df] bg-white/80 px-5 sm:px-8 lg:px-12">
+      <main className="min-w-0 flex-1 flex flex-col overflow-hidden">
+        <header className="sticky top-0 z-50 flex h-[76px] items-center justify-between border-b border-[#e3e9df] bg-white px-5 sm:px-8 lg:px-12 shrink-0">
           <div>
             <p className="text-[11px] font-medium tracking-[0.12em] text-[#91a49a] sm:text-xs">WEDNESDAY, SEP 04, 2026</p>
             <h1 className="mt-1 text-lg font-bold tracking-[-0.03em]">안녕하세요, 김사장님</h1>
@@ -137,7 +137,7 @@ export default function BossPage() {
           </div>
         </header>
 
-        <div className="border-b border-[#e3e9df] bg-white px-5 pt-4 lg:hidden">
+        <div className="border-b border-[#e3e9df] bg-white px-5 pt-4 lg:hidden flex-shrink-0">
           <div className="flex gap-5 overflow-x-auto">
             {tabs.map((tab) => (
               <button
@@ -151,7 +151,7 @@ export default function BossPage() {
           </div>
         </div>
 
-        <div className="mx-auto max-w-[1440px] px-5 py-6 sm:px-8 lg:px-12">
+        <div className="mx-auto max-w-[1440px] px-5 py-6 sm:px-8 lg:px-12 flex-1 min-h-0 overflow-y-auto">
           <div className="mb-6 flex items-end justify-between gap-4">
             <div className="min-w-0">
               <p className="text-sm font-semibold text-[#638174]">MOONLIGHT COFFEE · 성수점</p>

@@ -1,55 +1,36 @@
 "use client";
 
 import React, { useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   House,
   BookOpen,
-  Store,
-  Megaphone,
+  FileText,
+  Users,
+  Bell,
   Settings,
   LogOut,
   Menu,
   X,
 } from "lucide-react";
 
-interface HQSidebarProps {
-  userName: string;
-  franchiseName: string;
-  onLogout: () => void;
+interface OwnerSidebarProps {
   activeMenu?: string;
+  onLogout?: () => void;
 }
 
-export default function HQSidebar({
-  userName,
-  franchiseName,
-  onLogout,
+export default function OwnerSidebar({
   activeMenu = "home",
-}: HQSidebarProps) {
+  onLogout,
+}: OwnerSidebarProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   const menuItems = [
-    { id: "home", label: "홈", icon: House, href: "/hq" },
-    {
-      id: "manual",
-      label: "매뉴얼 관리",
-      icon: BookOpen,
-      submenu: [
-        { id: "manual-common", label: "공통 매뉴얼 관리" },
-        { id: "manual-store", label: "지점 매뉴얼 보기" },
-      ],
-    },
-    {
-      id: "store",
-      label: "지점 관리",
-      icon: Store,
-      submenu: [
-        { id: "store-status", label: "지점 현황" },
-        { id: "store-request", label: "문의 · 요청" },
-      ],
-    },
-    { id: "notice", label: "소통", icon: Megaphone, href: "/hq/communication" },
+    { id: "home", label: "홈", icon: House, href: "/boss" },
+    { id: "manual-common", label: "공통 매뉴얼", icon: BookOpen, href: "#" },
+    { id: "manual-store", label: "지점 매뉴얼 관리", icon: FileText, href: "#" },
+    { id: "staff", label: "직원 관리", icon: Users, href: "#" },
+    { id: "notice", label: "공지사항", icon: Bell, href: "#" },
   ];
 
   const bottomMenuItems = [
@@ -94,39 +75,21 @@ export default function HQSidebar({
             }`;
 
             return (
-              <div key={item.id}>
-                {item.href ? (
-                  <Link href={item.href} className={buttonClass}>
-                    <item.icon size={20} />
-                    <span>{item.label}</span>
-                  </Link>
-                ) : (
-                  <button className={buttonClass}>
-                    <item.icon size={20} />
-                    <span>{item.label}</span>
-                  </button>
-                )}
-
-                {/* Submenu */}
-                {item.submenu && isActive && (
-                  <div className="ml-4 mt-1">
-                    {item.submenu.map((sub) => (
-                      <button
-                        key={sub.id}
-                        className="w-full text-left px-4 py-3 text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors"
-                      >
-                        {sub.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <Link
+                key={item.id}
+                href={item.href}
+                className={buttonClass}
+                onClick={() => setIsOpen(false)}
+              >
+                <item.icon size={20} />
+                <span>{item.label}</span>
+              </Link>
             );
           })}
         </nav>
 
         {/* Bottom Menu */}
-        <div className="py-3 px-3">
+        <div className="py-3 px-3 border-t border-[var(--color-border)]">
           {bottomMenuItems.map((item) => (
             <button
               key={item.id}
@@ -136,17 +99,20 @@ export default function HQSidebar({
               <span>{item.label}</span>
             </button>
           ))}
-          
-          {/* Divider between actions */}
-          <div className="border-t border-[var(--color-border)] my-1" />
 
-          <button
-            onClick={onLogout}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium text-[var(--color-text-secondary)] hover:text-red-600 transition-colors"
-          >
-            <LogOut size={20} />
-            <span>로그아웃</span>
-          </button>
+          {/* Divider */}
+          <div className="my-1 mx-2 border-t border-[var(--color-border)]" />
+
+          {/* Logout Button */}
+          {onLogout && (
+            <button
+              onClick={onLogout}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium text-[var(--color-text-secondary)] hover:text-red-600 transition-colors"
+            >
+              <LogOut size={20} />
+              <span>로그아웃</span>
+            </button>
+          )}
         </div>
       </aside>
 
