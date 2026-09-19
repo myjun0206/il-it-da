@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import {
   MessageCircle,
   BookOpen,
@@ -53,10 +54,12 @@ export default function StaffSidebar({
       >
         {/* Logo Section - aligned with header */}
         <div className="flex items-center px-6 h-16 border-b border-[var(--color-border)]">
-          <img
+          <Image
             src="/logo/ilitda-wordmark.png"
-            alt="일잇다"
-            className="h-8 object-contain"
+            alt="일잉다"
+            width={687}
+            height={253}
+            className="h-8 w-auto object-contain"
           />
         </div>
 

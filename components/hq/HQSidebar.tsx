@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import {
   House,
   BookOpen,
@@ -68,16 +68,19 @@ export default function HQSidebar({
 
       {/* Sidebar */}
       <aside
+        aria-label={`${franchiseName} · ${userName} 사이드바`}
         className={`fixed left-0 top-0 h-screen bg-white border-r border-[var(--color-border)] flex flex-col transition-transform duration-300 lg:translate-x-0 ${
           isOpen ? "translate-x-0" : "-translate-x-full"
         } lg:w-[240px] w-64 z-40`}
       >
         {/* Logo Section - aligned with header */}
         <div className="flex items-center px-6 h-16 border-b border-[var(--color-border)]">
-          <img
+          <Image
             src="/logo/ilitda-wordmark.png"
-            alt="일잇다"
-            className="h-8 object-contain"
+            alt="일잉다"
+            width={687}
+            height={253}
+            className="h-8 w-auto object-contain"
           />
         </div>
 
