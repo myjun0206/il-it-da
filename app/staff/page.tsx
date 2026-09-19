@@ -1,12 +1,14 @@
 "use client";
 
-import React, { FormEvent, useState, useLayoutEffect, useEffect } from "react";
+import { FormEvent, startTransition, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bot, Clock3, Paperclip, Send, UserRound, ChevronRight, CheckCircle2, AlertCircle, Info } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
-import StaffSidebar from "@/components/staff/StaffSidebar";
+import { AlertCircle, Bot, CheckCircle2, ChevronRight, Clock3, Info, Paperclip, Send, Store, UserRound } from "lucide-react";
+
 import StaffHeader from "@/components/staff/StaffHeader";
+import StaffSidebar from "@/components/staff/StaffSidebar";
+import { DEMO_STORES, findDemoStore, type DemoStore } from "@/lib/data/demoStores";
 import type { RagSource, RagStatus } from "@/lib/rag/types";
+import { createClient } from "@/lib/supabase/client";
 
 type Message = {
   from: "ai" | "me";
@@ -29,7 +31,12 @@ const quickQuestions = [
   "지각하면 누구에게 말하나요?",
   "POS 사용법을 알고 싶어요",
   "매장 청소 체크리스트 보여줘",
-  "신규 알바가 꼭 알아야 할 내용은?"
+  "신규 알바가 꼭 알아야 할 내용은?",
+];
+const SELECTED_STORE_STORAGE_KEY = "staffDemoStoreId";
+const INITIAL_MESSAGES: Message[] = [
+  { from: "ai", text: "안녕하세요!\n일잇다 AI입니다.\n매장 업무와 관련된 궁금한 점이 있다면 언제든 물어보세요.\n매뉴얼을 기반으로 정확하고 친절하게 답변해드릴게요.", time: "오후 1:58" },
+  { from: "ai", text: "아래 예시 질문을 참고하거나,\n직접 궁금한 내용을 입력해보세요.", time: "오후 1:58" },
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -49,17 +56,47 @@ function normalizeSource(value: unknown): Message["source"] {
 
 export default function StaffPage() {
   const router = useRouter();
-  const [messages, setMessages] = useState<Message[]>([
-    { from: "ai", text: "안녕하세요!\n일잇다 AI입니다.\n매장 업무와 관련된 궁금한 점이 있다면 언제든 물어보세요.\n매뉴얼을 기반으로 정확하고 친절하게 답변해드릴게요.", time: "오후 1:58" },
-    { from: "ai", text: "아래 예시 질문을 참고하거나,\n직접 궁금한 내용을 입력해보세요.", time: "오후 1:58" },
-  ]);
+  const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [userName, setUserName] = useState("직원");
   const [storeName, setStoreName] = useState("매장");
+  const [selectedStore, setSelectedStore] = useState<DemoStore | null>(null);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
+    // PoC demo selection only. Real authorization must resolve the user's permitted store server-side.
+    const storedStoreId = sessionStorage.getItem(SELECTED_STORE_STORAGE_KEY);
+    if (!storedStoreId) return;
+
+    const storedStore = findDemoStore(storedStoreId);
+    if (!storedStore) {
+      sessionStorage.removeItem(SELECTED_STORE_STORAGE_KEY);
+      return;
+    }
+
+    startTransition(() => setSelectedStore(storedStore));
+  }, []);
+
+  function selectStore(storeId: string) {
+    if (isLoading) return;
+
+    const store = findDemoStore(storeId) ?? null;
+    if (selectedStore?.id !== store?.id) {
+      setMessages(INITIAL_MESSAGES);
+      setInput("");
+      setErrorMessage("");
+    }
+    setSelectedStore(store);
+
+    if (store) {
+      sessionStorage.setItem(SELECTED_STORE_STORAGE_KEY, store.id);
+    } else {
+      sessionStorage.removeItem(SELECTED_STORE_STORAGE_KEY);
+    }
+  }
+
+  useEffect(() => {
     // Check Supabase session - redirect if needed
     const checkAuth = async () => {
       try {
@@ -134,6 +171,10 @@ export default function StaffPage() {
     event?.preventDefault();
     const question = input.trim();
     if (!question || isLoading) return;
+    if (!selectedStore) {
+      setErrorMessage("먼저 근무 매장을 선택해 주세요.");
+      return;
+    }
     setInput("");
     setErrorMessage("");
     setMessages(current => [...current, { from: "me", text: question, time: "방금 전" }]);
@@ -143,7 +184,7 @@ export default function StaffPage() {
       const response = await fetch("/api/rag/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({ question, storeId: selectedStore.id }),
       });
 
       const result: unknown = await response.json();
@@ -204,6 +245,30 @@ export default function StaffPage() {
                 새 대화 시작
                 <ChevronRight size={16} />
               </button>
+            </div>
+
+            {/* Store Selector */}
+            <div className="mb-4 flex items-center gap-3 rounded-lg border border-[var(--color-border)] bg-white px-4 py-3 flex-shrink-0">
+              <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary-light)]/30 text-[var(--color-primary)]">
+                <Store size={16} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <label htmlFor="staff-store" className="block text-xs font-semibold text-[var(--color-text-secondary)]">
+                  근무 매장
+                </label>
+                <select
+                  id="staff-store"
+                  value={selectedStore?.id ?? ""}
+                  disabled={isLoading}
+                  onChange={(event) => selectStore(event.target.value)}
+                  className="mt-0.5 w-full bg-transparent text-sm font-semibold text-[var(--color-text-primary)] outline-none disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  <option value="">매장을 선택해 주세요</option>
+                  {DEMO_STORES.map((store) => (
+                    <option key={store.id} value={store.id}>{store.name}</option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             {/* Chat Container - takes remaining space */}

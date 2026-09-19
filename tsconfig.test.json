@@ -6,8 +6,15 @@
     "noEmit": true
   },
   "include": [
+    "tests/rag/answer-prompt.test.ts",
     "tests/rag/chunk-manual.test.ts",
-    "lib/rag/chunk-manual.ts"
+    "tests/rag/search-query.test.ts",
+    "tests/rag/validate-query-request.test.ts",
+    "lib/rag/answer-prompt.ts",
+    "lib/rag/chunk-manual.ts",
+    "lib/rag/search-query.ts",
+    "lib/rag/validate-query-request.ts",
+    "lib/rag/types.ts"
   ],
   "exclude": ["node_modules"]
 }

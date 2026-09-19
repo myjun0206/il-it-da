@@ -1,6 +1,5 @@
-import "server-only";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { createAdminClient } from "@/lib/supabase/admin";
 import { chunkManualText } from "@/lib/rag/chunk-manual";
 import { createEmbeddings } from "@/lib/rag/openai-embeddings";
 
@@ -56,9 +55,10 @@ function isApprovedManualRow(value: unknown): value is ApprovedManualRow {
   );
 }
 
-async function fetchApprovedManual(manualId: string): Promise<ApprovedManualRow> {
-  const supabase = createAdminClient();
-
+async function fetchApprovedManual(
+  supabase: SupabaseClient,
+  manualId: string,
+): Promise<ApprovedManualRow> {
   const { data, error } = await supabase
     .from("manuals")
     .select("id, brand_name, title, category, content, status")
@@ -87,9 +87,15 @@ async function fetchApprovedManual(manualId: string): Promise<ApprovedManualRow>
 
 export async function indexApprovedManual(
   manualId: string,
+  client?: SupabaseClient,
 ): Promise<IndexApprovedManualResult> {
+  if (typeof window !== "undefined") {
+    throw new Error("Manual indexing is only available on the server.");
+  }
+
+  const supabase = client ?? (await import("@/lib/supabase/admin")).createAdminClient();
   const normalizedManualId = validateManualId(manualId);
-  const manual = await fetchApprovedManual(normalizedManualId);
+  const manual = await fetchApprovedManual(supabase, normalizedManualId);
 
   const chunks = chunkManualText(manual.content);
 
@@ -111,8 +117,6 @@ export async function indexApprovedManual(
   if (embeddings.length !== chunks.length) {
     throw new Error("Embedding count does not match chunk count.");
   }
-
-  const supabase = createAdminClient();
 
   const rows = chunks.map((chunk, index) => ({
     manual_id: manual.id,

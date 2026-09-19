@@ -1,99 +1,130 @@
-import { Pinecone } from "@pinecone-database/pinecone";
+import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
+
+import { indexApprovedManual } from "@/lib/rag/index-approved-manual";
 
 export const runtime = "nodejs";
 
-type UploadBody = {
-  text?: unknown;
-  metadata?: unknown;
-  namespace?: unknown;
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type UploadRequestBody = {
+  manualId?: unknown;
 };
 
-type PineconeMetadata = Record<string, string | number | boolean | string[]>;
+type UploadSuccessResponse = {
+  manualId: string;
+  chunkCount: number;
+};
 
-function getServerEnv(name: "OPENAI_API_KEY" | "PINECONE_API_KEY") {
-  const value = process.env[name];
+type UploadErrorResponse = {
+  error: string;
+};
 
-  if (!value) {
-    throw new Error(`Missing ${name}.`);
+export type UploadResponse = UploadSuccessResponse | UploadErrorResponse;
+
+function verifyAuth(request: Request): { authorized: boolean; missingSecret?: boolean } {
+  const secret = process.env.RAG_INDEXING_SECRET;
+
+  if (!secret || secret.length < 32) {
+    return { authorized: false, missingSecret: true };
   }
 
-  return value;
+  const authHeader = request.headers.get("authorization");
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return { authorized: false };
+  }
+
+  const token = authHeader.slice("Bearer ".length).trim();
+  if (!token) {
+    return { authorized: false };
+  }
+
+  const tokenBuffer = Buffer.from(token, "utf8");
+  const secretBuffer = Buffer.from(secret, "utf8");
+
+  if (tokenBuffer.length !== secretBuffer.length) {
+    return { authorized: false };
+  }
+
+  if (!timingSafeEqual(tokenBuffer, secretBuffer)) {
+    return { authorized: false };
+  }
+
+  return { authorized: true };
 }
 
-export async function POST(request: Request) {
+export async function POST(
+  request: Request,
+): Promise<NextResponse<UploadResponse>> {
+  const auth = verifyAuth(request);
+
+  if (auth.missingSecret) {
+    console.error("RAG indexing authentication secret is not configured on the server.");
+    return NextResponse.json(
+      { error: "Server authentication is not configured." },
+      { status: 500 },
+    );
+  }
+
+  if (!auth.authorized) {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+
+  let body: UploadRequestBody;
+
   try {
-    const body = (await request.json()) as UploadBody;
-    const text = typeof body.text === "string" ? body.text.trim() : "";
+    body = (await request.json()) as UploadRequestBody;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+  }
 
-    if (!text) {
-      return NextResponse.json({ error: "text is required." }, { status: 400 });
-    }
+  if (
+    body === null ||
+    typeof body !== "object" ||
+    Array.isArray(body) ||
+    typeof body.manualId !== "string"
+  ) {
+    return NextResponse.json({ error: "manualId is required." }, { status: 400 });
+  }
 
-    if (text.length > 50_000) {
-      return NextResponse.json({ error: "text must be 50,000 characters or fewer." }, { status: 413 });
-    }
+  const manualId = body.manualId.trim();
 
-    const metadata = isMetadata(body.metadata) ? body.metadata : {};
-    const namespace = typeof body.namespace === "string" ? body.namespace : "default";
-    const openAiApiKey = getServerEnv("OPENAI_API_KEY");
-    const pineconeApiKey = getServerEnv("PINECONE_API_KEY");
+  if (!manualId) {
+    return NextResponse.json({ error: "manualId cannot be empty." }, { status: 400 });
+  }
 
-    const embeddingResponse = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${openAiApiKey}`,
-        "Content-Type": "application/json",
+  if (!UUID_REGEX.test(manualId)) {
+    return NextResponse.json({ error: "manualId must be a valid UUID." }, { status: 400 });
+  }
+
+  try {
+    const result = await indexApprovedManual(manualId);
+
+    return NextResponse.json(
+      {
+        manualId: result.manualId,
+        chunkCount: result.chunkCount,
       },
-      body: JSON.stringify({
-        input: text,
-        model: "text-embedding-3-small",
-        encoding_format: "float",
-      }),
-    });
-
-    if (!embeddingResponse.ok) {
-      return NextResponse.json({ error: "Failed to create embedding." }, { status: 502 });
-    }
-
-    const embeddingPayload = (await embeddingResponse.json()) as {
-      data?: Array<{ embedding?: number[] }>;
-    };
-    const embedding = embeddingPayload.data?.[0]?.embedding;
-
-    if (!embedding) {
-      return NextResponse.json({ error: "Embedding response was invalid." }, { status: 502 });
-    }
-
-    const pinecone = new Pinecone({ apiKey: pineconeApiKey });
-    const index = pinecone.index("il-it-da-index");
-    await index.namespace(namespace).upsert({
-      records: [
-        {
-          id: crypto.randomUUID(),
-          values: embedding,
-          metadata: { ...metadata, text },
-        },
-      ],
-    });
-
-    return NextResponse.json({ success: true, namespace }, { status: 201 });
+      { status: 200 },
+    );
   } catch (error) {
-    console.error("RAG upload failed:", error);
-    return NextResponse.json({ error: "Unable to upload the guide." }, { status: 500 });
-  }
-}
+    const errorMessage = error instanceof Error ? error.message : "";
 
-function isMetadata(value: unknown): value is PineconeMetadata {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-
-  return Object.values(value).every((item) => {
-    if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
-      return true;
+    if (
+      errorMessage === "Approved manual not found." ||
+      errorMessage === "Manual is not approved."
+    ) {
+      return NextResponse.json(
+        { error: "Approved manual not found." },
+        { status: 404 },
+      );
     }
 
-    return Array.isArray(item) && item.every((entry) => typeof entry === "string");
-  });
+    console.error("Failed to index approved manual.");
+    return NextResponse.json(
+      { error: "Failed to index manual." },
+      { status: 500 },
+    );
+  }
 }
