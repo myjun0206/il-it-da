@@ -120,7 +120,7 @@ export async function searchManualChunks(
   const topMatch = matches[0];
 
   console.info("RAG vector search", {
-    topManualTitle: topMatch?.title ?? null,
+    matchCount: matches.length,
     rawSimilarity: topMatch?.raw_similarity_score ?? null,
     keywordBoost: topMatch?.keyword_boost ?? null,
     finalSimilarity: topMatch?.similarity_score ?? null,

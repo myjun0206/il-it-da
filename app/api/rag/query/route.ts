@@ -93,15 +93,16 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
       keywordBoost: match.keyword_boost,
     }));
 
+    const status = resolveStatus(topMatch.similarity_score);
+
     console.info("RAG search result", {
-      question,
-      topManualTitle: topMatch.title,
+      questionLength: question.length,
+      status,
+      matchCount: matches.length,
       rawSimilarity: topMatch.raw_similarity_score,
       keywordBoost: topMatch.keyword_boost,
       finalSimilarity: topMatch.similarity_score,
     });
-
-    const status = resolveStatus(topMatch.similarity_score);
 
     if (status === "insufficient") {
       // 유사도가 낮으면 추측 답변을 막기 위해 GPT를 호출하지 않음
