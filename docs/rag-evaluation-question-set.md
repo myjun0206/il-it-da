@@ -123,7 +123,7 @@ npm run convert:rag-dataset -- --input <question-set.csv> --output <question-set
 ## 평가 실행 명령
 
 ```
-node scripts/evaluate-rag-dataset.mjs --input <question-set.json> --stores <store-map.json> [--endpoint <url>] [--verbose]
+node scripts/evaluate-rag-dataset.mjs --input <question-set.json> --stores <store-map.json> [--endpoint <url>] [--verbose] [--report <report.json>] [--force]
 ```
 
 - 기본 출력에는 case ID, expected/actual status, status·keyword·forbidden 판정, pass/fail, 전체
@@ -132,6 +132,26 @@ node scripts/evaluate-rag-dataset.mjs --input <question-set.json> --stores <stor
   있습니다."라는 경고가 출력된 뒤에만 질문/답변 원문이 콘솔에 표시됩니다. 이 옵션은 로컬 확인 용도로만
   사용하고 CI 로그에 남기지 않아야 합니다.
 - 종료 코드: `0` = 전체 통과, `1` = API 오류 또는 품질 실패 존재, `2` = 인자·로딩·스키마 오류.
+
+### 리포트 저장(`--report`)
+
+```
+node scripts/evaluate-rag-dataset.mjs --input <question-set.json> --stores <store-map.json> --report <report.json> [--force]
+```
+
+- `--report`는 선택 사항입니다. 지정하지 않으면 기존 동작(콘솔 출력만)이 그대로 유지됩니다.
+- `--input`과 `--report` 경로가 같으면 거부됩니다. 기존 리포트 파일이 있으면 `--force` 없이는
+  덮어쓰지 않습니다. 리포트는 전체 평가가 끝난 뒤 임시 파일 작성 후 rename하는 방식으로 저장되어
+  실패해도 부분 리포트가 남지 않습니다.
+- 평가에 실패한 케이스가 있어도 리포트는 정상적으로 저장되며, 종료 코드는 기존 규칙(`0`/`1`/`2`)을
+  그대로 따릅니다.
+- **리포트에는 질문 원문, 답변 원문, `expected_result`/키워드/금지어 원문, storeId·UUID,
+  `target_store`, endpoint, 요청/응답 본문, API 키·토큰이 절대 저장되지 않습니다.** 저장되는 값은
+  `questionId`, 기대/실제 status, status·keyword·forbidden 일치 여부, 개수, 최종 pass 여부, 그리고
+  전체 요약 통계뿐입니다.
+- 리포트는 QA 회귀 비교(이전 실행과의 pass/fail·정확도 비교)와 발표용 통계 자료로 활용할 수 있습니다.
+- 리포트 파일은 예제를 제외하고 **기본적으로 Git에 커밋하지 않는 것을 권장**합니다(질문셋/매장
+  매핑과 동일한 원칙).
 
 ## 예제 파일
 
