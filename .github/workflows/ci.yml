@@ -41,6 +41,12 @@ jobs:
       - name: Run RAG tests
         run: npm run test:rag
 
+      - name: Run RAG evaluation tool tests
+        run: npm run test:rag-eval
+
+      - name: Validate example RAG question set
+        run: npm run validate:rag-dataset -- --input examples/rag-eval/question-set.example.json
+
       - name: Run ESLint
         run: npm run lint
 
