@@ -9,6 +9,7 @@ import type { UserRole } from "@/lib/types/user";
 import {
   DEV_TEST_EMAILS,
   DEV_TEST_VERIFICATION_CODE,
+  DEV_TEST_EMAIL_FRANCHISE_MAP,
 } from "@/lib/data/mockFranchises";
 
 // 개발 환경 여부 확인
@@ -168,13 +169,18 @@ function HQSignupProfile() {
         setEmailVerified(true);
         setIsVerifying(false);
 
-        // 도메인 추출
-        const domain = formData.companyEmail.split("@")[1].toLowerCase();
-        const franchise = FRANCHISE_DOMAINS[domain];
+        // 프랜차이즈 확인: 먼저 테스트 이메일 매핑 확인
+        let franchise = isDev() && DEV_TEST_EMAIL_FRANCHISE_MAP[formData.companyEmail];
+
+        // 테스트 매핑 없으면 도메인으로 확인
+        if (!franchise) {
+          const domain = formData.companyEmail.split("@")[1].toLowerCase();
+          franchise = FRANCHISE_DOMAINS[domain];
+        }
 
         if (franchise) {
           setFranchiseConfirmation({
-            domain,
+            domain: formData.companyEmail.split("@")[1].toLowerCase(),
             name: franchise.name,
             id: franchise.id,
           });
@@ -191,18 +197,34 @@ function HQSignupProfile() {
     setVerificationError("");
 
     try {
+      // 개발 환경 - DEV 테스트 이메일 검증
+      const isDevTestEmail = isDev() && DEV_TEST_EMAILS.some(
+        (email) => email.toLowerCase() === formData.companyEmail.toLowerCase()
+      );
+
+      if (isDevTestEmail && verificationCode !== DEV_TEST_VERIFICATION_CODE) {
+        setVerificationError("인증번호가 일치하지 않습니다.");
+        setIsVerifying(false);
+        return;
+      }
+
       // TODO: 실제 API 연결 - 서버에서 검증 후 도메인 추출
       setTimeout(() => {
         setEmailVerified(true);
         setIsVerifying(false);
 
-        // 도메인 추출
-        const domain = formData.companyEmail.split("@")[1].toLowerCase();
-        const franchise = FRANCHISE_DOMAINS[domain];
+        // 프랜차이즈 확인: 먼저 테스트 이메일 매핑 확인
+        let franchise = isDev() && DEV_TEST_EMAIL_FRANCHISE_MAP[formData.companyEmail];
+
+        // 테스트 매핑 없으면 도메인으로 확인
+        if (!franchise) {
+          const domain = formData.companyEmail.split("@")[1].toLowerCase();
+          franchise = FRANCHISE_DOMAINS[domain];
+        }
 
         if (franchise) {
           setFranchiseConfirmation({
-            domain,
+            domain: formData.companyEmail.split("@")[1].toLowerCase(),
             name: franchise.name,
             id: franchise.id,
           });
