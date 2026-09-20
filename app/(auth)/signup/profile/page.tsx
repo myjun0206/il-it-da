@@ -139,105 +139,103 @@ function HQSignupProfile() {
       return;
     }
 
-    setIsSendingVerification(true);
-    setVerificationError("");
+    if (isDev()) {
+      setIsSendingVerification(true);
+      setVerificationError("");
 
-    try {
-      // TODO: 실제 API 연결
-      setTimeout(() => {
-        setEmailVerificationSent(true);
+      try {
+        // TODO: 실제 API 연결
+        setTimeout(() => {
+          setEmailVerificationSent(true);
+          setIsSendingVerification(false);
+        }, 600);
+      } catch {
+        setVerificationError("인증번호 발송 중 오류가 발생했습니다.");
         setIsSendingVerification(false);
-      }, 600);
-    } catch {
-      setVerificationError("인증번호 발송 중 오류가 발생했습니다.");
-      setIsSendingVerification(false);
+      }
+      return;
+    }
+
+    // 운영 환경: 실제 이메일 발송 API(007)가 아직 연결되지 않아 발송 성공으로 표시하지 않는다 (fail closed)
+    // TODO: 007 API 연결 후 이 분기를 실제 이메일 발송 API 호출로 교체
+    setVerificationError("현재 이메일 인증 서비스를 사용할 수 없습니다.");
+  };
+
+  // 정규화된 이메일로 프랜차이즈를 확인: 테스트 매핑 우선, 없으면 실제 도메인 매핑으로 폴백
+  const applyFranchiseForEmail = (normalizedEmail: string) => {
+    const domain = normalizedEmail.split("@")[1] ?? "";
+    const franchise =
+      (isDev() && DEV_TEST_EMAIL_FRANCHISE_MAP[normalizedEmail]) || FRANCHISE_DOMAINS[domain];
+
+    if (franchise) {
+      setFranchiseConfirmation({ domain, name: franchise.name, id: franchise.id });
+      setFranchiseNotFound(false);
+    } else {
+      setFranchiseNotFound(true);
+      setFranchiseConfirmation(null);
     }
   };
 
   const handleVerifyCode = async () => {
-    if (!verificationCode || verificationCode.length < 6) {
+    const normalizedCode = verificationCode.trim();
+
+    if (!normalizedCode || normalizedCode.length < 6) {
       setVerificationError("인증번호를 정확히 입력해주세요.");
       return;
     }
 
-    // 테스트 인증번호 확인 (개발/테스트용)
-    if (verificationCode === DEV_TEST_VERIFICATION_CODE) {
+    const normalizedEmail = formData.companyEmail.trim().toLowerCase();
+
+    // 개발 환경 + 등록된 테스트 이메일일 때만 테스트 인증번호를 허용
+    const isDevTestEmail =
+      isDev() &&
+      DEV_TEST_EMAILS.some((email) => email.trim().toLowerCase() === normalizedEmail);
+
+    // 등록된 테스트 이메일은 오직 지정된 테스트 인증번호로만 통과될 수 있다(일반 경로로 폴백하지 않음)
+    if (isDevTestEmail) {
+      if (normalizedCode !== DEV_TEST_VERIFICATION_CODE) {
+        setVerificationError("인증번호가 일치하지 않습니다.");
+        return;
+      }
+
       setIsVerifying(true);
       setVerificationError("");
 
       setTimeout(() => {
         setEmailVerified(true);
         setIsVerifying(false);
-
-        // 프랜차이즈 확인: 먼저 테스트 이메일 매핑 확인
-        let franchise = isDev() && DEV_TEST_EMAIL_FRANCHISE_MAP[formData.companyEmail];
-
-        // 테스트 매핑 없으면 도메인으로 확인
-        if (!franchise) {
-          const domain = formData.companyEmail.split("@")[1].toLowerCase();
-          franchise = FRANCHISE_DOMAINS[domain];
-        }
-
-        if (franchise) {
-          setFranchiseConfirmation({
-            domain: formData.companyEmail.split("@")[1].toLowerCase(),
-            name: franchise.name,
-            id: franchise.id,
-          });
-          setFranchiseNotFound(false);
-        } else {
-          setFranchiseNotFound(true);
-          setFranchiseConfirmation(null);
-        }
+        applyFranchiseForEmail(normalizedEmail);
       }, 600);
       return;
     }
 
-    setIsVerifying(true);
-    setVerificationError("");
-
-    try {
-      // 개발 환경 - DEV 테스트 이메일 검증
-      const isDevTestEmail = isDev() && DEV_TEST_EMAILS.some(
-        (email) => email.toLowerCase() === formData.companyEmail.toLowerCase()
-      );
-
-      if (isDevTestEmail && verificationCode !== DEV_TEST_VERIFICATION_CODE) {
-        setVerificationError("인증번호가 일치하지 않습니다.");
-        setIsVerifying(false);
-        return;
-      }
-
-      // TODO: 실제 API 연결 - 서버에서 검증 후 도메인 추출
-      setTimeout(() => {
-        setEmailVerified(true);
-        setIsVerifying(false);
-
-        // 프랜차이즈 확인: 먼저 테스트 이메일 매핑 확인
-        let franchise = isDev() && DEV_TEST_EMAIL_FRANCHISE_MAP[formData.companyEmail];
-
-        // 테스트 매핑 없으면 도메인으로 확인
-        if (!franchise) {
-          const domain = formData.companyEmail.split("@")[1].toLowerCase();
-          franchise = FRANCHISE_DOMAINS[domain];
-        }
-
-        if (franchise) {
-          setFranchiseConfirmation({
-            domain: formData.companyEmail.split("@")[1].toLowerCase(),
-            name: franchise.name,
-            id: franchise.id,
-          });
-          setFranchiseNotFound(false);
-        } else {
-          setFranchiseNotFound(true);
-          setFranchiseConfirmation(null);
-        }
-      }, 600);
-    } catch {
-      setVerificationError("인증 확인 중 오류가 발생했습니다.");
-      setIsVerifying(false);
+    // 테스트 인증번호는 등록된 테스트 이메일에서만 유효하다(미등록 이메일의 우회 방지, fail closed)
+    if (normalizedCode === DEV_TEST_VERIFICATION_CODE) {
+      setVerificationError("인증번호가 일치하지 않습니다.");
+      return;
     }
+
+    if (isDev()) {
+      setIsVerifying(true);
+      setVerificationError("");
+
+      try {
+        // TODO: 실제 API 연결 - 서버에서 검증 후 도메인 추출
+        setTimeout(() => {
+          setEmailVerified(true);
+          setIsVerifying(false);
+          applyFranchiseForEmail(normalizedEmail);
+        }, 600);
+      } catch {
+        setVerificationError("인증 확인 중 오류가 발생했습니다.");
+        setIsVerifying(false);
+      }
+      return;
+    }
+
+    // 운영 환경: 실제 이메일 인증 API(007)가 아직 연결되지 않아 성공 처리하지 않는다 (fail closed)
+    // TODO: 007 API 연결 후 이 분기를 실제 서버 인증 호출로 교체
+    setVerificationError("현재 이메일 인증 서비스를 사용할 수 없습니다.");
   };
 
   const handleConfirmFranchise = () => {
