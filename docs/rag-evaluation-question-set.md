@@ -68,7 +68,9 @@ Excel 원본 작성
 → "CSV UTF-8(쉼표로 분리)"로 저장
 → convert:rag-dataset 실행
 → validate:rag-dataset 실행
+→ analyze:rag-dataset 실행(분포·완성도·품질 경고 확인)
 → 로컬 서버 실행 후 eval:rag-dataset 실행
+→ compare:rag-reports로 이전 리포트와 회귀 여부 비교
 ```
 
 > ⚠️ Excel에서 내보낼 때 반드시 **"CSV UTF-8(쉼표로 분리)"** 를 선택해야 합니다. 일반 "CSV(쉼표로
@@ -164,6 +166,30 @@ node scripts/evaluate-rag-dataset.mjs --input <question-set.json> --stores <stor
 가상 값입니다.** 실제 평가를 실행할 때는 반드시 운영 환경에 맞는 별도의 store map 파일로 교체해야
 하며, 예제 store map을 그대로 실제 API 평가에 사용해서는 안 됩니다.
 
+## 질문셋 분포 분석(`analyze:rag-dataset`)
+
+검증을 통과한 JSON 질문셋이 특정 매장·질문 유형·상태·카테고리에 치우치거나 자동 채점에 필요한
+정보(키워드/금지어 등)가 빠져 있지 않은지 비식별 통계로 확인합니다. **CSV 파일을 직접 분석하지 않고,
+`convert:rag-dataset`과 `validate:rag-dataset`을 통과한 JSON만 입력으로 받습니다.**
+
+```
+npm run analyze:rag-dataset -- --input <question-set.json> [--strict]
+```
+
+- 기본 모드는 분석 보고용입니다. 경고가 있어도 종료 코드는 `0`입니다.
+- `--strict`는 품질 게이트용입니다. 유효한 데이터라도 경고가 하나 이상이면 종료 코드가 `1`이 됩니다.
+- 종료 코드: `0` = 정상(경고 유무 무관, 비-strict), `1` = `--strict`에서 경고 발견, `2` = 인자·파일
+  읽기·JSON 문법·기존 질문셋 스키마 오류.
+- **분포**는 `question_type`/`target_store`/`expected_status`/`manual_scope`/`category`/`priority`
+  별 개수(및 CLI 출력의 비율)를 보여주고, **완성도**는 `expected_keywords`/`forbidden_content`/
+  `expected_result`/`category`/`note`의 존재·미존재 건수를 보여줍니다.
+- **경고**는 `EMPTY_DATASET`, `STATUS_NOT_COVERED`, `QUESTION_TYPE_NOT_COVERED`, `STORE_NOT_COVERED`,
+  `ANSWERED_WITHOUT_KEYWORDS`, `CAUTIOUS_WITHOUT_KEYWORDS`, `INSUFFICIENT_WITH_EXPECTED_KEYWORDS`,
+  `CATEGORY_MISSING`, `PRIORITY_MISSING`, `DUPLICATE_QUESTION_ID`를 포함하며, 항목을 가리켜야 할 때는
+  `questionId`만 사용합니다. 경고는 기본적으로 품질 게이트가 아니라 정보 제공용입니다.
+- 질문 원문, `expected_result` 원문, 키워드·금지어 원문, storeId/UUID, 전체 파일 경로는 분석 결과와
+  콘솔 어디에도 출력되지 않습니다.
+
 ## 명령 요약
 
 1. **CSV → JSON 변환** (외부 API/DB 호출 없음, 변환+검증 모두 성공해야 저장)
@@ -174,21 +200,26 @@ node scripts/evaluate-rag-dataset.mjs --input <question-set.json> --stores <stor
    ```
    npm run validate:rag-dataset -- --input examples/rag-eval/question-set.example.json
    ```
-3. **평가 도구 단위 테스트** (mock fetch만 사용, 외부 API/DB 호출 없음)
+3. **질문셋 분포 분석** (외부 API/DB 호출 없음)
+   ```
+   npm run analyze:rag-dataset -- --input examples/rag-eval/question-set.example.json
+   ```
+4. **평가 도구 단위 테스트** (mock fetch만 사용, 외부 API/DB 호출 없음)
    ```
    npm run test:rag-eval
    ```
-4. **실제 API 평가** (실제 질문셋·store map으로 교체해서 실행)
+5. **실제 API 평가** (실제 질문셋·store map으로 교체해서 실행)
    ```
    npm run eval:rag-dataset -- --input <실제-question-set.json> --stores <실제-store-map.json>
    ```
    - 실행 전 로컬 서버(`npm run dev` 등)가 `http://localhost:3000`에서 실행 중이어야 합니다.
    - 이 명령은 실제 OpenAI/Supabase 호출을 유발하므로 사용량 또는 비용이 발생할 수 있습니다.
 
-CI(GitHub Actions)에서는 1번(예제 CSV→JSON 변환), 2번(변환 결과 검증), 3번(단위 테스트)만 자동
-실행되며, 4번(실제 API 평가)은 CI에서 실행되지 않습니다. CI에서 변환되는 JSON은 저장소
-작업 디렉토리 밖의 러너 임시 경로(`RUNNER_TEMP`)에만 쓰여 Git 변경사항으로 남지 않습니다.
-실제 평가는 로컬에서 필요할 때 수동으로 실행합니다.
+CI(GitHub Actions)에서는 1번(예제 CSV→JSON 변환), 2번(변환 결과 검증), 4번(단위 테스트)만 자동
+실행되며, 3번(분포 분석 CLI를 예제 파일에 직접 실행하는 것)과 5번(실제 API 평가)은 CI에서 실행되지
+않습니다. 분석기 자체의 동작은 4번 단위 테스트 안에서 고정 가상 fixture로만 검증됩니다. CI에서
+변환되는 JSON은 저장소 작업 디렉토리 밖의 러너 임시 경로(`RUNNER_TEMP`)에만 쓰여 Git 변경사항으로
+남지 않습니다. 실제 평가는 로컬에서 필요할 때 수동으로 실행합니다.
 
 ## 실제 QA 데이터의 Git 관리
 
