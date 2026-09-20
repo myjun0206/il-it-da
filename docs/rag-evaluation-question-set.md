@@ -194,4 +194,28 @@ CI(GitHub Actions)에서는 1번(예제 CSV→JSON 변환), 2번(변환 결과 �
 
 실제 Excel(.xlsx)/내보낸 CSV/변환된 JSON 파일은 **저장소에 커밋하지 않습니다.** 이 파일들은
 팀 공유 저장소(공유 드라이브 등)에서 로컬 데이터로 관리하고, 저장소에는 `examples/rag-eval/`의
-가상 예제 파일만 유지합니다.
+가상 예제 파일만 유지합니다. `--report`로 저장한 실제 평가 리포트 파일도 동일한 원칙에 따라
+**기본적으로 Git에 커밋하지 않는 것을 권장**합니다.
+
+## 리포트 비교(`compare:rag-reports`)
+
+기준(baseline) 리포트와 후보(candidate) 리포트를 비교해 품질이 회귀했는지 자동으로 판단합니다.
+
+```
+npm run compare:rag-reports -- --baseline <baseline-report.json> --candidate <candidate-report.json>
+```
+
+- `--baseline`, `--candidate` 모두 필수이며, 같은 파일을 동시에 지정하면 거부됩니다.
+- 두 입력 모두 `--report`로 저장한 schemaVersion 1 리포트여야 하며, 입력 파일은 수정하지 않습니다.
+- 외부 API·DB·네트워크 호출이 없는 순수 로컬 비교 도구입니다.
+- 종료 코드: `0` = 유효한 비교이고 회귀 없음, `1` = 유효한 비교이나 회귀 발견, `2` = 인자·파일
+  읽기·JSON 문법·리포트 스키마 오류.
+- `target_store="all"`로 확장된 케이스는 동일한 `questionId`를 여러 매장 결과로 가질 수 있으므로,
+  비교는 `questionId`별로 **그룹**(passed/failed/error 개수)을 만들어 수행하며 마지막 값으로
+  덮어쓰지 않습니다. 그룹 내 매장 결과 중 하나라도 회귀하면 해당 `questionId` 그룹 전체가 회귀로
+  분류됩니다.
+- 리포트와 비교 결과 어디에도 질문·답변 원문, 매장명, storeId/UUID가 포함되지 않습니다. 출력에는
+  `questionId`와 passed/failed/error 개수, 통과율 등 비식별 통계만 표시됩니다.
+- 회귀 판정 이후에는 매뉴얼 내용 변경 전후, 또는 RAG 임계값·프롬프트 등 품질 기준 변경 전후의 결과를
+  비교해 의도치 않은 회귀를 조기에 발견하는 용도로 사용할 수 있습니다.
+- 비교 대상 리포트 파일도 예제를 제외하고는 Git에 커밋하지 않는 것을 권장합니다.
