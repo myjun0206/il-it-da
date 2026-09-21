@@ -26,3 +26,19 @@ npm run test:integration
 5. `npm run lint`
 6. `npx tsc --noEmit`
 7. `npm run build`
+
+## PoC 통합 검증 한 번에 실행하기 (`npm run verify:poc`)
+
+위 7단계를 개발자가 매번 순서대로 직접 입력하지 않도록, `scripts/verify-poc.mjs`가 동일한 순서를
+자동으로 실행합니다.
+
+```bash
+npm run verify:poc
+```
+
+- 단계는 반드시 `check:integration → test:integration → test:rag → test:rag-eval → lint → tsc --noEmit → build` 순서로 하나씩 실행되며, 이전 단계가 성공해야 다음 단계가 실행됩니다.
+- 어떤 단계든 실패하면 그 즉시 중단하고 실패한 단계 이름과 종료 코드만 표준 에러에 출력합니다. 이후 단계는 실행되지 않고, 실패한 단계의 종료 코드가 그대로 프로세스 종료 코드로 보존됩니다.
+- 모든 단계가 성공하면 통과한 단계 수와 `PASS`만 표준 출력에 남습니다.
+- 이 러너는 각 단계의 명령 전체 문자열, 환경변수 값, 파일 내용, 질문·답변 원문, UUID, API 키, 토큰을 별도로 출력하지 않습니다. 각 자식 프로세스(예: 테스트, 빌드)의 정상 출력은 그대로 콘솔에 표시됩니다.
+- Windows PowerShell, macOS, Linux, GitHub Actions에서 동일하게 동작하도록 Node.js `child_process`만 사용하며 셸 전용 문법에 의존하지 않습니다.
+- 이 명령은 실제 Supabase/OpenAI 호출을 추가하지 않으며, 기존 `check:integration`/`test:integration`/`test:rag`/`test:rag-eval`/`lint`/`build`가 하던 동작만 순서대로 실행합니다.
