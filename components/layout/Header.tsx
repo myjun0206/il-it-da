@@ -109,7 +109,7 @@ export const Header = React.forwardRef<HTMLDivElement, HeaderProps>(
                   <button
                     onClick={() => {
                       // TODO: 로그아웃 로직
-                      router.push("/login");
+                      router.push("/");
                     }}
                     className="w-full flex items-center gap-3 px-4 py-3 text-[var(--color-status-error)] hover:bg-red-50 transition-colors"
                   >

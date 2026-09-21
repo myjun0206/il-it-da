@@ -22,6 +22,23 @@ interface StoreApprovalState {
   requestedAt?: string;
 }
 
+function clearSignupSessionStorage() {
+  sessionStorage.removeItem("signupRole");
+  sessionStorage.removeItem("signupTerms");
+  sessionStorage.removeItem("signupHQProfile");
+  sessionStorage.removeItem("signupProfile");
+  sessionStorage.removeItem("signupFranchise");
+  sessionStorage.removeItem("signupFranchiseConfirmed");
+  sessionStorage.removeItem("signupFranchiseName");
+  sessionStorage.removeItem("signupBrand");
+  sessionStorage.removeItem("signupStores");
+  sessionStorage.removeItem("signupSelectedStores");
+  sessionStorage.removeItem("signupStoreApprovals");
+  sessionStorage.removeItem("signupApprovalStatus");
+  sessionStorage.removeItem("signupApprovalSubmittedAt");
+  sessionStorage.removeItem("signupVerified");
+}
+
 // 타임스탬프를 한국식 날짜로 포맷
 function formatTimestamp(timestamp?: string): string {
   if (!timestamp) return "-";
@@ -49,7 +66,7 @@ export default function SignupApprovalPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [submittingStoreIds, setSubmittingStoreIds] = useState<Set<string>>(new Set());
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submissionError, setSubmissionError] = useState("");
 
   // 역할 확인 및 라우팅
   useLayoutEffect(() => {
@@ -226,7 +243,7 @@ export default function SignupApprovalPage() {
     const signupRole = sessionStorage.getItem("signupRole");
 
     if (!signupProfile || !signupRole) {
-      alert("회원가입 정보가 없습니다. 회원가입을 다시 진행해주세요.");
+      setSubmissionError("회원가입 정보가 없습니다. 회원가입을 다시 진행해주세요.");
       return false;
     }
 
@@ -340,12 +357,13 @@ export default function SignupApprovalPage() {
       return true;
     } catch (error) {
       console.error("Auth session error:", error);
-      alert("회원가입 중 오류가 발생했습니다.");
+      setSubmissionError("회원가입 중 오류가 발생했습니다.");
       return false;
     }
   };
 
   const handleRequestApproval = async (storeId: string) => {
+    setSubmissionError("");
     setSubmittingStoreIds((prev) => new Set(prev).add(storeId));
 
     try {
@@ -364,7 +382,7 @@ export default function SignupApprovalPage() {
       const approval = storeApprovals.find((item) => item.store.id === storeId);
       if (!approval) {
         console.error("Store approval not found:", storeId);
-        alert("매장 정보를 찾을 수 없습니다.");
+        setSubmissionError("매장 정보를 찾을 수 없습니다.");
         setSubmittingStoreIds((prev) => {
           const next = new Set(prev);
           next.delete(storeId);
@@ -388,7 +406,7 @@ export default function SignupApprovalPage() {
 
       if (!result.success) {
         console.error("Membership 생성 실패:", result);
-        alert(`매장 "${approval.store.name}" 승인 요청 중 오류: ${result.error || "알 수 없는 오류"}`);
+        setSubmissionError(`매장 "${approval.store.name}" 승인 요청 중 오류: ${result.error || "알 수 없는 오류"}`);
         setSubmittingStoreIds((prev) => {
           const next = new Set(prev);
           next.delete(storeId);
@@ -423,7 +441,7 @@ export default function SignupApprovalPage() {
       sessionStorage.setItem("signupStoreApprovals", JSON.stringify(updatedApprovals));
     } catch (e) {
       console.error("승인 요청 중 오류:", e);
-      alert("승인 요청 중 오류가 발생했습니다.");
+      setSubmissionError("승인 요청 중 오류가 발생했습니다.");
     } finally {
       setSubmittingStoreIds((prev) => {
         const next = new Set(prev);
@@ -447,6 +465,7 @@ export default function SignupApprovalPage() {
     if (requestableApprovals.length === 0) return;
 
     setIsLoading(true);
+    setSubmissionError("");
 
     try {
       // Auth session 확보
@@ -645,6 +664,12 @@ export default function SignupApprovalPage() {
                     </Button>
                   </div>
                 </div>
+
+                {submissionError && (
+                  <p className="mb-4 rounded-lg border border-[var(--color-status-error)]/20 bg-red-50 px-4 py-3 text-sm text-[var(--color-status-error)]">
+                    {submissionError}
+                  </p>
+                )}
 
                 {/* Store Approval Cards */}
                 <div className="space-y-3">

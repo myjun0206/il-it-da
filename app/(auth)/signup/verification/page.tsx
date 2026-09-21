@@ -8,10 +8,6 @@ import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 import { Card } from "@/components/common/Card";
 import type { UserRole } from "@/lib/types/user";
-import { DEV_TEST_VERIFICATION_CODE } from "@/lib/data/mockFranchises";
-
-// 개발 환경 여부 확인
-const isDev = () => typeof window !== 'undefined' && process.env.NODE_ENV === "development";
 
 export default function SignupVerificationPage() {
   const router = useRouter();
@@ -56,13 +52,25 @@ export default function SignupVerificationPage() {
     setErrors({});
     setIsLoading(true);
 
-    // Mock send verification code
-    setTimeout(() => {
+    try {
+      const response = await fetch("/api/auth/send-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const data = (await response.json()) as { sent?: boolean; error?: string };
+
+      if (!response.ok || !data.sent) {
+        throw new Error(data.error || "인증 코드 발송 중 오류가 발생했습니다.");
+      }
+
       setIsCodeSent(true);
-      setTimeLeft(300); // 5분
+      setTimeLeft(300);
+    } catch {
+      setErrors({ code: "인증 코드 발송 중 오류가 발생했습니다" });
+    } finally {
       setIsLoading(false);
-      console.log("Verification code sent to:", email);
-    }, 1000);
+    }
   };
 
   const handleVerify = async () => {
@@ -80,18 +88,25 @@ export default function SignupVerificationPage() {
 
     setIsLoading(true);
 
-    // Mock verification
-    setTimeout(() => {
-      if (verificationCode === "123456") {
-        // Mock correct code
-        sessionStorage.setItem("signupVerified", "true");
-        setIsLoading(false);
-        router.push("/signup/complete");
-      } else {
-        setErrors({ code: "인증 코드가 일치하지 않습니다" });
-        setIsLoading(false);
+    try {
+      const response = await fetch("/api/auth/verify-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, code: verificationCode }),
+      });
+      const data = (await response.json()) as { verified?: boolean; error?: string };
+
+      if (!response.ok || !data.verified) {
+        throw new Error(data.error || "인증 코드가 일치하지 않습니다");
       }
-    }, 1000);
+
+      sessionStorage.setItem("signupVerified", "true");
+      router.push("/signup/complete");
+    } catch {
+      setErrors({ code: "인증 코드가 일치하지 않거나 만료되었습니다" });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -167,12 +182,6 @@ export default function SignupVerificationPage() {
                     maxLength={6}
                     error={errors.code}
                   />
-                  {/* 개발 환경용 인증번호 힌트 */}
-                  {isDev() && isCodeSent && (
-                    <p className="mt-2 text-xs text-[var(--color-text-tertiary)]/60 font-normal">
-                      개발용 인증번호: {DEV_TEST_VERIFICATION_CODE}
-                    </p>
-                  )}
                 </div>
 
                 {/* Timer */}

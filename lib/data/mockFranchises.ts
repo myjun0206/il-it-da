@@ -94,7 +94,7 @@ export const DEV_TEST_EMAILS = [
 export const DEV_TEST_VERIFICATION_CODE = "123456";
 
 /**
- * 개발 환경 테스트용 이메일 → 프랜차이즈 매핑
+ * 개발 환경 테스트용 이메일 → 프랜차이즈 매핑 (키는 정규화된 소문자 이메일)
  * 테스트 계정에 대해서만 특정 브랜드로 인식되도록 설정
  * production에서는 사용되지 않음
  */

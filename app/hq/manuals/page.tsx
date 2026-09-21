@@ -1,92 +1,80 @@
 "use client";
 
-import React, { useLayoutEffect, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Search, Filter, MoreVertical, BookOpen } from "lucide-react";
+import { FileText, Plus, Trash2, Upload, X } from "lucide-react";
+import { Button } from "@/components/common/Button";
+import { Input } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
+import type { ManualRecord } from "@/lib/types/manual";
 
-// Mock Data
-const manualsMockData = {
-  manuals: [
-    {
-      id: 1,
-      title: "음료 제조 기본 매뉴얼",
-      category: "제조",
-      target: "전체 지점",
-      lastModified: "2026.09.18",
-      status: "배포 중",
-    },
-    {
-      id: 2,
-      title: "오픈 업무 매뉴얼",
-      category: "매장 운영",
-      target: "전체 지점",
-      lastModified: "2026.09.15",
-      status: "배포 중",
-    },
-    {
-      id: 3,
-      title: "위생 관리 매뉴얼",
-      category: "위생",
-      target: "전체 지점",
-      lastModified: "2026.09.10",
-      status: "배포 중",
-    },
-    {
-      id: 4,
-      title: "신메뉴 제조 가이드",
-      category: "제조",
-      target: "전체 지점",
-      lastModified: "2026.09.20",
-      status: "임시저장",
-    },
-    {
-      id: 5,
-      title: "POS 장애 대응",
-      category: "비상 대응",
-      target: "전체 지점",
-      lastModified: "2026.08.21",
-      status: "수정 필요",
-    },
-  ],
-  stats: {
-    total: 24,
-    deployed: 21,
-    needsUpdate: 3,
-  },
+type ManualGroup = {
+  id: string;
+  title: string;
+  items: ManualRecord[];
 };
 
-export default function ManualsPage() {
+// 대시보드 카드는 parent_manual_id가 NULL인 최상위 매뉴얼만 표시하고,
+// 하위 항목(parent_manual_id가 그 카드의 id와 일치하는 행)을 모달에서 보여준다.
+// 하위 항목이 없는 최상위 매뉴얼(레거시/단건 등록 등)은 자기 자신을 유일한 항목으로 취급한다.
+function groupByParent(manuals: ManualRecord[]): ManualGroup[] {
+  const topLevel = manuals.filter((manual) => !manual.parent_manual_id);
+  const childrenByParent = new Map<string, ManualRecord[]>();
+
+  for (const manual of manuals) {
+    if (!manual.parent_manual_id) continue;
+    const list = childrenByParent.get(manual.parent_manual_id) ?? [];
+    list.push(manual);
+    childrenByParent.set(manual.parent_manual_id, list);
+  }
+
+  return topLevel.map((parent) => {
+    const children = childrenByParent.get(parent.id) ?? [];
+    return {
+      id: parent.id,
+      title: parent.title,
+      items: children.length > 0 ? children : [parent],
+    };
+  });
+}
+
+export default function ManualDashboardPage() {
   const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [userName, setUserName] = useState("본사 관리자");
   const [franchiseName, setFranchiseName] = useState("메가MGC커피");
   const [isReady, setIsReady] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("전체");
-  const [selectedStatus, setSelectedStatus] = useState("전체");
+  const [manuals, setManuals] = useState<ManualRecord[]>([]);
+  const [isLoadingManuals, setIsLoadingManuals] = useState(true);
+  const [selectedGroup, setSelectedGroup] = useState<ManualGroup | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createTopic, setCreateTopic] = useState("");
+  const [createItems, setCreateItems] = useState<{ id: string; content: string }[]>([
+    { id: crypto.randomUUID(), content: "" },
+  ]);
+  const [createError, setCreateError] = useState("");
+  const [isCreating, setIsCreating] = useState(false);
+  const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
+  const [deleteAllError, setDeleteAllError] = useState("");
+  const [toastMessage, setToastMessage] = useState("");
 
-  const categories = ["전체", "제조", "매장 운영", "위생", "비상 대응"];
-  const statuses = ["전체", "배포 중", "임시저장", "수정 필요"];
+  const showToast = (message: string) => {
+    setToastMessage(message);
+    setTimeout(() => setToastMessage(""), 2500);
+  };
 
   useLayoutEffect(() => {
-    // Check Supabase session
     const checkAuth = async () => {
       try {
         const supabase = createClient();
         const { data } = await supabase.auth.getSession();
 
-        if (!data.session?.user) {
-          router.push("/");
-          return;
-        }
-
-        const user = data.session.user;
-        const role = user.user_metadata?.role;
-
-        // Verify user is HQ
-        if (role !== "hq") {
+        if (!data.session?.user || data.session.user.user_metadata?.role !== "hq") {
           router.push("/");
           return;
         }
@@ -100,7 +88,6 @@ export default function ManualsPage() {
   }, [router]);
 
   useEffect(() => {
-    // Set user info from metadata
     const setUserInfo = async () => {
       try {
         const supabase = createClient();
@@ -108,29 +95,43 @@ export default function ManualsPage() {
 
         if (!data.session?.user) return;
 
-        const user = data.session.user;
-        const name = user.user_metadata?.name;
-
+        const name = data.session.user.user_metadata?.name;
         if (name) {
           setUserName(name);
-        }
-
-        if (name && name.includes(" ")) {
-          const parts = name.split(" ");
-          if (parts[0]) {
-            setFranchiseName(parts[0]);
+          if (name.includes(" ")) {
+            const [first] = name.split(" ");
+            if (first) setFranchiseName(first);
           }
         }
-
-        setIsReady(true);
-      } catch (e) {
-        console.error("Set user info failed:", e);
+      } finally {
         setIsReady(true);
       }
     };
 
     setUserInfo();
   }, []);
+
+  const fetchManuals = useCallback(async () => {
+    setIsLoadingManuals(true);
+    try {
+      const response = await fetch("/api/manuals");
+      const data = (await response.json()) as { manuals?: ManualRecord[]; error?: string };
+      if (response.ok) {
+        setManuals(data.manuals ?? []);
+      }
+    } catch (e) {
+      console.error("매뉴얼 목록 조회 실패:", e);
+    } finally {
+      setIsLoadingManuals(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const loadData = async () => {
+      await fetchManuals();
+    };
+    loadData();
+  }, [fetchManuals]);
 
   const handleLogout = async () => {
     try {
@@ -143,36 +144,108 @@ export default function ManualsPage() {
     }
   };
 
-  const handleNewManual = () => {
-    // Placeholder for future implementation
-    alert("매뉴얼 등록 기능은 추후 구현될 예정입니다.");
+  const groups = groupByParent(manuals);
+
+  const handleFileSelected = async (file: File) => {
+    setUploadError("");
+    setIsUploading(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetch("/api/manuals/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const data = (await response.json()) as { error?: string };
+
+      if (!response.ok) {
+        throw new Error(data.error || "매뉴얼 업로드 중 오류가 발생했습니다.");
+      }
+
+      await fetchManuals();
+      showToast("매뉴얼이 업로드되었습니다.");
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : "매뉴얼 업로드 중 오류가 발생했습니다.");
+    } finally {
+      setIsUploading(false);
+    }
   };
 
-  // Filter manuals based on search and filters
-  const filteredManuals = manualsMockData.manuals.filter((manual) => {
-    const matchesSearch =
-      manual.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      manual.category.toLowerCase().includes(searchQuery.toLowerCase());
+  const resetCreateForm = () => {
+    setCreateTopic("");
+    setCreateItems([{ id: crypto.randomUUID(), content: "" }]);
+    setCreateError("");
+  };
 
-    const matchesCategory =
-      selectedCategory === "전체" || manual.category === selectedCategory;
+  const handleAddCreateItem = () => {
+    setCreateItems((prev) => [...prev, { id: crypto.randomUUID(), content: "" }]);
+  };
 
-    const matchesStatus =
-      selectedStatus === "전체" || manual.status === selectedStatus;
+  const handleRemoveCreateItem = (id: string) => {
+    setCreateItems((prev) => (prev.length > 1 ? prev.filter((item) => item.id !== id) : prev));
+  };
 
-    return matchesSearch && matchesCategory && matchesStatus;
-  });
+  const handleCreateItemChange = (id: string, value: string) => {
+    setCreateItems((prev) => prev.map((item) => (item.id === id ? { ...item, content: value } : item)));
+  };
 
-  const getStatusBadgeColor = (status: string) => {
-    switch (status) {
-      case "배포 중":
-        return "bg-green-100 text-green-700";
-      case "임시저장":
-        return "bg-gray-100 text-gray-700";
-      case "수정 필요":
-        return "bg-amber-100 text-amber-700";
-      default:
-        return "bg-gray-100 text-gray-700";
+  const handleCreateSubmit = async () => {
+    setCreateError("");
+
+    const topic = createTopic.trim();
+    const items = createItems.map((item) => item.content.trim()).filter(Boolean);
+
+    if (!topic || items.length === 0) {
+      setCreateError("주제와 세부 내용을 모두 입력해주세요.");
+      return;
+    }
+
+    setIsCreating(true);
+
+    try {
+      const response = await fetch("/api/manuals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topic, items }),
+      });
+      const data = (await response.json()) as { error?: string };
+
+      if (!response.ok) {
+        throw new Error(data.error || "매뉴얼 저장 중 오류가 발생했습니다.");
+      }
+
+      resetCreateForm();
+      setShowCreateModal(false);
+      await fetchManuals();
+      showToast("매뉴얼이 생성되었습니다.");
+    } catch (e) {
+      setCreateError(e instanceof Error ? e.message : "매뉴얼 저장 중 오류가 발생했습니다.");
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    setDeleteAllError("");
+    setIsDeletingAll(true);
+
+    try {
+      const response = await fetch("/api/manuals", { method: "DELETE" });
+      const data = (await response.json()) as { error?: string };
+
+      if (!response.ok) {
+        throw new Error(data.error || "매뉴얼 전체 삭제 중 오류가 발생했습니다.");
+      }
+
+      setShowDeleteAllConfirm(false);
+      await fetchManuals();
+      showToast("등록된 모든 매뉴얼이 삭제되었습니다.");
+    } catch (e) {
+      setDeleteAllError(e instanceof Error ? e.message : "매뉴얼 전체 삭제 중 오류가 발생했습니다.");
+    } finally {
+      setIsDeletingAll(false);
     }
   };
 
@@ -182,7 +255,6 @@ export default function ManualsPage() {
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-default)]">
-      {/* Sidebar */}
       <HQSidebar
         userName={userName}
         franchiseName={franchiseName}
@@ -190,249 +262,506 @@ export default function ManualsPage() {
         activeMenu="manual"
       />
 
-      {/* Main Content */}
       <div className="lg:ml-[240px]">
-        {/* Header */}
         <HQHeader userName={userName} franchiseName={franchiseName} />
 
-        {/* Content */}
-        <main className="p-6 lg:p-8 max-w-7xl mx-auto h-[calc(100vh-64px)] overflow-y-auto">
-          {/* Page Header */}
-          <div className="mb-8 flex items-start justify-between">
+        <main className="p-6 lg:p-8 max-w-7xl mx-auto">
+          <div className="mb-8 flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
                 매뉴얼 관리
               </h1>
               <p className="text-base text-[var(--color-text-secondary)]">
-                전 지점에서 사용하는 업무 매뉴얼을 등록하고 관리하세요.
+                {franchiseName}의 공통 매뉴얼을 그룹별로 관리하세요.
               </p>
             </div>
-            <button
-              onClick={handleNewManual}
-              className="bg-[var(--color-primary)] text-white px-6 py-3 rounded-lg font-semibold hover:bg-[var(--color-primary-hover)] transition-colors flex items-center gap-2 whitespace-nowrap"
-              style={{ minHeight: "44px" }}
-            >
-              <Plus size={20} />
-              새 매뉴얼 등록
-            </button>
-          </div>
-
-          {/* Summary Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-12">
-            {/* Card 1: Total Manuals */}
-            <div className="bg-white border border-[var(--color-border)] rounded-lg p-5 hover:border-[var(--color-primary)] hover:bg-[var(--color-bg-surface)] transition-all cursor-pointer">
-              <BookOpen
-                size={24}
-                className="text-[var(--color-primary)] mb-4"
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                isLoading={isUploading}
+              >
+                <Upload size={16} className="mr-2" /> 매뉴얼 파일 업로드
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => {
+                  setDeleteAllError("");
+                  setShowDeleteAllConfirm(true);
+                }}
+                disabled={manuals.length === 0}
+              >
+                <Trash2 size={16} className="mr-2" /> 매뉴얼 전체 삭제
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv,.txt,.pdf"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) {
+                    handleFileSelected(file);
+                  }
+                }}
               />
-              <p className="text-base font-semibold text-[var(--color-text-primary)] mb-3">
-                전체 매뉴얼
-              </p>
-              <p className="text-3xl font-bold text-[var(--color-text-primary)] mb-2">
-                {manualsMockData.stats.total}
-                <span className="text-base font-normal text-[var(--color-text-secondary)] ml-1">
-                  개
-                </span>
-              </p>
-              <p className="text-sm text-[var(--color-text-secondary)]">
-                등록된 전체 매뉴얼
-              </p>
-            </div>
-
-            {/* Card 2: Deployed */}
-            <div className="bg-white border border-[var(--color-border)] rounded-lg p-5 hover:border-[var(--color-primary)] hover:bg-[var(--color-bg-surface)] transition-all cursor-pointer">
-              <BookOpen
-                size={24}
-                className="text-[var(--color-primary)] mb-4"
-              />
-              <p className="text-base font-semibold text-[var(--color-text-primary)] mb-3">
-                배포 중
-              </p>
-              <p className="text-3xl font-bold text-[var(--color-text-primary)] mb-2">
-                {manualsMockData.stats.deployed}
-                <span className="text-base font-normal text-[var(--color-text-secondary)] ml-1">
-                  개
-                </span>
-              </p>
-              <p className="text-sm text-[var(--color-text-secondary)]">
-                현재 지점에서 사용 중
-              </p>
-            </div>
-
-            {/* Card 3: Needs Update */}
-            <div className="bg-white border border-[var(--color-border)] rounded-lg p-5 hover:border-[var(--color-primary)] hover:bg-[var(--color-bg-surface)] transition-all cursor-pointer">
-              <BookOpen
-                size={24}
-                className="text-[var(--color-primary)] mb-4"
-              />
-              <p className="text-base font-semibold text-[var(--color-text-primary)] mb-3">
-                수정 필요
-              </p>
-              <p className="text-3xl font-bold text-[var(--color-text-primary)] mb-2">
-                {manualsMockData.stats.needsUpdate}
-                <span className="text-base font-normal text-[var(--color-text-secondary)] ml-1">
-                  개
-                </span>
-              </p>
-              <p className="text-sm text-[var(--color-text-secondary)]">
-                업데이트 확인 필요
-              </p>
             </div>
           </div>
 
-          {/* AI Connection Info */}
-          <div className="mb-8 bg-[var(--color-primary-light)]/10 border border-[var(--color-primary-light)] rounded-lg p-4 flex items-start gap-3">
-            <BookOpen size={20} className="text-[var(--color-primary)] flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="font-semibold text-[var(--color-text-primary)] text-sm mb-1">
-                AI 지식 연동
-              </p>
-              <p className="text-sm text-[var(--color-text-secondary)]">
-                배포된 매뉴얼은 직원 AI 챗봇의 답변 근거로 활용됩니다.
-              </p>
-            </div>
-          </div>
-
-          {/* Manual List Section */}
-          <div className="bg-white border border-[var(--color-border)] rounded-lg overflow-hidden flex flex-col">
-            {/* Header with Filters */}
-            <div className="px-6 py-5 border-b border-[var(--color-border)] bg-[var(--color-bg-surface)]">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-base font-bold text-[var(--color-text-primary)]">
-                  매뉴얼 목록
-                </h2>
-                <div className="flex items-center gap-3">
-                  {/* Search */}
-                  <div className="relative flex-1 min-w-48">
-                    <Search
-                      size={18}
-                      className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)]"
-                    />
-                    <input
-                      type="text"
-                      placeholder="매뉴얼 검색"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2 border border-[var(--color-border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 text-sm"
-                      style={{ minHeight: "36px" }}
-                    />
+          {isLoadingManuals ? (
+            <p className="text-sm text-[var(--color-text-secondary)]">불러오는 중...</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {groups.map((group) => (
+                <button
+                  key={group.id}
+                  onClick={() => setSelectedGroup(group)}
+                  className="text-left bg-white border border-[var(--color-border)] rounded-xl p-6 shadow-sm hover:border-[var(--color-primary)] hover:shadow-md transition-all"
+                >
+                  <div className="w-10 h-10 rounded-lg bg-[var(--color-primary-light)] flex items-center justify-center mb-4">
+                    <FileText size={20} className="text-[var(--color-primary)]" />
                   </div>
-                </div>
-              </div>
+                  <p className="text-lg font-bold text-[var(--color-text-primary)] mb-1">
+                    {group.title}
+                  </p>
+                  <p className="text-sm text-[var(--color-text-secondary)]">
+                    {group.items.length}개 항목
+                  </p>
+                </button>
+              ))}
 
-              {/* Filters */}
-              <div className="flex flex-wrap gap-3">
-                {/* Category Filter */}
-                <div className="flex items-center gap-2">
-                  <Filter size={16} className="text-[var(--color-text-secondary)]" />
-                  <select
-                    value={selectedCategory}
-                    onChange={(e) => setSelectedCategory(e.target.value)}
-                    className="px-3 py-2 border border-[var(--color-border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 text-sm bg-white"
-                    style={{ minHeight: "36px" }}
-                  >
-                    {categories.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Status Filter */}
-                <div className="flex items-center gap-2">
-                  <select
-                    value={selectedStatus}
-                    onChange={(e) => setSelectedStatus(e.target.value)}
-                    className="px-3 py-2 border border-[var(--color-border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 text-sm bg-white"
-                    style={{ minHeight: "36px" }}
-                  >
-                    {statuses.map((status) => (
-                      <option key={status} value={status}>
-                        {status}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="flex flex-col items-center justify-center gap-2 bg-white border-2 border-dashed border-[var(--color-border)] rounded-xl p-6 min-h-[152px] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-colors"
+              >
+                <Plus size={28} />
+                <span className="text-sm font-semibold">매뉴얼 추가</span>
+              </button>
             </div>
+          )}
 
-            {/* Table */}
-            <div className="overflow-x-auto flex-1">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-[var(--color-border)] bg-white">
-                    <th className="px-6 py-4 text-left text-sm font-semibold text-[var(--color-text-primary)]">
-                      매뉴얼명
-                    </th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold text-[var(--color-text-primary)]">
-                      카테고리
-                    </th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold text-[var(--color-text-primary)]">
-                      적용 대상
-                    </th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold text-[var(--color-text-primary)]">
-                      최종 수정
-                    </th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold text-[var(--color-text-primary)]">
-                      상태
-                    </th>
-                    <th className="px-6 py-4 text-left text-sm font-semibold text-[var(--color-text-primary)]">
-                      관리
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredManuals.length > 0 ? (
-                    filteredManuals.map((manual) => (
-                      <tr
-                        key={manual.id}
-                        className="border-b border-[var(--color-border)] hover:bg-[var(--color-bg-surface)] transition-colors cursor-pointer last:border-b-0"
-                      >
-                        <td className="px-6 py-4 text-sm font-medium text-[var(--color-text-primary)]">
-                          {manual.title}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-[var(--color-text-secondary)]">
-                          {manual.category}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-[var(--color-text-secondary)]">
-                          {manual.target}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-[var(--color-text-secondary)]">
-                          {manual.lastModified}
-                        </td>
-                        <td className="px-6 py-4">
-                          <span
-                            className={`px-3 py-2 rounded text-sm font-medium inline-block ${getStatusBadgeColor(
-                              manual.status
-                            )}`}
-                          >
-                            {manual.status}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4">
-                          <button className="p-2 hover:bg-white rounded-lg transition-colors text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]">
-                            <MoreVertical size={18} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td
-                        colSpan={6}
-                        className="px-6 py-8 text-center text-[var(--color-text-secondary)]"
-                      >
-                        검색 결과가 없습니다.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+          {uploadError && (
+            <p className="mt-4 text-sm text-[var(--color-status-error)]">{uploadError}</p>
+          )}
+        </main>
+      </div>
+
+      {/* Delete All Manuals Confirm Modal */}
+      {showDeleteAllConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-sm p-6">
+            <h2 className="text-lg font-bold text-[var(--color-text-primary)] mb-2">
+              매뉴얼 전체 삭제
+            </h2>
+            <p className="text-sm text-[var(--color-text-secondary)] mb-6">
+              등록된 모든 매뉴얼을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
+            </p>
+
+            {deleteAllError && (
+              <p className="mb-4 text-sm text-[var(--color-status-error)]">{deleteAllError}</p>
+            )}
+
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                variant="ghost"
+                onClick={() => setShowDeleteAllConfirm(false)}
+                disabled={isDeletingAll}
+              >
+                취소
+              </Button>
+              <Button variant="danger" isLoading={isDeletingAll} onClick={handleDeleteAll}>
+                전체 삭제
+              </Button>
             </div>
           </div>
-        </main>
+        </div>
+      )}
+
+      {/* Manual Create Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-lg max-h-[85vh] overflow-y-auto p-6 relative">
+            <button
+              onClick={() => {
+                setShowCreateModal(false);
+                resetCreateForm();
+              }}
+              className="absolute top-4 right-4 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]"
+              aria-label="닫기"
+            >
+              <X size={20} />
+            </button>
+
+            <h2 className="text-lg font-bold text-[var(--color-text-primary)] mb-6">
+              매뉴얼 직접 작성
+            </h2>
+
+            <div className="space-y-4">
+              <Input
+                label="주제"
+                placeholder="예: 화장실 청소 관리법"
+                value={createTopic}
+                onChange={(e) => setCreateTopic(e.target.value)}
+              />
+
+              <div className="space-y-3">
+                {createItems.map((item, index) => (
+                  <div key={item.id} className="flex items-start gap-2">
+                    <div className="flex-1">
+                      <label className="mb-2 block text-sm font-semibold text-[var(--color-text-primary)]">
+                        내용 {index + 1}
+                      </label>
+                      <textarea
+                        value={item.content}
+                        onChange={(e) => handleCreateItemChange(item.id, e.target.value)}
+                        rows={3}
+                        className="w-full px-4 py-3 rounded-lg border-2 border-[var(--color-border)] text-base text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary-accent)] focus:ring-2 focus:ring-[var(--color-primary-accent)]/30"
+                      />
+                    </div>
+                    {createItems.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveCreateItem(item.id)}
+                        className="mt-8 p-2 rounded-lg text-[var(--color-text-tertiary)] hover:text-[var(--color-status-error)] hover:bg-red-50 transition-colors"
+                        aria-label="내용 항목 삭제"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={handleAddCreateItem}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg border-2 border-dashed border-[var(--color-border)] text-sm font-semibold text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-colors"
+                >
+                  <Plus size={16} /> 내용 항목 추가
+                </button>
+              </div>
+
+              {createError && (
+                <p className="text-sm text-[var(--color-status-error)]">{createError}</p>
+              )}
+
+              <Button
+                variant="primary"
+                className="w-full"
+                isLoading={isCreating}
+                onClick={handleCreateSubmit}
+              >
+                저장
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Detail / Edit Modal */}
+      {selectedGroup && (
+        <ManualGroupModal
+          group={selectedGroup}
+          onClose={() => setSelectedGroup(null)}
+          onSaved={async (message) => {
+            await fetchManuals();
+            showToast(message);
+          }}
+        />
+      )}
+
+      {/* Toast */}
+      {toastMessage && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] bg-[var(--color-text-primary)] text-white text-sm font-medium px-5 py-3 rounded-lg shadow-lg">
+          {toastMessage}
+        </div>
+      )}
+    </div>
+  );
+}
+
+type EditableItem = {
+  id: string;
+  title: string;
+  content: string;
+  isNew?: boolean;
+};
+
+function ManualGroupModal({
+  group,
+  onClose,
+  onSaved,
+}: {
+  group: ManualGroup;
+  onClose: () => void;
+  onSaved: (message: string) => Promise<void>;
+}) {
+  const [topic, setTopic] = useState(group.title);
+  const [isSavingTopic, setIsSavingTopic] = useState(false);
+  const [items, setItems] = useState<EditableItem[]>(
+    group.items.map((item) => ({ id: item.id, title: item.title, content: item.content })),
+  );
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isSavingAll, setIsSavingAll] = useState(false);
+  const [isDeletingSelected, setIsDeletingSelected] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [error, setError] = useState("");
+
+  const allSelected = items.length > 0 && selectedIds.size === items.length;
+
+  const handleChange = (id: string, value: string) => {
+    setItems((prev) => prev.map((item) => (item.id === id ? { ...item, content: value } : item)));
+  };
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedIds(allSelected ? new Set() : new Set(items.map((item) => item.id)));
+  };
+
+  const handleAddItem = () => {
+    setItems((prev) => [...prev, { id: `new-${crypto.randomUUID()}`, title: "", content: "", isNew: true }]);
+  };
+
+  const handleSaveTopic = async () => {
+    const trimmed = topic.trim();
+
+    if (!trimmed) {
+      setError("주제를 입력해주세요.");
+      return;
+    }
+
+    setIsSavingTopic(true);
+    setError("");
+
+    try {
+      const response = await fetch(`/api/manuals/${group.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: trimmed, category: trimmed }),
+      });
+      const data = (await response.json()) as { error?: string };
+
+      if (!response.ok) {
+        throw new Error(data.error || "주제 저장 중 오류가 발생했습니다.");
+      }
+
+      await onSaved("주제가 저장되었습니다.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "주제 저장 중 오류가 발생했습니다.");
+    } finally {
+      setIsSavingTopic(false);
+    }
+  };
+
+  const handleSaveAll = async () => {
+    setIsSavingAll(true);
+    setError("");
+
+    try {
+      const existingItems = items.filter((item) => !item.isNew);
+      const newItems = items.filter((item) => item.isNew && item.content.trim());
+
+      if (existingItems.length > 0) {
+        const response = await fetch("/api/manuals/batch-update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            manuals: existingItems.map((item) => ({ id: item.id, title: item.title, content: item.content })),
+          }),
+        });
+        const data = (await response.json()) as { error?: string };
+
+        if (!response.ok) {
+          throw new Error(data.error || "일괄 저장 중 오류가 발생했습니다.");
+        }
+      }
+
+      if (newItems.length > 0) {
+        const response = await fetch(`/api/manuals/${group.id}/items`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ items: newItems.map((item) => item.content.trim()) }),
+        });
+        const data = (await response.json()) as { manuals?: ManualRecord[]; error?: string };
+
+        if (!response.ok) {
+          throw new Error(data.error || "새 내용 항목 저장 중 오류가 발생했습니다.");
+        }
+
+        const created = data.manuals ?? [];
+        setItems((prev) => {
+          let createdIndex = 0;
+          return prev.map((item) => {
+            if (item.isNew && item.content.trim() && createdIndex < created.length) {
+              const record = created[createdIndex];
+              createdIndex += 1;
+              return { id: record.id, title: record.title, content: record.content };
+            }
+            return item;
+          });
+        });
+      }
+
+      await onSaved("변경사항이 모두 저장되었습니다.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "일괄 저장 중 오류가 발생했습니다.");
+    } finally {
+      setIsSavingAll(false);
+    }
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedIds.size === 0) {
+      setError("삭제할 항목을 선택해주세요.");
+      return;
+    }
+
+    setIsDeletingSelected(true);
+    setError("");
+
+    try {
+      const selectedItems = items.filter((item) => selectedIds.has(item.id));
+      const persistedIds = selectedItems.filter((item) => !item.isNew).map((item) => item.id);
+
+      if (persistedIds.length > 0) {
+        const response = await fetch("/api/manuals/batch-delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: persistedIds }),
+        });
+        const data = (await response.json()) as { error?: string };
+
+        if (!response.ok) {
+          throw new Error(data.error || "일괄 삭제 중 오류가 발생했습니다.");
+        }
+      }
+
+      setConfirmDelete(false);
+      await onSaved("선택한 항목이 삭제되었습니다.");
+
+      const remaining = items.filter((item) => !selectedIds.has(item.id));
+      setItems(remaining);
+      setSelectedIds(new Set());
+
+      if (remaining.length === 0) {
+        onClose();
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "일괄 삭제 중 오류가 발생했습니다.");
+    } finally {
+      setIsDeletingSelected(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl max-h-[85vh] overflow-y-auto p-6 relative">
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]"
+          aria-label="닫기"
+        >
+          <X size={20} />
+        </button>
+
+        <div className="flex items-end gap-3 mb-4">
+          <div className="flex-1">
+            <Input label="주제" value={topic} onChange={(e) => setTopic(e.target.value)} />
+          </div>
+          <Button variant="outline" size="sm" isLoading={isSavingTopic} onClick={handleSaveTopic}>
+            주제 저장
+          </Button>
+        </div>
+
+        {/* 일괄 컨트롤 액션 바 */}
+        <div className="flex items-center justify-between gap-3 mb-4 p-3 bg-[var(--color-bg-surface)] border border-[var(--color-border)] rounded-lg">
+          <label className="flex items-center gap-2 text-sm font-medium text-[var(--color-text-primary)] cursor-pointer">
+            <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} />
+            전체 선택 ({selectedIds.size}/{items.length})
+          </label>
+          <div className="flex items-center gap-2">
+            {confirmDelete ? (
+              <>
+                <span className="text-sm text-[var(--color-status-error)]">선택한 항목을 삭제할까요?</span>
+                <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
+                  취소
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  isLoading={isDeletingSelected}
+                  onClick={handleDeleteSelected}
+                >
+                  삭제 확정
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={selectedIds.size === 0}
+                  onClick={() => setConfirmDelete(true)}
+                >
+                  선택 삭제
+                </Button>
+                <Button variant="primary" size="sm" isLoading={isSavingAll} onClick={handleSaveAll}>
+                  전체 저장
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {error && <p className="mb-4 text-sm text-[var(--color-status-error)]">{error}</p>}
+
+        <div className="space-y-4">
+          {items.map((item, index) => (
+            <div key={item.id} className="border border-[var(--color-border)] rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  className="mt-3.5 flex-shrink-0"
+                  checked={selectedIds.has(item.id)}
+                  onChange={() => toggleSelected(item.id)}
+                  aria-label="세부 내용 선택"
+                />
+                <div className="flex-1">
+                  <label className="mb-2 block text-sm font-semibold text-[var(--color-text-primary)]">
+                    내용 {index + 1}
+                  </label>
+                  <textarea
+                    value={item.content}
+                    onChange={(e) => handleChange(item.id, e.target.value)}
+                    rows={4}
+                    className="w-full px-4 py-3 rounded-lg border-2 border-[var(--color-border)] text-base text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary-accent)] focus:ring-2 focus:ring-[var(--color-primary-accent)]/30"
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
+
+          <button
+            type="button"
+            onClick={handleAddItem}
+            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg border-2 border-dashed border-[var(--color-border)] text-sm font-semibold text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-colors"
+          >
+            <Plus size={16} /> 내용 항목 추가
+          </button>
+        </div>
       </div>
     </div>
   );
 }
+

@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useLayoutEffect, useEffect, useState, useCallback } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CheckCircle, Clock, Mail, Check, ChevronLeft } from "lucide-react";
 import { Button } from "@/components/common/Button";
@@ -44,7 +43,7 @@ export default function SignupCompletePage() {
     }
 
     // 회원가입 진행 임시 상태 모두 삭제
-    // 실제 계정 정보는 registeredAccounts에서 관리
+    // 실제 계정 정보는 Supabase Auth와 public.profiles에서 관리
     sessionStorage.removeItem("signupRole");
     sessionStorage.removeItem("signupHQProfile");
     sessionStorage.removeItem("signupFranchise");

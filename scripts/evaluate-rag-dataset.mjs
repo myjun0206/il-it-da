@@ -1,21 +1,29 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
 import { loadQuestionSet } from "./rag-eval/question-set.mjs";
 import { loadStoreMap, createStoreMap } from "./rag-eval/store-map.mjs";
 import { runEvaluation } from "./rag-eval/run-evaluation.mjs";
+import { createEvaluationReport, writeEvaluationReport } from "./rag-eval/report.mjs";
 
 const DEFAULT_ENDPOINT = "http://localhost:3000/api/rag/query";
 const VERBOSE_WARNING =
   "상세 모드에서는 질문과 답변 원문이 터미널 또는 CI 로그에 남을 수 있습니다.";
 
-const HELP_TEXT = `Usage: node scripts/evaluate-rag-dataset.mjs --input <question-set.json> --stores <store-map.json> [--endpoint <url>] [--verbose]
+const HELP_TEXT = `Usage: node scripts/evaluate-rag-dataset.mjs --input <question-set.json> --stores <store-map.json> [--endpoint <url>] [--verbose] [--report <report.json>] [--force]
 
 Loads a validated QA question set and store map, calls the local RAG API for
-each case, grades the responses, and prints a de-identified summary.
+each case, grades the responses, and prints a de-identified summary. Optionally
+saves a de-identified JSON report for QA regression comparison and reporting.
 
 Options:
   --input <path>     Path to the QA question set JSON file (required)
   --stores <path>    Path to the store map JSON file (required)
   --endpoint <url>   RAG query endpoint (default: ${DEFAULT_ENDPOINT})
   --verbose          Print question/answer text for each case (local use only)
+  --report <path>    Save a de-identified JSON report to this path (optional)
+  --force            Overwrite an existing --report file
   --help             Show this help message
 
 Exit codes:
@@ -30,6 +38,8 @@ function parseArgs(argv) {
     stores: null,
     endpoint: DEFAULT_ENDPOINT,
     verbose: false,
+    report: null,
+    force: false,
     help: false,
     unknown: [],
   };
@@ -47,7 +57,12 @@ function parseArgs(argv) {
       continue;
     }
 
-    if (arg === "--input" || arg === "--stores" || arg === "--endpoint") {
+    if (arg === "--force") {
+      parsed.force = true;
+      continue;
+    }
+
+    if (arg === "--input" || arg === "--stores" || arg === "--endpoint" || arg === "--report") {
       const value = argv[i + 1];
       if (typeof value !== "string" || value.startsWith("--")) {
         parsed.unknown.push(`${arg} (missing value)`);
@@ -56,6 +71,7 @@ function parseArgs(argv) {
       if (arg === "--input") parsed.input = value;
       if (arg === "--stores") parsed.stores = value;
       if (arg === "--endpoint") parsed.endpoint = value;
+      if (arg === "--report") parsed.report = value;
       i += 1;
       continue;
     }
@@ -64,6 +80,27 @@ function parseArgs(argv) {
   }
 
   return parsed;
+}
+
+function pathsPointToSameFile(a, b) {
+  return path.resolve(a) === path.resolve(b);
+}
+
+function validateReportPath(reportPath, inputPath, force) {
+  if (pathsPointToSameFile(reportPath, inputPath)) {
+    return { valid: false, code: "REPORT_PATH_MATCHES_INPUT" };
+  }
+
+  if (existsSync(reportPath) && !force) {
+    return { valid: false, code: "REPORT_ALREADY_EXISTS" };
+  }
+
+  const reportDir = path.dirname(path.resolve(reportPath));
+  if (!existsSync(reportDir)) {
+    return { valid: false, code: "REPORT_DIRECTORY_NOT_FOUND" };
+  }
+
+  return { valid: true };
 }
 
 function validateEndpoint(rawEndpoint) {
@@ -132,8 +169,8 @@ function createVerboseCaseLogger() {
   };
 }
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
+async function main(argv = process.argv.slice(2), { fetchImpl } = {}) {
+  const args = parseArgs(argv);
 
   if (args.help) {
     console.log(HELP_TEXT);
@@ -160,6 +197,14 @@ async function main() {
   if (!endpointCheck.valid) {
     console.error(`잘못된 --endpoint 값입니다: ${endpointCheck.code}`);
     return 2;
+  }
+
+  if (args.report) {
+    const reportPathCheck = validateReportPath(args.report, args.input, args.force);
+    if (!reportPathCheck.valid) {
+      console.error(`잘못된 --report 값입니다: ${reportPathCheck.code}`);
+      return 2;
+    }
   }
 
   let questionSetResult;
@@ -200,21 +245,39 @@ async function main() {
     questionSet: questionSetResult.data,
     storeMap,
     endpoint: args.endpoint,
+    fetchImpl,
     onCaseResult: args.verbose ? createVerboseCaseLogger() : undefined,
   });
 
   printCaseResults(results);
   printSummary(summary);
 
+  if (args.report) {
+    try {
+      const report = createEvaluationReport(summary, results);
+      writeEvaluationReport(args.report, report, { force: args.force });
+      console.log("리포트가 저장되었습니다.");
+    } catch (error) {
+      console.error(`리포트를 저장하지 못했습니다: ${error.code ?? "UNKNOWN_ERROR"}`);
+      return 2;
+    }
+  }
+
   const hasFailure = results.some((result) => result.error === true || result.pass === false);
   return hasFailure ? 1 : 0;
 }
 
-main()
-  .then((code) => {
-    process.exitCode = code;
-  })
-  .catch((error) => {
-    console.error(`예상치 못한 오류가 발생했습니다: ${error?.code ?? error?.name ?? "UNKNOWN_ERROR"}`);
-    process.exitCode = 2;
-  });
+export { main };
+
+const isDirectlyExecuted = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isDirectlyExecuted) {
+  main()
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((error) => {
+      console.error(`예상치 못한 오류가 발생했습니다: ${error?.code ?? error?.name ?? "UNKNOWN_ERROR"}`);
+      process.exitCode = 2;
+    });
+}

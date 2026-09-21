@@ -29,11 +29,13 @@ export default function SignupStoresPage() {
   useLayoutEffect(() => {
     const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
     if (!savedRole) {
+      console.log("[SIGNUP_STEP4] Redirecting: signupRole is missing");
       router.push("/signup/role");
       return;
     }
     if (savedRole === "hq") {
       // HQ는 organization으로
+      console.log("[SIGNUP_STEP4] Redirecting: HQ role should use organization flow");
       router.push("/signup/organization");
       return;
     }
@@ -42,6 +44,32 @@ export default function SignupStoresPage() {
   useEffect(() => {
     const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
     if (!savedRole) return;
+
+    const profileData = sessionStorage.getItem("signupProfile");
+    console.log("[SIGNUP_STEP4] Loaded profile:", profileData);
+
+    if (!profileData) {
+      console.log("[SIGNUP_STEP4] Redirecting: signupProfile is missing");
+      router.replace("/signup/profile");
+      return;
+    }
+
+    try {
+      const parsedProfile = JSON.parse(profileData) as { email?: unknown; name?: unknown; phone?: unknown };
+      if (
+        typeof parsedProfile.email !== "string" ||
+        typeof parsedProfile.name !== "string" ||
+        typeof parsedProfile.phone !== "string"
+      ) {
+        console.log("[SIGNUP_STEP4] Redirecting: signupProfile is invalid", parsedProfile);
+        router.replace("/signup/profile");
+        return;
+      }
+    } catch (error) {
+      console.log("[SIGNUP_STEP4] Redirecting: failed to parse signupProfile", error);
+      router.replace("/signup/profile");
+      return;
+    }
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setRole(savedRole);
@@ -93,7 +121,7 @@ export default function SignupStoresPage() {
     if (restoredStores.length > 0) {
       setSelectedStores(restoredStores);
     }
-  }, []);
+  }, [router]);
 
   if (!role) {
     return null;
