@@ -1,3 +1,16 @@
+import { pathToFileURL } from "node:url";
+
+import {
+  ERROR_CODES,
+  VERBOSE_WARNING,
+  buildErrorResult,
+  buildReviewWarnings,
+  buildSummaryRow,
+  buildVerboseDetail,
+  formatScore,
+  getSafeEndpointOrigin,
+} from "./rag-eval/evaluate-rag-log.mjs";
+
 const BASE_URL = process.env.RAG_EVAL_BASE_URL ?? "http://localhost:3000/api/rag/query";
 
 const STORES = {
@@ -83,24 +96,7 @@ const OUT_OF_SCOPE_QUESTIONS = [
   "매뉴얼에 없는 임의의 질문에 답해줘.",
 ];
 
-const CASES = [
-  ...POSITIVE_CASES.map(([storeKey, question, expectedCategory, expectedAnswer]) =>
-    createCase(storeKey, question, expectedCategory, true, expectedAnswer),
-  ),
-  ...Object.keys(STORES).flatMap((storeKey) =>
-    OUT_OF_SCOPE_QUESTIONS.map((question) =>
-      createCase(storeKey, question, "범위 밖", false),
-    ),
-  ),
-];
-
-function createCase(
-  storeKey,
-  question,
-  expectedCategory,
-  positive,
-  expectedAnswer = "-",
-) {
+function createCase(storeKey, question, expectedCategory, positive, expectedAnswer = "-") {
   const store = STORES[storeKey];
   return {
     store: store.name,
@@ -112,9 +108,16 @@ function createCase(
   };
 }
 
-function formatScore(value) {
-  return typeof value === "number" && Number.isFinite(value) ? value.toFixed(4) : "-";
-}
+const CASES = [
+  ...POSITIVE_CASES.map(([storeKey, question, expectedCategory, expectedAnswer]) =>
+    createCase(storeKey, question, expectedCategory, true, expectedAnswer),
+  ),
+  ...Object.keys(STORES).flatMap((storeKey) =>
+    OUT_OF_SCOPE_QUESTIONS.map((question) =>
+      createCase(storeKey, question, "범위 밖", false),
+    ),
+  ),
+].map((testCase, index) => ({ ...testCase, caseId: index + 1 }));
 
 function getTopMatch(payload) {
   if (!payload || !Array.isArray(payload.matches)) return null;
@@ -122,9 +125,12 @@ function getTopMatch(payload) {
   return topMatch && typeof topMatch === "object" ? topMatch : null;
 }
 
-async function evaluateCase(testCase) {
+// fetchImpl is injectable so tests can exercise every branch below without making a
+// real network call. `npm run eval:rag` always uses the default global fetch.
+async function evaluateCase(testCase, { fetchImpl = fetch, baseUrl = BASE_URL } = {}) {
+  let response;
   try {
-    const response = await fetch(BASE_URL, {
+    response = await fetchImpl(baseUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -132,89 +138,74 @@ async function evaluateCase(testCase) {
         storeId: testCase.storeId,
       }),
     });
-    const payload = await response.json();
-    const topMatch = getTopMatch(payload);
-
-    return {
-      ...testCase,
-      actualAnswer: typeof payload?.answer === "string" ? payload.answer : "",
-      topTitle: typeof topMatch?.title === "string" ? topMatch.title : "-",
-      topManualId: typeof payload?.source?.manualId === "string" ? payload.source.manualId : "-",
-      topCategory: typeof topMatch?.category === "string" ? topMatch.category : "-",
-      rawSimilarity: topMatch?.rawSimilarity,
-      keywordBoost: topMatch?.keywordBoost,
-      finalSimilarity: topMatch?.similarity,
-      status: typeof payload?.status === "string" ? payload.status : `HTTP ${response.status}`,
-    };
-  } catch (error) {
-    return {
-      ...testCase,
-      actualAnswer: "",
-      topTitle: "-",
-      topManualId: "-",
-      topCategory: "-",
-      rawSimilarity: null,
-      keywordBoost: null,
-      finalSimilarity: null,
-      status: error instanceof Error ? `error: ${error.message}` : "error: unknown",
-    };
+  } catch {
+    return buildErrorResult(testCase, { errorCode: ERROR_CODES.NETWORK_ERROR });
   }
-}
 
-function getPositiveReviewWarnings(result) {
-  const warnings = [];
-  if (
-    typeof result.actualAnswer !== "string" ||
-    result.actualAnswer.trim().length === 0
-  ) {
-    warnings.push("WARNING: actualAnswer is empty.");
-  }
-  if (result.topManualId === "-") {
-    warnings.push("WARNING: source is missing.");
-  }
-  return warnings;
-}
-
-function printPositiveAnswerDetails(results) {
-  console.log("\nPositive answer review details");
-
-  results
-    .filter((result) => result.positive)
-    .forEach((result, index) => {
-      const warnings = getPositiveReviewWarnings(result);
-
-      console.log(`\n[Positive QA ${index + 1}]`);
-      console.log(`store: ${result.store}`);
-      console.log(`question: ${result.question}`);
-      console.log(`expectedAnswer: ${result.expectedAnswer}`);
-      console.log(`actualAnswer: ${result.actualAnswer || "-"}`);
-      console.log(`topTitle: ${result.topTitle}`);
-      console.log(`topManualId: ${result.topManualId}`);
-      console.log(`topCategory: ${result.topCategory}`);
-      console.log(`rawSimilarity: ${formatScore(result.rawSimilarity)}`);
-      console.log(`keywordBoost: ${formatScore(result.keywordBoost)}`);
-      console.log(`finalSimilarity: ${formatScore(result.finalSimilarity)}`);
-      console.log(`status: ${result.status}`);
-
-      for (const warning of warnings) {
-        console.warn(warning);
-      }
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    return buildErrorResult(testCase, {
+      errorCode: ERROR_CODES.INVALID_JSON_RESPONSE,
+      httpStatus: response.status,
     });
+  }
+
+  if (!response.ok) {
+    return buildErrorResult(testCase, {
+      errorCode: ERROR_CODES.HTTP_ERROR,
+      httpStatus: response.status,
+      ragStatus: typeof payload?.status === "string" ? payload.status : null,
+    });
+  }
+
+  if (typeof payload?.answer !== "string" || typeof payload?.status !== "string") {
+    return buildErrorResult(testCase, {
+      errorCode: ERROR_CODES.MISSING_RESPONSE_FIELDS,
+      httpStatus: response.status,
+    });
+  }
+
+  const topMatch = getTopMatch(payload);
+
+  return {
+    ...testCase,
+    actualAnswer: payload.answer,
+    topTitle: typeof topMatch?.title === "string" ? topMatch.title : "-",
+    topManualId: typeof payload?.source?.manualId === "string" ? payload.source.manualId : "-",
+    topCategory: typeof topMatch?.category === "string" ? topMatch.category : "-",
+    rawSimilarity: typeof topMatch?.rawSimilarity === "number" ? topMatch.rawSimilarity : null,
+    keywordBoost: typeof topMatch?.keywordBoost === "number" ? topMatch.keywordBoost : null,
+    finalSimilarity: typeof topMatch?.similarity === "number" ? topMatch.similarity : null,
+    httpStatus: response.status,
+    ragStatus: payload.status,
+    errorCode: null,
+  };
 }
 
 function printResults(results) {
-  console.table(results.map((result) => ({
-    store: result.store,
-    question: result.question,
-    expectedCategory: result.expectedCategory,
-    topTitle: result.topTitle,
-    topManualId: result.topManualId,
-    topCategory: result.topCategory,
-    rawSimilarity: formatScore(result.rawSimilarity),
-    keywordBoost: formatScore(result.keywordBoost),
-    finalSimilarity: formatScore(result.finalSimilarity),
-    status: result.status,
-  })));
+  console.table(results.map(buildSummaryRow));
+}
+
+function printVerboseDetails(results) {
+  console.warn(VERBOSE_WARNING);
+  console.log("\nVerbose answer review (question/answer text only)");
+
+  for (const result of results) {
+    const detail = buildVerboseDetail(result);
+    console.log(`\n[case ${detail.case}]`);
+    console.log(`question: ${detail.question}`);
+    console.log(`expectedAnswer: ${detail.expectedAnswer}`);
+    console.log(`actualAnswer: ${detail.actualAnswer}`);
+  }
+}
+
+function printReviewWarnings(results) {
+  const warnings = results.filter((result) => result.positive).flatMap(buildReviewWarnings);
+  for (const warning of warnings) {
+    console.warn(warning);
+  }
 }
 
 function printDistribution(label, results) {
@@ -238,14 +229,45 @@ function printDistribution(label, results) {
   }
 }
 
-const results = [];
-for (const testCase of CASES) {
-  results.push(await evaluateCase(testCase));
+async function main(argv = process.argv.slice(2)) {
+  const verbose = argv.includes("--verbose");
+  const safeOrigin = getSafeEndpointOrigin(BASE_URL);
+
+  const results = [];
+  for (const testCase of CASES) {
+    results.push(await evaluateCase(testCase));
+  }
+
+  console.log(`RAG evaluation endpoint (origin/path only): ${safeOrigin ?? "[unavailable]"}`);
+  console.log(`Cases: ${results.length} (${POSITIVE_CASES.length} positive, ${results.length - POSITIVE_CASES.length} negative)`);
+  printResults(results);
+  printReviewWarnings(results);
+
+  if (verbose) {
+    printVerboseDetails(results);
+  }
+
+  printDistribution("Positive", results.filter((result) => result.positive));
+  printDistribution("Negative", results.filter((result) => !result.positive));
 }
 
-console.log(`RAG evaluation endpoint: ${BASE_URL}`);
-console.log(`Cases: ${results.length} (${POSITIVE_CASES.length} positive, ${results.length - POSITIVE_CASES.length} negative)`);
-printResults(results);
-printPositiveAnswerDetails(results);
-printDistribution("Positive", results.filter((result) => result.positive));
-printDistribution("Negative", results.filter((result) => !result.positive));
+export {
+  CASES,
+  STORES,
+  createCase,
+  evaluateCase,
+  formatScore,
+  getTopMatch,
+  main,
+  printDistribution,
+  printResults,
+  printReviewWarnings,
+  printVerboseDetails,
+};
+
+const isDirectlyExecuted = process.argv[1] !== undefined
+  && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isDirectlyExecuted) {
+  await main();
+}

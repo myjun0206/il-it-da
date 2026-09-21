@@ -2,6 +2,15 @@
 
 RAG QA 질문셋은 **JSON 배열**을 최상위 구조로 사용합니다. 각 배열 항목은 하나의 평가 케이스입니다.
 
+## 고정 예제 스크립트(`npm run eval:rag`)의 로그 정책
+
+`scripts/evaluate-rag.mjs`(`npm run eval:rag`)의 기본 출력에는 질문/답변 원문, 매장명, storeId,
+매뉴얼 제목·ID, endpoint 전체 URL, 원본 오류 메시지가 포함되지 않습니다. 케이스 번호, 상태 코드,
+`NETWORK_ERROR`/`HTTP_ERROR`/`INVALID_JSON_RESPONSE`/`MISSING_RESPONSE_FIELDS` 같은 고정 오류
+코드, 유사도 숫자만 표시됩니다. `--verbose`를 추가하면 시작 시 경고가 한 번 출력된 뒤 질문/답변
+원문만 추가로 표시되며, storeId·UUID·토큰은 `--verbose`에서도 출력되지 않습니다. 이 명령은 로컬
+확인용으로만 사용하고 CI 로그에 남기지 않습니다.
+
 ## 필수 필드
 
 | 필드 | 타입 | 허용값 |
