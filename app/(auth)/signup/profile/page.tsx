@@ -139,10 +139,9 @@ function HQSignupProfile() {
     }
 
     const normalizedEmail = normalizeEmail(formData.companyEmail);
-    const domain = normalizedEmail.split("@")[1] ?? "";
 
-    // 개발 환경: 테스트 이메일 확인
-    if (isDev() && DEV_TEST_EMAILS.some((email) => normalizeEmail(email).endsWith("@" + domain))) {
+    // 개발 환경: 등록된 테스트 이메일만 mock 발송 허용
+    if (isDev() && DEV_TEST_EMAILS.some((email) => normalizeEmail(email) === normalizedEmail)) {
       setIsSendingVerification(true);
       setVerificationError("");
       setTimeout(() => {
@@ -152,25 +151,7 @@ function HQSignupProfile() {
       return;
     }
 
-    if (isDev()) {
-      setIsSendingVerification(true);
-      setVerificationError("");
-
-      try {
-        // TODO: 실제 API 연결
-        setTimeout(() => {
-          setEmailVerificationSent(true);
-          setIsSendingVerification(false);
-        }, 600);
-      } catch {
-        setVerificationError("인증번호 발송 중 오류가 발생했습니다.");
-        setIsSendingVerification(false);
-      }
-      return;
-    }
-
-    // 운영 환경: 실제 이메일 발송 API(007)가 아직 연결되지 않아 발송 성공으로 표시하지 않는다 (fail closed)
-    // TODO: 007 API 연결 후 이 분기를 실제 이메일 발송 API 호출로 교체
+    // 실제 이메일 발송 API(007)가 아직 연결되지 않아 성공으로 표시하지 않는다 (fail closed)
     setVerificationError("현재 이메일 인증 서비스를 사용할 수 없습니다.");
   };
 
@@ -194,6 +175,7 @@ function HQSignupProfile() {
 
   const handleVerifyCode = async () => {
     const normalizedCode = verificationCode.trim();
+    setEmailVerified(false);
 
     if (!normalizedCode || normalizedCode.length < 6) {
       setVerificationError("인증번호를 정확히 입력해주세요.");
@@ -231,27 +213,7 @@ function HQSignupProfile() {
       return;
     }
 
-    if (isDev()) {
-      setIsVerifying(true);
-      setVerificationError("");
-
-      try {
-        // TODO: 실제 API 연결 - 서버에서 검증 후 도메인 추출
-        setTimeout(() => {
-          const franchise = findFranchiseForEmail(normalizedEmail);
-          setEmailVerified(true);
-          setIsVerifying(false);
-          applyFranchiseResult(franchise, normalizedEmail);
-        }, 600);
-      } catch {
-        setVerificationError("인증 확인 중 오류가 발생했습니다.");
-        setIsVerifying(false);
-      }
-      return;
-    }
-
-    // 운영 환경: 실제 이메일 인증 API(007)가 아직 연결되지 않아 성공 처리하지 않는다 (fail closed)
-    // TODO: 007 API 연결 후 이 분기를 실제 서버 인증 호출로 교체
+    // 실제 이메일 인증 API(007)가 아직 연결되지 않아 성공 처리하지 않는다 (fail closed)
     setVerificationError("현재 이메일 인증 서비스를 사용할 수 없습니다.");
   };
 
