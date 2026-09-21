@@ -42,3 +42,10 @@ npm run verify:poc
 - 이 러너는 각 단계의 명령 전체 문자열, 환경변수 값, 파일 내용, 질문·답변 원문, UUID, API 키, 토큰을 별도로 출력하지 않습니다. 각 자식 프로세스(예: 테스트, 빌드)의 정상 출력은 그대로 콘솔에 표시됩니다.
 - Windows PowerShell, macOS, Linux, GitHub Actions에서 동일하게 동작하도록 Node.js `child_process`만 사용하며 셸 전용 문법에 의존하지 않습니다.
 - 이 명령은 실제 Supabase/OpenAI 호출을 추가하지 않으며, 기존 `check:integration`/`test:integration`/`test:rag`/`test:rag-eval`/`lint`/`build`가 하던 동작만 순서대로 실행합니다.
+
+## PR 템플릿 사용하기
+
+GitHub에서 develop을 대상으로 PR을 생성하면 `.github/pull_request_template.md`가 자동으로
+채워집니다. PR 설명에서 `npm run verify:poc` 통과 여부를 대표 검증으로 기록하고, 개별 명령은
+`verify:poc`가 실패했거나 특정 단계만 다시 확인해야 할 때만 추가로 기록하세요. 마이그레이션·환경변수·
+보안 점검 항목은 해당 사항이 없어도 지우지 말고 "N/A"로 표시합니다.
