@@ -35,6 +35,7 @@ export default function HQSidebar({
       id: "manual",
       label: "매뉴얼 관리",
       icon: BookOpen,
+      href: "/hq/manuals",
       submenu: [
         { id: "manual-common", label: "공통 매뉴얼 관리" },
         { id: "manual-store", label: "지점 매뉴얼 보기" },

@@ -16,6 +16,23 @@ interface StoreApprovalState {
   requestedAt?: string;
 }
 
+function clearSignupSessionStorage() {
+  sessionStorage.removeItem("signupRole");
+  sessionStorage.removeItem("signupTerms");
+  sessionStorage.removeItem("signupHQProfile");
+  sessionStorage.removeItem("signupProfile");
+  sessionStorage.removeItem("signupFranchise");
+  sessionStorage.removeItem("signupFranchiseConfirmed");
+  sessionStorage.removeItem("signupFranchiseName");
+  sessionStorage.removeItem("signupBrand");
+  sessionStorage.removeItem("signupStores");
+  sessionStorage.removeItem("signupSelectedStores");
+  sessionStorage.removeItem("signupStoreApprovals");
+  sessionStorage.removeItem("signupApprovalStatus");
+  sessionStorage.removeItem("signupApprovalSubmittedAt");
+  sessionStorage.removeItem("signupVerified");
+}
+
 // 타임스탬프를 한국식 날짜로 포맷
 function formatTimestamp(timestamp?: string): string {
   if (!timestamp) return "-";
@@ -43,6 +60,7 @@ export default function SignupApprovalPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [submittingStoreIds, setSubmittingStoreIds] = useState<Set<string>>(new Set());
+  const [submissionError, setSubmissionError] = useState("");
 
   // 역할 확인 및 라우팅
   useLayoutEffect(() => {
@@ -147,23 +165,62 @@ export default function SignupApprovalPage() {
     setSelectedStores((prev) => prev.filter((store) => store.id !== storeId));
   };
 
+  const submitSignup = async (storesToSubmit: Store[]) => {
+    const profileData = sessionStorage.getItem("signupProfile");
+    const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
+
+    if (!profileData || !savedRole) {
+      setSubmissionError("회원가입 정보를 찾을 수 없습니다. 기본 정보부터 다시 입력해주세요.");
+      return false;
+    }
+
+    try {
+      const profile = JSON.parse(profileData) as {
+        email?: string;
+        password?: string;
+        name?: string;
+        phone?: string;
+      };
+      const response = await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: profile.email,
+          password: profile.password,
+          name: profile.name,
+          phone: profile.phone,
+          role: savedRole,
+          selectedStoreIds: storesToSubmit.map((store) => store.id),
+          selectedStores: storesToSubmit,
+        }),
+      });
+      const data = (await response.json()) as { userId?: string; error?: string; detail?: string };
+
+      if (!response.ok || !data.userId) {
+        throw new Error(data.detail || data.error || "회원가입 중 오류가 발생했습니다.");
+      }
+
+      clearSignupSessionStorage();
+  router.push("/");
+      return true;
+    } catch (error) {
+      console.error("회원가입 승인 요청 실패:", error);
+      setSubmissionError(error instanceof Error ? error.message : "회원가입 승인 요청 중 오류가 발생했습니다.");
+      return false;
+    }
+  };
+
   const handleRequestApproval = async (storeId: string) => {
+    setSubmissionError("");
     setSubmittingStoreIds((prev) => new Set(prev).add(storeId));
 
-    // 승인 요청 시뮬레이션
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    const store = selectedStores.find((item) => item.id === storeId);
 
-    setStoreApprovals((prev) =>
-      prev.map((item) =>
-        item.store.id === storeId
-          ? {
-              ...item,
-              status: "pending" as ApprovalStatus,
-              requestedAt: new Date().toISOString(),
-            }
-          : item
-      )
-    );
+    if (store) {
+      await submitSignup([store]);
+    } else {
+      setSubmissionError("선택한 매장 정보를 찾을 수 없습니다.");
+    }
 
     setSubmittingStoreIds((prev) => {
       const next = new Set(prev);
@@ -186,32 +243,10 @@ export default function SignupApprovalPage() {
     if (requestableApprovals.length === 0) return;
 
     setIsLoading(true);
+    setSubmissionError("");
 
-    // 모든 신청 가능한 요청 제출
-    await new Promise((resolve) => setTimeout(resolve, 800));
-
-    // 새로운 상태 계산
-    const updatedApprovals = storeApprovals.map((item) =>
-      item.status === "requestable"
-        ? {
-            ...item,
-            status: "pending" as ApprovalStatus,
-            requestedAt: new Date().toISOString(),
-          }
-        : item
-    );
-
-    // 즉시 sessionStorage 업데이트
-    sessionStorage.setItem("signupStoreApprovals", JSON.stringify(updatedApprovals));
-    sessionStorage.setItem("signupApprovalStatus", "submitted");
-    sessionStorage.setItem("signupApprovalSubmittedAt", new Date().toISOString());
-
-    // 그 다음에 상태 업데이트
-    setStoreApprovals(updatedApprovals);
+    await submitSignup(requestableApprovals.map((item) => item.store));
     setIsLoading(false);
-
-    // 승인 현황 페이지로 이동
-    router.push("/signup/approval-status");
   };
 
   const handlePrevious = () => {
@@ -341,6 +376,12 @@ export default function SignupApprovalPage() {
                     </Button>
                   </div>
                 </div>
+
+                {submissionError && (
+                  <p className="mb-4 rounded-lg border border-[var(--color-status-error)]/20 bg-red-50 px-4 py-3 text-sm text-[var(--color-status-error)]">
+                    {submissionError}
+                  </p>
+                )}
 
                 {/* Store Approval Cards */}
                 <div className="space-y-3">

@@ -16,6 +16,7 @@ const staff = [
 type UploadState = "idle" | "loading" | "success" | "error";
 
 export default function BossPage() {
+  
   const router = useRouter();
   const [activeTab, setActiveTab] = useState("대시보드");
   const [guideText, setGuideText] = useState("");
