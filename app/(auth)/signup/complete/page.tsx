@@ -35,7 +35,7 @@ export default function SignupCompletePage() {
   // 로그인 화면으로 이동 - 임시 회원가입 상태 초기화
   const handleGoToLogin = useCallback(() => {
     // 회원가입 진행 임시 상태 모두 삭제
-    // 실제 계정 정보는 registeredAccounts에서 관리
+    // 실제 계정 정보는 Supabase Auth와 public.profiles에서 관리
     sessionStorage.removeItem("signupRole");
     sessionStorage.removeItem("signupHQProfile");
     sessionStorage.removeItem("signupFranchise");
@@ -219,7 +219,7 @@ export default function SignupCompletePage() {
                   </Button>
                 </Link>
 
-                <Link href="/login" className="block mt-3">
+                <Link href="/" className="block mt-3">
                   <Button
                     type="button"
                     variant="outline"
