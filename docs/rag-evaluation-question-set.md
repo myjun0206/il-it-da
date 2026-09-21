@@ -11,6 +11,38 @@ RAG QA 질문셋은 **JSON 배열**을 최상위 구조로 사용합니다. 각 
 원문만 추가로 표시되며, storeId·UUID·토큰은 `--verbose`에서도 출력되지 않습니다. 이 명령은 로컬
 확인용으로만 사용하고 CI 로그에 남기지 않습니다.
 
+## RAG 임계값 오프라인 보정 도구(`npm run calibrate:rag-thresholds`)
+
+`scripts/calibrate-rag-thresholds.mjs`는 질문·답변 원문 없이 비식별 평가 결과(`caseId`,
+`questionId`, `groupId`, `partition`, `expectedStatus`, `similarity`, `answerCorrect`, `scopeSafe`)만
+입력받아 answered/cautious 임계값 후보 조합별 품질 지표를 비교하는 오프라인 도구입니다. 실제
+Supabase/OpenAI API를 호출하지 않고, **현재 런타임 임계값(`app/api/rag/query/route.ts`의
+0.60/0.40)을 변경하지 않습니다.** 이 도구는 특정 값을 "최적값"으로 자동 확정하지 않고, 항상
+0.60/0.40 baseline과 함께 안전 우선순위(격리 실패 → 오답 → 정밀도 → macroF1 → coverage)로 정렬된
+"상위 후보" 목록만 보여주며 최종 판단은 사람이 합니다.
+
+```bash
+npm run calibrate:rag-thresholds -- --input examples/rag-eval/threshold-calibration.example.json
+```
+
+- 후보 임계값은 `calibration` 파티션 데이터로만 순위를 매기고, 상위 후보와 baseline을 `validation`
+  파티션에도 동일하게 적용해 나란히 출력합니다. `validation`이 없으면 경고만 출력하고 계속 진행합니다.
+- 같은 `groupId`가 `calibration`/`validation` 양쪽에 있으면 `GROUP_PARTITION_LEAKAGE` 경고를
+  출력합니다.
+- `similarity`는 `null` 또는 **-1~1** 범위의 유한 숫자만 허용합니다(0~1이 아님). 실제 API의 최종
+  `similarity_score`는 SQL에서 `least(1.0, raw_similarity_score + keyword_boost)`로 계산되어
+  상한은 1.0으로 고정되지만 하한은 강제되지 않아 음수(최소 -1)가 될 수 있으며, 이는
+  `question_logs.similarity_score`의 `CHECK (between -1 and 1)` 제약과도 일치합니다. 범위를
+  벗어난 값은 조용히 clamp하지 않고 `INVALID_SIMILARITY` 오류로 거부합니다.
+- `scopeSafe=false` 사례가 하나라도 있거나 `calibration`/`validation`에 동일 `groupId`가 있으면
+  분석 결과의 `calibrationEligible`이 `false`로 표시되고, "임계값으로 해결할 수 없는 문제"라는 고정
+  안내가 함께 출력됩니다. 이 경우 결과는 배포 가능한 추천이나 선택 가능한 최종 후보가 아니라 진단
+  참고용이며, 종료 코드는 여전히 `0`(품질 경고)입니다.
+- 입력 스키마와 예제는 [`examples/rag-eval/threshold-calibration.example.json`](../examples/rag-eval/threshold-calibration.example.json)를 참고하세요. 이 예제는 가상 데이터이며 실제 평가 결과가 아닙니다.
+- 종료 코드: `0` = 분석 성공(품질 결과 자체는 실패로 처리하지 않음), `2` = 인자·파일·JSON·스키마 오류.
+- `--top`, `--step`, `--answered-min/max`, `--cautious-min/max` 옵션으로 후보 개수와 그리드 범위를
+  조정할 수 있습니다. 자세한 옵션은 `--help`로 확인하세요.
+
 ## 필수 필드
 
 | 필드 | 타입 | 허용값 |
