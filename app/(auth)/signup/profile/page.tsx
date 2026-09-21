@@ -15,6 +15,9 @@ import {
 // 개발 환경 여부 확인
 const isDev = () => typeof window !== 'undefined' && process.env.NODE_ENV === "development";
 
+// 이메일 정규화: 앞뒤 공백 제거 + 소문자 변환(테스트 이메일/도메인 비교에 공통 사용)
+const normalizeEmail = (value: string) => value.trim().toLowerCase();
+
 // Mock franchise domains - 실제 DB/API로 교체 가능
 const FRANCHISE_DOMAINS: Record<string, { name: string; id: string }> = {
   "megamgc.com": { name: "메가MGC커피", id: "brand_mega" },
@@ -22,6 +25,14 @@ const FRANCHISE_DOMAINS: Record<string, { name: string; id: string }> = {
   "bhc.com": { name: "BHC 치킨", id: "brand_002" },
   "nene.com": { name: "네네치킨", id: "brand_003" },
   "companiongroup.com": { name: "Companion Group", id: "brand_004" },
+};
+
+// 정규화된 이메일로 프랜차이즈 조회: 개발 환경 테스트 매핑 우선, 없으면 실제 도메인 매핑으로 폴백
+const findFranchiseForEmail = (email: string) => {
+  const normalizedEmail = normalizeEmail(email);
+  const domain = normalizedEmail.split("@")[1] ?? "";
+
+  return (isDev() ? DEV_TEST_EMAIL_FRANCHISE_MAP[normalizedEmail] : undefined) ?? FRANCHISE_DOMAINS[domain];
 };
 
 // ============= HQ 전용 기본정보 화면 =============
@@ -127,9 +138,10 @@ function HQSignupProfile() {
       return;
     }
 
-    // 개발 환경: 테스트 이메일 확인
-    const domain = formData.companyEmail.split("@")[1]?.toLowerCase();
-    if (isDev() && DEV_TEST_EMAILS.some((email) => email.endsWith("@" + domain))) {
+    const normalizedEmail = normalizeEmail(formData.companyEmail);
+
+    // 개발 환경: 등록된 테스트 이메일만 mock 발송 허용
+    if (isDev() && DEV_TEST_EMAILS.some((email) => normalizeEmail(email) === normalizedEmail)) {
       setIsSendingVerification(true);
       setVerificationError("");
       setTimeout(() => {
@@ -139,36 +151,21 @@ function HQSignupProfile() {
       return;
     }
 
-    if (isDev()) {
-      setIsSendingVerification(true);
-      setVerificationError("");
-
-      try {
-        // TODO: 실제 API 연결
-        setTimeout(() => {
-          setEmailVerificationSent(true);
-          setIsSendingVerification(false);
-        }, 600);
-      } catch {
-        setVerificationError("인증번호 발송 중 오류가 발생했습니다.");
-        setIsSendingVerification(false);
-      }
-      return;
-    }
-
-    // 운영 환경: 실제 이메일 발송 API(007)가 아직 연결되지 않아 발송 성공으로 표시하지 않는다 (fail closed)
-    // TODO: 007 API 연결 후 이 분기를 실제 이메일 발송 API 호출로 교체
+    // 실제 이메일 발송 API(007)가 아직 연결되지 않아 성공으로 표시하지 않는다 (fail closed)
     setVerificationError("현재 이메일 인증 서비스를 사용할 수 없습니다.");
   };
 
-  // 정규화된 이메일로 프랜차이즈를 확인: 테스트 매핑 우선, 없으면 실제 도메인 매핑으로 폴백
-  const applyFranchiseForEmail = (normalizedEmail: string) => {
-    const domain = normalizedEmail.split("@")[1] ?? "";
-    const franchise =
-      (isDev() && DEV_TEST_EMAIL_FRANCHISE_MAP[normalizedEmail]) || FRANCHISE_DOMAINS[domain];
-
+  // 조회된 프랜차이즈(없을 수도 있음)를 그대로 state에 반영: 직전에 설정한 state가 아니라 방금 조회한 지역변수만 사용
+  const applyFranchiseResult = (
+    franchise: { name: string; id: string } | undefined,
+    normalizedEmail: string,
+  ) => {
     if (franchise) {
-      setFranchiseConfirmation({ domain, name: franchise.name, id: franchise.id });
+      setFranchiseConfirmation({
+        domain: normalizedEmail.split("@")[1] ?? "",
+        name: franchise.name,
+        id: franchise.id,
+      });
       setFranchiseNotFound(false);
     } else {
       setFranchiseNotFound(true);
@@ -178,18 +175,18 @@ function HQSignupProfile() {
 
   const handleVerifyCode = async () => {
     const normalizedCode = verificationCode.trim();
+    setEmailVerified(false);
 
     if (!normalizedCode || normalizedCode.length < 6) {
       setVerificationError("인증번호를 정확히 입력해주세요.");
       return;
     }
 
-    const normalizedEmail = formData.companyEmail.trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(formData.companyEmail);
 
     // 개발 환경 + 등록된 테스트 이메일일 때만 테스트 인증번호를 허용
     const isDevTestEmail =
-      isDev() &&
-      DEV_TEST_EMAILS.some((email) => email.trim().toLowerCase() === normalizedEmail);
+      isDev() && DEV_TEST_EMAILS.some((email) => normalizeEmail(email) === normalizedEmail);
 
     // 등록된 테스트 이메일은 오직 지정된 테스트 인증번호로만 통과될 수 있다(일반 경로로 폴백하지 않음)
     if (isDevTestEmail) {
@@ -202,9 +199,10 @@ function HQSignupProfile() {
       setVerificationError("");
 
       setTimeout(() => {
+        const franchise = findFranchiseForEmail(normalizedEmail);
         setEmailVerified(true);
         setIsVerifying(false);
-        applyFranchiseForEmail(normalizedEmail);
+        applyFranchiseResult(franchise, normalizedEmail);
       }, 600);
       return;
     }
@@ -215,26 +213,7 @@ function HQSignupProfile() {
       return;
     }
 
-    if (isDev()) {
-      setIsVerifying(true);
-      setVerificationError("");
-
-      try {
-        // TODO: 실제 API 연결 - 서버에서 검증 후 도메인 추출
-        setTimeout(() => {
-          setEmailVerified(true);
-          setIsVerifying(false);
-          applyFranchiseForEmail(normalizedEmail);
-        }, 600);
-      } catch {
-        setVerificationError("인증 확인 중 오류가 발생했습니다.");
-        setIsVerifying(false);
-      }
-      return;
-    }
-
-    // 운영 환경: 실제 이메일 인증 API(007)가 아직 연결되지 않아 성공 처리하지 않는다 (fail closed)
-    // TODO: 007 API 연결 후 이 분기를 실제 서버 인증 호출로 교체
+    // 실제 이메일 인증 API(007)가 아직 연결되지 않아 성공 처리하지 않는다 (fail closed)
     setVerificationError("현재 이메일 인증 서비스를 사용할 수 없습니다.");
   };
 

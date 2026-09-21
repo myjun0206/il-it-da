@@ -14,6 +14,15 @@ const PRIORITIES = new Set(["high", "medium", "low"]);
 const MAX_QUESTION_LENGTH = 2_000;
 const UTF8_BOM_CHAR_CODE = 0xfeff;
 
+/** Canonical enum value lists, exposed so other tools (e.g. the analyzer) never redeclare the schema. */
+export const QUESTION_SET_ENUMS = {
+  questionType: [...QUESTION_TYPES],
+  targetStore: [...TARGET_STORES],
+  expectedStatus: [...EXPECTED_STATUSES],
+  manualScope: [...MANUAL_SCOPES],
+  priority: [...PRIORITIES],
+};
+
 function isNonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
 }

@@ -68,7 +68,9 @@ Excel 원본 작성
 → "CSV UTF-8(쉼표로 분리)"로 저장
 → convert:rag-dataset 실행
 → validate:rag-dataset 실행
+→ analyze:rag-dataset 실행(분포·완성도·품질 경고 확인)
 → 로컬 서버 실행 후 eval:rag-dataset 실행
+→ compare:rag-reports로 이전 리포트와 회귀 여부 비교
 ```
 
 > ⚠️ Excel에서 내보낼 때 반드시 **"CSV UTF-8(쉼표로 분리)"** 를 선택해야 합니다. 일반 "CSV(쉼표로
@@ -123,7 +125,7 @@ npm run convert:rag-dataset -- --input <question-set.csv> --output <question-set
 ## 평가 실행 명령
 
 ```
-node scripts/evaluate-rag-dataset.mjs --input <question-set.json> --stores <store-map.json> [--endpoint <url>] [--verbose]
+node scripts/evaluate-rag-dataset.mjs --input <question-set.json> --stores <store-map.json> [--endpoint <url>] [--verbose] [--report <report.json>] [--force]
 ```
 
 - 기본 출력에는 case ID, expected/actual status, status·keyword·forbidden 판정, pass/fail, 전체
@@ -132,6 +134,26 @@ node scripts/evaluate-rag-dataset.mjs --input <question-set.json> --stores <stor
   있습니다."라는 경고가 출력된 뒤에만 질문/답변 원문이 콘솔에 표시됩니다. 이 옵션은 로컬 확인 용도로만
   사용하고 CI 로그에 남기지 않아야 합니다.
 - 종료 코드: `0` = 전체 통과, `1` = API 오류 또는 품질 실패 존재, `2` = 인자·로딩·스키마 오류.
+
+### 리포트 저장(`--report`)
+
+```
+node scripts/evaluate-rag-dataset.mjs --input <question-set.json> --stores <store-map.json> --report <report.json> [--force]
+```
+
+- `--report`는 선택 사항입니다. 지정하지 않으면 기존 동작(콘솔 출력만)이 그대로 유지됩니다.
+- `--input`과 `--report` 경로가 같으면 거부됩니다. 기존 리포트 파일이 있으면 `--force` 없이는
+  덮어쓰지 않습니다. 리포트는 전체 평가가 끝난 뒤 임시 파일 작성 후 rename하는 방식으로 저장되어
+  실패해도 부분 리포트가 남지 않습니다.
+- 평가에 실패한 케이스가 있어도 리포트는 정상적으로 저장되며, 종료 코드는 기존 규칙(`0`/`1`/`2`)을
+  그대로 따릅니다.
+- **리포트에는 질문 원문, 답변 원문, `expected_result`/키워드/금지어 원문, storeId·UUID,
+  `target_store`, endpoint, 요청/응답 본문, API 키·토큰이 절대 저장되지 않습니다.** 저장되는 값은
+  `questionId`, 기대/실제 status, status·keyword·forbidden 일치 여부, 개수, 최종 pass 여부, 그리고
+  전체 요약 통계뿐입니다.
+- 리포트는 QA 회귀 비교(이전 실행과의 pass/fail·정확도 비교)와 발표용 통계 자료로 활용할 수 있습니다.
+- 리포트 파일은 예제를 제외하고 **기본적으로 Git에 커밋하지 않는 것을 권장**합니다(질문셋/매장
+  매핑과 동일한 원칙).
 
 ## 예제 파일
 
@@ -144,6 +166,30 @@ node scripts/evaluate-rag-dataset.mjs --input <question-set.json> --stores <stor
 가상 값입니다.** 실제 평가를 실행할 때는 반드시 운영 환경에 맞는 별도의 store map 파일로 교체해야
 하며, 예제 store map을 그대로 실제 API 평가에 사용해서는 안 됩니다.
 
+## 질문셋 분포 분석(`analyze:rag-dataset`)
+
+검증을 통과한 JSON 질문셋이 특정 매장·질문 유형·상태·카테고리에 치우치거나 자동 채점에 필요한
+정보(키워드/금지어 등)가 빠져 있지 않은지 비식별 통계로 확인합니다. **CSV 파일을 직접 분석하지 않고,
+`convert:rag-dataset`과 `validate:rag-dataset`을 통과한 JSON만 입력으로 받습니다.**
+
+```
+npm run analyze:rag-dataset -- --input <question-set.json> [--strict]
+```
+
+- 기본 모드는 분석 보고용입니다. 경고가 있어도 종료 코드는 `0`입니다.
+- `--strict`는 품질 게이트용입니다. 유효한 데이터라도 경고가 하나 이상이면 종료 코드가 `1`이 됩니다.
+- 종료 코드: `0` = 정상(경고 유무 무관, 비-strict), `1` = `--strict`에서 경고 발견, `2` = 인자·파일
+  읽기·JSON 문법·기존 질문셋 스키마 오류.
+- **분포**는 `question_type`/`target_store`/`expected_status`/`manual_scope`/`category`/`priority`
+  별 개수(및 CLI 출력의 비율)를 보여주고, **완성도**는 `expected_keywords`/`forbidden_content`/
+  `expected_result`/`category`/`note`의 존재·미존재 건수를 보여줍니다.
+- **경고**는 `EMPTY_DATASET`, `STATUS_NOT_COVERED`, `QUESTION_TYPE_NOT_COVERED`, `STORE_NOT_COVERED`,
+  `ANSWERED_WITHOUT_KEYWORDS`, `CAUTIOUS_WITHOUT_KEYWORDS`, `INSUFFICIENT_WITH_EXPECTED_KEYWORDS`,
+  `CATEGORY_MISSING`, `PRIORITY_MISSING`, `DUPLICATE_QUESTION_ID`를 포함하며, 항목을 가리켜야 할 때는
+  `questionId`만 사용합니다. 경고는 기본적으로 품질 게이트가 아니라 정보 제공용입니다.
+- 질문 원문, `expected_result` 원문, 키워드·금지어 원문, storeId/UUID, 전체 파일 경로는 분석 결과와
+  콘솔 어디에도 출력되지 않습니다.
+
 ## 명령 요약
 
 1. **CSV → JSON 변환** (외부 API/DB 호출 없음, 변환+검증 모두 성공해야 저장)
@@ -154,24 +200,53 @@ node scripts/evaluate-rag-dataset.mjs --input <question-set.json> --stores <stor
    ```
    npm run validate:rag-dataset -- --input examples/rag-eval/question-set.example.json
    ```
-3. **평가 도구 단위 테스트** (mock fetch만 사용, 외부 API/DB 호출 없음)
+3. **질문셋 분포 분석** (외부 API/DB 호출 없음)
+   ```
+   npm run analyze:rag-dataset -- --input examples/rag-eval/question-set.example.json
+   ```
+4. **평가 도구 단위 테스트** (mock fetch만 사용, 외부 API/DB 호출 없음)
    ```
    npm run test:rag-eval
    ```
-4. **실제 API 평가** (실제 질문셋·store map으로 교체해서 실행)
+5. **실제 API 평가** (실제 질문셋·store map으로 교체해서 실행)
    ```
    npm run eval:rag-dataset -- --input <실제-question-set.json> --stores <실제-store-map.json>
    ```
    - 실행 전 로컬 서버(`npm run dev` 등)가 `http://localhost:3000`에서 실행 중이어야 합니다.
    - 이 명령은 실제 OpenAI/Supabase 호출을 유발하므로 사용량 또는 비용이 발생할 수 있습니다.
 
-CI(GitHub Actions)에서는 1번(예제 CSV→JSON 변환), 2번(변환 결과 검증), 3번(단위 테스트)만 자동
-실행되며, 4번(실제 API 평가)은 CI에서 실행되지 않습니다. CI에서 변환되는 JSON은 저장소
-작업 디렉토리 밖의 러너 임시 경로(`RUNNER_TEMP`)에만 쓰여 Git 변경사항으로 남지 않습니다.
-실제 평가는 로컬에서 필요할 때 수동으로 실행합니다.
+CI(GitHub Actions)에서는 1번(예제 CSV→JSON 변환), 2번(변환 결과 검증), 4번(단위 테스트)만 자동
+실행되며, 3번(분포 분석 CLI를 예제 파일에 직접 실행하는 것)과 5번(실제 API 평가)은 CI에서 실행되지
+않습니다. 분석기 자체의 동작은 4번 단위 테스트 안에서 고정 가상 fixture로만 검증됩니다. CI에서
+변환되는 JSON은 저장소 작업 디렉토리 밖의 러너 임시 경로(`RUNNER_TEMP`)에만 쓰여 Git 변경사항으로
+남지 않습니다. 실제 평가는 로컬에서 필요할 때 수동으로 실행합니다.
 
 ## 실제 QA 데이터의 Git 관리
 
 실제 Excel(.xlsx)/내보낸 CSV/변환된 JSON 파일은 **저장소에 커밋하지 않습니다.** 이 파일들은
 팀 공유 저장소(공유 드라이브 등)에서 로컬 데이터로 관리하고, 저장소에는 `examples/rag-eval/`의
-가상 예제 파일만 유지합니다.
+가상 예제 파일만 유지합니다. `--report`로 저장한 실제 평가 리포트 파일도 동일한 원칙에 따라
+**기본적으로 Git에 커밋하지 않는 것을 권장**합니다.
+
+## 리포트 비교(`compare:rag-reports`)
+
+기준(baseline) 리포트와 후보(candidate) 리포트를 비교해 품질이 회귀했는지 자동으로 판단합니다.
+
+```
+npm run compare:rag-reports -- --baseline <baseline-report.json> --candidate <candidate-report.json>
+```
+
+- `--baseline`, `--candidate` 모두 필수이며, 같은 파일을 동시에 지정하면 거부됩니다.
+- 두 입력 모두 `--report`로 저장한 schemaVersion 1 리포트여야 하며, 입력 파일은 수정하지 않습니다.
+- 외부 API·DB·네트워크 호출이 없는 순수 로컬 비교 도구입니다.
+- 종료 코드: `0` = 유효한 비교이고 회귀 없음, `1` = 유효한 비교이나 회귀 발견, `2` = 인자·파일
+  읽기·JSON 문법·리포트 스키마 오류.
+- `target_store="all"`로 확장된 케이스는 동일한 `questionId`를 여러 매장 결과로 가질 수 있으므로,
+  비교는 `questionId`별로 **그룹**(passed/failed/error 개수)을 만들어 수행하며 마지막 값으로
+  덮어쓰지 않습니다. 그룹 내 매장 결과 중 하나라도 회귀하면 해당 `questionId` 그룹 전체가 회귀로
+  분류됩니다.
+- 리포트와 비교 결과 어디에도 질문·답변 원문, 매장명, storeId/UUID가 포함되지 않습니다. 출력에는
+  `questionId`와 passed/failed/error 개수, 통과율 등 비식별 통계만 표시됩니다.
+- 회귀 판정 이후에는 매뉴얼 내용 변경 전후, 또는 RAG 임계값·프롬프트 등 품질 기준 변경 전후의 결과를
+  비교해 의도치 않은 회귀를 조기에 발견하는 용도로 사용할 수 있습니다.
+- 비교 대상 리포트 파일도 예제를 제외하고는 Git에 커밋하지 않는 것을 권장합니다.
