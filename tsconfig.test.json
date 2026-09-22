@@ -11,19 +11,25 @@
     "tests/rag/search-query.test.ts",
     "tests/rag/validate-query-request.test.ts",
     "tests/rag/save-question-log.test.ts",
+    "tests/rag/rag-store-access.test.ts",
+    "tests/rag/finalize-rag-query-response.test.ts",
     "tests/auth/dev-test-verification.test.ts",
     "tests/auth/safe-auth-log.test.ts",
     "tests/manuals/upload-limits.test.ts",
+    "tests/staff/approved-stores.test.ts",
     "lib/rag/answer-prompt.ts",
     "lib/rag/chunk-manual.ts",
     "lib/rag/search-query.ts",
     "lib/rag/validate-query-request.ts",
     "lib/rag/save-question-log.ts",
+    "lib/rag/rag-store-access.ts",
+    "lib/rag/finalize-rag-query-response.ts",
     "lib/rag/types.ts",
     "lib/auth/dev-test-verification.ts",
     "lib/auth/safe-auth-log.ts",
     "lib/data/mockFranchises.ts",
-    "lib/manuals/upload-limits.ts"
+    "lib/manuals/upload-limits.ts",
+    "lib/staff/approved-stores.ts"
   ],
   "exclude": ["node_modules"]
 }
