@@ -6,14 +6,6 @@ import { ChevronLeft, Check, Building2 } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input, PasswordInput } from "@/components/common/Input";
 import type { UserRole } from "@/lib/types/user";
-<<<<<<< HEAD
-import {
-  DEV_TEST_EMAILS,
-  DEV_TEST_VERIFICATION_CODE,
-  DEV_TEST_EMAIL_FRANCHISE_MAP,
-} from "@/lib/data/mockFranchises";
-=======
->>>>>>> feature/rag-api
 
 // public.franchises 테이블에 이메일 도메인을 조회해 프랜차이즈 정보를 가져온다 (app/api/franchises/lookup).
 async function getFranchiseByEmail(
@@ -21,19 +13,6 @@ async function getFranchiseByEmail(
 ): Promise<{ domain: string; franchise?: { id: string; name: string } }> {
   const domain = email.split("@")[1]?.toLowerCase();
 
-<<<<<<< HEAD
-// 이메일 정규화: 앞뒤 공백 제거 + 소문자 변환(테스트 이메일/도메인 비교에 공통 사용)
-const normalizeEmail = (value: string) => value.trim().toLowerCase();
-
-// Mock franchise domains - 실제 DB/API로 교체 가능
-const FRANCHISE_DOMAINS: Record<string, { name: string; id: string }> = {
-  "megamgc.com": { name: "메가MGC커피", id: "brand_mega" },
-  "kyochon.com": { name: "교촌치킨", id: "brand_001" },
-  "bhc.com": { name: "BHC 치킨", id: "brand_002" },
-  "nene.com": { name: "네네치킨", id: "brand_003" },
-  "companiongroup.com": { name: "Companion Group", id: "brand_004" },
-};
-=======
   if (!domain) {
     return { domain: "", franchise: undefined };
   }
@@ -67,15 +46,6 @@ function clearSignupSessionStorage() {
   sessionStorage.removeItem("signupApprovalSubmittedAt");
   sessionStorage.removeItem("signupVerified");
 }
->>>>>>> feature/rag-api
-
-// 정규화된 이메일로 프랜차이즈 조회: 개발 환경 테스트 매핑 우선, 없으면 실제 도메인 매핑으로 폴백
-const findFranchiseForEmail = (email: string) => {
-  const normalizedEmail = normalizeEmail(email);
-  const domain = normalizedEmail.split("@")[1] ?? "";
-
-  return (isDev() ? DEV_TEST_EMAIL_FRANCHISE_MAP[normalizedEmail] : undefined) ?? FRANCHISE_DOMAINS[domain];
-};
 
 // ============= HQ 전용 기본정보 화면 =============
 function HQSignupProfile() {
@@ -180,40 +150,6 @@ function HQSignupProfile() {
       return;
     }
 
-<<<<<<< HEAD
-    const normalizedEmail = normalizeEmail(formData.companyEmail);
-
-    // 개발 환경: 등록된 테스트 이메일만 mock 발송 허용
-    if (isDev() && DEV_TEST_EMAILS.some((email) => normalizeEmail(email) === normalizedEmail)) {
-      setIsSendingVerification(true);
-      setVerificationError("");
-      setTimeout(() => {
-        setEmailVerificationSent(true);
-        setIsSendingVerification(false);
-      }, 600);
-      return;
-    }
-
-    // 실제 이메일 발송 API(007)가 아직 연결되지 않아 성공으로 표시하지 않는다 (fail closed)
-    setVerificationError("현재 이메일 인증 서비스를 사용할 수 없습니다.");
-  };
-
-  // 조회된 프랜차이즈(없을 수도 있음)를 그대로 state에 반영: 직전에 설정한 state가 아니라 방금 조회한 지역변수만 사용
-  const applyFranchiseResult = (
-    franchise: { name: string; id: string } | undefined,
-    normalizedEmail: string,
-  ) => {
-    if (franchise) {
-      setFranchiseConfirmation({
-        domain: normalizedEmail.split("@")[1] ?? "",
-        name: franchise.name,
-        id: franchise.id,
-      });
-      setFranchiseNotFound(false);
-    } else {
-      setFranchiseNotFound(true);
-      setFranchiseConfirmation(null);
-=======
     setIsSendingVerification(true);
     setVerificationError("");
 
@@ -236,7 +172,6 @@ function HQSignupProfile() {
       setVerificationError("인증번호 발송 중 오류가 발생했습니다.");
     } finally {
       setIsSendingVerification(false);
->>>>>>> feature/rag-api
     }
   };
 
@@ -249,37 +184,6 @@ function HQSignupProfile() {
       return;
     }
 
-<<<<<<< HEAD
-    const normalizedEmail = normalizeEmail(formData.companyEmail);
-
-    // 개발 환경 + 등록된 테스트 이메일일 때만 테스트 인증번호를 허용
-    const isDevTestEmail =
-      isDev() && DEV_TEST_EMAILS.some((email) => normalizeEmail(email) === normalizedEmail);
-
-    // 등록된 테스트 이메일은 오직 지정된 테스트 인증번호로만 통과될 수 있다(일반 경로로 폴백하지 않음)
-    if (isDevTestEmail) {
-      if (normalizedCode !== DEV_TEST_VERIFICATION_CODE) {
-        setVerificationError("인증번호가 일치하지 않습니다.");
-        return;
-      }
-
-      setIsVerifying(true);
-      setVerificationError("");
-
-      setTimeout(() => {
-        const franchise = findFranchiseForEmail(normalizedEmail);
-        setEmailVerified(true);
-        setIsVerifying(false);
-        applyFranchiseResult(franchise, normalizedEmail);
-      }, 600);
-      return;
-    }
-
-    // 테스트 인증번호는 등록된 테스트 이메일에서만 유효하다(미등록 이메일의 우회 방지, fail closed)
-    if (normalizedCode === DEV_TEST_VERIFICATION_CODE) {
-      setVerificationError("인증번호가 일치하지 않습니다.");
-      return;
-=======
     setIsVerifying(true);
     setVerificationError("");
 
@@ -315,11 +219,7 @@ function HQSignupProfile() {
       setVerificationError("인증번호가 일치하지 않거나 만료되었습니다.");
     } finally {
       setIsVerifying(false);
->>>>>>> feature/rag-api
     }
-
-    // 실제 이메일 인증 API(007)가 아직 연결되지 않아 성공 처리하지 않는다 (fail closed)
-    setVerificationError("현재 이메일 인증 서비스를 사용할 수 없습니다.");
   };
 
   const handleConfirmFranchise = () => {

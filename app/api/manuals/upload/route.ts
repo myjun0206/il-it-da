@@ -4,6 +4,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireHqUser } from "@/lib/supabase/hq-auth";
 import { saveManualGroupsWithChunks, type ManualGroupInput } from "@/lib/rag/save-manual-sections";
 import type { ManualRecord } from "@/lib/types/manual";
+import {
+  isFileSizeWithinLimit,
+  isPlausibleXlsxMimeType,
+  isRowCountWithinLimit,
+  isSheetCountWithinLimit,
+} from "@/lib/manuals/upload-limits";
 
 export const runtime = "nodejs";
 
@@ -236,6 +242,10 @@ async function parseXlsxRows(buffer: ArrayBuffer): Promise<string[][]> {
     throw new Error("엑셀 파일에 시트가 없습니다.");
   }
 
+  if (!isSheetCountWithinLimit(workbook.SheetNames.length)) {
+    throw new Error("엑셀 파일의 시트 수가 허용 개수를 초과했습니다.");
+  }
+
   const sheet = workbook.Sheets[sheetName];
 
   let rawRows: unknown[][];
@@ -245,6 +255,10 @@ async function parseXlsxRows(buffer: ArrayBuffer): Promise<string[][]> {
   } catch (sheetError) {
     console.error("[MANUALS_UPLOAD] xlsx sheet_to_json failed:", sheetError);
     throw new Error("엑셀 파일 형식을 읽을 수 없습니다. 파일 상태를 확인해 주세요.");
+  }
+
+  if (!isRowCountWithinLimit(rawRows.length)) {
+    throw new Error("엑셀 시트의 행 수가 허용 개수를 초과했습니다.");
   }
 
   return rawRows.map((row) => (Array.isArray(row) ? row.map(normalizeCell) : []));
@@ -314,6 +328,10 @@ export async function POST(request: Request): Promise<NextResponse<UploadManuals
     return NextResponse.json({ error: "빈 파일은 업로드할 수 없습니다." }, { status: 400 });
   }
 
+  if (!isFileSizeWithinLimit(file.size)) {
+    return NextResponse.json({ error: "업로드 가능한 최대 파일 크기를 초과했습니다." }, { status: 413 });
+  }
+
   const extension = getExtension(file.name);
   const fallbackTopic = file.name.slice(0, file.name.length - extension.length).trim() || "업로드 매뉴얼";
 
@@ -321,6 +339,9 @@ export async function POST(request: Request): Promise<NextResponse<UploadManuals
 
   try {
     if (extension === ".xlsx" || extension === ".xls") {
+      if (!isPlausibleXlsxMimeType(file.type)) {
+        return NextResponse.json({ error: "지원하지 않는 파일 형식입니다." }, { status: 400 });
+      }
       const rows = await parseXlsxRows(await file.arrayBuffer());
       if (rows.length === 0) {
         return NextResponse.json({ error: "파일에 데이터가 없습니다." }, { status: 400 });

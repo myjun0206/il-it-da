@@ -12,6 +12,12 @@ export type ManualGroupInput = {
 const MANUAL_SELECT_COLUMNS =
   "id, brand_name, franchise_id, store_id, parent_manual_id, title, category, content, status, created_at, updated_at";
 
+// 고정 오류 코드와 안전한 error name만 남기고, message/details/hint/payload/content/UUID는 출력하지 않는다.
+function logSafeManualError(code: string, error: unknown): void {
+  const name = error instanceof Error ? error.name : "UnknownError";
+  console.error(`[MANUALS] ${code}`, { name });
+}
+
 async function syncChunksForManuals(supabase: SupabaseClient, manuals: ManualRecord[]): Promise<void> {
   if (manuals.length === 0) {
     return;
@@ -31,11 +37,11 @@ async function syncChunksForManuals(supabase: SupabaseClient, manuals: ManualRec
       const { error: chunkError } = await supabase.from("manual_chunks").insert(chunkRows);
 
       if (chunkError) {
-        console.error("[MANUALS] manual_chunks insert failed:", chunkError);
+        logSafeManualError("MANUAL_CHUNKS_INSERT_FAILED", chunkError);
       }
     }
   } catch (chunkParseError) {
-    console.error("[MANUALS] manual chunking failed:", chunkParseError);
+    logSafeManualError("MANUAL_CHUNKING_FAILED", chunkParseError);
   }
 }
 
@@ -75,7 +81,7 @@ export async function saveManualGroupsWithChunks(
       .single();
 
     if (parentError || !parentData) {
-      console.error("[MANUALS] parent manual insert failed:", parentError);
+      logSafeManualError("PARENT_MANUAL_INSERT_FAILED", parentError);
       throw new Error("매뉴얼 주제 저장 중 오류가 발생했습니다.");
     }
 
@@ -100,7 +106,7 @@ export async function saveManualGroupsWithChunks(
       .select(MANUAL_SELECT_COLUMNS);
 
     if (childrenError) {
-      console.error("[MANUALS] child manuals insert failed:", childrenError);
+      logSafeManualError("CHILD_MANUALS_INSERT_FAILED", childrenError);
       throw new Error("매뉴얼 세부 내용 저장 중 오류가 발생했습니다.");
     }
 
@@ -144,7 +150,7 @@ export async function addItemsToManualGroup(
     .select(MANUAL_SELECT_COLUMNS);
 
   if (error) {
-    console.error("[MANUALS] add items to group failed:", error);
+    logSafeManualError("ADD_ITEMS_TO_GROUP_FAILED", error);
     throw new Error("세부 내용 추가 중 오류가 발생했습니다.");
   }
 

@@ -111,13 +111,22 @@ export default function ManualDashboardPage() {
     setUserInfo();
   }, []);
 
-  const fetchManuals = async () => {
+  // 상태를 전혀 건드리지 않는 순수 데이터 조회 함수 - useEffect에서 안전하게 호출하기 위해 분리.
+  // 기존 동작과 동일하게, HTTP 오류 응답은 조용히 무시하고(에러 로그 없이) manuals를 갱신하지 않는다.
+  const fetchManualsData = async (): Promise<ManualRecord[] | null> => {
+    const response = await fetch("/api/manuals");
+    const data = (await response.json()) as { manuals?: ManualRecord[]; error?: string };
+    return response.ok ? data.manuals ?? [] : null;
+  };
+
+  // 마운트 시 로딩 표시는 isLoadingManuals의 초기값(true)으로 이미 처리되므로,
+  // 재조회 시에만 로딩 상태를 다시 켠다(이벤트 핸들러에서 호출, effect 동기 구간과 무관).
+  const refetchManuals = async () => {
     setIsLoadingManuals(true);
     try {
-      const response = await fetch("/api/manuals");
-      const data = (await response.json()) as { manuals?: ManualRecord[]; error?: string };
-      if (response.ok) {
-        setManuals(data.manuals ?? []);
+      const manuals = await fetchManualsData();
+      if (manuals) {
+        setManuals(manuals);
       }
     } catch (e) {
       console.error("매뉴얼 목록 조회 실패:", e);
@@ -127,7 +136,14 @@ export default function ManualDashboardPage() {
   };
 
   useEffect(() => {
-    fetchManuals();
+    fetchManualsData()
+      .then((manuals) => {
+        if (manuals) {
+          setManuals(manuals);
+        }
+      })
+      .catch((e) => console.error("매뉴얼 목록 조회 실패:", e))
+      .finally(() => setIsLoadingManuals(false));
   }, []);
 
   const handleLogout = async () => {
@@ -161,7 +177,7 @@ export default function ManualDashboardPage() {
         throw new Error(data.error || "매뉴얼 업로드 중 오류가 발생했습니다.");
       }
 
-      await fetchManuals();
+      await refetchManuals();
       showToast("매뉴얼이 업로드되었습니다.");
     } catch (e) {
       setUploadError(e instanceof Error ? e.message : "매뉴얼 업로드 중 오류가 발생했습니다.");
@@ -215,7 +231,7 @@ export default function ManualDashboardPage() {
 
       resetCreateForm();
       setShowCreateModal(false);
-      await fetchManuals();
+      await refetchManuals();
       showToast("매뉴얼이 생성되었습니다.");
     } catch (e) {
       setCreateError(e instanceof Error ? e.message : "매뉴얼 저장 중 오류가 발생했습니다.");
@@ -237,7 +253,7 @@ export default function ManualDashboardPage() {
       }
 
       setShowDeleteAllConfirm(false);
-      await fetchManuals();
+      await refetchManuals();
       showToast("등록된 모든 매뉴얼이 삭제되었습니다.");
     } catch (e) {
       setDeleteAllError(e instanceof Error ? e.message : "매뉴얼 전체 삭제 중 오류가 발생했습니다.");
@@ -461,7 +477,7 @@ export default function ManualDashboardPage() {
           group={selectedGroup}
           onClose={() => setSelectedGroup(null)}
           onSaved={async (message) => {
-            await fetchManuals();
+            await refetchManuals();
             showToast(message);
           }}
         />

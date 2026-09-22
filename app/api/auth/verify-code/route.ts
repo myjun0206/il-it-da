@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
 
 export const runtime = "nodejs";
 
@@ -70,6 +71,7 @@ export async function POST(request: Request): Promise<NextResponse<VerifyCodeRes
       .from("email_verifications")
       .select("id, code, expires_at")
       .eq("email", email)
+      .eq("is_verified", false)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle<VerificationRow>();
@@ -101,7 +103,7 @@ export async function POST(request: Request): Promise<NextResponse<VerifyCodeRes
 
     return NextResponse.json({ verified: true }, { status: 200 });
   } catch (error) {
-    console.error("[AUTH] Verify code failed:", error);
+    logSafeAuthError("VERIFY_CODE_FAILED", error);
     return NextResponse.json({ error: "Unable to verify code." }, { status: 500 });
   }
 }
