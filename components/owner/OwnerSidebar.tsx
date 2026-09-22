@@ -28,8 +28,8 @@ export default function OwnerSidebar({
 
   const menuItems = [
     { id: "home", label: "홈", icon: House, href: "/boss" },
-    { id: "manual-common", label: "공통 매뉴얼", icon: BookOpen, href: "#" },
-    { id: "manual-store", label: "지점 매뉴얼 관리", icon: FileText, href: "#" },
+    { id: "manual-common", label: "공통 매뉴얼", icon: BookOpen, href: "/boss/manuals" },
+    { id: "manual-store", label: "지점 매뉴얼 관리", icon: FileText, href: "/boss/store-manuals" },
     { id: "staff", label: "직원 관리", icon: Users, href: "#" },
     { id: "notice", label: "공지사항", icon: Bell, href: "#" },
   ];

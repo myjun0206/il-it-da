@@ -26,6 +26,11 @@ export type UploadResponse = UploadSuccessResponse | UploadErrorResponse;
 function verifyAuth(request: Request): { authorized: boolean; missingSecret?: boolean } {
   const secret = process.env.RAG_INDEXING_SECRET;
 
+  // In development, allow without auth for testing
+  if (process.env.NODE_ENV === "development" && (!secret || secret.length < 32)) {
+    return { authorized: true };
+  }
+
   if (!secret || secret.length < 32) {
     return { authorized: false, missingSecret: true };
   }

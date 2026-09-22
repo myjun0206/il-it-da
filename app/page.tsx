@@ -60,37 +60,34 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      const supabase = createClient();
-      
-      // Real Supabase Auth login
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
       });
 
-      if (error) {
+      const result: { user?: { id: string; email: string; role: string }; error?: string } =
+        await response.json();
+
+      if (!response.ok || !result.user) {
         setIsLoading(false);
         setErrors((prev) => ({
           ...prev,
-          email: error.message || "아이디 또는 비밀번호를 확인해주세요.",
+          email: result.error || "아이디 또는 비밀번호를 확인해주세요.",
         }));
         return;
       }
 
-      if (data.user) {
-        const role = data.user.user_metadata?.role;
-        
-        // Role-based redirect
-        if (role === "hq") {
-          router.push("/hq");
-        } else if (role === "owner") {
-          router.push("/boss");
-        } else if (role === "staff") {
-          router.push("/staff");
-        } else {
-          // Unknown role, redirect to home
-          router.push("/");
-        }
+      // Role-based redirect
+      if (result.user.role === "hq") {
+        router.push("/hq");
+      } else if (result.user.role === "owner") {
+        router.push("/boss");
+      } else if (result.user.role === "staff") {
+        router.push("/staff");
+      } else {
+        // Unknown role, redirect to home
+        router.push("/");
       }
     } catch (e) {
       setIsLoading(false);

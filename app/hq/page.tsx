@@ -99,6 +99,7 @@ export default function HQPage() {
   const [userName, setUserName] = useState("본사 관리자");
   const [franchiseName, setFranchiseName] = useState("메가MGC커피");
   const [isReady, setIsReady] = useState(false);
+  const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0);
 
   useLayoutEffect(() => {
     // Check Supabase session
@@ -165,6 +166,26 @@ export default function HQPage() {
     setUserInfo();
   }, []);
 
+  useEffect(() => {
+    // Fetch pending approvals count (only owner memberships)
+    const fetchPendingCount = async () => {
+      try {
+        const response = await fetch("/api/hq/approvals?status=pending");
+        const result = await response.json();
+
+        if (result.success && Array.isArray(result.data)) {
+          setPendingApprovalsCount(result.data.length);
+        }
+      } catch (e) {
+        console.error("Failed to fetch pending approvals count:", e);
+      }
+    };
+
+    if (isReady) {
+      fetchPendingCount();
+    }
+  }, [isReady]);
+
   const handleLogout = async () => {
     try {
       const supabase = createClient();
@@ -202,8 +223,6 @@ export default function HQPage() {
         onLogout={handleLogout}
         activeMenu="home"
       />
-
-      {/* Main Content */}
       <div className="lg:ml-[240px]">
         {/* Header */}
         <HQHeader userName={userName} franchiseName={franchiseName} />
@@ -228,10 +247,18 @@ export default function HQPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               {dashboardMockData.pendingTasks.map((task) => {
                 const Icon = task.icon;
+                const count = task.id === 1 ? pendingApprovalsCount : task.count;
                 return (
                   <div
                     key={task.id}
-                    className="bg-white border border-[var(--color-border)] rounded-lg p-5 hover:border-[var(--color-primary)] hover:bg-[var(--color-bg-surface)] transition-all cursor-pointer"
+                    onClick={() => {
+                      if (task.id === 1) {
+                        router.push("/hq/approvals");
+                      }
+                    }}
+                    className={`bg-white border border-[var(--color-border)] rounded-lg p-5 hover:border-[var(--color-primary)] hover:bg-[var(--color-bg-surface)] transition-all ${
+                      task.id === 1 ? "cursor-pointer" : ""
+                    }`}
                   >
                     <Icon
                       size={24}
@@ -241,7 +268,7 @@ export default function HQPage() {
                       {task.title}
                     </p>
                     <p className="text-3xl font-bold text-[var(--color-text-primary)] mb-3">
-                      {task.count}
+                      {count}
                       <span className="text-base font-normal text-[var(--color-text-secondary)] ml-1">
                         {task.title === "승인 대기" ? "건" : task.title === "미처리 문의 · 요청" ? "건" : "곳"}
                       </span>

@@ -85,7 +85,6 @@ const getInitialTermsState = (role: Role): Record<TermsKey, boolean> => {
 
 export default function SignupTermsPage() {
   const router = useRouter();
-  const [mounted] = useState(() => typeof window !== 'undefined');
   
   // Initialize terms based on role from sessionStorage
   const getInitialTermsData = () => {
@@ -103,10 +102,6 @@ export default function SignupTermsPage() {
   const [currentTerms] = useState<Term[]>(initialData.terms);
   const [termsAccepted, setTermsAccepted] = useState<Record<TermsKey, boolean>>(initialData.accepted);
   const [selectedTermModal, setSelectedTermModal] = useState<TermsKey | null>(null);
-
-  if (!mounted) {
-    return null;
-  }
 
   // 동적으로 required 약관이 모두 동의되었는지 확인
   const requiredAccepted = currentTerms

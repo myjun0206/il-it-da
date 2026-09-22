@@ -1,56 +1,120 @@
 "use client";
 
-import Link from "next/link";
-import { FormEvent, useState, useLayoutEffect } from "react";
+import React, { useLayoutEffect, useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { Bell, BookOpen, ChevronRight, FileText, LayoutDashboard, LogOut, MoreHorizontal, Plus, Search, Settings2, ShieldCheck, Store, UploadCloud, Users } from "lucide-react";
+import {
+  BookOpen,
+  Users,
+  Sparkles,
+  ChevronDown,
+  UploadCloud,
+} from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-
-const tabs = ["대시보드", "매장 가이드", "수칙 문서", "알바생 관리"];
-const staff = [
-  { name: "김민지", role: "주말 오픈", status: "근무 중", color: "#e2a366" },
-  { name: "박준호", role: "평일 마감", status: "대기 중", color: "#8bb5a3" },
-  { name: "이서연", role: "주말 마감", status: "휴무", color: "#b8a995" },
-];
+import OwnerSidebar from "@/components/owner/OwnerSidebar";
+import OwnerHeader from "@/components/owner/OwnerHeader";
+import { Button } from "@/components/common/Button";
 
 type UploadState = "idle" | "loading" | "success" | "error";
 
-export default function BossPage() {
+interface ApprovedStore {
+  membershipId: string;
+  storeId: string;
+  storeName: string;
+  role: string;
+  status: string;
+}
+
+export default function OwnerDashboardPage() {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState("대시보드");
+  const [isReady, setIsReady] = useState(false);
+  const [userName, setUserName] = useState("");
+  const [selectedStoreId, setSelectedStoreId] = useState("");
+  const [selectedStoreName, setSelectedStoreName] = useState("");
+  const [approvedStores, setApprovedStores] = useState<ApprovedStore[]>([]);
+  const [storeDropdownOpen, setStoreDropdownOpen] = useState(false);
+
+  // RAG upload states
   const [guideText, setGuideText] = useState("");
   const [uploadState, setUploadState] = useState<UploadState>("idle");
   const [uploadMessage, setUploadMessage] = useState("");
 
+  // Authorization & Data Loading
   useLayoutEffect(() => {
-    // Check Supabase session
-    const checkAuth = async () => {
+    const checkAuthAndInit = async () => {
       try {
         const supabase = createClient();
         const { data } = await supabase.auth.getSession();
-        
+
         if (!data.session?.user) {
           router.push("/");
           return;
         }
 
         const role = data.session.user.user_metadata?.role;
-
-        // Verify user is owner (boss)
         if (role !== "owner") {
           router.push("/");
           return;
         }
+
+        // Get user name from session metadata or email
+        const name = data.session.user.user_metadata?.name || data.session.user.email || "점주";
+        setUserName(name);
+
+        // Get selectedStoreId from sessionStorage
+        const storedStoreId = sessionStorage.getItem("selectedStoreId");
+        const storedStoreName = sessionStorage.getItem("selectedStoreName");
+
+        if (storedStoreId) {
+          setSelectedStoreId(storedStoreId);
+          setSelectedStoreName(storedStoreName || "");
+        }
+
+        // Fetch approved stores for dropdown
+        const response = await fetch("/api/signup/store-membership");
+        const result = await response.json();
+
+        if (response.ok && result.success && Array.isArray(result.data)) {
+          const approved = result.data.filter(
+            (m: ApprovedStore) => m.status === "approved" && m.role === "owner"
+          );
+          setApprovedStores(approved);
+
+          // ✅ 보안: selectedStoreId 검증
+          // storedStoreId가 현재 user의 approved store에 속하는지 확인
+          if (approved.length > 0) {
+            if (storedStoreId) {
+              const isValidStore = approved.some((s: ApprovedStore) => s.storeId === storedStoreId);
+              if (!isValidStore) {
+                // 검증 실패: sessionStorage의 ID가 유효하지 않음
+                // 첫 번째 approved store로 reset
+                setSelectedStoreId(approved[0].storeId);
+                setSelectedStoreName(approved[0].storeName);
+                sessionStorage.setItem("selectedStoreId", approved[0].storeId);
+                sessionStorage.setItem("selectedStoreName", approved[0].storeName);
+              }
+              // 검증 성공: storedStoreId 유지
+            } else {
+              // storedStoreId 없음: 첫 번째 approved store 설정
+              setSelectedStoreId(approved[0].storeId);
+              setSelectedStoreName(approved[0].storeName);
+              sessionStorage.setItem("selectedStoreId", approved[0].storeId);
+              sessionStorage.setItem("selectedStoreName", approved[0].storeName);
+            }
+          }
+        }
+
+        setIsReady(true);
       } catch (e) {
-        console.error("Auth check failed:", e);
+        console.error("Auth initialization failed:", e);
         router.push("/");
       }
     };
 
-    checkAuth();
+    checkAuthAndInit();
   }, [router]);
 
-  async function uploadGuide(event: FormEvent<HTMLFormElement>) {
+  // RAG Upload Handler
+  const handleGuideUpload = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const text = guideText.trim();
     if (!text) {
@@ -58,24 +122,66 @@ export default function BossPage() {
       setUploadMessage("가이드 내용을 입력해주세요.");
       return;
     }
+
+    // ✅ 보안: selectedStoreId 재검증
+    // 사용자가 sessionStorage를 임의로 변경한 경우 방어
+    if (!selectedStoreId || approvedStores.length === 0) {
+      setUploadState("error");
+      setUploadMessage("접근 권한이 없는 매장입니다.");
+      return;
+    }
+
+    const isValidStore = approvedStores.some((s: ApprovedStore) => s.storeId === selectedStoreId);
+    if (!isValidStore) {
+      setUploadState("error");
+      setUploadMessage("접근 권한이 없는 매장입니다.");
+      return;
+    }
+
     setUploadState("loading");
     setUploadMessage("");
+
     try {
       const response = await fetch("/api/rag/upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, metadata: { store: "moonlight-seongsu", type: "guide" } }),
+        body: JSON.stringify({
+          text,
+          metadata: {
+            store: selectedStoreId,
+            storeName: selectedStoreName,
+            type: "guide",
+          },
+        }),
       });
+
       const result = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(result.error || "저장에 실패했습니다.");
+      if (!response.ok) {
+        throw new Error(result.error || "저장에 실패했습니다.");
+      }
+
       setGuideText("");
       setUploadState("success");
       setUploadMessage("가이드가 저장되었습니다.");
+      setTimeout(() => {
+        setUploadState("idle");
+        setUploadMessage("");
+      }, 3000);
     } catch (error) {
       setUploadState("error");
-      setUploadMessage(error instanceof Error ? error.message : "가이드 저장에 실패했습니다.");
+      setUploadMessage(
+        error instanceof Error ? error.message : "가이드 저장에 실패했습니다."
+      );
     }
-  }
+  };
+
+  const handleStoreChange = (store: ApprovedStore) => {
+    setSelectedStoreId(store.storeId);
+    setSelectedStoreName(store.storeName);
+    sessionStorage.setItem("selectedStoreId", store.storeId);
+    sessionStorage.setItem("selectedStoreName", store.storeName);
+    setStoreDropdownOpen(false);
+  };
 
   const handleLogout = async () => {
     try {
@@ -88,208 +194,264 @@ export default function BossPage() {
     }
   };
 
+  if (!isReady) {
+    return null;
+  }
+
   return (
-    <div className="dashboard-shell h-screen overflow-hidden w-full text-[#24362e] lg:flex">
-      <aside className="hidden w-64 shrink-0 border-r border-[#dfe7dc] bg-[#f7f9f3] px-5 py-7 h-screen overflow-y-auto lg:flex lg:flex-col">
-        <Link href="/" className="mb-12 flex items-center gap-3 px-2">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#1c6b52] text-white"><Store size={18} /></span>
-          <span className="text-xl font-semibold tracking-[-0.04em]">일잇다</span>
-        </Link>
-        <p className="px-3 text-[11px] font-bold tracking-[0.14em] text-[#91a49a]">WORKSPACE</p>
-        <nav className="mt-3 space-y-1">
-          {tabs.map((tab, index) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#0C9D81] ${activeTab === tab ? "bg-[#dceade] text-[#1c6b52]" : "text-[#789086] hover:bg-[#edf3ea]"}`}
-            >
-              {index === 0 ? <LayoutDashboard size={17} /> : index === 1 ? <BookOpen size={17} /> : index === 2 ? <FileText size={17} /> : <Users size={17} />}
-              {tab}
-              {activeTab === tab && <ChevronRight className="ml-auto" size={15} />}
-            </button>
-          ))}
-        </nav>
-        <div className="mt-auto space-y-1 pt-8">
-          <button type="button" aria-label="설정 열기" className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-[#789086] transition-colors hover:bg-[#edf3ea] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#0C9D81]">
-            <Settings2 size={17} /> 설정
-          </button>
-          <button type="button" onClick={handleLogout} aria-label="로그아웃" className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-[#789086] transition-colors hover:bg-[#edf3ea] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#0C9D81]">
-            <LogOut size={17} /> 로그아웃
-          </button>
-        </div>
-      </aside>
+    <div className="min-h-screen bg-[var(--color-bg-default)] flex">
+      {/* Sidebar */}
+      <OwnerSidebar activeMenu="home" onLogout={handleLogout} />
 
-      <main className="min-w-0 flex-1 flex flex-col overflow-hidden">
-        <header className="sticky top-0 z-50 flex h-[76px] items-center justify-between border-b border-[#e3e9df] bg-white px-5 sm:px-8 lg:px-12 shrink-0">
-          <div>
-            <p className="text-[11px] font-medium tracking-[0.12em] text-[#91a49a] sm:text-xs">WEDNESDAY, SEP 04, 2026</p>
-            <h1 className="mt-1 text-lg font-bold tracking-[-0.03em]">안녕하세요, 김사장님</h1>
-          </div>
-          <div className="flex items-center gap-3">
-            <button type="button" aria-label="검색" className="hidden h-10 w-10 items-center justify-center rounded-xl border border-[#e2e9df] text-[#779086] transition-colors hover:bg-[#f5f8f4] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#0C9D81] sm:flex">
-              <Search size={17} />
-            </button>
-            <button type="button" aria-label="알림" className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-[#e2e9df] text-[#779086] transition-colors hover:bg-[#f5f8f4] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#0C9D81]">
-              <Bell size={17} />
-              <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-[#d4774d]" />
-            </button>
-            <div className="hidden h-9 w-9 items-center justify-center rounded-full bg-[#e5c6a7] text-xs font-bold text-[#754d32] sm:flex">KS</div>
-          </div>
-        </header>
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col lg:ml-[240px]">
+        {/* Header */}
+        <OwnerHeader userName={userName} storeName={selectedStoreName} />
 
-        <div className="border-b border-[#e3e9df] bg-white px-5 pt-4 lg:hidden flex-shrink-0">
-          <div className="flex gap-5 overflow-x-auto">
-            {tabs.map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`whitespace-nowrap border-b-2 pb-3 text-xs font-bold focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#0C9D81] ${activeTab === tab ? "border-[#1c6b52] text-[#1c6b52]" : "border-transparent text-[#91a49a]"}`}
-              >
-                {tab}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="mx-auto max-w-[1440px] px-5 py-6 sm:px-8 lg:px-12 flex-1 min-h-0 overflow-y-auto">
-          <div className="mb-6 flex items-end justify-between gap-4">
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-[#638174]">MOONLIGHT COFFEE · 성수점</p>
-              <h2 className="mt-2 text-3xl font-semibold tracking-[-0.06em]">{activeTab === "대시보드" ? "매장 현황" : activeTab}</h2>
+        {/* Page Content */}
+        <main className="flex-1 overflow-y-auto">
+          <div className="p-6 lg:p-8 max-w-7xl mx-auto">
+            {/* Welcome Section */}
+            <div className="mb-8">
+              <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
+                안녕하세요, {userName} 점주님
+              </h1>
+              <p className="text-base text-[var(--color-text-secondary)]">
+                {selectedStoreName}의 오늘 운영 현황을 확인해보세요.
+              </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setActiveTab("매장 가이드")}
-              className="hidden items-center gap-2 rounded-xl bg-[#1c6b52] px-4 py-3 text-xs font-bold text-white shadow-[0_8px_20px_rgba(28,107,82,0.18)] transition-colors hover:bg-[#195B65] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#0C9D81] sm:flex"
-            >
-              <Plus size={16} />새로 만들기
-            </button>
-          </div>
 
-          {activeTab === "대시보드" ? <Dashboard /> : activeTab === "매장 가이드" ? <GuideUploader guideText={guideText} setGuideText={setGuideText} uploadGuide={uploadGuide} uploadState={uploadState} uploadMessage={uploadMessage} /> : <TabPlaceholder tab={activeTab} />}
-        </div>
-      </main>
-    </div>
-  );
-}
-
-function Dashboard() {
-  return (
-    <>
-      <div className="grid grid-cols-3 gap-2 sm:gap-3">
-        <Stat label="오늘 근무 인원" value="3명" detail="정상 운영 중" icon={<Users size={18} />} />
-        <Stat label="등록된 가이드" value="12개" detail="지난달보다 2개 추가" icon={<BookOpen size={18} />} />
-        <Stat label="문서 기반 답변률" value="94.8%" detail="이번 주 평균" icon={<ShieldCheck size={18} />} />
-      </div>
-      <div className="mt-5 grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
-        <section className="rounded-2xl border border-[#e1e9df] bg-white p-5 sm:p-6">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h3 className="font-bold">오늘의 근무자</h3>
-              <p className="mt-1 text-xs text-[#8aa097]">2026. 09. 04 금요일</p>
-            </div>
-            <button type="button" className="text-xs font-bold text-[#1c6b52] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#0C9D81]">전체 보기 <ChevronRight className="inline" size={14} /></button>
-          </div>
-          <div className="mt-5 divide-y divide-[#edf1eb]">
-            {staff.map((person) => (
-              <div key={person.name} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
-                <span className="flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold text-white" style={{ backgroundColor: person.color }}>{person.name.slice(0, 1)}</span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-bold">{person.name}</p>
-                  <p className="mt-0.5 text-xs text-[#8aa097]">{person.role}</p>
+            {/* Current Store Section */}
+            <div className="bg-white border border-[var(--color-border)] rounded-lg p-6 mb-8">
+              <p className="text-sm font-semibold text-[var(--color-text-secondary)] mb-3">
+                현재 매장
+              </p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-2xl font-bold text-[var(--color-text-primary)]">
+                    {selectedStoreName}
+                  </p>
+                  <p className="text-sm text-[var(--color-status-success)] mt-1">
+                    운영 중 · 승인 완료
+                  </p>
                 </div>
-                <span className="rounded-full bg-[#e1f1e6] px-2.5 py-1 text-[11px] font-bold text-[#318061]">{person.status}</span>
-                <MoreHorizontal size={17} className="text-[#b1beb6]" />
+                {approvedStores.length > 1 && (
+                  <div className="relative">
+                    <button
+                      onClick={() => setStoreDropdownOpen(!storeDropdownOpen)}
+                      className="flex items-center gap-2 px-4 py-2 border border-[var(--color-border)] rounded-lg hover:bg-[var(--color-bg-surface)] transition-colors"
+                    >
+                      매장 변경
+                      <ChevronDown size={18} />
+                    </button>
+                    {storeDropdownOpen && (
+                      <div className="absolute right-0 mt-2 w-64 bg-white border border-[var(--color-border)] rounded-lg shadow-lg z-10">
+                        {approvedStores.map((store) => (
+                          <button
+                            key={store.storeId}
+                            onClick={() => handleStoreChange(store)}
+                            className={`w-full text-left px-4 py-3 hover:bg-[var(--color-bg-surface)] transition-colors ${
+                              selectedStoreId === store.storeId
+                                ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                                : "text-[var(--color-text-primary)]"
+                            }`}
+                          >
+                            <p className="font-semibold">{store.storeName}</p>
+                            <p className="text-xs text-[var(--color-text-secondary)]">
+                              {store.status === "approved" && "승인 완료"}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="rounded-2xl border border-[#e1e9df] bg-[#f3f7ef] p-5 sm:p-6">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h3 className="font-bold">최근 업데이트</h3>
-              <p className="mt-1 text-xs text-[#8aa097]">매장 지식 베이스</p>
             </div>
-            <FileText className="text-[#7ba08c]" size={20} />
+
+            {/* Today's Management Section */}
+            <div className="mb-8">
+              <h2 className="text-lg font-bold text-[var(--color-text-primary)] mb-4">
+                오늘의 매장 관리
+              </h2>
+              <div className="grid grid-cols-3 gap-4">
+                {/* Staff Management */}
+                <div className="bg-white border border-[var(--color-border)] rounded-lg p-6 hover:shadow-sm transition-shadow">
+                  <div className="flex items-start justify-between mb-4">
+                    <div>
+                      <h3 className="text-lg font-bold text-[var(--color-text-primary)]">
+                        직원 관리
+                      </h3>
+                      <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+                        직원 승인과 근무 현황을 확인하세요.
+                      </p>
+                    </div>
+                    <Users size={24} className="text-[var(--color-primary)]" />
+                  </div>
+                  <button
+                    onClick={() => {}}
+                    className="text-sm font-semibold text-[var(--color-primary)] hover:underline"
+                  >
+                    관리하기 →
+                  </button>
+                </div>
+
+                {/* Manual Management */}
+                <div className="bg-white border border-[var(--color-border)] rounded-lg p-6 hover:shadow-sm transition-shadow">
+                  <div className="flex items-start justify-between mb-4">
+                    <div>
+                      <h3 className="text-lg font-bold text-[var(--color-text-primary)]">
+                        매뉴얼 관리
+                      </h3>
+                      <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+                        매장의 업무 매뉴얼을 등록하고 관리하세요.
+                      </p>
+                    </div>
+                    <BookOpen size={24} className="text-[var(--color-primary)]" />
+                  </div>
+                  <button
+                    onClick={() => {}}
+                    className="text-sm font-semibold text-[var(--color-primary)] hover:underline"
+                  >
+                    관리하기 →
+                  </button>
+                </div>
+
+                {/* AI Assistant */}
+                <div className="bg-white border border-[var(--color-border)] rounded-lg p-6 hover:shadow-sm transition-shadow">
+                  <div className="flex items-start justify-between mb-4">
+                    <div>
+                      <h3 className="text-lg font-bold text-[var(--color-text-primary)]">
+                        AI 업무 도우미
+                      </h3>
+                      <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+                        매뉴얼을 기반으로 필요한 정보를 빠르게 확인하세요.
+                      </p>
+                    </div>
+                    <Sparkles size={24} className="text-[var(--color-primary)]" />
+                  </div>
+                  <button
+                    onClick={() => {}}
+                    className="text-sm font-semibold text-[var(--color-primary)] hover:underline"
+                  >
+                    질문하기 →
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Two Column Layout: Staff Overview + Pending Tasks */}
+            <div className="grid grid-cols-3 gap-6 mb-8">
+              {/* Staff Overview - 2/3 width */}
+              <div className="col-span-2 bg-white border border-[var(--color-border)] rounded-lg p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h3 className="text-lg font-bold text-[var(--color-text-primary)]">
+                      오늘의 직원 현황
+                    </h3>
+                  </div>
+                  <button className="text-sm font-semibold text-[var(--color-primary)] hover:underline">
+                    전체 보기 →
+                  </button>
+                </div>
+                <div className="space-y-4">
+                  <p className="text-sm text-[var(--color-text-secondary)]">
+                    등록된 직원이 없습니다. 직원 관리에서 직원을 등록해보세요.
+                  </p>
+                </div>
+              </div>
+
+              {/* Pending Tasks - 1/3 width */}
+              <div className="bg-white border border-[var(--color-border)] rounded-lg p-6">
+                <h3 className="text-lg font-bold text-[var(--color-text-primary)] mb-6">
+                  확인이 필요한 업무
+                </h3>
+                <div className="space-y-4">
+                  <div className="pb-4 border-b border-[var(--color-border)]">
+                    <p className="text-sm font-semibold text-[var(--color-text-primary)]">
+                      직원 가입 승인 요청
+                    </p>
+                    <p className="text-2xl font-bold text-[var(--color-text-primary)] mt-2">
+                      0건
+                    </p>
+                  </div>
+                  <div className="pb-4 border-b border-[var(--color-border)]">
+                    <p className="text-sm font-semibold text-[var(--color-text-primary)]">
+                      확인이 필요한 매뉴얼
+                    </p>
+                    <p className="text-2xl font-bold text-[var(--color-text-primary)] mt-2">
+                      0건
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-[var(--color-text-primary)]">
+                      미확인 공지
+                    </p>
+                    <p className="text-2xl font-bold text-[var(--color-text-primary)] mt-2">
+                      0건
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Guide Uploader Section */}
+            <div>
+              <h2 className="text-lg font-bold text-[var(--color-text-primary)] mb-4">
+                매뉴얼 등록
+              </h2>
+              <form
+                onSubmit={handleGuideUpload}
+                className="bg-white border border-[var(--color-border)] rounded-lg p-6"
+              >
+                <div className="flex items-start gap-4 mb-6">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-[var(--color-primary-light)]">
+                    <UploadCloud size={24} className="text-[var(--color-primary)]" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-[var(--color-text-primary)]">
+                      새 매장 가이드 등록
+                    </h3>
+                    <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+                      알바생 질문에 활용할 업무 절차와 운영 노하우를 입력해주세요.
+                    </p>
+                  </div>
+                </div>
+
+                <textarea
+                  value={guideText}
+                  onChange={(e) => setGuideText(e.target.value)}
+                  placeholder="예: 마감할 때는 먼저 에스프레소 머신을 세척하고..."
+                  className="w-full min-h-48 border border-[var(--color-border)] rounded-lg p-4 text-sm focus:border-[var(--color-primary)] focus:outline-none resize-y"
+                />
+
+                <div className="mt-4 flex items-center justify-between">
+                  {uploadMessage && (
+                    <p
+                      className={`text-sm font-semibold ${
+                        uploadState === "error"
+                          ? "text-red-600"
+                          : "text-[var(--color-status-success)]"
+                      }`}
+                    >
+                      {uploadMessage}
+                    </p>
+                  )}
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    disabled={uploadState === "loading"}
+                    className="ml-auto"
+                  >
+                    <UploadCloud size={16} className="mr-2" />
+                    {uploadState === "loading" ? "저장 중..." : "가이드 저장"}
+                  </Button>
+                </div>
+              </form>
+            </div>
           </div>
-          <div className="mt-5 space-y-3">
-            <Activity title="주말 마감 체크리스트" meta="가이드 · 2시간 전" />
-            <Activity title="식자재 검수 수칙 v2" meta="수칙 문서 · 어제" />
-            <Activity title="신메뉴 제조 가이드" meta="가이드 · 3일 전" />
-          </div>
-        </section>
+        </main>
       </div>
-    </>
-  );
-}
-
-function Stat({ label, value, detail, icon }: { label: string; value: string; detail: string; icon: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border border-[#e1e9df] bg-white p-2 sm:rounded-2xl sm:p-5">
-      <div className="flex items-center justify-between gap-1.5 text-[#6c9180] sm:gap-3">
-        <span className="text-[11px] font-bold leading-tight text-[#435766] sm:text-[13px]">{label}</span>
-        <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-lg bg-[#eaf3e9] sm:h-8 sm:w-8">{icon}</span>
-      </div>
-      <p className="mt-1.5 text-xl font-semibold tracking-[-0.06em] sm:mt-4 sm:text-3xl">{value}</p>
-      <p className="mt-0.5 whitespace-nowrap text-[10px] font-medium text-[#8aa097] sm:mt-1 sm:text-[12px]">{detail}</p>
     </div>
-  );
-}
-
-function Activity({ title, meta }: { title: string; meta: string }) {
-  return (
-    <div className="flex items-center gap-3 rounded-xl bg-white/75 p-3">
-      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#e3eee0] text-[#4d826b]"><FileText size={15} /></span>
-      <div className="min-w-0 flex-1">
-        <p className="text-xs font-bold break-words">{title}</p>
-        <p className="mt-1 text-[11px] text-[#8aa097]">{meta}</p>
-      </div>
-      <ChevronRight className="ml-auto text-[#9cb2a3]" size={15} />
-    </div>
-  );
-}
-
-function GuideUploader({ guideText, setGuideText, uploadGuide, uploadState, uploadMessage }: { guideText: string; setGuideText: (value: string) => void; uploadGuide: (event: FormEvent<HTMLFormElement>) => void; uploadState: UploadState; uploadMessage: string }) {
-  return (
-    <form onSubmit={uploadGuide} className="w-full rounded-2xl border border-[#e1e9df] bg-white p-5 sm:p-7">
-      <div className="flex items-start gap-4">
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#e3eee0] text-[#4d826b]"><UploadCloud size={20} /></span>
-        <div>
-          <h3 className="font-bold">새 매장 가이드 등록</h3>
-          <p className="mt-1 text-sm text-[#82978d]">알바생 질문에 활용할 업무 절차와 운영 노하우를 입력해주세요.</p>
-        </div>
-      </div>
-      <textarea
-        value={guideText}
-        onChange={(event) => setGuideText(event.target.value)}
-        placeholder="예: 마감할 때는 먼저 에스프레소 머신을 세척하고..."
-        className="mt-6 min-h-48 w-full resize-y rounded-xl border border-[#dfe8dd] bg-[#fafcf8] p-4 text-sm leading-6 text-[#345246] outline-none placeholder:text-[#a5b1aa] focus:border-[#6da58b] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#0C9D81]"
-      />
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-        <p role="status" className={`text-sm font-semibold ${uploadState === "error" ? "text-[#c7664d]" : "text-[#3b8062]"}`}>
-          {uploadMessage}
-        </p>
-        <div className="flex justify-end">
-          <button
-            type="submit"
-            disabled={uploadState === "loading"}
-            className="flex items-center gap-2 rounded-xl bg-[#1c6b52] px-5 py-3 text-sm font-bold text-white shadow-[0_8px_20px_rgba(28,107,82,0.18)] disabled:cursor-wait disabled:opacity-60 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#0C9D81]"
-          >
-            <UploadCloud size={16} />{uploadState === "loading" ? "저장 중..." : "가이드 저장"}
-          </button>
-        </div>
-      </div>
-    </form>
-  );
-}
-
-function TabPlaceholder({ tab }: { tab: string }) {
-  return (
-    <section className="flex min-h-[380px] flex-col items-center justify-center rounded-2xl border border-dashed border-[#cddbcf] bg-[#f8faf6] text-center">
-      <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#e3eee0] text-[#4d826b]"><UploadCloud size={24} /></span>
-      <h3 className="mt-5 text-lg font-bold">{tab}을 준비하고 있어요</h3>
-      <p className="mt-2 text-sm text-[#82978d]">새로운 내용을 등록하면 알바생의 질문에 바로 활용됩니다.</p>
-    </section>
   );
 }
