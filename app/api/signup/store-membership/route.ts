@@ -49,13 +49,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const adminClient = createAdminClient();
 
-    // 사용자의 approved owner membership만 조회 (보안: 서버에서 필터링)
+    // 사용자의 모든 membership을 조회한다. 승인 상태 화면과 역할별 화면이 필요한 상태만 필터링한다.
     const { data: memberships, error: membershipError } = await adminClient
       .from("store_memberships")
       .select("*")
-      .eq("user_id", userId)
-      .eq("role", "owner")
-      .eq("status", "approved");
+      .eq("user_id", userId);
 
     if (membershipError) {
       console.error("[GET /api/signup/store-membership] Failed to fetch memberships:", membershipError);
@@ -166,16 +164,33 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
 
     const userId = user.id;
 
-    // Auth user의 user_metadata.role과 요청의 role 검증
-    const authUserRole = user.user_metadata?.role as string | undefined;
-    if (!authUserRole || authUserRole !== role) {
+    const adminClient = createAdminClient();
+    const { data: authorizedProfile, error: authorizedProfileError } = await adminClient
+      .from("profiles")
+      .select("role")
+      .eq("id", userId)
+      .maybeSingle<{ role: string }>();
+
+    if (authorizedProfileError) {
       return NextResponse.json(
-        { success: false, error: "Unauthorized: role does not match authenticated user role" },
-        { status: 401 }
+        { success: false, error: "Unable to verify authenticated profile" },
+        { status: 500 }
       );
     }
 
-    const adminClient = createAdminClient();
+    const hasSocialIdentity = user.identities?.some(
+      (identity) => identity.provider === "google" || identity.provider === "kakao",
+    );
+    const isEmailSignup = user.app_metadata?.provider === "email" && !hasSocialIdentity;
+    const canCreateInitialEmailProfile =
+      !authorizedProfile && isEmailSignup && user.user_metadata?.role === role;
+
+    if (authorizedProfile?.role !== role && !canCreateInitialEmailProfile) {
+      return NextResponse.json(
+        { success: false, error: "Forbidden: role does not match authenticated profile" },
+        { status: 403 }
+      );
+    }
 
     // 1. profiles row 생성 또는 업데이트 (full_name이 없으면 채우기)
     try {

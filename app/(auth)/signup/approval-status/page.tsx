@@ -152,7 +152,7 @@ export default function SignupApprovalStatusPage() {
     // Save the real store UUID from membership, not the mock store.id
     sessionStorage.setItem("selectedStoreId", membershipStoreId);
     sessionStorage.setItem("selectedStoreName", storeName);
-    router.push("/boss");
+    router.push(role === "staff" ? "/staff" : "/boss");
   };
 
   const handleAddStore = () => {

@@ -106,18 +106,21 @@ export default function HQPage() {
     const checkAuth = async () => {
       try {
         const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
+        const { data, error } = await supabase.auth.getUser();
         
-        if (!data.session?.user) {
+        if (error || !data.user) {
           router.push("/");
           return;
         }
 
-        const user = data.session.user;
-        const role = user.user_metadata?.role;
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", data.user.id)
+          .maybeSingle<{ role: string }>();
 
         // Verify user is HQ
-        if (role !== "hq") {
+        if (profile?.role !== "hq") {
           router.push("/");
           return;
         }

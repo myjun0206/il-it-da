@@ -6,6 +6,7 @@ import { FileText, Plus, Trash2, Upload, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
+import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
 import type { ManualRecord } from "@/lib/types/manual";
@@ -72,9 +73,9 @@ export default function ManualDashboardPage() {
     const checkAuth = async () => {
       try {
         const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
+        const profile = await getAuthenticatedProfile(supabase);
 
-        if (!data.session?.user || data.session.user.user_metadata?.role !== "hq") {
+        if (profile?.role !== "hq") {
           router.push("/");
           return;
         }

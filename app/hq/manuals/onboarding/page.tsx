@@ -6,6 +6,7 @@ import { UploadCloud, Trash2, Plus } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
+import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import type { ManualSectionDraft } from "@/lib/types/manual";
 
 type Step = "upload" | "review";
@@ -62,9 +63,9 @@ export default function ManualOnboardingPage() {
   useLayoutEffect(() => {
     const checkAuth = async () => {
       const supabase = createClient();
-      const { data } = await supabase.auth.getSession();
+      const profile = await getAuthenticatedProfile(supabase);
 
-      if (!data.session?.user || data.session.user.user_metadata?.role !== "hq") {
+      if (profile?.role !== "hq") {
         router.push("/");
       }
     };

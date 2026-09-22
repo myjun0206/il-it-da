@@ -43,21 +43,25 @@ export default function OwnerDashboardPage() {
     const checkAuthAndInit = async () => {
       try {
         const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
+        const { data, error } = await supabase.auth.getUser();
 
-        if (!data.session?.user) {
+        if (error || !data.user) {
           router.push("/");
           return;
         }
 
-        const role = data.session.user.user_metadata?.role;
-        if (role !== "owner") {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", data.user.id)
+          .maybeSingle<{ role: string }>();
+        if (profile?.role !== "owner") {
           router.push("/");
           return;
         }
 
         // Get user name from session metadata or email
-        const name = data.session.user.user_metadata?.name || data.session.user.email || "점주";
+        const name = data.user.user_metadata?.name || data.user.email || "점주";
         setUserName(name);
 
         // Get selectedStoreId from sessionStorage

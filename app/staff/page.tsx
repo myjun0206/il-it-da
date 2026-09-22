@@ -131,17 +131,21 @@ export default function StaffPage() {
     const checkAuth = async () => {
       try {
         const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
+        const { data, error } = await supabase.auth.getUser();
         
-        if (!data.session?.user) {
+        if (error || !data.user) {
           router.push("/");
           return;
         }
 
-        const role = data.session.user.user_metadata?.role;
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", data.user.id)
+          .maybeSingle<{ role: string }>();
 
         // Verify user is staff
-        if (role !== "staff") {
+        if (profile?.role !== "staff") {
           router.push("/");
           return;
         }
