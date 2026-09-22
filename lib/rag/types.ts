@@ -8,6 +8,15 @@ export type RagSource = {
 
 export type RagQueryRequest = {
   question: string;
+  storeId: string;
+};
+
+export type RagSearchMatch = {
+  title: string;
+  category: string;
+  similarity: number;
+  rawSimilarity: number;
+  keywordBoost: number;
 };
 
 export type RagQuerySuccessResponse = {
@@ -15,6 +24,7 @@ export type RagQuerySuccessResponse = {
   similarity: number | null;
   source: RagSource | null;
   status?: RagStatus;
+  matches: RagSearchMatch[];
 };
 
 export type RagQueryErrorResponse = {
@@ -29,5 +39,7 @@ export type ManualChunkMatch = {
   title: string;
   category: string;
   content: string;
+  raw_similarity_score: number;
+  keyword_boost: number;
   similarity_score: number;
 };

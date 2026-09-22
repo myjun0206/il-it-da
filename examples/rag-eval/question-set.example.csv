@@ -1,0 +1,4 @@
+﻿question_id,question_type,manual_scope,target_store,category,question,expected_status,expected_result,expected_keywords,forbidden_content,priority,note
+EXAMPLE-001,normal,store,이수점,예제 카테고리,가상 카페의 원두는 어디에 보관하나요?,answered,이 예제는 검증 형식을 보여주기 위한 것으로 실제 매뉴얼 정답이 아닙니다.,보관|원두,모르겠습니다,medium,형식 확인용 가상 예제 (실제 질문 아님)
+EXAMPLE-002,paraphrase,hq,all,예제 카테고리,가상 카페 매장은 청소를 언제 하나요?,cautious,이 예제는 검증 형식을 보여주기 위한 것으로 실제 매뉴얼 정답이 아닙니다.,청소,,low,target_store=all 확장 동작을 보여주는 예제
+EXAMPLE-003,out_of_scope,none,숭실대점,예제 카테고리,오늘 날씨가 어떤가요?,insufficient,이 예제는 검증 형식을 보여주기 위한 것으로 실제 매뉴얼 정답이 아닙니다.,,,low,선택 필드(expected_keywords/forbidden_content)를 생략한 예제

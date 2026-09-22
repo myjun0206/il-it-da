@@ -4,8 +4,17 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "eval:rag": "node scripts/evaluate-rag.mjs",
     "build": "next build",
-    "test:rag": "tsc -p tsconfig.test.json && node --test tests/rag/chunk-manual.test.ts",
+    "test:rag": "tsc -p tsconfig.test.json && node --test tests/rag/answer-prompt.test.ts tests/rag/chunk-manual.test.ts tests/rag/search-query.test.ts tests/rag/validate-query-request.test.ts tests/rag/save-question-log.test.ts tests/auth/dev-test-verification.test.ts tests/auth/safe-auth-log.test.ts tests/manuals/upload-limits.test.ts",
+    "test:rag-eval": "node --test tests/rag-eval/question-set.test.mjs tests/rag-eval/grading.test.mjs tests/rag-eval/store-map.test.mjs tests/rag-eval/run-evaluation.test.mjs tests/rag-eval/csv-question-set.test.mjs tests/rag-eval/convert-rag-csv-to-json.test.mjs tests/rag-eval/report.test.mjs tests/rag-eval/evaluate-rag-dataset.test.mjs tests/rag-eval/compare-reports.test.mjs tests/rag-eval/compare-rag-reports.test.mjs tests/rag-eval/analyze-question-set.test.mjs tests/rag-eval/analyze-rag-dataset.test.mjs",
+    "check:integration": "node scripts/check-integration.mjs",
+    "test:integration": "node --test tests/integration/check-repository.test.mjs tests/integration/check-integration.test.mjs",
+    "validate:rag-dataset": "node scripts/validate-rag-dataset.mjs",
+    "convert:rag-dataset": "node scripts/convert-rag-csv-to-json.mjs",
+    "eval:rag-dataset": "node scripts/evaluate-rag-dataset.mjs",
+    "compare:rag-reports": "node scripts/compare-rag-reports.mjs",
+    "analyze:rag-dataset": "node scripts/analyze-rag-dataset.mjs",
     "start": "next start",
     "lint": "eslint"
   },
@@ -16,12 +25,15 @@
     "@supabase/ssr": "^0.12.5",
     "@supabase/supabase-js": "^2.115.0",
     "clsx": "^2.1.1",
+    "csv-parse": "7.0.2",
+    "dotenv": "16.6.1",
     "langchain": "^1.5.10",
     "lucide-react": "^1.40.0",
     "next": "16.3.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "tailwind-merge": "^3.6.0"
+    "tailwind-merge": "^3.6.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

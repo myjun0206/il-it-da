@@ -2,7 +2,12 @@ import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createEmbedding } from "@/lib/rag/openai-embeddings";
+import {
+  extractSearchKeywords,
+  formatSearchEmbeddingInput,
+} from "@/lib/rag/search-query";
 import type { ManualChunkMatch } from "@/lib/rag/types";
+
 
 function validateAndNormalizeQuestion(question: unknown): string {
   if (typeof question !== "string") {
@@ -46,6 +51,10 @@ function isManualChunkMatch(item: unknown): item is ManualChunkMatch {
     typeof record.title === "string" &&
     typeof record.category === "string" &&
     typeof record.content === "string" &&
+    typeof record.raw_similarity_score === "number" &&
+    Number.isFinite(record.raw_similarity_score) &&
+    typeof record.keyword_boost === "number" &&
+    Number.isFinite(record.keyword_boost) &&
     typeof record.similarity_score === "number" &&
     Number.isFinite(record.similarity_score)
   );
@@ -71,6 +80,8 @@ function parseChunkMatches(data: unknown): ManualChunkMatch[] {
       title: item.title,
       category: item.category,
       content: item.content,
+      raw_similarity_score: item.raw_similarity_score,
+      keyword_boost: item.keyword_boost,
       similarity_score: item.similarity_score,
     });
   }
@@ -80,22 +91,40 @@ function parseChunkMatches(data: unknown): ManualChunkMatch[] {
 
 export async function searchManualChunks(
   question: string,
+  storeId: string,
   matchCount = 5,
 ): Promise<ManualChunkMatch[]> {
   const normalizedQuestion = validateAndNormalizeQuestion(question);
   const validatedMatchCount = validateMatchCount(matchCount);
+  const formattedQuery = formatSearchEmbeddingInput(normalizedQuestion);
+  const queryKeywords = extractSearchKeywords(normalizedQuestion);
 
-  const embedding = await createEmbedding(normalizedQuestion);
+  const embedding = await createEmbedding(formattedQuery);
   const supabase = createAdminClient();
 
-  const { data, error } = await supabase.rpc("match_manual_chunks", {
+  const { data, error } = await supabase.rpc("match_manual_chunks_hybrid_by_store", {
     query_embedding: embedding,
+    query_text: normalizedQuestion,
+    query_keywords: queryKeywords,
+    target_store_id: storeId,
     match_count: validatedMatchCount,
   });
 
   if (error) {
-    throw new Error(`Supabase match_manual_chunks RPC failed: ${error.message}`);
+    console.error("RAG store-scoped hybrid search failed.");
+    throw new Error("Supabase store-scoped hybrid search failed.");
   }
 
-  return parseChunkMatches(data);
+  const matches = parseChunkMatches(data);
+
+  const topMatch = matches[0];
+
+  console.info("RAG vector search", {
+    matchCount: matches.length,
+    rawSimilarity: topMatch?.raw_similarity_score ?? null,
+    keywordBoost: topMatch?.keyword_boost ?? null,
+    finalSimilarity: topMatch?.similarity_score ?? null,
+  });
+
+  return matches;
 }

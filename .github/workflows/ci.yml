@@ -4,9 +4,11 @@ on:
   pull_request:
     branches:
       - main
+      - develop
   push:
     branches:
       - main
+      - develop
 
 permissions:
   contents: read
@@ -38,6 +40,18 @@ jobs:
 
       - name: Run RAG tests
         run: npm run test:rag
+
+      - name: Run RAG evaluation tool tests
+        run: npm run test:rag-eval
+
+      - name: Convert example RAG question set CSV to JSON
+        run: npm run convert:rag-dataset -- --input examples/rag-eval/question-set.example.csv --output ${{ runner.temp }}/question-set.example.converted.json
+
+      - name: Validate converted example RAG question set
+        run: npm run validate:rag-dataset -- --input ${{ runner.temp }}/question-set.example.converted.json
+
+      - name: Validate example RAG question set
+        run: npm run validate:rag-dataset -- --input examples/rag-eval/question-set.example.json
 
       - name: Run ESLint
         run: npm run lint

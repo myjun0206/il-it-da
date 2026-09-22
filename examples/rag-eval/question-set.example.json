@@ -1,0 +1,42 @@
+[
+  {
+    "question_id": "EXAMPLE-001",
+    "question_type": "normal",
+    "manual_scope": "store",
+    "target_store": "이수점",
+    "category": "예제 카테고리",
+    "question": "가상 카페의 원두는 어디에 보관하나요?",
+    "expected_status": "answered",
+    "expected_result": "이 예제는 검증 형식을 보여주기 위한 것으로 실제 매뉴얼 정답이 아닙니다.",
+    "expected_keywords": ["보관", "원두"],
+    "forbidden_content": ["모르겠습니다"],
+    "priority": "medium",
+    "note": "형식 확인용 가상 예제 (실제 질문 아님)"
+  },
+  {
+    "question_id": "EXAMPLE-002",
+    "question_type": "paraphrase",
+    "manual_scope": "hq",
+    "target_store": "all",
+    "category": "예제 카테고리",
+    "question": "가상 카페 매장은 청소를 언제 하나요?",
+    "expected_status": "cautious",
+    "expected_result": "이 예제는 검증 형식을 보여주기 위한 것으로 실제 매뉴얼 정답이 아닙니다.",
+    "expected_keywords": ["청소"],
+    "forbidden_content": [],
+    "priority": "low",
+    "note": "target_store=all 확장 동작을 보여주는 예제"
+  },
+  {
+    "question_id": "EXAMPLE-003",
+    "question_type": "out_of_scope",
+    "manual_scope": "none",
+    "target_store": "숭실대점",
+    "category": "예제 카테고리",
+    "question": "오늘 날씨가 어떤가요?",
+    "expected_status": "insufficient",
+    "expected_result": "이 예제는 검증 형식을 보여주기 위한 것으로 실제 매뉴얼 정답이 아닙니다.",
+    "priority": "low",
+    "note": "선택 필드(expected_keywords/forbidden_content)를 생략한 예제"
+  }
+]

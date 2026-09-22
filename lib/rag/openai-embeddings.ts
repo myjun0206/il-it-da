@@ -1,5 +1,3 @@
-import "server-only";
-
 const OPENAI_EMBEDDING_URL = "https://api.openai.com/v1/embeddings";
 const EMBEDDING_MODEL = "text-embedding-3-small";
 const EXPECTED_EMBEDDING_DIMENSION = 1536;
@@ -134,6 +132,10 @@ function parseAndSortOpenAiEmbeddings(payload: unknown, expectedCount: number): 
 }
 
 export async function createEmbeddings(inputs: string[]): Promise<number[][]> {
+  if (typeof window !== "undefined") {
+    throw new Error("OpenAI embeddings are only available on the server.");
+  }
+
   const normalizedInputs = validateAndNormalizeInputs(inputs);
   const apiKey = getOpenAiApiKey();
 
