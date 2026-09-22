@@ -7,6 +7,9 @@ import { Check } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input, PasswordInput } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
+import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
+
+type OAuthProvider = "google" | "kakao";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -20,11 +23,16 @@ export default function LoginPage() {
   useLayoutEffect(() => {
     const checkSession = async () => {
       try {
+        const oauthError = new URLSearchParams(window.location.search).get("oauthError");
+        if (oauthError) {
+          setErrors({ email: "SNS 로그인을 완료하지 못했습니다. 다시 시도해주세요." });
+        }
+
         const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
+        const profile = await getAuthenticatedProfile(supabase);
         
-        if (data.session?.user) {
-          const role = data.session.user.user_metadata?.role;
+        if (profile) {
+          const role = profile.role;
           
           // Redirect based on role
           if (role === "hq") {
@@ -95,6 +103,30 @@ export default function LoginPage() {
       setErrors((prev) => ({
         ...prev,
         email: "로그인 중 오류가 발생했습니다.",
+      }));
+    }
+  };
+
+  const handleOAuthLogin = async (provider: OAuthProvider) => {
+    setErrors({});
+
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
+
+      if (error) {
+        throw error;
+      }
+    } catch (error) {
+      console.error("OAuth login failed:", error);
+      setErrors((prev) => ({
+        ...prev,
+        email: "SNS 로그인에 실패했습니다. 잠시 후 다시 시도해주세요.",
       }));
     }
   };
@@ -282,7 +314,7 @@ export default function LoginPage() {
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
-                    console.log("Kakao login");
+                    void handleOAuthLogin("kakao");
                   }}
                   className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
                   style={{ width: "52px", height: "52px" }}
@@ -299,7 +331,7 @@ export default function LoginPage() {
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
-                    console.log("Google login");
+                    void handleOAuthLogin("google");
                   }}
                   className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
                   style={{ width: "52px", height: "52px" }}
@@ -479,7 +511,7 @@ export default function LoginPage() {
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
-                    console.log("Kakao login");
+                    void handleOAuthLogin("kakao");
                   }}
                   className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
                   style={{ width: "52px", height: "52px" }}
@@ -496,7 +528,7 @@ export default function LoginPage() {
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
-                    console.log("Google login");
+                    void handleOAuthLogin("google");
                   }}
                   className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
                   style={{ width: "52px", height: "52px" }}

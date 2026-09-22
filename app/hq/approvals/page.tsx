@@ -4,6 +4,7 @@ import React, { useLayoutEffect, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
 
@@ -52,18 +53,10 @@ export default function HQApprovalsPage() {
     const checkAuth = async () => {
       try {
         const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-
-        if (!data.session?.user) {
-          router.push("/");
-          return;
-        }
-
-        const user = data.session.user;
-        const role = user.user_metadata?.role;
+        const profile = await getAuthenticatedProfile(supabase);
 
         // Verify user is HQ
-        if (role !== "hq") {
+        if (profile?.role !== "hq") {
           router.push("/");
           return;
         }

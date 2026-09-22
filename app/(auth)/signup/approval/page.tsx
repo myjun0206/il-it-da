@@ -252,6 +252,14 @@ export default function SignupApprovalPage() {
       const profileEmail = profile.email;
       const profilePassword = profile.password;
 
+      const isOAuthUser = currentUser?.identities?.some(
+        (identity) => identity.provider === "google" || identity.provider === "kakao",
+      ) || currentUser?.app_metadata?.provider === "google" || currentUser?.app_metadata?.provider === "kakao";
+
+      if (currentUser && currentUser.email === profileEmail && isOAuthUser) {
+        return true;
+      }
+
       // 현재 user가 있고 email + role이 signup 대상과 정확히 일치하면 재사용
       if (currentUser && currentUser.email === profileEmail) {
         const currentUserRole = currentUser.user_metadata?.role as string | undefined;

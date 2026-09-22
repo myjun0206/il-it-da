@@ -58,6 +58,22 @@ function clearSignupSessionStorage() {
   sessionStorage.removeItem("signupVerified");
 }
 
+function isOAuthUser(user: {
+  identities?: Array<{ provider?: string }> | null;
+  app_metadata?: Record<string, unknown>;
+}): boolean {
+  const identityProvider = user.identities?.some(
+    (identity) => identity.provider === "google" || identity.provider === "kakao",
+  );
+  const primaryProvider = user.app_metadata?.provider;
+  return Boolean(identityProvider || primaryProvider === "google" || primaryProvider === "kakao");
+}
+
+function getOAuthDisplayName(metadata: Record<string, unknown>): string {
+  const name = metadata.full_name ?? metadata.name ?? metadata.user_name;
+  return typeof name === "string" ? name : "";
+}
+
 // ============= HQ 전용 기본정보 화면 =============
 function HQSignupProfile() {
   const router = useRouter();
@@ -97,6 +113,7 @@ function HQSignupProfile() {
   } | null>(null);
   const [franchiseConfirmed, setFranchiseConfirmed] = useState(false);
   const [franchiseNotFound, setFranchiseNotFound] = useState(false);
+  const [isOAuthSignup, setIsOAuthSignup] = useState(false);
 
   // 역할 확인 (role 없으면 리다이렉트, 있으면 계속)
   useLayoutEffect(() => {
@@ -167,6 +184,38 @@ function HQSignupProfile() {
       sessionStorage.setItem("signupHQProfile", JSON.stringify(formData));
     }
   }, [formData]);
+
+  useEffect(() => {
+    const loadOAuthUser = async () => {
+      const supabase = createClient();
+      const { data, error } = await supabase.auth.getUser();
+      const user = data.user;
+
+      if (error || !user || !isOAuthUser(user) || !user.email) return;
+
+      const name = getOAuthDisplayName(user.user_metadata);
+      setIsOAuthSignup(true);
+      setEmailVerified(true);
+      setFormData((current) => ({
+        ...current,
+        companyEmail: user.email ?? current.companyEmail,
+        name: current.name || name,
+        password: "",
+        passwordConfirm: "",
+      }));
+
+      const { domain, franchise } = await getFranchiseByEmail(user.email);
+      if (franchise) {
+        setFranchiseConfirmation({ domain, name: franchise.name, id: franchise.id });
+        setFranchiseNotFound(false);
+      } else {
+        setFranchiseConfirmation(null);
+        setFranchiseNotFound(true);
+      }
+    };
+
+    void loadOAuthUser();
+  }, []);
 
   const isValidEmail = (email: string): boolean => {
     return email.includes("@") && email.length > 0;
@@ -360,13 +409,13 @@ function HQSignupProfile() {
       newErrors.phone = "올바른 연락처 형식이 아닙니다";
     }
 
-    if (!formData.password) {
+    if (!isOAuthSignup && !formData.password) {
       newErrors.password = "비밀번호를 입력해주세요";
-    } else if (formData.password.length < 8) {
+    } else if (!isOAuthSignup && formData.password.length < 8) {
       newErrors.password = "비밀번호는 8글자 이상이어야 합니다";
     }
 
-    if (formData.password !== formData.passwordConfirm) {
+    if (!isOAuthSignup && formData.password !== formData.passwordConfirm) {
       newErrors.passwordConfirm = "비밀번호가 일치하지 않습니다";
     }
 
@@ -440,6 +489,36 @@ function HQSignupProfile() {
 
     // 로딩 상태 설정
     setIsLoading(true);
+
+    if (isOAuthSignup) {
+      try {
+        const franchise = JSON.parse(savedFranchise) as { id?: string };
+        const response = await fetch("/api/auth/oauth-onboarding", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            role: "hq",
+            name: formData.name,
+            phone: formData.phone,
+            brandId: franchise.id,
+          }),
+        });
+        const data = (await response.json()) as { userId?: string; error?: string };
+
+        if (!response.ok || !data.userId) {
+          throw new Error(data.error || "SNS 프로필 생성에 실패했습니다.");
+        }
+
+        clearSignupSessionStorage();
+        router.push("/hq");
+      } catch (error) {
+        setErrors({
+          form: error instanceof Error ? error.message : "SNS 프로필 생성에 실패했습니다.",
+        });
+        setIsLoading(false);
+      }
+      return;
+    }
 
     // DEV 테스트 이메일: signInWithPassword로 기존 계정 재사용
     const normalizedEmail = normalizeEmail(formData.companyEmail);
@@ -676,8 +755,9 @@ function HQSignupProfile() {
                         onChange={handleCompanyEmailChange}
                     error={errors.companyEmail || verificationError}
                     className="h-[72px]"
-                    disabled={emailVerified && formData.companyEmail.length > 0}
+                    disabled={isOAuthSignup || (emailVerified && formData.companyEmail.length > 0)}
                   />
+                  {!isOAuthSignup && (
                   <button
                     type="button"
                     onClick={handleSendVerificationCode}
@@ -690,6 +770,7 @@ function HQSignupProfile() {
                   >
                     {isSendingVerification ? "발송 중..." : "인증번호 받기"}
                   </button>
+                  )}
                 </div>
 
                 {/* Email Verification Notification */}
@@ -862,6 +943,7 @@ function HQSignupProfile() {
                 />
               </div>
 
+              {!isOAuthSignup && (<>
               {/* Password */}
               <div className="mb-6">
                 <label className="block text-base font-semibold text-[var(--color-text-primary)] mb-2.5">
@@ -887,6 +969,7 @@ function HQSignupProfile() {
                   error={errors.passwordConfirm}
                 />
               </div>
+              </>)}
 
               {errors.form && (
                 <p className="mb-4 text-center text-sm text-[var(--color-status-error)]">
@@ -939,6 +1022,7 @@ function OwnerStaffSignupProfile() {
   const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
   const [isSendingVerification, setIsSendingVerification] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [isOAuthSignup, setIsOAuthSignup] = useState(false);
 
   // 페이지 로드 시 sessionStorage에서 저장된 데이터 복원
   useEffect(() => {
@@ -957,6 +1041,29 @@ function OwnerStaffSignupProfile() {
         console.error("프로필 데이터 로드 실패:", e);
       }
     }
+  }, []);
+
+  useEffect(() => {
+    const loadOAuthUser = async () => {
+      const supabase = createClient();
+      const { data, error } = await supabase.auth.getUser();
+      const user = data.user;
+
+      if (error || !user || !isOAuthUser(user) || !user.email) return;
+
+      setIsOAuthSignup(true);
+      setEmailDuplicateChecked(true);
+      setEmailVerified(true);
+      setFormData((current) => ({
+        ...current,
+        email: user.email ?? current.email,
+        name: current.name || getOAuthDisplayName(user.user_metadata),
+        password: "",
+        passwordConfirm: "",
+      }));
+    };
+
+    void loadOAuthUser();
   }, []);
 
   const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1082,7 +1189,7 @@ function OwnerStaffSignupProfile() {
       newErrors.email = "올바른 이메일 형식이 아닙니다";
     }
 
-    if (!emailVerified) {
+    if (!isOAuthSignup && !emailVerified) {
       newErrors.email = newErrors.email || "이메일 인증이 필요합니다";
     }
 
@@ -1098,13 +1205,13 @@ function OwnerStaffSignupProfile() {
       newErrors.phone = "올바른 연락처 형식이 아닙니다";
     }
 
-    if (!formData.password) {
+    if (!isOAuthSignup && !formData.password) {
       newErrors.password = "비밀번호를 입력해주세요";
-    } else if (formData.password.length < 8) {
+    } else if (!isOAuthSignup && formData.password.length < 8) {
       newErrors.password = "비밀번호는 8글자 이상이어야 합니다";
     }
 
-    if (formData.password !== formData.passwordConfirm) {
+    if (!isOAuthSignup && formData.password !== formData.passwordConfirm) {
       newErrors.passwordConfirm = "비밀번호가 일치하지 않습니다";
     }
 
@@ -1116,6 +1223,37 @@ function OwnerStaffSignupProfile() {
     if (!validateForm()) return;
 
     setIsLoading(true);
+
+    if (isOAuthSignup) {
+      try {
+        const role = sessionStorage.getItem("signupRole");
+        const response = await fetch("/api/auth/oauth-onboarding", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role, name: formData.name, phone: formData.phone }),
+        });
+        const data = (await response.json()) as { userId?: string; error?: string };
+
+        if (!response.ok || !data.userId) {
+          throw new Error(data.error || "SNS 프로필 생성에 실패했습니다.");
+        }
+
+        sessionStorage.setItem("signupProfile", JSON.stringify({
+          email: formData.email,
+          name: formData.name,
+          phone: formData.phone,
+          role,
+        }));
+        router.push("/signup/stores");
+      } catch (error) {
+        setErrors({
+          form: error instanceof Error ? error.message : "SNS 프로필 생성에 실패했습니다.",
+        });
+        setIsLoading(false);
+      }
+      return;
+    }
+
     setTimeout(() => {
       const profileData = {
         ...formData,
@@ -1196,7 +1334,9 @@ function OwnerStaffSignupProfile() {
                     onChange={handleEmailChange}
                     error={errors.email || emailDuplicateError}
                     className="h-[72px]"
+                    disabled={isOAuthSignup}
                   />
+                  {!isOAuthSignup && (
                   <button
                     type="button"
                     onClick={handleCheckEmailDuplicate}
@@ -1209,10 +1349,11 @@ function OwnerStaffSignupProfile() {
                   >
                     {isCheckingDuplicate ? "확인 중..." : "중복 확인"}
                   </button>
+                  )}
                 </div>
 
                 {/* Duplicate Check Success */}
-                {emailDuplicateChecked && !emailDuplicateError && (
+                {emailDuplicateChecked && !emailDuplicateError && !isOAuthSignup && (
                   <div className="flex items-center gap-2 mt-2.5 text-sm sm:text-base">
                     <div className="w-5 h-5 rounded-full bg-[var(--color-primary)] flex items-center justify-center flex-shrink-0">
                       <Check size={14} className="text-white" strokeWidth={3} />
@@ -1224,7 +1365,7 @@ function OwnerStaffSignupProfile() {
                 )}
 
                 {/* Send Verification Button */}
-                {emailDuplicateChecked && !emailDuplicateError && !emailVerificationSent && (
+                {emailDuplicateChecked && !emailDuplicateError && !emailVerificationSent && !isOAuthSignup && (
                   <button
                     type="button"
                     onClick={handleSendVerificationCode}
@@ -1237,7 +1378,7 @@ function OwnerStaffSignupProfile() {
               </div>
 
               {/* Email Verification Message */}
-              {emailVerificationSent && (
+              {emailVerificationSent && !isOAuthSignup && (
                 <div className="mt-5 mb-5 p-4 bg-[var(--color-primary-light)]/30 border border-[var(--color-primary)]/20 rounded-lg">
                   <p className="text-sm sm:text-base text-[var(--color-text-secondary)]">
                     입력하신 이메일로 인증번호를 보냈습니다.
@@ -1246,7 +1387,7 @@ function OwnerStaffSignupProfile() {
               )}
 
               {/* Verification Code Input */}
-              {emailVerificationSent && (
+              {emailVerificationSent && !isOAuthSignup && (
                 <div className="mb-8">
                   <label className="block text-base font-semibold text-[var(--color-text-primary)] mb-2.5">
                     인증번호
@@ -1320,6 +1461,7 @@ function OwnerStaffSignupProfile() {
                 />
               </div>
 
+              {!isOAuthSignup && (<>
               {/* Password */}
               <div className="mb-6">
                 <label className="block text-base font-semibold text-[var(--color-text-primary)] mb-2.5">
@@ -1345,6 +1487,13 @@ function OwnerStaffSignupProfile() {
                   error={errors.passwordConfirm}
                 />
               </div>
+              </>)}
+
+              {errors.form && (
+                <p className="mb-4 text-center text-sm text-[var(--color-status-error)]">
+                  {errors.form}
+                </p>
+              )}
 
               {/* Next Button */}
               <div className="flex justify-center pt-8">

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createClient } from "@/lib/supabase/server";
+import { requireHqUser } from "@/lib/supabase/hq-auth";
 
 export const runtime = "nodejs";
 
@@ -25,24 +25,12 @@ interface StoreMembership {
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
-    // Get server session to verify auth
-    const serverClient = await createClient();
-    const { data: sessionData } = await serverClient.auth.getSession();
+    const hqUser = await requireHqUser();
 
-    if (!sessionData.session?.user) {
+    if (!hqUser) {
       return NextResponse.json(
-        { success: false, error: "Unauthorized: No session" },
+        { success: false, error: "Unauthorized: HQ profile required" },
         { status: 401 }
-      );
-    }
-
-    const user = sessionData.session.user;
-
-    // Verify user is HQ
-    if (user.user_metadata?.role !== "hq") {
-      return NextResponse.json(
-        { success: false, error: "Forbidden: User is not HQ" },
-        { status: 403 }
       );
     }
 
@@ -201,24 +189,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
 export async function PUT(request: NextRequest): Promise<NextResponse> {
   try {
-    // Get server session to verify auth
-    const serverClient = await createClient();
-    const { data: sessionData } = await serverClient.auth.getSession();
+    const hqUser = await requireHqUser();
 
-    if (!sessionData.session?.user) {
+    if (!hqUser) {
       return NextResponse.json(
-        { success: false, error: "Unauthorized: No session" },
+        { success: false, error: "Unauthorized: HQ profile required" },
         { status: 401 }
-      );
-    }
-
-    const hqUser = sessionData.session.user;
-
-    // Verify user is HQ
-    if (hqUser.user_metadata?.role !== "hq") {
-      return NextResponse.json(
-        { success: false, error: "Forbidden: User is not HQ" },
-        { status: 403 }
       );
     }
 
@@ -290,7 +266,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       updateData = {
         status: "approved",
         approved_at: now,
-        approved_by: hqUser.id,
+        approved_by: hqUser.userId,
         rejected_at: null,
         rejected_by: null,
       };
@@ -299,7 +275,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       updateData = {
         status: "rejected",
         rejected_at: now,
-        rejected_by: hqUser.id,
+        rejected_by: hqUser.userId,
         approved_at: null,
         approved_by: null,
       };

@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { useRouter } from "next/navigation";
 import { Search, ChevronRight, X, BookOpen } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
 import { Input } from "@/components/common/Input";
@@ -86,9 +87,9 @@ export default function OwnerManualsPage() {
     const checkAuth = async () => {
       try {
         const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
+        const profile = await getAuthenticatedProfile(supabase);
 
-        if (!data.session?.user || data.session.user.user_metadata?.role !== "owner") {
+        if (profile?.role !== "owner") {
           router.push("/");
           return;
         }
