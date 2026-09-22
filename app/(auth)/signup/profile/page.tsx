@@ -5,7 +5,18 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, Check, Building2 } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input, PasswordInput } from "@/components/common/Input";
+import { createClient } from "@/lib/supabase/client";
 import type { UserRole } from "@/lib/types/user";
+import {
+  DEV_TEST_EMAILS,
+  DEV_TEST_VERIFICATION_CODE,
+  DEV_TEST_EMAIL_FRANCHISE_MAP,
+  DEV_TEST_EMAIL_ROLE_MAP,
+  DEV_TEST_PASSWORD,
+} from "@/lib/data/mockFranchises";
+
+// 이메일 정규화: 앞뒤 공백 제거 + 소문자 변환(테스트 이메일/도메인 비교에 공통 사용)
+const normalizeEmail = (value: string) => value.trim().toLowerCase();
 
 // public.franchises 테이블에 이메일 도메인을 조회해 프랜차이즈 정보를 가져온다 (app/api/franchises/lookup).
 async function getFranchiseByEmail(
@@ -59,6 +70,16 @@ function HQSignupProfile() {
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(false);
+  const [role, setRole] = useState<"hq" | "owner" | "staff" | null>(null);
+
+  // owner/staff 전용: 간단한 프로필 폼
+  const [ownerStaffFormData, setOwnerStaffFormData] = useState({
+    email: "",
+    name: "",
+    phone: "",
+    password: "",
+    passwordConfirm: "",
+  });
 
   // HQ 전용: 회사 이메일 인증
   const [emailVerificationSent, setEmailVerificationSent] = useState(false);
@@ -77,46 +98,65 @@ function HQSignupProfile() {
   const [franchiseConfirmed, setFranchiseConfirmed] = useState(false);
   const [franchiseNotFound, setFranchiseNotFound] = useState(false);
 
-  // 역할 확인 및 리다이렉트 (side effect)
+  // 역할 확인 (role 없으면 리다이렉트, 있으면 계속)
   useLayoutEffect(() => {
     const savedRole = sessionStorage.getItem("signupRole");
-    if (savedRole !== "hq") {
+    if (!savedRole || !["hq", "owner", "staff"].includes(savedRole)) {
       router.push("/signup/role");
       return;
     }
   }, [router]);
 
   // 페이지 로드 시 sessionStorage에서 저장된 상태 복구 (state update)
-  useEffect(() => {
-    // 이전에 입력한 개인정보 복구
-    const savedProfile = sessionStorage.getItem("signupHQProfile");
-    if (savedProfile) {
-      try {
-        const profile = JSON.parse(savedProfile);
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setFormData(profile);
-        // 이메일이 있으면 인증 완료 상태로 표시
-        if (profile.companyEmail) {
-          setEmailVerified(true);
-        }
-      } catch (e) {
-        console.error("프로필 데이터 로드 실패:", e);
-      }
+  useLayoutEffect(() => {
+    // role 확인
+    const savedRole = sessionStorage.getItem("signupRole") as "hq" | "owner" | "staff" | null;
+    if (savedRole) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRole(savedRole);
     }
 
-    // 이전에 확인한 프랜차이즈 정보 복구
-    const savedFranchise = sessionStorage.getItem("signupFranchise");
-    const savedConfirmed = sessionStorage.getItem("signupFranchiseConfirmed");
-    if (savedFranchise) {
-      try {
-        const franchise = JSON.parse(savedFranchise);
-        setFranchiseConfirmation(franchise);
-        // 이전에 확인된 프랜차이즈라면 상태 복구
-        if (savedConfirmed === "true") {
-          setFranchiseConfirmed(true);
+    if (savedRole === "hq") {
+      // HQ: 이전에 입력한 개인정보 복구
+      const savedProfile = sessionStorage.getItem("signupHQProfile");
+      if (savedProfile) {
+        try {
+          const profile = JSON.parse(savedProfile);
+          setFormData(profile);
+          // 이메일이 있으면 인증 완료 상태로 표시
+          if (profile.companyEmail) {
+            setEmailVerified(true);
+          }
+        } catch (e) {
+          console.error("프로필 데이터 로드 실패:", e);
         }
-      } catch (e) {
-        console.error("프랜차이즈 정보 로드 실패:", e);
+      }
+
+      // 이전에 확인한 프랜차이즈 정보 복구
+      const savedFranchise = sessionStorage.getItem("signupFranchise");
+      const savedConfirmed = sessionStorage.getItem("signupFranchiseConfirmed");
+      if (savedFranchise) {
+        try {
+          const franchise = JSON.parse(savedFranchise);
+          setFranchiseConfirmation(franchise);
+          // 이전에 확인된 프랜차이즈라면 상태 복구
+          if (savedConfirmed === "true") {
+            setFranchiseConfirmed(true);
+          }
+        } catch (e) {
+          console.error("프랜차이즈 정보 로드 실패:", e);
+        }
+      }
+    } else if (savedRole === "owner" || savedRole === "staff") {
+      // owner/staff: 이전에 입력한 개인정보 복구
+      const savedProfile = sessionStorage.getItem("signupProfile");
+      if (savedProfile) {
+        try {
+          const profile = JSON.parse(savedProfile);
+          setOwnerStaffFormData(profile);
+        } catch (e) {
+          console.error("프로필 데이터 로드 실패:", e);
+        }
       }
     }
   }, []);
@@ -150,6 +190,20 @@ function HQSignupProfile() {
       return;
     }
 
+    const normalizedEmail = normalizeEmail(formData.companyEmail);
+
+    // 개발 환경: 등록된 테스트 이메일만 mock 발송 허용
+    if (typeof window !== "undefined" && process.env.NODE_ENV === "development" && DEV_TEST_EMAILS.some((email) => normalizeEmail(email) === normalizedEmail)) {
+      setIsSendingVerification(true);
+      setVerificationError("");
+      setTimeout(() => {
+        setEmailVerificationSent(true);
+        setIsSendingVerification(false);
+      }, 600);
+      return;
+    }
+
+    // 실제 이메일 발송 API 사용
     setIsSendingVerification(true);
     setVerificationError("");
 
@@ -177,6 +231,7 @@ function HQSignupProfile() {
 
   const handleVerifyCode = async () => {
     const normalizedCode = verificationCode.trim();
+    const normalizedEmail = normalizeEmail(formData.companyEmail);
     setEmailVerified(false);
 
     if (!normalizedCode || normalizedCode.length < 6) {
@@ -184,6 +239,35 @@ function HQSignupProfile() {
       return;
     }
 
+    // 개발 환경 + 등록된 테스트 이메일일 때만 테스트 인증번호를 허용
+    const isDevTestEmail =
+      typeof window !== "undefined" && process.env.NODE_ENV === "development" && DEV_TEST_EMAILS.some((email) => normalizeEmail(email) === normalizedEmail);
+
+    // 등록된 테스트 이메일은 오직 지정된 테스트 인증번호로만 통과될 수 있다(일반 경로로 폴백하지 않음)
+    if (isDevTestEmail) {
+      if (normalizedCode !== DEV_TEST_VERIFICATION_CODE) {
+        setVerificationError("인증번호가 일치하지 않습니다.");
+        return;
+      }
+
+      setIsVerifying(true);
+      setVerificationError("");
+
+      setTimeout(() => {
+        setEmailVerified(true);
+        sessionStorage.setItem("signupVerified", "true");
+        setIsVerifying(false);
+      }, 600);
+      return;
+    }
+
+    // 테스트 인증번호는 등록된 테스트 이메일에서만 유효하다(미등록 이메일의 우회 방지, fail closed)
+    if (normalizedCode === DEV_TEST_VERIFICATION_CODE) {
+      setVerificationError("인증번호가 일치하지 않습니다.");
+      return;
+    }
+
+    // 일반 이메일: /api/auth/verify-code 호출
     setIsVerifying(true);
     setVerificationError("");
 
@@ -297,7 +381,7 @@ function HQSignupProfile() {
     // sessionStorage 데이터 확인 - state 비동기 업데이트 문제 해결
     const savedFranchise = sessionStorage.getItem("signupFranchise");
     const savedFranchiseConfirmed = sessionStorage.getItem("signupFranchiseConfirmed");
-    
+
     if (!savedFranchise || savedFranchiseConfirmed !== "true") {
       setErrors({ franchise: "프랜차이즈 확인이 필요합니다" });
       return;
@@ -305,7 +389,7 @@ function HQSignupProfile() {
 
     // 사용자가 입력한 데이터 저장 (임시 회원가입 상태)
     sessionStorage.setItem("signupHQProfile", JSON.stringify(formData));
-    
+
     // 프랜차이즈 정보도 저장 (완료 화면에서 사용)
     try {
       const franchise = JSON.parse(savedFranchise);
@@ -316,8 +400,90 @@ function HQSignupProfile() {
       console.error("프랜차이즈 정보 파싱 실패:", e);
     }
 
+    // 실제 등록된 계정 정보 저장 (hq/communication 등에서 사용)
+    try {
+      const accountsJson = sessionStorage.getItem("registeredAccounts");
+      const registeredAccounts = accountsJson ? JSON.parse(accountsJson) : [];
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const existingIndex = registeredAccounts.findIndex(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (acc: any) => acc.companyEmail === formData.companyEmail && acc.role === "hq"
+      );
+
+      // 프랜차이즈 정보 추가
+      let franchiseName = "";
+      try {
+        const franchise = JSON.parse(savedFranchise);
+        franchiseName = franchise.name || "";
+      } catch (e) {
+        console.error("프랜차이즈 정보 파싱 실패:", e);
+      }
+
+      const newAccount = {
+        ...formData,
+        role: "hq",
+        franchiseName: franchiseName,
+        registeredAt: new Date().toISOString(),
+      };
+
+      if (existingIndex >= 0) {
+        registeredAccounts[existingIndex] = newAccount;
+      } else {
+        registeredAccounts.push(newAccount);
+      }
+
+      sessionStorage.setItem("registeredAccounts", JSON.stringify(registeredAccounts));
+    } catch (e) {
+      console.error("등록된 계정 저장 실패:", e);
+    }
+
+    // 로딩 상태 설정
     setIsLoading(true);
 
+    // DEV 테스트 이메일: signInWithPassword로 기존 계정 재사용
+    const normalizedEmail = normalizeEmail(formData.companyEmail);
+    const isDevTestEmail = typeof window !== "undefined" && process.env.NODE_ENV === "development" && DEV_TEST_EMAILS.some((email) => normalizeEmail(email) === normalizedEmail);
+
+    if (isDevTestEmail) {
+      try {
+        const supabase = createClient();
+        const { data: authData, error: authError } =
+          await supabase.auth.signInWithPassword({
+            email: formData.companyEmail,
+            password: DEV_TEST_PASSWORD,
+          });
+
+        if (authError) {
+          setIsLoading(false);
+          console.error("Test account signIn error:", authError);
+          setErrors({
+            companyEmail: `테스트 계정 로그인 실패: ${authError.message || "알 수 없는 오류"}`,
+          });
+          return;
+        }
+
+        if (!authData.user || !authData.session) {
+          setIsLoading(false);
+          setErrors({
+            companyEmail: "테스트 계정 세션을 확보할 수 없습니다.",
+          });
+          return;
+        }
+
+        // HQ 테스트 계정 로그인 성공
+        setIsLoading(false);
+        await new Promise(resolve => setTimeout(resolve, 50));
+        router.push("/signup/complete");
+      } catch (e) {
+        setIsLoading(false);
+        console.error("테스트 계정 처리 중 오류:", e);
+        setErrors({ companyEmail: "회원가입 중 오류가 발생했습니다." });
+      }
+      return;
+    }
+
+    // 일반 이메일: /api/auth/signup API 사용
     try {
       const franchise = JSON.parse(savedFranchise) as { id?: string };
       const response = await fetch("/api/auth/signup", {
@@ -354,6 +520,96 @@ function HQSignupProfile() {
     router.push("/signup/terms");
   };
 
+  // owner/staff용 검증
+  const validateOwnerStaffForm = () => {
+    const newErrors: Record<string, string> = {};
+
+    if (!ownerStaffFormData.email) {
+      newErrors.email = "이메일을 입력해주세요";
+    } else if (!ownerStaffFormData.email.includes("@")) {
+      newErrors.email = "올바른 이메일 형식이 아닙니다";
+    }
+
+    if (!ownerStaffFormData.name) {
+      newErrors.name = "이름을 입력해주세요";
+    } else if (ownerStaffFormData.name.length < 2) {
+      newErrors.name = "이름은 2글자 이상이어야 합니다";
+    }
+
+    if (!ownerStaffFormData.password) {
+      newErrors.password = "비밀번호를 입력해주세요";
+    } else if (ownerStaffFormData.password.length < 8) {
+      newErrors.password = "비밀번호는 8글자 이상이어야 합니다";
+    }
+
+    if (ownerStaffFormData.password !== ownerStaffFormData.passwordConfirm) {
+      newErrors.passwordConfirm = "비밀번호가 일치하지 않습니다";
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  // owner/staff용 계속하기
+  const handleContinueOwnerStaff = async () => {
+    if (!validateOwnerStaffForm()) return;
+
+    setIsLoading(true);
+
+    try {
+      const supabase = createClient();
+
+      // Supabase Auth 사용자 생성
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: ownerStaffFormData.email,
+        password: ownerStaffFormData.password,
+        options: {
+          data: {
+            role: role || "owner",
+            name: ownerStaffFormData.name,
+          }
+        }
+      });
+
+      if (authError) {
+        setIsLoading(false);
+        if (authError.message?.includes("already registered")) {
+          setErrors({ email: "이미 등록된 이메일입니다." });
+        } else {
+          setErrors({ email: authError.message || "회원가입 중 오류가 발생했습니다." });
+        }
+        return;
+      }
+
+      // user와 session이 모두 있는지 확인
+      if (!authData.user) {
+        setIsLoading(false);
+        setErrors({ email: "사용자 생성에 실패했습니다." });
+        return;
+      }
+
+      if (!authData.session) {
+        setIsLoading(false);
+        setErrors({ email: "로그인 세션을 생성할 수 없습니다. Supabase 이메일 설정을 확인해주세요." });
+        return;
+      }
+
+      // signupProfile에 저장 (approval 페이지에서 사용)
+      sessionStorage.setItem(
+        "signupProfile",
+        JSON.stringify(ownerStaffFormData)
+      );
+
+      // 약간의 지연 후 다음 페이지로
+      await new Promise(resolve => setTimeout(resolve, 50));
+      router.push("/signup/stores");
+    } catch (e) {
+      setIsLoading(false);
+      console.error("Auth 사용자 생성 실패:", e);
+      setErrors({ email: "회원가입 중 오류가 발생했습니다." });
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[var(--color-bg-default)]">
       {/* Header */}
@@ -378,10 +634,10 @@ function HQSignupProfile() {
 
           <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
             <span className="text-base sm:text-lg lg:text-[17px] font-semibold text-[var(--color-text-secondary)]">
-              2 / 3
+              {role === "hq" ? "3 / 3" : "3 / 5"}
             </span>
             <div className="w-20 sm:w-28 h-2 bg-[var(--color-border-light)] rounded-full overflow-hidden flex-shrink-0">
-              <div className="h-full bg-[var(--color-primary)] rounded-full transition-all duration-300" style={{ width: "66%" }} />
+              <div className="h-full bg-[var(--color-primary)] rounded-full transition-all duration-300" style={{ width: role === "hq" ? "100%" : "60%" }} />
             </div>
           </div>
         </div>
@@ -393,28 +649,31 @@ function HQSignupProfile() {
           {/* Title Section */}
           <div className="mb-6 sm:mb-8 lg:mb-10 text-center">
             <h1 className="mb-4 sm:mb-5 lg:mb-6 font-bold text-[var(--color-text-primary)]" style={{ fontSize: "clamp(32px, 2.5vw, 42px)", fontWeight: 800 }}>
-              기본 정보를 입력해주세요
+              {role === "hq" ? "기본 정보를 입력해주세요" : "프로필 정보를 입력해주세요"}
             </h1>
             <p className="text-[var(--color-text-secondary)]" style={{ fontSize: "clamp(16px, 1.2vw, 20px)" }}>
-              본사 직원 인증을 위해 회사 이메일을 확인해주세요.
+              {role === "hq" ? "본사 직원 인증을 위해 회사 이메일을 확인해주세요." : "회원가입을 위해 기본 정보를 입력해주세요."}
             </p>
           </div>
 
-          {/* Form Container */}
-          <div className="mx-auto w-full max-w-[860px]">
-            <form>
-              {/* Company Email */}
-              <div className="mb-6">
-                <label className="block text-base font-semibold text-[var(--color-text-primary)] mb-2.5">
-                  본사 직원 이메일
-                </label>
+          {/* HQ Form */}
+          {role === "hq" && (
+            <>
+              {/* Form Container */}
+              <div className="mx-auto w-full max-w-[860px]">
+                <form>
+                  {/* Company Email */}
+                  <div className="mb-6">
+                    <label className="block text-base font-semibold text-[var(--color-text-primary)] mb-2.5">
+                      본사 직원 이메일
+                    </label>
 
-                <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_156px] gap-3.5 w-full">
-                  <Input
-                    type="email"
-                    placeholder="회사 이메일을 입력해주세요"
-                    value={formData.companyEmail}
-                    onChange={handleCompanyEmailChange}
+                    <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_156px] gap-3.5 w-full">
+                      <Input
+                        type="email"
+                        placeholder="회사 이메일을 입력해주세요"
+                        value={formData.companyEmail}
+                        onChange={handleCompanyEmailChange}
                     error={errors.companyEmail || verificationError}
                     className="h-[72px]"
                     disabled={emailVerified && formData.companyEmail.length > 0}
@@ -649,13 +908,15 @@ function HQSignupProfile() {
               </div>
             </form>
           </div>
+            </>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-// ============= 점주/직원 기본정보 화면 (기존) =============
+// ============= 점주/직원 기본정보 화면 =============
 function OwnerStaffSignupProfile() {
   const router = useRouter();
   const [formData, setFormData] = useState({
@@ -1090,7 +1351,7 @@ function OwnerStaffSignupProfile() {
                 <Button
                   type="button"
                   onClick={handleContinue}
-                  disabled={isLoading}
+                  disabled={isLoading || !emailVerified}
                   variant="primary"
                   size="lg"
                   className="w-full sm:w-auto min-h-14 lg:min-h-16 px-8 lg:px-12 text-lg lg:text-xl font-semibold"

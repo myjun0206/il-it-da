@@ -1,11 +1,11 @@
 "use client";
 
 import React, { useLayoutEffect, useEffect, useState, useCallback } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CheckCircle, Clock, Mail, Check, ChevronLeft } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Card } from "@/components/common/Card";
+import { createClient } from "@/lib/supabase/client";
 import type { UserRole } from "@/lib/types/user";
 
 export default function SignupCompletePage() {
@@ -33,7 +33,15 @@ export default function SignupCompletePage() {
   }, []);
 
   // 로그인 화면으로 이동 - 임시 회원가입 상태 초기화
-  const handleGoToLogin = useCallback(() => {
+  const handleGoToLogin = useCallback(async () => {
+    try {
+      // Signup 과정에서 생성된 Auth session 종료
+      const supabase = createClient();
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.error("SignOut failed:", e);
+    }
+
     // 회원가입 진행 임시 상태 모두 삭제
     // 실제 계정 정보는 Supabase Auth와 public.profiles에서 관리
     sessionStorage.removeItem("signupRole");
@@ -48,7 +56,7 @@ export default function SignupCompletePage() {
     
     // 로그인 페이지로 이동
     router.push("/");
-  }, []);
+  }, [router]);
 
   if (!role) {
     return null;
@@ -208,27 +216,25 @@ export default function SignupCompletePage() {
                   </div>
                 </div>
 
-                <Link href="/" className="block">
-                  <Button
-                    type="button"
-                    variant="primary"
-                    size="md"
-                    className="w-full"
-                  >
-                    홈으로 돌아가기
-                  </Button>
-                </Link>
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="md"
+                  className="w-full"
+                  onClick={handleGoToLogin}
+                >
+                  홈으로 돌아가기
+                </Button>
 
-                <Link href="/" className="block mt-3">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="md"
-                    className="w-full"
-                  >
-                    다시 로그인하기
-                  </Button>
-                </Link>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="md"
+                  className="w-full mt-3"
+                  onClick={handleGoToLogin}
+                >
+                  다시 로그인하기
+                </Button>
               </Card>
             )}
           </div>

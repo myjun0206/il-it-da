@@ -29,7 +29,6 @@ export default function SignupVerificationPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [mounted] = useState(() => typeof window !== 'undefined');
 
   useLayoutEffect(() => {
     const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
@@ -48,10 +47,6 @@ export default function SignupVerificationPage() {
       return () => clearTimeout(timer);
     }
   }, [timeLeft]);
-
-  if (!mounted) {
-    return null;
-  }
 
   const handleSendCode = async () => {
     setErrors({});
