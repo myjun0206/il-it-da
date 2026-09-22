@@ -6,7 +6,6 @@ import { AlertCircle, Bot, CheckCircle2, ChevronRight, Clock3, Info, Paperclip, 
 
 import StaffHeader from "@/components/staff/StaffHeader";
 import StaffSidebar from "@/components/staff/StaffSidebar";
-import { DEMO_STORES, findDemoStore, type DemoStore } from "@/lib/data/demoStores";
 import type { RagSource, RagStatus } from "@/lib/rag/types";
 import { createClient } from "@/lib/supabase/client";
 
@@ -18,6 +17,11 @@ type Message = {
   source?: Partial<Pick<RagSource, "title" | "category">>;
   similarity?: number;
 };
+
+interface Store {
+  id: string;
+  name: string;
+}
 
 const statusBadgeConfig = {
   answered: { label: "매뉴얼 기반 답변", icon: CheckCircle2, className: "border border-[#7cd4b6] bg-[#e8f9f4] text-[#0d5d4d]" },
@@ -62,26 +66,60 @@ export default function StaffPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [userName, setUserName] = useState("직원");
   const [storeName, setStoreName] = useState("매장");
-  const [selectedStore, setSelectedStore] = useState<DemoStore | null>(null);
+  const [selectedStore, setSelectedStore] = useState<Store | null>(null);
+  const [availableStores, setAvailableStores] = useState<Store[]>([]);
 
   useEffect(() => {
-    // PoC demo selection only. Real authorization must resolve the user's permitted store server-side.
-    const storedStoreId = sessionStorage.getItem(SELECTED_STORE_STORAGE_KEY);
-    if (!storedStoreId) return;
+    // Fetch user's approved stores from store_memberships
+    const fetchUserStores = async () => {
+      try {
+        const supabase = createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        
+        if (!user) return;
 
-    const storedStore = findDemoStore(storedStoreId);
-    if (!storedStore) {
-      sessionStorage.removeItem(SELECTED_STORE_STORAGE_KEY);
-      return;
-    }
+        // Query store_memberships for this user's approved stores
+        const { data: memberships } = await supabase
+          .from("store_memberships")
+          .select("store_id")
+          .eq("user_id", user.id)
+          .eq("role", "staff")
+          .eq("status", "approved");
 
-    startTransition(() => setSelectedStore(storedStore));
+        if (memberships && memberships.length > 0) {
+          const storeIds = memberships.map(m => m.store_id);
+          
+          // Fetch store names
+          const { data: stores } = await supabase
+            .from("stores")
+            .select("id, store_name")
+            .in("id", storeIds);
+
+          if (stores) {
+            const formattedStores = stores.map(s => ({
+              id: s.id,
+              name: s.store_name
+            }));
+            setAvailableStores(formattedStores);
+            
+            // Auto-select first store
+            if (formattedStores.length > 0) {
+              selectStore(formattedStores[0].id);
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Failed to fetch user stores:", e);
+      }
+    };
+
+    fetchUserStores();
   }, []);
 
   function selectStore(storeId: string) {
     if (isLoading) return;
 
-    const store = findDemoStore(storeId) ?? null;
+    const store = availableStores.find(s => s.id === storeId) || null;
     if (selectedStore?.id !== store?.id) {
       setMessages(INITIAL_MESSAGES);
       setInput("");
@@ -91,6 +129,7 @@ export default function StaffPage() {
 
     if (store) {
       sessionStorage.setItem(SELECTED_STORE_STORAGE_KEY, store.id);
+      setStoreName(store.name);
     } else {
       sessionStorage.removeItem(SELECTED_STORE_STORAGE_KEY);
     }
@@ -264,7 +303,7 @@ export default function StaffPage() {
                   className="mt-0.5 w-full bg-transparent text-sm font-semibold text-[var(--color-text-primary)] outline-none disabled:cursor-not-allowed disabled:opacity-70"
                 >
                   <option value="">매장을 선택해 주세요</option>
-                  {DEMO_STORES.map((store) => (
+                  {availableStores.map((store) => (
                     <option key={store.id} value={store.id}>{store.name}</option>
                   ))}
                 </select>

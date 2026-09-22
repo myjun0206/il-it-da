@@ -1,19 +1,26 @@
 "use client";
 
-import React, { useState, useLayoutEffect } from "react";
+import React, { useState, useLayoutEffect, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ArrowRight, Building2 } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Card } from "@/components/common/Card";
 import type { UserRole } from "@/lib/types/user";
-import { mockBrands } from "@/lib/data/mockStores";
+import { createClient } from "@/lib/supabase/client";
+
+interface Franchise {
+  id: string;
+  name: string;
+}
 
 export default function SignupOrganizationPage() {
   const router = useRouter();
   const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [mounted] = useState(() => typeof window !== 'undefined');
+  const [mounted, setMounted] = useState(false);
+  const [brands, setBrands] = useState<Franchise[]>([]);
+  const [isFetching, setIsFetching] = useState(true);
 
   useLayoutEffect(() => {
     const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
@@ -23,7 +30,34 @@ export default function SignupOrganizationPage() {
       // 본사가 아니면 stores로 리다이렉트 (조직 선택은 본사만)
       router.push("/signup/stores");
     }
+    setMounted(true);
   }, [router]);
+
+  useEffect(() => {
+    // Fetch franchises from Supabase
+    const fetchFranchises = async () => {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase.from("franchises").select("id, name");
+        
+        if (error) {
+          console.error("Failed to fetch franchises:", error);
+          setBrands([]);
+        } else {
+          setBrands(data || []);
+        }
+      } catch (e) {
+        console.error("Failed to fetch franchises:", e);
+        setBrands([]);
+      } finally {
+        setIsFetching(false);
+      }
+    };
+
+    if (mounted) {
+      fetchFranchises();
+    }
+  }, [mounted]);
 
   if (!mounted) {
     return null;
@@ -80,39 +114,49 @@ export default function SignupOrganizationPage() {
 
             {/* Brand List */}
             <div className="space-y-3 mb-8">
-              {mockBrands.map((brand) => (
-                <Card
-                  key={brand.id}
-                  onClick={() => setSelectedBrand(brand.id)}
-                  padding="md"
-                  className={`cursor-pointer transition-all ${
-                    selectedBrand === brand.id
-                      ? "ring-2 ring-[var(--color-primary)] shadow-lg"
-                      : "hover:shadow-md"
-                  }`}
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-[var(--color-primary-light)]">
-                      <Building2 size={24} className="text-[var(--color-primary)]" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-semibold text-[var(--color-text-primary)]">
-                        {brand.name}
-                      </h3>
-                      <p className="text-sm text-[var(--color-text-secondary)]">
-                        브랜드 ID: {brand.id}
-                      </p>
-                    </div>
-                    {selectedBrand === brand.id && (
-                      <div className="flex-shrink-0">
-                        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--color-primary)]">
-                          <span className="text-white text-sm font-bold">✓</span>
-                        </div>
+              {isFetching ? (
+                <div className="text-center py-8 text-[var(--color-text-secondary)]">
+                  브랜드 로딩 중...
+                </div>
+              ) : brands.length === 0 ? (
+                <div className="text-center py-8 text-[var(--color-text-secondary)]">
+                  사용 가능한 브랜드가 없습니다.
+                </div>
+              ) : (
+                brands.map((brand) => (
+                  <Card
+                    key={brand.id}
+                    onClick={() => setSelectedBrand(brand.id)}
+                    padding="md"
+                    className={`cursor-pointer transition-all ${
+                      selectedBrand === brand.id
+                        ? "ring-2 ring-[var(--color-primary)] shadow-lg"
+                        : "hover:shadow-md"
+                    }`}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-[var(--color-primary-light)]">
+                        <Building2 size={24} className="text-[var(--color-primary)]" />
                       </div>
-                    )}
-                  </div>
-                </Card>
-              ))}
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold text-[var(--color-text-primary)]">
+                          {brand.name}
+                        </h3>
+                        <p className="text-sm text-[var(--color-text-secondary)]">
+                          브랜드 ID: {brand.id}
+                        </p>
+                      </div>
+                      {selectedBrand === brand.id && (
+                        <div className="flex-shrink-0">
+                          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--color-primary)]">
+                            <span className="text-white text-sm font-bold">✓</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </Card>
+                ))
+              )}
             </div>
 
             {/* Button Group */}
@@ -132,7 +176,7 @@ export default function SignupOrganizationPage() {
                 variant="primary"
                 size="md"
                 onClick={handleContinue}
-                disabled={!selectedBrand}
+                disabled={!selectedBrand || isFetching}
                 isLoading={isLoading}
                 className="w-full sm:w-auto"
               >
