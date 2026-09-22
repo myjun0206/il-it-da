@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { resolveFranchiseIdForStoreName } from "@/lib/supabase/resolve-store-franchise";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 interface CreateMembershipRequest {
   storeId?: string;
@@ -31,6 +32,12 @@ interface MembershipWithStore {
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
+    // [SESSION_DEBUG] 이 라우트가 실제로 받은 sb-* 쿠키 이름만 출력한다(값은 출력하지 않는다).
+    console.log(
+      "[SESSION_DEBUG][GET /api/signup/store-membership] incoming cookies:",
+      request.cookies.getAll().map((c) => c.name).filter((name) => name.startsWith("sb-"))
+    );
+
     // 현재 인증된 사용자 확보
     const serverClient = await createClient();
     const { data: { user }, error: userError } = await serverClient.auth.getUser();
@@ -51,13 +58,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const adminClient = createAdminClient();
 
-    // 사용자의 approved owner membership만 조회 (보안: 서버에서 필터링)
+    // 로그인 및 승인 확인에서 대기/승인/거절 상태를 모두 판별할 수 있도록
+    // 현재 사용자의 membership 전체를 반환한다. user_id 필터는 서버에서 강제한다.
     const { data: memberships, error: membershipError } = await adminClient
       .from("store_memberships")
       .select("*")
       .eq("user_id", userId)
-      .eq("role", "owner")
-      .eq("status", "approved");
+      .order("requested_at", { ascending: false });
 
     if (membershipError) {
       console.error("[GET /api/signup/store-membership] Failed to fetch memberships:", membershipError);
@@ -156,10 +163,17 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
     }
 
     // 서버에서 현재 인증된 사용자를 직접 가져옴 (클라이언트 userId 신뢰 안 함)
+    // [SESSION_DEBUG] 이 라우트가 실제로 받은 sb-* 쿠키 이름만 출력한다(값은 출력하지 않는다).
+    console.log(
+      "[SESSION_DEBUG][POST /api/signup/store-membership] incoming cookies:",
+      request.cookies.getAll().map((c) => c.name).filter((name) => name.startsWith("sb-"))
+    );
+
     const serverClient = await createClient();
     const { data: { user }, error: userError } = await serverClient.auth.getUser();
 
     if (userError || !user) {
+      console.log("[SESSION_DEBUG][POST /api/signup/store-membership] Unauthorized:", userError?.message);
       return NextResponse.json(
         { success: false, error: "Unauthorized: No authenticated user" },
         { status: 401 }
@@ -186,11 +200,13 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
 
       // auth user metadata에서 name 가져오기 (fallback: email)
       const userName = user.user_metadata?.name || user.email || "Unknown User";
+      const userEmail = user.email?.trim().toLowerCase() || null;
 
       const { error: profileError } = await adminClient
         .from("profiles")
         .insert({
           id: userId,
+          email: userEmail,
           role: profileRole,
           full_name: userName,
         });
@@ -200,27 +216,44 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
         // 기존 profile 조회
         const { data: existingProfile, error: fetchError } = await adminClient
           .from("profiles")
-          .select("full_name")
+          .select("email, full_name, role")
           .eq("id", userId)
           .single();
 
-        if (!fetchError && existingProfile && !existingProfile.full_name) {
-          // full_name이 NULL이면 업데이트
-          const { error: updateError } = await adminClient
-            .from("profiles")
-            .update({ full_name: userName })
-            .eq("id", userId);
+        if (!fetchError && existingProfile) {
+          const profileUpdates: {
+            email?: string;
+            full_name?: string;
+            role?: "owner" | "staff";
+          } = {};
 
-          if (updateError) {
-            console.error("Profile update error:", updateError);
-            return NextResponse.json(
-              {
-                success: false,
-                error: "Failed to update profile",
-                details: updateError.message,
-              },
-              { status: 500 }
-            );
+          if (userEmail && existingProfile.email !== userEmail) {
+            profileUpdates.email = userEmail;
+          }
+          if (!existingProfile.full_name) {
+            profileUpdates.full_name = userName;
+          }
+          if (existingProfile.role !== profileRole) {
+            profileUpdates.role = profileRole;
+          }
+
+          if (Object.keys(profileUpdates).length > 0) {
+            const { error: updateError } = await adminClient
+              .from("profiles")
+              .update(profileUpdates)
+              .eq("id", userId);
+
+            if (updateError) {
+              console.error("Profile update error:", updateError);
+              return NextResponse.json(
+                {
+                  success: false,
+                  error: "Failed to update profile",
+                  details: updateError.message,
+                },
+                { status: 500 }
+              );
+            }
           }
         }
         // full_name이 이미 있으면 그냥 스킵 (기존 값 유지)

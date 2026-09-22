@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { FileText, Plus, Trash2, Upload, X } from "lucide-react";
+import React, { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Building2, FileText, Plus, Trash2, Upload, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
@@ -15,6 +15,9 @@ type ManualGroup = {
   title: string;
   items: ManualRecord[];
 };
+
+type ManualScope = "hq" | "store";
+type HqStore = { id: string; name: string };
 
 // 대시보드 카드는 parent_manual_id가 NULL인 최상위 매뉴얼만 표시하고,
 // 하위 항목(parent_manual_id가 그 카드의 id와 일치하는 행)을 모달에서 보여준다.
@@ -41,7 +44,17 @@ function groupByParent(manuals: ManualRecord[]): ManualGroup[] {
 }
 
 export default function ManualDashboardPage() {
+  return (
+    <Suspense fallback={null}>
+      <ManualDashboardContent />
+    </Suspense>
+  );
+}
+
+function ManualDashboardContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const activeScope: ManualScope = searchParams.get("scope") === "store" ? "store" : "hq";
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [userName, setUserName] = useState("본사 관리자");
   const [franchiseName, setFranchiseName] = useState("메가MGC커피");
@@ -62,6 +75,9 @@ export default function ManualDashboardPage() {
   const [isDeletingAll, setIsDeletingAll] = useState(false);
   const [deleteAllError, setDeleteAllError] = useState("");
   const [toastMessage, setToastMessage] = useState("");
+  const [stores, setStores] = useState<HqStore[]>([]);
+  const [selectedStoreId, setSelectedStoreId] = useState("");
+  const [manualError, setManualError] = useState("");
 
   const showToast = (message: string) => {
     setToastMessage(message);
@@ -113,16 +129,23 @@ export default function ManualDashboardPage() {
 
   // 상태를 전혀 건드리지 않는 순수 데이터 조회 함수 - useEffect에서 안전하게 호출하기 위해 분리.
   // 기존 동작과 동일하게, HTTP 오류 응답은 조용히 무시하고(에러 로그 없이) manuals를 갱신하지 않는다.
-  const fetchManualsData = async (): Promise<ManualRecord[] | null> => {
-    const response = await fetch("/api/manuals");
+  const fetchManualsData = useCallback(async (): Promise<ManualRecord[] | null> => {
+    if (activeScope === "store" && !selectedStoreId) return [];
+
+    const endpoint = activeScope === "hq"
+      ? "/api/manuals"
+      : `/api/store-manuals?storeId=${encodeURIComponent(selectedStoreId)}`;
+    const response = await fetch(endpoint, { cache: "no-store" });
     const data = (await response.json()) as { manuals?: ManualRecord[]; error?: string };
-    return response.ok ? data.manuals ?? [] : null;
-  };
+    if (!response.ok) throw new Error(data.error || "매뉴얼 목록을 불러오지 못했습니다.");
+    return data.manuals ?? [];
+  }, [activeScope, selectedStoreId]);
 
   // 마운트 시 로딩 표시는 isLoadingManuals의 초기값(true)으로 이미 처리되므로,
   // 재조회 시에만 로딩 상태를 다시 켠다(이벤트 핸들러에서 호출, effect 동기 구간과 무관).
   const refetchManuals = async () => {
     setIsLoadingManuals(true);
+    setManualError("");
     try {
       const manuals = await fetchManualsData();
       if (manuals) {
@@ -130,6 +153,7 @@ export default function ManualDashboardPage() {
       }
     } catch (e) {
       console.error("매뉴얼 목록 조회 실패:", e);
+      setManualError(e instanceof Error ? e.message : "매뉴얼 목록을 불러오지 못했습니다.");
     } finally {
       setIsLoadingManuals(false);
     }
@@ -142,9 +166,42 @@ export default function ManualDashboardPage() {
           setManuals(manuals);
         }
       })
-      .catch((e) => console.error("매뉴얼 목록 조회 실패:", e))
+      .catch((e) => {
+        console.error("매뉴얼 목록 조회 실패:", e);
+        setManualError(e instanceof Error ? e.message : "매뉴얼 목록을 불러오지 못했습니다.");
+      })
       .finally(() => setIsLoadingManuals(false));
-  }, []);
+  }, [fetchManualsData]);
+
+  useEffect(() => {
+    if (!isReady) return;
+
+    fetch("/api/hq/stores", { cache: "no-store" })
+      .then(async (response) => {
+        const data = (await response.json()) as { stores?: HqStore[]; error?: string };
+        if (!response.ok) throw new Error(data.error || "지점 목록을 불러오지 못했습니다.");
+        const nextStores = data.stores ?? [];
+        setStores(nextStores);
+        setSelectedStoreId((current) => current || nextStores[0]?.id || "");
+      })
+      .catch((error) => {
+        console.error("지점 목록 조회 실패:", error);
+        setStores([]);
+      });
+  }, [isReady]);
+
+  const handleScopeChange = (scope: ManualScope) => {
+    setSelectedGroup(null);
+    setManualError("");
+    setUploadError("");
+    router.replace(`/hq/manuals?scope=${scope}`);
+  };
+
+  const handleStoreChange = (storeId: string) => {
+    setSelectedStoreId(storeId);
+    setSelectedGroup(null);
+    setManualError("");
+  };
 
   const handleLogout = async () => {
     try {
@@ -232,7 +289,7 @@ export default function ManualDashboardPage() {
       resetCreateForm();
       setShowCreateModal(false);
       await refetchManuals();
-      showToast("매뉴얼이 생성되었습니다.");
+      showToast("본사 공통 매뉴얼이 생성되었습니다.");
     } catch (e) {
       setCreateError(e instanceof Error ? e.message : "매뉴얼 저장 중 오류가 발생했습니다.");
     } finally {
@@ -273,6 +330,8 @@ export default function ManualDashboardPage() {
         franchiseName={franchiseName}
         onLogout={handleLogout}
         activeMenu="manual"
+        manualScope={activeScope}
+        onManualScopeChange={handleScopeChange}
       />
 
       <div className="lg:ml-[240px]">
@@ -282,13 +341,15 @@ export default function ManualDashboardPage() {
           <div className="mb-8 flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
-                매뉴얼 관리
+                {activeScope === "hq" ? "공통 매뉴얼 관리" : "지점 매뉴얼 보기"}
               </h1>
               <p className="text-base text-[var(--color-text-secondary)]">
-                {franchiseName}의 공통 매뉴얼을 그룹별로 관리하세요.
+                {activeScope === "hq"
+                  ? `${franchiseName}의 모든 지점에 적용되는 공통 매뉴얼을 관리하세요.`
+                  : "지점을 선택해 해당 지점에서 등록한 매뉴얼 현황을 조회하세요."}
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            {activeScope === "hq" && <div className="flex items-center gap-2">
               <Button
                 variant="outline"
                 onClick={() => fileInputRef.current?.click()}
@@ -319,11 +380,46 @@ export default function ManualDashboardPage() {
                   }
                 }}
               />
-            </div>
+            </div>}
           </div>
+
+          {activeScope === "store" && stores.length > 0 && (
+            <div className="mb-7 max-w-md">
+              <label htmlFor="hq-manual-store" className="mb-2 block text-sm font-semibold text-[var(--color-text-primary)]">
+                관리 지점
+              </label>
+              <select
+                id="hq-manual-store"
+                value={selectedStoreId}
+                onChange={(event) => handleStoreChange(event.target.value)}
+                className="h-12 w-full rounded-lg border-2 border-[var(--color-border)] bg-white px-3 text-sm text-[var(--color-text-primary)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+              >
+                {stores.map((store) => (
+                  <option key={store.id} value={store.id}>{store.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {manualError && (
+            <p className="mb-5 border border-red-200 bg-red-50 px-4 py-3 text-sm text-[var(--color-status-error)]">
+              {manualError}
+            </p>
+          )}
 
           {isLoadingManuals ? (
             <p className="text-sm text-[var(--color-text-secondary)]">불러오는 중...</p>
+          ) : activeScope === "store" && stores.length === 0 ? (
+            <div className="flex flex-col items-center justify-center border-y border-[var(--color-border)] bg-white py-16 text-center">
+              <Building2 size={40} className="mb-4 text-[var(--color-border)]" />
+              <p className="font-semibold text-[var(--color-text-primary)]">등록된 지점이 없습니다.</p>
+            </div>
+          ) : activeScope === "store" && groups.length === 0 ? (
+            <div className="flex flex-col items-center justify-center border-y border-[var(--color-border)] bg-white py-16 text-center">
+              <FileText size={40} className="mb-4 text-[var(--color-border)]" />
+              <p className="font-semibold text-[var(--color-text-primary)]">등록된 지점 매뉴얼이 없습니다.</p>
+              <p className="mt-2 text-sm text-[var(--color-text-secondary)]">지점에서 매뉴얼을 등록하면 이곳에서 확인할 수 있습니다.</p>
+            </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {groups.map((group) => (
@@ -344,13 +440,15 @@ export default function ManualDashboardPage() {
                 </button>
               ))}
 
-              <button
-                onClick={() => setShowCreateModal(true)}
-                className="flex flex-col items-center justify-center gap-2 bg-white border-2 border-dashed border-[var(--color-border)] rounded-xl p-6 min-h-[152px] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-colors"
-              >
-                <Plus size={28} />
-                <span className="text-sm font-semibold">매뉴얼 추가</span>
-              </button>
+              {activeScope === "hq" && (
+                <button
+                  onClick={() => setShowCreateModal(true)}
+                  className="flex flex-col items-center justify-center gap-2 bg-white border-2 border-dashed border-[var(--color-border)] rounded-xl p-6 min-h-[152px] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-colors"
+                >
+                  <Plus size={28} />
+                  <span className="text-sm font-semibold">매뉴얼 추가</span>
+                </button>
+              )}
             </div>
           )}
 
@@ -392,7 +490,7 @@ export default function ManualDashboardPage() {
       )}
 
       {/* Manual Create Modal */}
-      {showCreateModal && (
+      {showCreateModal && activeScope === "hq" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-lg max-h-[85vh] overflow-y-auto p-6 relative">
             <button
@@ -472,7 +570,7 @@ export default function ManualDashboardPage() {
       )}
 
       {/* Manual Detail / Edit Modal */}
-      {selectedGroup && (
+      {selectedGroup && activeScope === "hq" && (
         <ManualGroupModal
           group={selectedGroup}
           onClose={() => setSelectedGroup(null)}
@@ -481,6 +579,10 @@ export default function ManualDashboardPage() {
             showToast(message);
           }}
         />
+      )}
+
+      {selectedGroup && activeScope === "store" && (
+        <StoreManualReadOnlyModal group={selectedGroup} onClose={() => setSelectedGroup(null)} />
       )}
 
       {/* Toast */}
@@ -772,6 +874,45 @@ function ManualGroupModal({
           >
             <Plus size={16} /> 내용 항목 추가
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StoreManualReadOnlyModal({
+  group,
+  onClose,
+}: {
+  group: ManualGroup;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="relative max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-lg">
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-4 top-4 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]"
+          aria-label="닫기"
+        >
+          <X size={20} />
+        </button>
+
+        <div className="mb-6 pr-10">
+          <p className="mb-1 text-xs font-semibold text-[var(--color-primary)]">지점 매뉴얼 · 조회 전용</p>
+          <h2 className="text-xl font-bold text-[var(--color-text-primary)]">{group.title}</h2>
+        </div>
+
+        <div className="space-y-4">
+          {group.items.map((item, index) => (
+            <div key={item.id} className="border-b border-[var(--color-border)] pb-4 last:border-b-0 last:pb-0">
+              <p className="mb-2 text-sm font-semibold text-[var(--color-text-primary)]">내용 {index + 1}</p>
+              <p className="whitespace-pre-wrap text-sm leading-6 text-[var(--color-text-secondary)]">
+                {item.content}
+              </p>
+            </div>
+          ))}
         </div>
       </div>
     </div>

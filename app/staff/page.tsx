@@ -115,6 +115,22 @@ export default function StaffPage() {
           router.push("/");
           return;
         }
+
+        const response = await fetch("/api/signup/store-membership", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        const result = (await response.json()) as {
+          data?: Array<{ role: string; status: string }>;
+        };
+        const hasApprovedStore = result.data?.some(
+          (membership) => membership.role === "staff" && membership.status === "approved",
+        );
+
+        if (!hasApprovedStore) {
+          router.replace("/signup/approval-status");
+          return;
+        }
       } catch (e) {
         console.error("Auth check failed:", e);
         router.push("/");

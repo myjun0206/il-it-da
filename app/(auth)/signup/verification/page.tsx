@@ -7,6 +7,7 @@ import { ChevronLeft, Mail } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 import { Card } from "@/components/common/Card";
+import { signupStorage as sessionStorage } from "@/lib/signup/signup-storage";
 import type { UserRole } from "@/lib/types/user";
 
 export default function SignupVerificationPage() {
@@ -122,9 +123,6 @@ export default function SignupVerificationPage() {
               <ChevronLeft size={20} />
               <span className="text-sm font-medium">이전</span>
             </Link>
-            <div className="text-sm text-[var(--color-text-tertiary)]">
-              5 / 5
-            </div>
           </div>
         </div>
 

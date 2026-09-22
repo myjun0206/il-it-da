@@ -1,30 +1,97 @@
-import { NextResponse } from "next/server";
+import { createServerClient } from "@supabase/ssr";
+import type { EmailOtpType, Session } from "@supabase/supabase-js";
+import { NextResponse, type NextRequest } from "next/server";
 
-import { createClient } from "@/lib/supabase/server";
+import { getSafeAuthNextPath } from "@/lib/auth/auth-callback";
 
-export const runtime = "nodejs";
+const ALLOWED_OTP_TYPES = new Set<EmailOtpType>([
+  "email",
+  "email_change",
+  "invite",
+  "magiclink",
+  "recovery",
+  "signup",
+]);
 
-/**
- * Supabase 이메일 인증(컨펌) 링크가 되돌아오는 콜백. URL의 PKCE `code`를 실제 세션으로
- * 교환해 쿠키에 안착시킨 뒤에만 다음 페이지로 이동시킨다. 이 라우트가 없으면 이메일 링크를
- * 눌러도 세션이 전혀 생성되지 않아 승인 화면에서 "세션을 확보하지 못했습니다"가 발생한다.
- */
-export async function GET(request: Request): Promise<NextResponse> {
-  const { searchParams, origin } = new URL(request.url);
-  const code = searchParams.get("code");
-  const next = searchParams.get("next") || "/signup/approval";
+function verificationFailedResponse(request: NextRequest): NextResponse {
+  return NextResponse.redirect(new URL("/?error=verification_failed", request.url));
+}
 
-  if (!code) {
-    return NextResponse.redirect(`${origin}/?error=verification_failed`);
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.error("[AUTH_CALLBACK] Missing Supabase environment variables.");
+    return verificationFailedResponse(request);
   }
 
-  const supabase = await createClient();
-  const { error } = await supabase.auth.exchangeCodeForSession(code);
+  const code = request.nextUrl.searchParams.get("code");
+  const tokenHash = request.nextUrl.searchParams.get("token_hash");
+  const requestedOtpType = request.nextUrl.searchParams.get("type") as EmailOtpType | null;
+  const nextPath = getSafeAuthNextPath(request.nextUrl.searchParams.get("next"));
+  const response = NextResponse.redirect(new URL(nextPath, request.url));
+  response.headers.set("Cache-Control", "no-store");
+  const writtenCookieNames = new Set<string>();
 
-  if (error) {
-    console.error("[AUTH_CALLBACK] exchangeCodeForSession failed:", { name: error.name });
-    return NextResponse.redirect(`${origin}/?error=verification_failed`);
+  const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll();
+      },
+      setAll(cookiesToSet, headersToSet) {
+        cookiesToSet.forEach(({ name, value }) => {
+          request.cookies.set(name, value);
+        });
+        cookiesToSet.forEach(({ name, value, options }) => {
+          writtenCookieNames.add(name);
+          response.cookies.set(name, value, options);
+        });
+        Object.entries(headersToSet).forEach(([name, value]) => {
+          response.headers.set(name, value);
+        });
+      },
+    },
+  });
+
+  try {
+    let session: Session | null = null;
+
+    if (code) {
+      const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+      if (error) throw error;
+      session = data.session;
+    } else if (tokenHash) {
+      const otpType = requestedOtpType && ALLOWED_OTP_TYPES.has(requestedOtpType)
+        ? requestedOtpType
+        : "signup";
+      const { data, error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: otpType });
+      if (error) throw error;
+      session = data.session;
+    } else {
+      console.error("[AUTH_CALLBACK] Verification parameters are missing.");
+      return verificationFailedResponse(request);
+    }
+
+    if (!session) {
+      throw new Error("No session after authentication callback.");
+    }
+
+    const hasWrittenAuthCookie = [...writtenCookieNames].some(
+      (name) => name.includes("-auth-token") && !name.includes("code-verifier"),
+    );
+    if (!hasWrittenAuthCookie) {
+      throw new Error("Authentication callback did not write a session cookie.");
+    }
+
+    console.log("[AUTH_CALLBACK] Session established.", {
+      userId: session.user.id,
+      nextPath,
+      cookieNames: [...writtenCookieNames],
+    });
+    return response;
+  } catch (error) {
+    console.error("[AUTH_CALLBACK] Verification failed:", error);
+    return verificationFailedResponse(request);
   }
-
-  return NextResponse.redirect(`${origin}${next}`);
 }

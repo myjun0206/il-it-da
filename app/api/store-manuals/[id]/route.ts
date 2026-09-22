@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { resolveStoreManualAccess } from "@/lib/supabase/store-manual-auth";
 import { indexManualById } from "@/lib/rag/index-manual";
 import type { ManualRecord } from "@/lib/types/manual";
 
@@ -91,17 +92,8 @@ export async function PATCH(
 
     const adminClient = createAdminClient();
 
-    // 권한 검증: user_id + store_id + role=owner + status=approved
-    const { data: membership, error: membershipError } = await adminClient
-      .from("store_memberships")
-      .select("*")
-      .eq("user_id", userData.user.id)
-      .eq("store_id", storeId)
-      .eq("role", "owner")
-      .eq("status", "approved")
-      .maybeSingle<{ id: string }>();
-
-    if (membershipError || !membership) {
+    const access = await resolveStoreManualAccess(adminClient, userData.user.id, storeId);
+    if (!access) {
       return NextResponse.json(
         { error: "이 지점에 대한 접근 권한이 없습니다." },
         { status: 403 },
@@ -293,17 +285,8 @@ export async function DELETE(
 
     const adminClient = createAdminClient();
 
-    // 권한 검증: user_id + store_id + role=owner + status=approved
-    const { data: membership, error: membershipError } = await adminClient
-      .from("store_memberships")
-      .select("*")
-      .eq("user_id", userData.user.id)
-      .eq("store_id", storeId)
-      .eq("role", "owner")
-      .eq("status", "approved")
-      .maybeSingle<{ id: string }>();
-
-    if (membershipError || !membership) {
+    const access = await resolveStoreManualAccess(adminClient, userData.user.id, storeId);
+    if (!access) {
       return NextResponse.json(
         { error: "이 지점에 대한 접근 권한이 없습니다." },
         { status: 403 },

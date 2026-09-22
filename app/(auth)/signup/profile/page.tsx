@@ -5,7 +5,10 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, Check, Building2 } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input, PasswordInput } from "@/components/common/Input";
+import { buildAuthCallbackUrl } from "@/lib/auth/auth-callback";
+import { waitForAuthReadiness } from "@/lib/auth/wait-for-auth-session";
 import { createClient } from "@/lib/supabase/client";
+import { signupStorage as sessionStorage } from "@/lib/signup/signup-storage";
 import type { UserRole } from "@/lib/types/user";
 import {
   DEV_TEST_EMAILS,
@@ -73,15 +76,6 @@ function HQSignupProfile() {
   const [role, setRole] = useState<"hq" | "owner" | "staff" | null>(null);
   const [emailAlreadyRegistered, setEmailAlreadyRegistered] = useState(false);
 
-  // owner/staff 전용: 간단한 프로필 폼
-  const [ownerStaffFormData, setOwnerStaffFormData] = useState({
-    email: "",
-    name: "",
-    phone: "",
-    password: "",
-    passwordConfirm: "",
-  });
-
   // HQ 전용: 회사 이메일 인증
   const [emailVerificationSent, setEmailVerificationSent] = useState(false);
   const [verificationCode, setVerificationCode] = useState("");
@@ -146,17 +140,6 @@ function HQSignupProfile() {
           }
         } catch (e) {
           console.error("프랜차이즈 정보 로드 실패:", e);
-        }
-      }
-    } else if (savedRole === "owner" || savedRole === "staff") {
-      // owner/staff: 이전에 입력한 개인정보 복구
-      const savedProfile = sessionStorage.getItem("signupProfile");
-      if (savedProfile) {
-        try {
-          const profile = JSON.parse(savedProfile);
-          setOwnerStaffFormData(profile);
-        } catch (e) {
-          console.error("프로필 데이터 로드 실패:", e);
         }
       }
     }
@@ -402,8 +385,10 @@ function HQSignupProfile() {
     }
 
     // 실제 등록된 계정 정보 저장 (hq/communication 등에서 사용)
+    // signupRole 등과 달리 가입 위저드 상태가 아니므로 shadow된 sessionStorage(localStorage)가 아닌
+    // 진짜 sessionStorage를 그대로 쓴다.
     try {
-      const accountsJson = sessionStorage.getItem("registeredAccounts");
+      const accountsJson = window.sessionStorage.getItem("registeredAccounts");
       const registeredAccounts = accountsJson ? JSON.parse(accountsJson) : [];
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -434,7 +419,7 @@ function HQSignupProfile() {
         registeredAccounts.push(newAccount);
       }
 
-      sessionStorage.setItem("registeredAccounts", JSON.stringify(registeredAccounts));
+      window.sessionStorage.setItem("registeredAccounts", JSON.stringify(registeredAccounts));
     } catch (e) {
       console.error("등록된 계정 저장 실패:", e);
     }
@@ -529,96 +514,6 @@ function HQSignupProfile() {
     router.push("/signup/terms");
   };
 
-  // owner/staff용 검증
-  const validateOwnerStaffForm = () => {
-    const newErrors: Record<string, string> = {};
-
-    if (!ownerStaffFormData.email) {
-      newErrors.email = "이메일을 입력해주세요";
-    } else if (!ownerStaffFormData.email.includes("@")) {
-      newErrors.email = "올바른 이메일 형식이 아닙니다";
-    }
-
-    if (!ownerStaffFormData.name) {
-      newErrors.name = "이름을 입력해주세요";
-    } else if (ownerStaffFormData.name.length < 2) {
-      newErrors.name = "이름은 2글자 이상이어야 합니다";
-    }
-
-    if (!ownerStaffFormData.password) {
-      newErrors.password = "비밀번호를 입력해주세요";
-    } else if (ownerStaffFormData.password.length < 8) {
-      newErrors.password = "비밀번호는 8글자 이상이어야 합니다";
-    }
-
-    if (ownerStaffFormData.password !== ownerStaffFormData.passwordConfirm) {
-      newErrors.passwordConfirm = "비밀번호가 일치하지 않습니다";
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  // owner/staff용 계속하기
-  const handleContinueOwnerStaff = async () => {
-    if (!validateOwnerStaffForm()) return;
-
-    setIsLoading(true);
-
-    try {
-      const supabase = createClient();
-
-      // Supabase Auth 사용자 생성
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: ownerStaffFormData.email,
-        password: ownerStaffFormData.password,
-        options: {
-          data: {
-            role: role || "owner",
-            name: ownerStaffFormData.name,
-          }
-        }
-      });
-
-      if (authError) {
-        setIsLoading(false);
-        if (authError.message?.includes("already registered")) {
-          setErrors({ email: "이미 등록된 이메일입니다." });
-        } else {
-          setErrors({ email: authError.message || "회원가입 중 오류가 발생했습니다." });
-        }
-        return;
-      }
-
-      // user와 session이 모두 있는지 확인
-      if (!authData.user) {
-        setIsLoading(false);
-        setErrors({ email: "사용자 생성에 실패했습니다." });
-        return;
-      }
-
-      if (!authData.session) {
-        setIsLoading(false);
-        setErrors({ email: "로그인 세션을 생성할 수 없습니다. Supabase 이메일 설정을 확인해주세요." });
-        return;
-      }
-
-      // signupProfile에 저장 (approval 페이지에서 사용)
-      sessionStorage.setItem(
-        "signupProfile",
-        JSON.stringify(ownerStaffFormData)
-      );
-
-      // 약간의 지연 후 다음 페이지로
-      await new Promise(resolve => setTimeout(resolve, 50));
-      router.push("/signup/stores");
-    } catch (e) {
-      setIsLoading(false);
-      console.error("Auth 사용자 생성 실패:", e);
-      setErrors({ email: "회원가입 중 오류가 발생했습니다." });
-    }
-  };
-
   return (
     <div className="min-h-screen bg-[var(--color-bg-default)]">
       {/* Header */}
@@ -641,14 +536,7 @@ function HQSignupProfile() {
             />
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-            <span className="text-base sm:text-lg lg:text-[17px] font-semibold text-[var(--color-text-secondary)]">
-              {role === "hq" ? "3 / 3" : "3 / 5"}
-            </span>
-            <div className="w-20 sm:w-28 h-2 bg-[var(--color-border-light)] rounded-full overflow-hidden flex-shrink-0">
-              <div className="h-full bg-[var(--color-primary)] rounded-full transition-all duration-300" style={{ width: role === "hq" ? "100%" : "60%" }} />
-            </div>
-          </div>
+          <div className="w-20 flex-shrink-0" aria-hidden="true" />
         </div>
       </header>
 
@@ -939,6 +827,7 @@ function HQSignupProfile() {
 // ============= 점주/직원 기본정보 화면 =============
 function OwnerStaffSignupProfile() {
   const router = useRouter();
+  const isDevelopment = process.env.NODE_ENV === "development";
   const [formData, setFormData] = useState({
     email: "",
     name: "",
@@ -1102,7 +991,7 @@ function OwnerStaffSignupProfile() {
       newErrors.email = "올바른 이메일 형식이 아닙니다";
     }
 
-    if (!emailVerified) {
+    if (!isDevelopment && !emailVerified) {
       newErrors.email = newErrors.email || "이메일 인증이 필요합니다";
     }
 
@@ -1136,17 +1025,99 @@ function OwnerStaffSignupProfile() {
     if (!validateForm()) return;
 
     setIsLoading(true);
-    setTimeout(() => {
-      const profileData = {
-        ...formData,
-        role: sessionStorage.getItem("signupRole"),
-      };
+    setErrors({});
 
-      sessionStorage.setItem("signupProfile", JSON.stringify(profileData));
-      console.log("[SIGNUP_STEP3] Saved profile:", profileData);
-      setIsLoading(false);
+    const signupRole = sessionStorage.getItem("signupRole") as UserRole | null;
+    const profileData = { ...formData, role: signupRole };
+    sessionStorage.setItem("signupProfile", JSON.stringify(profileData));
+
+    try {
+      const supabase = createClient();
+
+      if (isDevelopment) {
+        const response = await fetch("/api/auth/dev-signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: formData.email,
+            password: formData.password,
+            name: formData.name,
+            role: signupRole,
+          }),
+        });
+        const result = (await response.json()) as { success?: boolean; error?: string };
+
+        if (!response.ok || !result.success) {
+          setErrors({ form: result.error || "개발용 사용자 준비에 실패했습니다." });
+          return;
+        }
+
+        const { error } = await supabase.auth.signInWithPassword({
+          email: formData.email,
+          password: formData.password,
+        });
+        if (error || !(await waitForAuthReadiness(supabase))) {
+          setErrors({ form: "개발용 로그인 세션을 확보할 수 없습니다." });
+          return;
+        }
+
+        router.push("/signup/stores");
+        return;
+      }
+
+      if (DEV_TEST_EMAILS.includes(formData.email)) {
+        const expectedRole = DEV_TEST_EMAIL_ROLE_MAP[formData.email];
+        if (!expectedRole || expectedRole !== signupRole) {
+          setErrors({ form: "선택한 역할과 테스트 계정의 역할이 일치하지 않습니다." });
+          return;
+        }
+
+        const { error } = await supabase.auth.signInWithPassword({
+          email: formData.email,
+          password: DEV_TEST_PASSWORD,
+        });
+        if (error || !(await waitForAuthReadiness(supabase))) {
+          setErrors({ form: "테스트 계정 세션을 확보할 수 없습니다." });
+          return;
+        }
+
+        router.push("/signup/stores");
+        return;
+      }
+
+      const emailRedirectTo = buildAuthCallbackUrl(window.location.origin, "/signup/stores");
+      console.log("[AUTH_SIGNUP][profile] emailRedirectTo:", emailRedirectTo);
+      const { data, error } = await supabase.auth.signUp({
+        email: formData.email,
+        password: formData.password,
+        options: {
+          data: { role: signupRole, name: formData.name },
+          emailRedirectTo,
+        },
+      });
+
+      if (error) {
+        setErrors({ form: error.message || "회원가입 중 오류가 발생했습니다." });
+        return;
+      }
+
+      if (!data.session) {
+        setErrors({ form: "가입 확인 이메일을 보냈습니다. 이메일의 인증 링크를 열면 점포 선택이 계속됩니다." });
+        return;
+      }
+
+      if (!(await waitForAuthReadiness(supabase))) {
+        setErrors({ form: "인증 세션을 확인할 수 없습니다. 다시 시도해주세요." });
+        return;
+      }
+
       router.push("/signup/stores");
-    }, 800);
+    } catch (error) {
+      console.error("Owner/staff signup failed:", error);
+      setErrors({ form: "회원가입 중 오류가 발생했습니다." });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handlePrevious = () => {
@@ -1175,14 +1146,7 @@ function OwnerStaffSignupProfile() {
             />
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-            <span className="text-base sm:text-lg lg:text-[17px] font-semibold text-[var(--color-text-secondary)]">
-              3 / 5
-            </span>
-            <div className="w-20 sm:w-28 h-2 bg-[var(--color-border-light)] rounded-full overflow-hidden flex-shrink-0">
-              <div className="h-full bg-[var(--color-primary)] rounded-full transition-all duration-300" style={{ width: "60%" }} />
-            </div>
-          </div>
+          <div className="w-20 flex-shrink-0" aria-hidden="true" />
         </div>
       </header>
 
@@ -1367,11 +1331,16 @@ function OwnerStaffSignupProfile() {
               </div>
 
               {/* Next Button */}
+              {errors.form && (
+                <div className="mb-4 rounded-lg border border-[var(--color-status-error)]/20 bg-red-50 px-4 py-3">
+                  <p className="text-sm text-[var(--color-status-error)]">{errors.form}</p>
+                </div>
+              )}
               <div className="flex justify-center pt-8">
                 <Button
                   type="button"
                   onClick={handleContinue}
-                  disabled={isLoading || !emailVerified}
+                  disabled={isLoading || (!isDevelopment && !emailVerified)}
                   variant="primary"
                   size="lg"
                   className="w-full sm:w-auto min-h-14 lg:min-h-16 px-8 lg:px-12 text-lg lg:text-xl font-semibold"

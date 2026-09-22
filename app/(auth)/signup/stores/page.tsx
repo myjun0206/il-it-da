@@ -7,6 +7,9 @@ import { Button } from "@/components/common/Button";
 import StoreSearchDropdown from "@/components/signup/StoreSearchDropdown";
 import StoreMap from "@/components/signup/StoreMap";
 import SelectedStoreDisplay from "@/components/signup/SelectedStoreDisplay";
+import { waitForAuthReadiness } from "@/lib/auth/wait-for-auth-session";
+import { createClient } from "@/lib/supabase/client";
+import { signupStorage as sessionStorage } from "@/lib/signup/signup-storage";
 import type { UserRole } from "@/lib/types/user";
 import type { Store } from "@/lib/types/store";
 import { mockStores } from "@/lib/data/mockStores";
@@ -25,6 +28,21 @@ export default function SignupStoresPage() {
   const [selectedStores, setSelectedStores] = useState<Store[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isAddMode, setIsAddMode] = useState(false);
+  const [authStatus, setAuthStatus] = useState<"checking" | "ready" | "missing">("checking");
+
+  useEffect(() => {
+    let active = true;
+
+    const verifySession = async () => {
+      const user = await waitForAuthReadiness(createClient());
+      if (active) setAuthStatus(user ? "ready" : "missing");
+    };
+
+    verifySession();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useLayoutEffect(() => {
     const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
@@ -123,8 +141,24 @@ export default function SignupStoresPage() {
     }
   }, [router]);
 
-  if (!role) {
-    return null;
+  if (!role || authStatus === "checking") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--color-bg-default)]">
+        <p className="text-sm text-[var(--color-text-secondary)]">인증 세션을 확인하는 중입니다...</p>
+      </div>
+    );
+  }
+
+  if (authStatus === "missing") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--color-bg-default)] px-4">
+        <div className="max-w-md text-center">
+          <p className="text-sm text-[var(--color-status-error)]">
+            인증 세션을 확인할 수 없습니다. 가장 최근에 받은 인증 이메일의 링크를 다시 열어주세요.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   // 매장 선택 핸들러 (중복 방지)
@@ -175,10 +209,6 @@ export default function SignupStoresPage() {
     }
   };
 
-  // 진행 단계 (점주/직원: 4 / 5)
-  const currentStep = 4;
-  const totalSteps = 5;
-
   return (
     <div className="min-h-screen bg-[var(--color-bg-default)]">
       <div className="flex flex-col min-h-screen">
@@ -204,17 +234,7 @@ export default function SignupStoresPage() {
               />
             </div>
 
-            <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-              <span className="text-base sm:text-lg lg:text-[17px] font-semibold text-[var(--color-text-secondary)]">
-                {currentStep} / {totalSteps}
-              </span>
-              <div className="w-20 sm:w-28 h-2 bg-[var(--color-border-light)] rounded-full overflow-hidden flex-shrink-0">
-                <div
-                  className="h-full bg-[var(--color-primary)] rounded-full transition-all duration-300"
-                  style={{ width: `${(currentStep / totalSteps) * 100}%` }}
-                />
-              </div>
-            </div>
+            <div className="w-20 flex-shrink-0" aria-hidden="true" />
           </div>
         </header>
 

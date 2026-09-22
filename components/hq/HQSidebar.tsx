@@ -19,6 +19,8 @@ interface HQSidebarProps {
   franchiseName: string;
   onLogout: () => void;
   activeMenu?: string;
+  manualScope?: "hq" | "store";
+  onManualScopeChange?: (scope: "hq" | "store") => void;
 }
 
 export default function HQSidebar({
@@ -26,6 +28,8 @@ export default function HQSidebar({
   franchiseName,
   onLogout,
   activeMenu = "home",
+  manualScope = "hq",
+  onManualScopeChange,
 }: HQSidebarProps) {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -37,8 +41,8 @@ export default function HQSidebar({
       icon: BookOpen,
       href: "/hq/manuals",
       submenu: [
-        { id: "manual-common", label: "공통 매뉴얼 관리" },
-        { id: "manual-store", label: "지점 매뉴얼 보기" },
+        { id: "manual-common", label: "공통 매뉴얼 관리", href: "/hq/manuals?scope=hq", scope: "hq" as const },
+        { id: "manual-store", label: "지점 매뉴얼 보기", href: "/hq/manuals?scope=store", scope: "store" as const },
       ],
     },
     {
@@ -114,14 +118,35 @@ export default function HQSidebar({
                 {/* Submenu */}
                 {item.submenu && isActive && (
                   <div className="ml-4 mt-1">
-                    {item.submenu.map((sub) => (
-                      <button
-                        key={sub.id}
-                        className="w-full text-left px-4 py-3 text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors"
-                      >
-                        {sub.label}
-                      </button>
-                    ))}
+                    {item.submenu.map((sub) => {
+                      const isManualSubmenu = "scope" in sub;
+                      const isSubActive = isManualSubmenu && manualScope === sub.scope;
+
+                      return "href" in sub ? (
+                        <Link
+                          key={sub.id}
+                          href={sub.href}
+                          onClick={() => {
+                            if (isManualSubmenu) onManualScopeChange?.(sub.scope);
+                            setIsOpen(false);
+                          }}
+                          className={`block w-full px-4 py-3 text-left text-sm transition-colors ${
+                            isSubActive
+                              ? "font-semibold text-[var(--color-primary)]"
+                              : "text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
+                          }`}
+                        >
+                          {sub.label}
+                        </Link>
+                      ) : (
+                        <button
+                          key={sub.id}
+                          className="w-full px-4 py-3 text-left text-sm text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-primary)]"
+                        >
+                          {sub.label}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>

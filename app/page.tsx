@@ -8,6 +8,8 @@ import { Button } from "@/components/common/Button";
 import { Input, PasswordInput } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
 
+type ApprovalStatus = "approved" | "pending" | "rejected" | "not_requested";
+
 export default function LoginPage() {
   return (
     <Suspense fallback={null}>
@@ -25,6 +27,8 @@ function LoginPageContent() {
   const [rememberMe, setRememberMe] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [authMode, setAuthMode] = useState<"login" | "approval">("login");
+  const [approvalMessage, setApprovalMessage] = useState("");
 
   // Check if user is already logged in on mount
   useLayoutEffect(() => {
@@ -36,13 +40,22 @@ function LoginPageContent() {
         if (data.session?.user) {
           const role = data.session.user.user_metadata?.role;
           
-          // Redirect based on role
+          // Redirect based on role and persisted membership status.
           if (role === "hq") {
             router.push("/hq");
-          } else if (role === "owner") {
-            router.push("/boss");
-          } else if (role === "staff") {
-            router.push("/staff");
+          } else if (role === "owner" || role === "staff") {
+            const response = await fetch("/api/signup/store-membership", {
+              credentials: "include",
+              cache: "no-store",
+            });
+            const result = (await response.json()) as {
+              data?: Array<{ status: ApprovalStatus }>;
+            };
+            const statuses = result.data?.map((membership) => membership.status) ?? [];
+
+            if (statuses.includes("approved")) {
+              router.push(role === "owner" ? "/boss" : "/staff");
+            }
           }
         }
       } catch (e) {
@@ -56,13 +69,14 @@ function LoginPageContent() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrors({});
+    setApprovalMessage("");
 
     // Validation
     if (!email) {
       setErrors((prev) => ({ ...prev, email: "이메일을 입력해주세요" }));
       return;
     }
-    if (!password) {
+    if (authMode === "login" && !password) {
       setErrors((prev) => ({ ...prev, password: "비밀번호를 입력해주세요" }));
       return;
     }
@@ -70,13 +84,37 @@ function LoginPageContent() {
     setIsLoading(true);
 
     try {
+      if (authMode === "approval") {
+        const response = await fetch("/api/auth/approval-status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+        const result = (await response.json()) as {
+          found: boolean;
+          status?: ApprovalStatus;
+          error?: string;
+        };
+
+        if (!response.ok) {
+          setErrors({ email: result.error || "승인 상태를 확인할 수 없습니다." });
+        } else if (!result.found || !result.status) {
+          setApprovalMessage("가입 또는 승인 신청 내역을 찾을 수 없습니다.");
+        } else {
+          window.sessionStorage.setItem("approvalLookupEmail", email.trim().toLowerCase());
+          router.push("/signup/approval-status");
+        }
+        setIsLoading(false);
+        return;
+      }
+
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
 
-      const result: { user?: { id: string; email: string; role: string }; error?: string } =
+      const result: { user?: { id: string; email: string; role: string; approvalStatus: ApprovalStatus }; error?: string } =
         await response.json();
 
       if (!response.ok || !result.user) {
@@ -88,7 +126,24 @@ function LoginPageContent() {
         return;
       }
 
-      // Role-based redirect
+      if (
+        (result.user.role === "owner" || result.user.role === "staff") &&
+        (result.user.approvalStatus === "pending" || result.user.approvalStatus === "rejected")
+      ) {
+        router.push("/signup/approval-status");
+        return;
+      }
+
+      if (
+        (result.user.role === "owner" || result.user.role === "staff") &&
+        result.user.approvalStatus === "not_requested"
+      ) {
+        setIsLoading(false);
+        setErrors({ email: "등록된 점포 승인 신청이 없습니다." });
+        return;
+      }
+
+      // Role-based redirect for approved accounts.
       if (result.user.role === "hq") {
         router.push("/hq");
       } else if (result.user.role === "owner") {
@@ -202,17 +257,39 @@ function LoginPageContent() {
           <div className="w-full max-w-md p-6">
             <div className="mb-8">
               <h2 className="text-2xl font-bold text-[var(--color-text-primary)]">
-                로그인
+                로그인 / 승인 확인
               </h2>
               <p className="mt-2 text-[var(--color-text-secondary)]">
                 일잇다에서 매장 업무를 이어가세요.
               </p>
             </div>
 
+            <div className="mb-5 grid grid-cols-2 rounded-lg border border-[var(--color-border)] bg-white p-1">
+              {(["login", "approval"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => {
+                    setAuthMode(mode);
+                    setErrors({});
+                    setApprovalMessage("");
+                  }}
+                  className={`h-10 rounded-md text-sm font-semibold ${authMode === mode ? "bg-[var(--color-primary)] text-white" : "text-[var(--color-text-secondary)]"}`}
+                >
+                  {mode === "login" ? "로그인" : "승인 확인"}
+                </button>
+              ))}
+            </div>
+
             <form onSubmit={handleLogin} className="space-y-5">
               {verificationError && (
                 <p className="rounded-lg border border-[var(--color-status-error)]/20 bg-red-50 px-4 py-3 text-sm text-[var(--color-status-error)]">
                   이메일 인증 확인에 실패했습니다. 다시 시도하거나 재가입해 주세요.
+                </p>
+              )}
+              {approvalMessage && (
+                <p className="rounded-lg border border-[var(--color-border)] bg-white px-4 py-3 text-sm text-[var(--color-text-primary)]">
+                  {approvalMessage}
                 </p>
               )}
               <Input
@@ -224,13 +301,15 @@ function LoginPageContent() {
                 error={errors.email}
               />
 
-              <PasswordInput
-                label="비밀번호"
-                placeholder="비밀번호를 입력하세요"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                error={errors.password}
-              />
+              {authMode === "login" && (
+                <PasswordInput
+                  label="비밀번호"
+                  placeholder="비밀번호를 입력하세요"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  error={errors.password}
+                />
+              )}
 
               <div className="flex items-center gap-2">
                 <input
@@ -255,7 +334,7 @@ function LoginPageContent() {
                 isLoading={isLoading}
                 className="w-full"
               >
-                로그인
+                {authMode === "login" ? "로그인" : "승인 상태 확인"}
               </Button>
 
               <div className="flex justify-center">
@@ -401,17 +480,39 @@ function LoginPageContent() {
           <div className="w-full max-w-md p-6">
             <div className="mb-6">
               <h2 className="text-xl font-bold text-[var(--color-text-primary)]">
-                로그인
+                로그인 / 승인 확인
               </h2>
               <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
                 일잇다에서 매장 업무를 이어가세요.
               </p>
             </div>
 
+            <div className="mb-4 grid grid-cols-2 rounded-lg border border-[var(--color-border)] bg-white p-1">
+              {(["login", "approval"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => {
+                    setAuthMode(mode);
+                    setErrors({});
+                    setApprovalMessage("");
+                  }}
+                  className={`h-10 rounded-md text-sm font-semibold ${authMode === mode ? "bg-[var(--color-primary)] text-white" : "text-[var(--color-text-secondary)]"}`}
+                >
+                  {mode === "login" ? "로그인" : "승인 확인"}
+                </button>
+              ))}
+            </div>
+
             <form onSubmit={handleLogin} className="space-y-4">
               {verificationError && (
                 <p className="rounded-lg border border-[var(--color-status-error)]/20 bg-red-50 px-4 py-3 text-sm text-[var(--color-status-error)]">
                   이메일 인증 확인에 실패했습니다. 다시 시도하거나 재가입해 주세요.
+                </p>
+              )}
+              {approvalMessage && (
+                <p className="rounded-lg border border-[var(--color-border)] bg-white px-4 py-3 text-sm text-[var(--color-text-primary)]">
+                  {approvalMessage}
                 </p>
               )}
               <Input
@@ -423,13 +524,15 @@ function LoginPageContent() {
                 error={errors.email}
               />
 
-              <PasswordInput
-                label="비밀번호"
-                placeholder="비밀번호를 입력하세요"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                error={errors.password}
-              />
+              {authMode === "login" && (
+                <PasswordInput
+                  label="비밀번호"
+                  placeholder="비밀번호를 입력하세요"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  error={errors.password}
+                />
+              )}
 
               <div className="flex items-center gap-2">
                 <input
@@ -454,7 +557,7 @@ function LoginPageContent() {
                 isLoading={isLoading}
                 className="w-full"
               >
-                로그인
+                {authMode === "login" ? "로그인" : "승인 상태 확인"}
               </Button>
 
               <div className="flex justify-center">

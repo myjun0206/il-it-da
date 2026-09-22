@@ -77,6 +77,12 @@ export default function OwnerDashboardPage() {
           const approved = result.data.filter(
             (m: ApprovedStore) => m.status === "approved" && m.role === "owner"
           );
+
+          if (approved.length === 0) {
+            router.replace("/signup/approval-status");
+            return;
+          }
+
           setApprovedStores(approved);
 
           // ✅ 보안: selectedStoreId 검증

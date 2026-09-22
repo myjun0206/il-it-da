@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, ArrowRight, Building2 } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Card } from "@/components/common/Card";
+import { signupStorage as sessionStorage } from "@/lib/signup/signup-storage";
 import type { UserRole } from "@/lib/types/user";
 import { mockBrands } from "@/lib/data/mockStores";
 

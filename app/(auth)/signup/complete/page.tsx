@@ -6,6 +6,7 @@ import { CheckCircle, Clock, Mail, Check, ChevronLeft } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Card } from "@/components/common/Card";
 import { createClient } from "@/lib/supabase/client";
+import { signupStorage as sessionStorage } from "@/lib/signup/signup-storage";
 import type { UserRole } from "@/lib/types/user";
 
 export default function SignupCompletePage() {
@@ -79,9 +80,7 @@ export default function SignupCompletePage() {
                 <span className="hidden sm:inline text-base font-semibold">이전</span>
               </button>
               <img src="/logo.svg" alt="일잇다" className="h-8 lg:h-9" />
-              <div className="text-sm sm:text-base font-semibold text-[var(--color-text-secondary)]">
-                3 / 3
-              </div>
+              <div className="w-16 flex-shrink-0" aria-hidden="true" />
             </div>
           </header>
         )}

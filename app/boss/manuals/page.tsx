@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Search, ChevronRight, X, BookOpen } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -131,14 +131,19 @@ export default function OwnerManualsPage() {
     setIsLoadingManuals(true);
     setError("");
     try {
-      const response = await fetch("/api/manuals");
+      const selectedStoreId = sessionStorage.getItem("selectedStoreId") || "";
+      const endpoint = selectedStoreId
+        ? `/api/manuals?storeId=${encodeURIComponent(selectedStoreId)}`
+        : "/api/manuals";
+      const response = await fetch(endpoint, { cache: "no-store" });
       const data = (await response.json()) as { manuals?: ManualRecord[]; error?: string };
 
       if (!response.ok || !data.manuals) {
         throw new Error(data.error || "매뉴얼 목록을 불러오지 못했습니다.");
       }
 
-      setManuals(data.manuals);
+      // 점주 화면에서는 방어적으로 본사 공통(store_id = null) 매뉴얼만 렌더링한다.
+      setManuals(data.manuals.filter((manual) => manual.store_id === null));
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : "매뉴얼 목록을 불러오지 못했습니다.";
       setError(errorMsg);
@@ -209,10 +214,10 @@ export default function OwnerManualsPage() {
             {/* 페이지 제목 영역 */}
             <div className="mb-8">
               <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
-                공통 매뉴얼
+                본사 공통 매뉴얼
               </h1>
               <p className="text-base text-[var(--color-text-secondary)]">
-                본사에서 배포한 업무 매뉴얼을 확인하세요.
+                본사에서 모든 지점에 배포한 업무 매뉴얼을 조회합니다.
               </p>
             </div>
 

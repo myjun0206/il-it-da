@@ -68,11 +68,39 @@ export async function GET(request: Request): Promise<NextResponse<ManualsListRes
       return NextResponse.json({ error: "매뉴얼 열람 권한이 없습니다." }, { status: 403 });
     }
 
+    const { searchParams } = new URL(request.url);
+    const storeIdParam = getString(searchParams.get("storeId") ?? undefined);
+
     // 프랜차이즈 정보 조회
     let franchiseId: string | null = null;
     let brandName = "본사";
 
-    if (profile.brand_id) {
+    if (profile.role === "owner" && storeIdParam) {
+      const { data: membership, error: membershipError } = await adminClient
+        .from("store_memberships")
+        .select("franchise_id")
+        .eq("user_id", userData.user.id)
+        .eq("store_id", storeIdParam)
+        .eq("role", "owner")
+        .eq("status", "approved")
+        .maybeSingle<{ franchise_id: string | null }>();
+
+      if (membershipError || !membership) {
+        return NextResponse.json({ error: "선택한 지점의 매뉴얼 열람 권한이 없습니다." }, { status: 403 });
+      }
+
+      franchiseId = membership.franchise_id;
+      if (!franchiseId) {
+        const { data: selectedStore } = await adminClient
+          .from("stores")
+          .select("franchise_id")
+          .eq("id", storeIdParam)
+          .maybeSingle<{ franchise_id: string | null }>();
+        franchiseId = selectedStore?.franchise_id ?? null;
+      }
+    }
+
+    if (!franchiseId && profile.brand_id) {
       const { data: franchise } = await adminClient
         .from("franchises")
         .select("id, name")
@@ -83,18 +111,29 @@ export async function GET(request: Request): Promise<NextResponse<ManualsListRes
         franchiseId = franchise.id;
         brandName = franchise.name;
       }
-    } else {
+    } else if (!franchiseId) {
+      if (profile.role === "owner") {
+        const { data: membership } = await adminClient
+          .from("store_memberships")
+          .select("franchise_id")
+          .eq("user_id", userData.user.id)
+          .eq("role", "owner")
+          .eq("status", "approved")
+          .not("franchise_id", "is", null)
+          .limit(1)
+          .maybeSingle<{ franchise_id: string | null }>();
+        franchiseId = membership?.franchise_id ?? null;
+      }
+
       // 레거시 계정: user_metadata에서 이름 파싱
       const name = userData.user.user_metadata?.name as string | undefined;
-      if (name && name.trim()) {
+      if (!franchiseId && name && name.trim()) {
         const [first] = name.trim().split(/\s+/);
         if (first) brandName = first;
       }
     }
 
     // Owner는 공통 매뉴얼(store_id = null)만 조회 가능
-    const { searchParams } = new URL(request.url);
-    const storeIdParam = getString(searchParams.get("storeId") ?? undefined);
     const storeId = profile.role === "owner" ? null : storeIdParam;
 
     // 쿼리 구성
@@ -110,6 +149,9 @@ export async function GET(request: Request): Promise<NextResponse<ManualsListRes
 
     // 매뉴얼 범위 제한
     query = storeId ? query.or(`store_id.eq.${storeId},store_id.is.null`) : query.is("store_id", null);
+    if (profile.role === "owner") {
+      query = query.eq("status", "approved");
+    }
 
     const { data, error } = await query;
 

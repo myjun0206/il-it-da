@@ -1,14 +1,17 @@
 "use client";
 
-import React, { useState, useLayoutEffect, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Plus, Store as StoreIcon } from "lucide-react";
+import { Check, Home, Plus, Store as StoreIcon } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { getBrandLogoPath } from "@/lib/brands/brand-logos";
+import { createClient } from "@/lib/supabase/client";
+import { signupStorage as sessionStorage } from "@/lib/signup/signup-storage";
 import type { UserRole } from "@/lib/types/user";
 import type { Store } from "@/lib/types/store";
 
 type ApprovalStatus = "requestable" | "pending" | "approved" | "rejected";
+type AccountApprovalStatus = "approved" | "pending" | "rejected" | "not_requested";
 
 interface StoreApprovalState {
   store: Store;
@@ -40,29 +43,62 @@ export default function SignupApprovalStatusPage() {
   const [role, setRole] = useState<UserRole | null>(null);
   const [storeApprovals, setStoreApprovals] = useState<StoreApprovalState[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-
-  useLayoutEffect(() => {
-    const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
-    if (!savedRole || savedRole === "hq") {
-      router.push(savedRole === "hq" ? "/signup/complete" : "/signup/role");
-    }
-  }, [router]);
+  const [lookupStatus, setLookupStatus] = useState<AccountApprovalStatus | null>(null);
 
   useEffect(() => {
     const loadApprovalStatus = async () => {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      const authRole = user?.user_metadata?.role as UserRole | undefined;
       const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
-      if (!savedRole || savedRole === "hq") return;
+      const lookupEmail = window.sessionStorage.getItem("approvalLookupEmail");
+      const resolvedRole = authRole || savedRole;
 
-      setRole(savedRole);
+      if (!user && lookupEmail) {
+        try {
+          const response = await fetch("/api/auth/approval-status", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: lookupEmail }),
+            cache: "no-store",
+          });
+          const result = (await response.json()) as {
+            found: boolean;
+            status?: AccountApprovalStatus;
+            role?: UserRole;
+          };
+
+          if (!response.ok || !result.found || !result.status || !result.role) {
+            router.replace("/");
+            return;
+          }
+
+          setRole(result.role);
+          setLookupStatus(result.status);
+          setIsLoading(false);
+        } catch (error) {
+          console.error("Failed to load approval lookup:", error);
+          router.replace("/");
+        }
+        return;
+      }
+
+      if (!resolvedRole) {
+        router.replace("/");
+        return;
+      }
+      if (resolvedRole === "hq") {
+        router.replace("/hq");
+        return;
+      }
+
+      setRole(resolvedRole);
 
       try {
         const savedApprovals = sessionStorage.getItem("signupStoreApprovals");
-        if (!savedApprovals) {
-          router.push("/signup/approval");
-          return;
-        }
-
-        const sessionApprovals = JSON.parse(savedApprovals) as StoreApprovalState[];
+        const sessionApprovals = savedApprovals
+          ? JSON.parse(savedApprovals) as StoreApprovalState[]
+          : [];
         console.log("[approval-status] sessionApprovals loaded:", {
           count: sessionApprovals.length,
           approvals: sessionApprovals.map(a => ({
@@ -73,7 +109,10 @@ export default function SignupApprovalStatusPage() {
         });
 
         // Server API에서 실제 membership 정보 조회
-        const response = await fetch("/api/signup/store-membership", { credentials: "include" });
+        const response = await fetch("/api/signup/store-membership", {
+          credentials: "include",
+          cache: "no-store",
+        });
         const result = await response.json();
 
         console.log("[approval-status] GET /api/signup/store-membership response:", {
@@ -87,11 +126,37 @@ export default function SignupApprovalStatusPage() {
           // 서버에서 받은 membership 데이터가 있음
           const dbMemberships = result.data;
 
+          if (sessionApprovals.length === 0) {
+            const restoredApprovals: StoreApprovalState[] = dbMemberships.map(
+              (membership: { membershipId: string; storeId: string; storeName: string; status: ApprovalStatus; requestedAt?: string }) => ({
+                store: {
+                  id: membership.storeId,
+                  brandId: "",
+                  brandName: "",
+                  name: membership.storeName,
+                  address: "",
+                  createdAt: new Date(),
+                  manualCount: 0,
+                  memberCount: 0,
+                  status: "active",
+                },
+                status: membership.status,
+                requestedAt: membership.requestedAt,
+                membershipId: membership.membershipId,
+                membershipStoreId: membership.storeId,
+              }),
+            );
+            setStoreApprovals(restoredApprovals);
+            sessionStorage.setItem("signupStoreApprovals", JSON.stringify(restoredApprovals));
+            return;
+          }
+
           // sessionApprovals의 각 항목과 dbMemberships를 store name으로 연결
           const updatedApprovals = sessionApprovals.map(approval => {
             // store name으로 일치하는 DB membership 찾기
             const dbMembership = dbMemberships.find(
               (m: { membershipId: string; storeId: string; storeName: string; role: string; status: string; requestedAt?: string }) =>
+                (approval.membershipStoreId && m.storeId === approval.membershipStoreId) ||
                 m.storeName === approval.store.name
             );
 
@@ -144,14 +209,28 @@ export default function SignupApprovalStatusPage() {
     };
 
     loadApprovalStatus();
+    const intervalId = window.setInterval(loadApprovalStatus, 5000);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        loadApprovalStatus();
+      }
+    };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
   }, [router]);
 
   if (!role) return null;
 
   const handleSelectStore = (membershipStoreId: string, storeName: string) => {
     // Save the real store UUID from membership, not the mock store.id
-    sessionStorage.setItem("selectedStoreId", membershipStoreId);
-    sessionStorage.setItem("selectedStoreName", storeName);
+    // boss 대시보드(app/boss/page.tsx)가 같은 태버 실제 sessionStorage를 읽으므로, 이 두 키만은
+    // 가입 위저드 상태와 달리 shadow된 sessionStorage(localStorage)가 아닌 진짜 sessionStorage를 쓴다.
+    window.sessionStorage.setItem("selectedStoreId", membershipStoreId);
+    window.sessionStorage.setItem("selectedStoreName", storeName);
     router.push("/boss");
   };
 
@@ -160,6 +239,10 @@ export default function SignupApprovalStatusPage() {
     const existingStores = storeApprovals.map(item => item.store);
     sessionStorage.setItem("signupSelectedStores", JSON.stringify(existingStores));
     router.push("/signup/stores?mode=add");
+  };
+
+  const handleGoHome = () => {
+    router.push("/");
   };
 
   const roleLabel = role === "owner" ? "점주" : "직원";
@@ -184,10 +267,14 @@ export default function SignupApprovalStatusPage() {
               <img src="/logo/ilitda-wordmark.png" alt="일잇다" className="h-8 sm:h-9 w-auto object-contain" />
             </div>
             <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-              <span className="text-base sm:text-lg lg:text-[17px] font-semibold text-[var(--color-text-secondary)]">5 / 5</span>
-              <div className="w-20 sm:w-28 h-2 bg-[var(--color-border-light)] rounded-full overflow-hidden">
-                <div className="h-full bg-[var(--color-primary)] rounded-full" style={{ width: "100%" }} />
-              </div>
+              <button
+                type="button"
+                onClick={handleGoHome}
+                className="ml-2 inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[var(--color-primary)] bg-white px-4 text-sm font-semibold text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary-light)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2"
+              >
+                <Home size={17} />
+                메인
+              </button>
             </div>
           </div>
         </header>
@@ -203,6 +290,23 @@ export default function SignupApprovalStatusPage() {
               <h2 className="text-xl font-bold text-[var(--color-text-primary)]">승인 요청</h2>
               <span className="text-base font-semibold text-[var(--color-text-secondary)]">총 {totalCount}건 (승인됨: {approvedCount})</span>
             </div>
+
+            {lookupStatus && storeApprovals.length === 0 && (
+              <div className="mb-8 border-y border-[var(--color-border)] bg-white px-5 py-8 text-center">
+                <p className="text-xl font-bold text-[var(--color-text-primary)]">
+                  {lookupStatus === "approved"
+                    ? "승인이 완료되었습니다."
+                    : lookupStatus === "pending"
+                      ? "현재 관리자 승인 대기 중입니다."
+                      : lookupStatus === "rejected"
+                        ? "승인 요청이 거절되었습니다."
+                        : "아직 점포 승인 요청이 등록되지 않았습니다."}
+                </p>
+                <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
+                  상세 점포 정보는 로그인 후 확인할 수 있습니다.
+                </p>
+              </div>
+            )}
 
             <div className="space-y-3 mb-8">
               {storeApprovals.map((approval, index) => {

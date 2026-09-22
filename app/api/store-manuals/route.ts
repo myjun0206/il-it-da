@@ -4,14 +4,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { indexManualById } from "@/lib/rag/index-manual";
 import { saveManualGroupsWithChunks } from "@/lib/rag/save-manual-sections";
+import { resolveStoreManualAccess } from "@/lib/supabase/store-manual-auth";
 import type { ManualRecord } from "@/lib/types/manual";
 
 export const runtime = "nodejs";
-
-type CreateStoreManualRequestBody = {
-  topic?: unknown;
-  items?: unknown;
-};
 
 type StoreManualListResponse = {
   manuals?: ManualRecord[];
@@ -46,7 +42,7 @@ function parseItems(items: unknown): string[] | null {
 }
 
 /**
- * Owner가 자신의 승인된 store에 속한 지점 매뉴얼을 조회.
+ * Owner는 자신의 승인된 store, HQ는 같은 franchise의 store 매뉴얼을 조회한다.
  * store_id = null인 공통 매뉴얼은 제외하고,
  * storeId에 해당하는 지점 매뉴얼만 반환한다.
  */
@@ -67,18 +63,14 @@ export async function GET(request: Request): Promise<NextResponse<StoreManualLis
       return NextResponse.json({ error: "지점 ID가 필요합니다." }, { status: 400 });
     }
 
-    // 서버에서 권한 검증: user_id + store_id + role=owner + status=approved
     const adminClient = createAdminClient();
-    const { data: membership, error: membershipError } = await adminClient
-      .from("store_memberships")
-      .select("*")
-      .eq("user_id", userData.user.id)
-      .eq("store_id", storeId)
-      .eq("role", "owner")
-      .eq("status", "approved")
-      .maybeSingle<{ id: string }>();
-
-    if (membershipError || !membership) {
+    const access = await resolveStoreManualAccess(
+      adminClient,
+      userData.user.id,
+      storeId,
+      { allowHqRead: true },
+    );
+    if (!access) {
       return NextResponse.json(
         { error: "이 지점에 대한 접근 권한이 없습니다." },
         { status: 403 },
@@ -110,7 +102,7 @@ export async function GET(request: Request): Promise<NextResponse<StoreManualLis
 }
 
 /**
- * Owner가 자신의 승인된 store에 지점 매뉴얼을 생성.
+ * Owner가 자신의 승인된 store에 지점 매뉴얼을 생성한다. HQ는 조회만 가능하다.
  * body: { topic: string, items: string[], storeId: string }
  * - topic: 부모 매뉴얼 제목 (카테고리)
  * - items: 세부 업무 내용 배열 (최소 1개)
@@ -147,64 +139,19 @@ export async function POST(request: Request): Promise<NextResponse<CreateStoreMa
       return NextResponse.json({ error: "지점 ID가 필요합니다." }, { status: 400 });
     }
 
-    // 서버에서 권한 검증: user_id + store_id + role=owner + status=approved
     const adminClient = createAdminClient();
-    const { data: membership, error: membershipError } = await adminClient
-      .from("store_memberships")
-      .select("*")
-      .eq("user_id", userData.user.id)
-      .eq("store_id", storeId)
-      .eq("role", "owner")
-      .eq("status", "approved")
-      .maybeSingle<{ id: string }>();
-
-    if (membershipError || !membership) {
+    const access = await resolveStoreManualAccess(adminClient, userData.user.id, storeId);
+    if (!access) {
       return NextResponse.json(
         { error: "이 지점에 대한 접근 권한이 없습니다." },
         { status: 403 },
       );
     }
 
-    // Owner의 profile 정보 조회 (franchise_id, brand_name 등)
-    const { data: profile, error: profileError } = await adminClient
-      .from("profiles")
-      .select("role, brand_id")
-      .eq("id", userData.user.id)
-      .maybeSingle<{ role: string; brand_id: string | null }>();
-
-    if (profileError || !profile) {
-      return NextResponse.json({ error: "사용자 정보를 불러올 수 없습니다." }, { status: 500 });
-    }
-
-    // franchiseId와 brandName 설정
-    let franchiseId: string | null = null;
-    let brandName = "본사";
-
-    if (profile.brand_id) {
-      franchiseId = profile.brand_id;
-      const { data: franchise } = await adminClient
-        .from("franchises")
-        .select("name")
-        .eq("id", profile.brand_id)
-        .maybeSingle<{ name: string }>();
-
-      if (franchise) {
-        brandName = franchise.name;
-      }
-    } else {
-      // 레거시 계정: user_metadata에서 이름 파싱
-      const userName = userData.user.user_metadata?.name as string | undefined;
-      if (userName && userName.trim()) {
-        const [first] = userName.trim().split(/\s+/);
-        if (first) brandName = first;
-      }
-    }
-
-    // saveManualGroupsWithChunks 사용 (owner용으로도 동일하게 작동)
     const hqUserLike = {
       userId: userData.user.id,
-      franchiseId,
-      brandName,
+      franchiseId: access.franchiseId,
+      brandName: access.brandName,
     };
 
     const manuals = await saveManualGroupsWithChunks(adminClient, hqUserLike, [{ topic, items }], storeId);

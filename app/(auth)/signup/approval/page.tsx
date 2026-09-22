@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, Trash2, Check, Plus, Store as StoreIcon } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { getBrandLogoPath } from "@/lib/brands/brand-logos";
+import { fetchWithAuthRetry, waitForAuthReadiness } from "@/lib/auth/wait-for-auth-session";
 import { createClient } from "@/lib/supabase/client";
+import { signupStorage as sessionStorage } from "@/lib/signup/signup-storage";
 import {
   DEV_TEST_EMAILS,
   DEV_TEST_EMAIL_ROLE_MAP,
@@ -20,6 +22,17 @@ interface StoreApprovalState {
   store: Store;
   status: ApprovalStatus;
   requestedAt?: string;
+}
+
+// [SESSION_DEBUG] document.cookie에서 sb-*(Supabase 인증) 쿠키 "이름"만 골라 출력한다.
+// 값(access/refresh token)은 절대 로그에 남기지 않는다. 탭 간 쿠키 유무를 비교하는 용도.
+function logAuthCookieNames(label: string) {
+  if (typeof document === "undefined") return;
+  const cookieNames = document.cookie
+    .split(";")
+    .map((c) => c.trim().split("=")[0])
+    .filter((name) => name.startsWith("sb-"));
+  console.log(`[SESSION_DEBUG][${label}] document.cookie sb-* names:`, cookieNames);
 }
 
 function clearSignupSessionStorage() {
@@ -67,7 +80,6 @@ export default function SignupApprovalPage() {
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [submittingStoreIds, setSubmittingStoreIds] = useState<Set<string>>(new Set());
   const [submissionError, setSubmissionError] = useState("");
-  const [emailAlreadyRegistered, setEmailAlreadyRegistered] = useState(false);
 
   // 역할 확인 및 라우팅
   useLayoutEffect(() => {
@@ -116,12 +128,12 @@ export default function SignupApprovalPage() {
           const fetchMembershipsAndMerge = async () => {
             try {
               const supabase = createClient();
-              const { data: sessionCheck } = await supabase.auth.getSession();
+              const authenticatedUser = await waitForAuthReadiness(supabase);
 
               let dbMemberships: { membershipId: string; storeId: string; storeName: string; status: string; requestedAt?: string }[] = [];
 
-              if (sessionCheck.session) {
-                const response = await fetch("/api/signup/store-membership", {
+              if (authenticatedUser) {
+                const response = await fetchWithAuthRetry(supabase, "/api/signup/store-membership", {
                   credentials: "include",
                 });
                 const result = await response.json();
@@ -246,7 +258,13 @@ export default function SignupApprovalPage() {
   // Auth session 확보 (테스트 계정은 signInWithPassword, 신규 이메일은 signUp)
   const ensureSignupAuthSession = async (): Promise<boolean> => {
     const supabase = createClient();
-    const { data: { user: currentUser } } = await supabase.auth.getUser();
+    // [SESSION_DEBUG] 이 탭이 지금 시점에 실제로 들고 있는 sb-* 쿠키 이름만 출력한다(값은 출력하지 않는다).
+    logAuthCookieNames("ensureSignupAuthSession:start");
+    const currentUser = await waitForAuthReadiness(supabase);
+    console.log("[SESSION_DEBUG][ensureSignupAuthSession] getUser ->", {
+      hasUser: Boolean(currentUser),
+      email: currentUser?.email ?? null,
+    });
 
     // signupProfile과 signupRole 읽기
     const signupProfile = sessionStorage.getItem("signupProfile");
@@ -260,15 +278,16 @@ export default function SignupApprovalPage() {
     try {
       const profile = JSON.parse(signupProfile);
       const profileEmail = profile.email;
-      const profilePassword = profile.password;
 
-      // 현재 user가 있고 email + role이 signup 대상과 정확히 일치하면 재사용
+      // 이메일 인증 콜백으로 확보한 동일 사용자는 다시 signUp하지 않는다.
       if (currentUser && currentUser.email === profileEmail) {
         const currentUserRole = currentUser.user_metadata?.role as string | undefined;
-        if (currentUserRole === signupRole) {
-          // 현재 session 재사용 가능
-          return true;
+        if (currentUserRole !== signupRole) {
+          setSubmissionError("인증된 계정의 역할이 가입 정보와 일치하지 않습니다. 다시 로그인해 주세요.");
+          return false;
         }
+
+        return true;
       }
 
       // 현재 user가 다른 사용자라면 signOut
@@ -330,57 +349,8 @@ export default function SignupApprovalPage() {
         return true;
       }
 
-      // 일반 신규 이메일: signUp 사용
-      const { data: authData, error: authError } =
-        await supabase.auth.signUp({
-          email: profileEmail,
-          password: profilePassword,
-          options: {
-            data: {
-              role: signupRole,
-              name: profile.name,
-            },
-            // 이메일 인증(컨펌) 링크를 눌렀을 때 세션을 실제로 교환해 줄 콜백 경로로 되돌아오게 한다.
-            emailRedirectTo: `${window.location.origin}/auth/callback?next=/signup/approval`,
-          },
-        });
-
-      if (authError) {
-        console.error("signUp error:", authError);
-        if (
-          authError.message?.toLowerCase().includes("already") ||
-          authError.message?.toLowerCase().includes("already registered") ||
-          authError.message?.toLowerCase().includes("user already exists")
-        ) {
-          setEmailAlreadyRegistered(true);
-          setSubmissionError("이미 가입된 이메일입니다. 로그인해 주세요.");
-        } else {
-          setSubmissionError(`회원가입 중 오류: ${authError.message || "알 수 없는 오류"}`);
-        }
-        return false;
-      }
-
-      if (!authData.user || !authData.session) {
-        // 이메일 인증(컨펌)이 필요한 프로젝트 설정이면 signUp 직후 세션이 없어 이후 API 호출이
-        // "Auth session missing"으로 실패한다. 세션이 없으면 여기서 명확히 실패 처리한다.
-        setSubmissionError("이메일 인증 후 다시 로그인해주세요. 세션을 확보하지 못했습니다.");
-        return false;
-      }
-
-      // ✅ 중요: signUp 직후 HTTP 쿠키가 실제로 반영되었는지 확인한다.
-      // 이를 확인하지 않으면 바로 이어지는 store-membership 호출이 세션 누락(401)으로 실패할 수 있다.
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!sessionData.session || sessionData.session.user.email !== profileEmail) {
-        console.error("Session verification failed after signUp", {
-          expected: profileEmail,
-          actual: sessionData.session?.user.email,
-        });
-        setSubmissionError("세션 확보에 실패했습니다. 다시 시도해주세요.");
-        return false;
-      }
-
-      setEmailAlreadyRegistered(false);
-      return true;
+      setSubmissionError("인증 세션이 없습니다. 가장 최근에 받은 가입 확인 이메일의 링크를 열어주세요.");
+      return false;
     } catch (error) {
       console.error("Auth session error:", error);
       setSubmissionError("회원가입 중 오류가 발생했습니다.");
@@ -390,7 +360,6 @@ export default function SignupApprovalPage() {
 
   const handleRequestApproval = async (storeId: string) => {
     setSubmissionError("");
-    setEmailAlreadyRegistered(false);
     setSubmittingStoreIds((prev) => new Set(prev).add(storeId));
 
     try {
@@ -419,7 +388,8 @@ export default function SignupApprovalPage() {
       }
 
       // API 호출 (userId는 서버에서 auth.getUser()로 직접 가져옴)
-      const response = await fetch("/api/signup/store-membership", {
+      const supabase = createClient();
+      const response = await fetchWithAuthRetry(supabase, "/api/signup/store-membership", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -467,6 +437,13 @@ export default function SignupApprovalPage() {
           : item
       );
       sessionStorage.setItem("signupStoreApprovals", JSON.stringify(updatedApprovals));
+
+      const allRequestsCompleted = updatedApprovals.every(
+        (item) => item.status !== "requestable",
+      );
+      if (allRequestsCompleted) {
+        router.push("/");
+      }
     } catch (e) {
       console.error("승인 요청 중 오류:", e);
       setSubmissionError("승인 요청 중 오류가 발생했습니다.");
@@ -494,7 +471,6 @@ export default function SignupApprovalPage() {
 
     setIsLoading(true);
     setSubmissionError("");
-    setEmailAlreadyRegistered(false);
 
     try {
       // Auth session 확보
@@ -507,7 +483,8 @@ export default function SignupApprovalPage() {
       // Create memberships for all requestable stores (userId from server auth.getUser)
       for (const approval of requestableApprovals) {
         try {
-          const response = await fetch("/api/signup/store-membership", {
+          const supabase = createClient();
+          const response = await fetchWithAuthRetry(supabase, "/api/signup/store-membership", {
             method: "POST",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
@@ -550,8 +527,7 @@ export default function SignupApprovalPage() {
 
       alert("승인 요청이 완료되었습니다.\n본사 승인을 기다려 주세요.");
 
-      // Move to approval status page
-      router.push("/signup/approval-status");
+      router.push("/");
     } catch (e) {
       console.error("승인 요청 중 오류:", e);
       alert("승인 요청 중 오류가 발생했습니다.");
@@ -563,7 +539,7 @@ export default function SignupApprovalPage() {
   const handleGoToApprovalStatus = () => {
     // 최종 상태 저장
     sessionStorage.setItem("signupStoreApprovals", JSON.stringify(storeApprovals));
-    router.push("/signup/approval-status");
+    router.push("/");
   };
 
   const handlePrevious = () => {
@@ -611,17 +587,7 @@ export default function SignupApprovalPage() {
               />
             </div>
 
-            <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-              <span className="text-base sm:text-lg lg:text-[17px] font-semibold text-[var(--color-text-secondary)]">
-                5 / 5
-              </span>
-              <div className="w-20 sm:w-28 h-2 bg-[var(--color-border-light)] rounded-full overflow-hidden flex-shrink-0">
-                <div
-                  className="h-full bg-[var(--color-primary)] rounded-full transition-all duration-300"
-                  style={{ width: "100%" }}
-                />
-              </div>
-            </div>
+            <div className="w-20 flex-shrink-0" aria-hidden="true" />
           </div>
         </header>
 
@@ -698,17 +664,6 @@ export default function SignupApprovalPage() {
                 {submissionError && (
                   <div className="mb-4 rounded-lg border border-[var(--color-status-error)]/20 bg-red-50 px-4 py-3">
                     <p className="text-sm text-[var(--color-status-error)]">{submissionError}</p>
-                    {emailAlreadyRegistered && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => router.push("/")}
-                        className="mt-2"
-                      >
-                        로그인하러 가기
-                      </Button>
-                    )}
                   </div>
                 )}
 
@@ -898,7 +853,7 @@ export default function SignupApprovalPage() {
                     매장 추가
                   </Button>
 
-                  {/* Approval Status Button - Show when all pending */}
+                  {/* Main home button - Show when all requests are pending */}
                   {allApprovalsPending && (
                     <Button
                       type="button"
@@ -908,7 +863,7 @@ export default function SignupApprovalPage() {
                       className="w-full h-14 px-4 text-base font-medium flex items-center justify-center gap-2"
                     >
                       <Check size={20} />
-                      승인 현황 확인
+                      메인 홈으로 이동
                     </Button>
                   )}
                 </div>
