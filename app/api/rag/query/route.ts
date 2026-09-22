@@ -1,6 +1,9 @@
 ﻿import { NextResponse } from "next/server";
 
 import { buildAnswerPromptMessages, buildManualContext } from "@/lib/rag/answer-prompt";
+import { authorizeRagStoreAccessForRequest } from "@/lib/rag/authorize-rag-store-access";
+import { finalizeRagQueryResponse } from "@/lib/rag/finalize-rag-query-response";
+import { saveQuestionLog } from "@/lib/rag/save-question-log";
 import { searchManualChunks } from "@/lib/rag/search-manual-chunks";
 import { validateQueryRequest } from "@/lib/rag/validate-query-request";
 import type {
@@ -71,17 +74,30 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
   }
   const { question, storeId } = validation.data;
 
+  const authorization = await authorizeRagStoreAccessForRequest(storeId);
+  if (authorization.status === "UNAUTHENTICATED") {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+  if (authorization.status === "FORBIDDEN") {
+    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  }
+
   try {
     const searchResults = await searchManualChunks(question, storeId); // Supabase Pgvector 기반 매뉴얼 청크 검색
 
     if (searchResults.length === 0) {
-      return NextResponse.json({
-        answer: NO_MANUAL_ANSWER,
-        similarity: null,
-        source: null,
-        status: "insufficient",
-        matches: [],
-      });
+      const response = await finalizeRagQueryResponse({
+        httpStatus: 200,
+        question,
+        response: {
+          answer: NO_MANUAL_ANSWER,
+          similarity: null,
+          source: null,
+          status: "insufficient",
+          matches: [],
+        },
+      }, saveQuestionLog);
+      return NextResponse.json(response);
     }
 
     const topMatch = searchResults[0];
@@ -106,13 +122,18 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
 
     if (status === "insufficient") {
       // 유사도가 낮으면 추측 답변을 막기 위해 GPT를 호출하지 않음
-      return NextResponse.json({
-        answer: NO_MANUAL_ANSWER,
-        similarity: topMatch.similarity_score,
-        source: null,
-        status: "insufficient",
-        matches,
-      });
+      const response = await finalizeRagQueryResponse({
+        httpStatus: 200,
+        question,
+        response: {
+          answer: NO_MANUAL_ANSWER,
+          similarity: topMatch.similarity_score,
+          source: null,
+          status: "insufficient",
+          matches,
+        },
+      }, saveQuestionLog);
+      return NextResponse.json(response);
     }
 
     const context = buildManualContext(searchResults); // 검색된 청크들을 GPT 프롬프트용 컨텍스트 문자열로 조합
@@ -123,13 +144,18 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
       answer += CAUTION_NOTICE;
     }
 
-    return NextResponse.json({
-      answer,
-      similarity: topMatch.similarity_score,
-      source: toRagSource(topMatch), // searchManualChunks() 스네이크 필드명 -> 응답 규격 필드명 명시적 매핑
-      status,
-      matches,
-    });
+    const response = await finalizeRagQueryResponse({
+      httpStatus: 200,
+      question,
+      response: {
+        answer,
+        similarity: topMatch.similarity_score,
+        source: toRagSource(topMatch), // searchManualChunks() 스네이크 필드명 -> 응답 규격 필드명 명시적 매핑
+        status,
+        matches,
+      },
+    }, saveQuestionLog);
+    return NextResponse.json(response);
   } catch (error) {
     console.error("RAG query failed:", getSafeErrorDetails(error));
     return NextResponse.json({ error: "Unable to answer the question." }, { status: 500 });
