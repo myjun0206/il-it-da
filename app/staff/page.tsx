@@ -1,12 +1,13 @@
 "use client";
 
-import { FormEvent, startTransition, useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, Bot, CheckCircle2, ChevronRight, Clock3, Info, Paperclip, Send, Store, UserRound } from "lucide-react";
 
 import StaffHeader from "@/components/staff/StaffHeader";
 import StaffSidebar from "@/components/staff/StaffSidebar";
 import type { RagSource, RagStatus } from "@/lib/rag/types";
+import type { StaffStore } from "@/lib/staff/approved-stores";
 import { createClient } from "@/lib/supabase/client";
 
 type Message = {
@@ -17,11 +18,6 @@ type Message = {
   source?: Partial<Pick<RagSource, "title" | "category">>;
   similarity?: number;
 };
-
-interface Store {
-  id: string;
-  name: string;
-}
 
 const statusBadgeConfig = {
   answered: { label: "매뉴얼 기반 답변", icon: CheckCircle2, className: "border border-[#7cd4b6] bg-[#e8f9f4] text-[#0d5d4d]" },
@@ -37,7 +33,6 @@ const quickQuestions = [
   "매장 청소 체크리스트 보여줘",
   "신규 알바가 꼭 알아야 할 내용은?",
 ];
-const SELECTED_STORE_STORAGE_KEY = "staffDemoStoreId";
 const INITIAL_MESSAGES: Message[] = [
   { from: "ai", text: "안녕하세요!\n일잇다 AI입니다.\n매장 업무와 관련된 궁금한 점이 있다면 언제든 물어보세요.\n매뉴얼을 기반으로 정확하고 친절하게 답변해드릴게요.", time: "오후 1:58" },
   { from: "ai", text: "아래 예시 질문을 참고하거나,\n직접 궁금한 내용을 입력해보세요.", time: "오후 1:58" },
@@ -66,74 +61,70 @@ export default function StaffPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [userName, setUserName] = useState("직원");
   const [storeName, setStoreName] = useState("매장");
-  const [selectedStore, setSelectedStore] = useState<Store | null>(null);
-  const [availableStores, setAvailableStores] = useState<Store[]>([]);
-
-  useEffect(() => {
-    // Fetch user's approved stores from store_memberships
-    const fetchUserStores = async () => {
-      try {
-        const supabase = createClient();
-        const { data: { user } } = await supabase.auth.getUser();
-        
-        if (!user) return;
-
-        // Query store_memberships for this user's approved stores
-        const { data: memberships } = await supabase
-          .from("store_memberships")
-          .select("store_id")
-          .eq("user_id", user.id)
-          .eq("role", "staff")
-          .eq("status", "approved");
-
-        if (memberships && memberships.length > 0) {
-          const storeIds = memberships.map(m => m.store_id);
-          
-          // Fetch store names
-          const { data: stores } = await supabase
-            .from("stores")
-            .select("id, store_name")
-            .in("id", storeIds);
-
-          if (stores) {
-            const formattedStores = stores.map(s => ({
-              id: s.id,
-              name: s.store_name
-            }));
-            setAvailableStores(formattedStores);
-            
-            // Auto-select first store
-            if (formattedStores.length > 0) {
-              selectStore(formattedStores[0].id);
-            }
-          }
-        }
-      } catch (e) {
-        console.error("Failed to fetch user stores:", e);
-      }
-    };
-
-    fetchUserStores();
-  }, []);
+  const [stores, setStores] = useState<StaffStore[]>([]);
+  const [selectedStore, setSelectedStore] = useState<StaffStore | null>(null);
+  const [isStoresLoading, setIsStoresLoading] = useState(true);
+  const [storesError, setStoresError] = useState("");
+  const [storesReloadToken, setStoresReloadToken] = useState(0);
 
   function selectStore(storeId: string) {
-    if (isLoading) return;
+    if (isLoading || isStoresLoading) return;
 
-    const store = availableStores.find(s => s.id === storeId) || null;
+    const store = stores.find((candidate) => candidate.id === storeId) ?? null;
     if (selectedStore?.id !== store?.id) {
       setMessages(INITIAL_MESSAGES);
       setInput("");
       setErrorMessage("");
     }
     setSelectedStore(store);
-
-    if (store) {
-      sessionStorage.setItem(SELECTED_STORE_STORAGE_KEY, store.id);
-      setStoreName(store.name);
-    } else {
-      sessionStorage.removeItem(SELECTED_STORE_STORAGE_KEY);
-    }
+    setStoreName(store?.name ?? "매장");
   }
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadApprovedStores() {
+      setIsStoresLoading(true);
+      setStoresError("");
+
+      try {
+        const response = await fetch("/api/staff/stores", { signal: controller.signal });
+        if (response.status === 401) {
+          router.push("/");
+          return;
+        }
+
+        const payload = (await response.json()) as { stores?: StaffStore[]; error?: string };
+        if (!response.ok || !Array.isArray(payload.stores)) {
+          throw new Error("Unable to load approved stores.");
+        }
+
+        if (controller.signal.aborted) return;
+
+        setStores(payload.stores);
+        if (payload.stores.length === 1) {
+          setSelectedStore(payload.stores[0]);
+          setStoreName(payload.stores[0].name);
+        } else {
+          setSelectedStore(null);
+          setStoreName("매장");
+        }
+      } catch {
+        if (controller.signal.aborted) return;
+        setStores([]);
+        setSelectedStore(null);
+        setStoreName("매장");
+        setStoresError("승인된 소속 매장을 불러오지 못했습니다. 다시 시도해 주세요.");
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsStoresLoading(false);
+        }
+      }
+    }
+
+    loadApprovedStores();
+    return () => controller.abort();
+  }, [router, storesReloadToken]);
 
   useEffect(() => {
     // Check Supabase session - redirect if needed
@@ -178,14 +169,6 @@ export default function StaffPage() {
         // Set user name from metadata
         if (name) {
           setUserName(name);
-          // Extract store name from user name or use default
-          // Format: "매장명 직원명" -> "매장명"
-          if (name.includes(" ")) {
-            const parts = name.split(" ");
-            if (parts[0]) {
-              setStoreName(parts[0]);
-            }
-          }
         }
       } catch (e) {
         console.error("Set user info failed:", e);
@@ -209,9 +192,13 @@ export default function StaffPage() {
   async function sendMessage(event?: FormEvent) {
     event?.preventDefault();
     const question = input.trim();
-    if (!question || isLoading) return;
+    if (!question || isLoading || isStoresLoading) return;
     if (!selectedStore) {
-      setErrorMessage("먼저 근무 매장을 선택해 주세요.");
+      setErrorMessage(
+        stores.length === 0
+          ? "승인된 소속 매장이 없습니다. 관리자에게 승인 상태를 확인해 주세요."
+          : "먼저 근무 매장을 선택해 주세요.",
+      );
       return;
     }
     setInput("");
@@ -298,17 +285,38 @@ export default function StaffPage() {
                 <select
                   id="staff-store"
                   value={selectedStore?.id ?? ""}
-                  disabled={isLoading}
+                  disabled={isLoading || isStoresLoading || stores.length === 0}
                   onChange={(event) => selectStore(event.target.value)}
                   className="mt-0.5 w-full bg-transparent text-sm font-semibold text-[var(--color-text-primary)] outline-none disabled:cursor-not-allowed disabled:opacity-70"
                 >
-                  <option value="">매장을 선택해 주세요</option>
-                  {availableStores.map((store) => (
+                  <option value="">
+                    {isStoresLoading ? "승인된 매장 정보를 불러오는 중..." : "매장을 선택해 주세요"}
+                  </option>
+                  {stores.map((store) => (
                     <option key={store.id} value={store.id}>{store.name}</option>
                   ))}
                 </select>
               </div>
             </div>
+
+            {storesError && (
+              <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                <span>{storesError}</span>
+                <button
+                  type="button"
+                  onClick={() => setStoresReloadToken((value) => value + 1)}
+                  className="shrink-0 font-semibold text-red-700 hover:text-red-900"
+                >
+                  다시 시도
+                </button>
+              </div>
+            )}
+
+            {!isStoresLoading && !storesError && stores.length === 0 && (
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                승인된 소속 매장이 없습니다. 관리자에게 승인 상태를 확인해 주세요.
+              </div>
+            )}
 
             {/* Chat Container - takes remaining space */}
             <div className="bg-white border border-[var(--color-border)] rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
@@ -356,7 +364,7 @@ export default function StaffPage() {
                     key={question}
                     type="button"
                     aria-label={`질문: ${question}`}
-                    disabled={isLoading}
+                    disabled={isLoading || isStoresLoading || !selectedStore}
                     onClick={() => {
                       setInput(question);
                       sendMessage({ preventDefault: () => {} } as FormEvent);
@@ -382,7 +390,7 @@ export default function StaffPage() {
 
                 <input
                   value={input}
-                  disabled={isLoading}
+                  disabled={isLoading || isStoresLoading || !selectedStore}
                   onChange={event => setInput(event.target.value)}
                   placeholder={isLoading ? "답변을 기다리는 중이에요…" : "질문을 입력하세요"}
                   aria-label="질문 입력창"
@@ -391,7 +399,7 @@ export default function StaffPage() {
 
                 <button
                   type="submit"
-                  disabled={isLoading || !input.trim()}
+                  disabled={isLoading || isStoresLoading || !selectedStore || !input.trim()}
                   aria-label="메시지 보내기"
                   className="flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary)]/90 transition-colors flex-shrink-0 disabled:cursor-not-allowed disabled:bg-[var(--color-primary)]/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
                 >
