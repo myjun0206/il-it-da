@@ -115,7 +115,7 @@ export default function HQApprovalsPage() {
     setIsLoading(true);
     try {
       // Always fetch complete data without status filter
-      const response = await fetch(`/api/hq/approvals`);
+      const response = await fetch(`/api/hq/approvals`, { credentials: "include" });
       const result = await response.json();
 
       if (result.success && Array.isArray(result.data)) {
@@ -139,7 +139,7 @@ export default function HQApprovalsPage() {
       setIsLoading(true);
       try {
         // Always fetch complete data without status filter
-        const response = await fetch(`/api/hq/approvals`);
+        const response = await fetch(`/api/hq/approvals`, { credentials: "include" });
         const result = await response.json();
 
         if (result.success && Array.isArray(result.data)) {
@@ -204,6 +204,7 @@ export default function HQApprovalsPage() {
     try {
       const response = await fetch("/api/hq/approvals", {
         method: "PUT",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
@@ -219,7 +220,7 @@ export default function HQApprovalsPage() {
         // Refresh the complete approvals list (allApprovals only)
         setIsLoading(true);
         try {
-          const refreshResponse = await fetch(`/api/hq/approvals`);
+          const refreshResponse = await fetch(`/api/hq/approvals`, { credentials: "include" });
           const refreshResult = await refreshResponse.json();
 
           if (refreshResult.success && Array.isArray(refreshResult.data)) {

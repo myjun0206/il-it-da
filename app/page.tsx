@@ -1,15 +1,25 @@
 "use client";
 
-import React, { useState, useLayoutEffect } from "react";
+import React, { Suspense, useState, useLayoutEffect } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Check } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input, PasswordInput } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginPageContent />
+    </Suspense>
+  );
+}
+
+function LoginPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const verificationError = searchParams.get("error") === "verification_failed";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
@@ -200,6 +210,11 @@ export default function LoginPage() {
             </div>
 
             <form onSubmit={handleLogin} className="space-y-5">
+              {verificationError && (
+                <p className="rounded-lg border border-[var(--color-status-error)]/20 bg-red-50 px-4 py-3 text-sm text-[var(--color-status-error)]">
+                  이메일 인증 확인에 실패했습니다. 다시 시도하거나 재가입해 주세요.
+                </p>
+              )}
               <Input
                 label="아이디 또는 이메일"
                 type="email"
@@ -394,6 +409,11 @@ export default function LoginPage() {
             </div>
 
             <form onSubmit={handleLogin} className="space-y-4">
+              {verificationError && (
+                <p className="rounded-lg border border-[var(--color-status-error)]/20 bg-red-50 px-4 py-3 text-sm text-[var(--color-status-error)]">
+                  이메일 인증 확인에 실패했습니다. 다시 시도하거나 재가입해 주세요.
+                </p>
+              )}
               <Input
                 label="아이디 또는 이메일"
                 type="email"

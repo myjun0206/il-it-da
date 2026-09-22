@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createClient } from "@/lib/supabase/server";
+import { requireHqUser } from "@/lib/supabase/hq-auth";
 
 export const runtime = "nodejs";
 
@@ -25,25 +25,20 @@ interface StoreMembership {
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
-    // Get server session to verify auth
-    const serverClient = await createClient();
-    const { data: sessionData } = await serverClient.auth.getSession();
+    // 로그인 + HQ 역할 + 소속 franchise_id를 한 번에 검증한다.
+    const hqUser = await requireHqUser();
 
-    if (!sessionData.session?.user) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized: No session" },
-        { status: 401 }
-      );
-    }
-
-    const user = sessionData.session.user;
-
-    // Verify user is HQ
-    if (user.user_metadata?.role !== "hq") {
+    if (!hqUser) {
       return NextResponse.json(
         { success: false, error: "Forbidden: User is not HQ" },
         { status: 403 }
       );
+    }
+
+    // franchise_id가 없는 레거시 HQ 계정은 다른 브랜드 요청까지 노출시키지 않도록
+    // 안전하게 빈 목록을 반환한다(fail closed).
+    if (!hqUser.franchiseId) {
+      return NextResponse.json({ success: true, data: [] });
     }
 
     // Parse query parameters
@@ -53,7 +48,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Use admin client to bypass RLS
     const adminClient = createAdminClient();
 
-    // Build query - HQ can only view OWNER memberships, never STAFF
+    // Build query - HQ can only view OWNER memberships for their own brand, never STAFF or other brands
     let query = adminClient
       .from("store_memberships")
       .select(
@@ -70,7 +65,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         rejected_by
       `
       )
-      .eq("role", "owner");
+      .eq("role", "owner")
+      .eq("franchise_id", hqUser.franchiseId);
 
     // Apply status filter if provided
     if (status && ["pending", "approved", "rejected"].includes(status)) {
@@ -201,21 +197,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
 export async function PUT(request: NextRequest): Promise<NextResponse> {
   try {
-    // Get server session to verify auth
-    const serverClient = await createClient();
-    const { data: sessionData } = await serverClient.auth.getSession();
+    // 로그인 + HQ 역할 + 소속 franchise_id를 한 번에 검증한다.
+    const hqUser = await requireHqUser();
 
-    if (!sessionData.session?.user) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized: No session" },
-        { status: 401 }
-      );
-    }
-
-    const hqUser = sessionData.session.user;
-
-    // Verify user is HQ
-    if (hqUser.user_metadata?.role !== "hq") {
+    if (!hqUser) {
       return NextResponse.json(
         { success: false, error: "Forbidden: User is not HQ" },
         { status: 403 }
@@ -271,6 +256,17 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       );
     }
 
+    // 다른 브랜드 소속 매장의 승인 요청은 이 HQ 계정이 처리할 수 없다.
+    if (!hqUser.franchiseId || membership.franchise_id !== hqUser.franchiseId) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Forbidden: Membership belongs to a different brand",
+        },
+        { status: 403 }
+      );
+    }
+
     // Verify membership is currently pending (can only approve/reject pending requests)
     if (membership.status !== "pending") {
       return NextResponse.json(
@@ -290,7 +286,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       updateData = {
         status: "approved",
         approved_at: now,
-        approved_by: hqUser.id,
+        approved_by: hqUser.userId,
         rejected_at: null,
         rejected_by: null,
       };
@@ -299,7 +295,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       updateData = {
         status: "rejected",
         rejected_at: now,
-        rejected_by: hqUser.id,
+        rejected_by: hqUser.userId,
         approved_at: null,
         approved_by: null,
       };

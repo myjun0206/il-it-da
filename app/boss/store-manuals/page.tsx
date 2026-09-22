@@ -135,7 +135,7 @@ export default function StoreManualsManagemntPage() {
 
         // 서버에서 승인된 지점 목록 조회 및 검증
         try {
-          const response = await fetch("/api/signup/store-membership");
+          const response = await fetch("/api/signup/store-membership", { credentials: "include" });
           const result = (await response.json()) as {
             success?: boolean;
             data?: Array<{ storeId: string; storeName: string; status: string; role: string }>;
