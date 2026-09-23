@@ -115,9 +115,9 @@ export default function HQPage() {
     const fetchDashboardData = async () => {
       try {
         const supabase = createClient();
-        
+
         // Fetch pending approvals
-        const response = await fetch("/api/hq/approvals?status=pending");
+        const response = await fetch("/api/hq/approvals?status=pending", { credentials: "include" });
         const result = await response.json();
         if (result.success && Array.isArray(result.data)) {
           setPendingApprovalsCount(result.data.length);

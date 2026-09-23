@@ -35,6 +35,7 @@ type SignupResponse = {
   role?: string;
   error?: string;
   detail?: string;
+  code?: "email_exists";
 };
 
 type VerificationRow = {
@@ -163,6 +164,25 @@ function logSignupError(error: unknown): void {
   console.error("[SIGNUP_ERROR]", getErrorMetadata(error));
 }
 
+// Supabase auth.admin.createUser()가 이미 가입된 이메일에 대해 내리는 email_exists/중복 에러를 구별해 내진다.
+function isEmailAlreadyRegisteredError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const value = error as { code?: unknown; message?: unknown };
+  const code = typeof value.code === "string" ? value.code.toLowerCase() : "";
+  const message = typeof value.message === "string" ? value.message.toLowerCase() : "";
+
+  return (
+    code === "email_exists" ||
+    code === "user_already_exists" ||
+    message.includes("already been registered") ||
+    message.includes("already registered") ||
+    message.includes("already exists")
+  );
+}
+
 function createSignupError(stage: string, error: unknown): Error {
   const metadata = getErrorMetadata(error);
   const detailParts = [
@@ -262,6 +282,14 @@ export async function POST(request: Request): Promise<NextResponse<SignupRespons
     if (authError) {
       const error = createSignupError("Supabase createUser failed", authError);
       logSignupError(error);
+
+      if (isEmailAlreadyRegisteredError(authError)) {
+        return NextResponse.json(
+          { error: "이미 가입된 이메일입니다. 로그인해 주세요.", code: "email_exists" },
+          { status: 409 },
+        );
+      }
+
       return NextResponse.json(
         { error: getErrorDetail(authError), detail: error.message },
         { status: 400 },

@@ -67,6 +67,7 @@ export default function SignupApprovalPage() {
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [submittingStoreIds, setSubmittingStoreIds] = useState<Set<string>>(new Set());
   const [submissionError, setSubmissionError] = useState("");
+  const [emailAlreadyRegistered, setEmailAlreadyRegistered] = useState(false);
 
   // 역할 확인 및 라우팅
   useLayoutEffect(() => {
@@ -110,15 +111,24 @@ export default function SignupApprovalPage() {
         if (Array.isArray(parsed) && parsed.length > 0) {
           setSelectedStores(parsed);
 
-          // DB에서 현재 memberships 조회
+          // DB에서 현재 memberships 조회 (가입 신청 전이라 세션이 아예 없는 방문자는 401을
+          // 유발하지 않도록, 로컬 세션 존재 여부를 먼저 확인한 뒤에만 서버에 조회한다).
           const fetchMembershipsAndMerge = async () => {
             try {
-              const response = await fetch("/api/signup/store-membership");
-              const result = await response.json();
+              const supabase = createClient();
+              const { data: sessionCheck } = await supabase.auth.getSession();
 
               let dbMemberships: { membershipId: string; storeId: string; storeName: string; status: string; requestedAt?: string }[] = [];
-              if (response.ok && result.success && Array.isArray(result.data)) {
-                dbMemberships = result.data;
+
+              if (sessionCheck.session) {
+                const response = await fetch("/api/signup/store-membership", {
+                  credentials: "include",
+                });
+                const result = await response.json();
+
+                if (response.ok && result.success && Array.isArray(result.data)) {
+                  dbMemberships = result.data;
+                }
               }
 
               // 기존 approval 상태 복원 또는 새로 생성
@@ -338,6 +348,8 @@ export default function SignupApprovalPage() {
               role: signupRole,
               name: profile.name,
             },
+            // 이메일 인증(컨펌) 링크를 눌렀을 때 세션을 실제로 교환해 줄 콜백 경로로 되돌아오게 한다.
+            emailRedirectTo: `${window.location.origin}/auth/callback?next=/signup/approval`,
           },
         });
 
@@ -348,20 +360,34 @@ export default function SignupApprovalPage() {
           authError.message?.toLowerCase().includes("already registered") ||
           authError.message?.toLowerCase().includes("user already exists")
         ) {
-          alert("이미 가입된 이메일입니다. 로그인해주세요.");
+          setEmailAlreadyRegistered(true);
+          setSubmissionError("이미 가입된 이메일입니다. 로그인해 주세요.");
         } else {
-          alert(
-            `회원가입 중 오류: ${authError.message || "알 수 없는 오류"}`
-          );
+          setSubmissionError(`회원가입 중 오류: ${authError.message || "알 수 없는 오류"}`);
         }
         return false;
       }
 
-      if (!authData.user) {
-        alert("사용자 생성에 실패했습니다.");
+      if (!authData.user || !authData.session) {
+        // 이메일 인증(컨펌)이 필요한 프로젝트 설정이면 signUp 직후 세션이 없어 이후 API 호출이
+        // "Auth session missing"으로 실패한다. 세션이 없으면 여기서 명확히 실패 처리한다.
+        setSubmissionError("이메일 인증 후 다시 로그인해주세요. 세션을 확보하지 못했습니다.");
         return false;
       }
 
+      // ✅ 중요: signUp 직후 HTTP 쿠키가 실제로 반영되었는지 확인한다.
+      // 이를 확인하지 않으면 바로 이어지는 store-membership 호출이 세션 누락(401)으로 실패할 수 있다.
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData.session || sessionData.session.user.email !== profileEmail) {
+        console.error("Session verification failed after signUp", {
+          expected: profileEmail,
+          actual: sessionData.session?.user.email,
+        });
+        setSubmissionError("세션 확보에 실패했습니다. 다시 시도해주세요.");
+        return false;
+      }
+
+      setEmailAlreadyRegistered(false);
       return true;
     } catch (error) {
       console.error("Auth session error:", error);
@@ -372,6 +398,7 @@ export default function SignupApprovalPage() {
 
   const handleRequestApproval = async (storeId: string) => {
     setSubmissionError("");
+    setEmailAlreadyRegistered(false);
     setSubmittingStoreIds((prev) => new Set(prev).add(storeId));
 
     try {
@@ -402,6 +429,7 @@ export default function SignupApprovalPage() {
       // API 호출 (userId는 서버에서 auth.getUser()로 직접 가져옴)
       const response = await fetch("/api/signup/store-membership", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           storeId: approval.store.id,
@@ -474,6 +502,7 @@ export default function SignupApprovalPage() {
 
     setIsLoading(true);
     setSubmissionError("");
+    setEmailAlreadyRegistered(false);
 
     try {
       // Auth session 확보
@@ -488,6 +517,7 @@ export default function SignupApprovalPage() {
         try {
           const response = await fetch("/api/signup/store-membership", {
             method: "POST",
+            credentials: "include",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               storeId: approval.store.id,
@@ -674,9 +704,20 @@ export default function SignupApprovalPage() {
                 </div>
 
                 {submissionError && (
-                  <p className="mb-4 rounded-lg border border-[var(--color-status-error)]/20 bg-red-50 px-4 py-3 text-sm text-[var(--color-status-error)]">
-                    {submissionError}
-                  </p>
+                  <div className="mb-4 rounded-lg border border-[var(--color-status-error)]/20 bg-red-50 px-4 py-3">
+                    <p className="text-sm text-[var(--color-status-error)]">{submissionError}</p>
+                    {emailAlreadyRegistered && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => router.push("/")}
+                        className="mt-2"
+                      >
+                        로그인하러 가기
+                      </Button>
+                    )}
+                  </div>
                 )}
 
                 {/* Store Approval Cards */}

@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { createNotification } from "@/lib/notifications";
+import { resolveFranchiseIdForStoreName } from "@/lib/supabase/resolve-store-franchise";
 
 export const runtime = "nodejs";
 
@@ -10,6 +11,7 @@ interface CreateMembershipRequest {
   storeId?: string;
   storeName?: string;
   role: "owner" | "staff";
+  franchiseId?: string;
 }
 
 interface CreateMembershipResponse {
@@ -143,7 +145,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
       );
     }
 
-    const { storeId, storeName, role } = body as CreateMembershipRequest;
+    const { storeId, storeName, role, franchiseId } = body as CreateMembershipRequest;
 
     if (!role || (role !== "owner" && role !== "staff")) {
       return NextResponse.json(
@@ -260,6 +262,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
 
     // 2. stores row 생성/조회
     let finalStoreId: string | null = null;
+    // 매장이 속한 브랜드(franchise_id). 기존 매장이면 DB에 저장된 값을 그대로 쓰고,
+    // 신규 매장이면 매장명으로 franchises를 자동 매칭한다 (클라이언트가 보낸 브랜드명은 신뢰하지 않는다).
+    let finalFranchiseId: string | null = null;
 
     if (storeId || storeName) {
       // Diagnostic: 요청 파라미터 로그
@@ -273,7 +278,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
       // 기존 stores에서 조회 (storeName으로 찾기)
       const { data: existingStore, error: storeError } = await adminClient
         .from("stores")
-        .select("id")
+        .select("id, franchise_id")
         .eq("store_name", storeName)
         .single();
 
@@ -290,11 +295,31 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
       }
 
       if (existingStore) {
-        // 기존 store 찾음
+        // 기존 store 찾음 - 소속 브랜드는 DB에 저장된 franchise_id를 우선 사용하되,
+        // 마이그레이션 이전에 생성된 매장 등 franchise_id가 비어있으면 매장명으로 다시 자동 매칭해 채워 넣는다.
+        // (채워두지 않으면 이 매장의 승인 요청이 어느 HQ 승인 큐에도 걸리지 않게 된다.)
         finalStoreId = existingStore.id;
+        finalFranchiseId = existingStore.franchise_id;
+
+        if (!finalFranchiseId) {
+          const backfilledFranchiseId = await resolveFranchiseIdForStoreName(adminClient, storeName!);
+
+          if (backfilledFranchiseId) {
+            const { error: backfillError } = await adminClient
+              .from("stores")
+              .update({ franchise_id: backfilledFranchiseId })
+              .eq("id", existingStore.id);
+
+            if (!backfillError) {
+              finalFranchiseId = backfilledFranchiseId;
+            }
+          }
+        }
+
         console.log("[POST /api/signup/store-membership] Found existing store:", {
           storeName,
           storeId: finalStoreId,
+          franchiseId: finalFranchiseId,
         });
       } else {
         // 기존 store 없음
@@ -307,11 +332,14 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
           // Owner: 새로운 store 생성
           console.log("[POST /api/signup/store-membership] Creating new store for owner");
 
+          // 매장명으로 소속 브랜드를 자동 인식한다 (예: "버거킹 종로구청점" -> 버거킹).
+          const autoDetectedFranchiseId = await resolveFranchiseIdForStoreName(adminClient, storeName!);
+
           // UPSERT를 사용하거나 먼저 다시 조회 (race condition 방지)
           // 방법: 먼저 다시 확인
           const { data: doubleCheckStore, error: doubleCheckError } = await adminClient
             .from("stores")
-            .select("id")
+            .select("id, franchise_id")
             .eq("store_name", storeName)
             .single();
 
@@ -321,10 +349,11 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
               .from("stores")
               .insert({
                 store_name: storeName,
+                franchise_id: autoDetectedFranchiseId,
                 // id, created_at은 defaults로 자동 생성
                 // boss_id는 선택사항 (NULL 허용)
               })
-              .select("id")
+              .select("id, franchise_id")
               .single();
 
             if (insertError) {
@@ -341,7 +370,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
               // 한 번 더 조회
               const { data: retryStore, error: retryError } = await adminClient
                 .from("stores")
-                .select("id")
+                .select("id, franchise_id")
                 .eq("store_name", storeName)
                 .single();
 
@@ -364,25 +393,29 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
               if (retryStore) {
                 // 다시 조회하니 있음 (다른 요청이 생성함)
                 finalStoreId = retryStore.id;
+                finalFranchiseId = retryStore.franchise_id;
                 console.log(
                   "[POST /api/signup/store-membership] Store created by concurrent request:",
-                  { storeName, storeId: finalStoreId }
+                  { storeName, storeId: finalStoreId, franchiseId: finalFranchiseId }
                 );
               }
             } else {
               // 성공
               finalStoreId = newStore.id;
+              finalFranchiseId = newStore.franchise_id;
               console.log("[POST /api/signup/store-membership] New store created:", {
                 storeName,
                 storeId: finalStoreId,
+                franchiseId: finalFranchiseId,
               });
             }
           } else if (!doubleCheckError && doubleCheckStore) {
             // 다시 확인하니 있음 (다른 요청이 생성함)
             finalStoreId = doubleCheckStore.id;
+            finalFranchiseId = doubleCheckStore.franchise_id;
             console.log(
               "[POST /api/signup/store-membership] Store already exists (created by concurrent request):",
-              { storeName, storeId: finalStoreId }
+              { storeName, storeId: finalStoreId, franchiseId: finalFranchiseId }
             );
           }
         } else {
@@ -419,6 +452,21 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
       );
     }
 
+    // 승인 화면 브랜드 드롭다운에서 사용자가 직접 고른 franchiseId가 있으면, 실존하는 프랜차이즈인지
+    // 검증한 뒤 이 요청의 franchise_id로 우선 사용한다(자동 인식이 틀렸을 때의 수동 보정 용도).
+    let finalMembershipFranchiseId = finalFranchiseId;
+    if (franchiseId) {
+      const { data: chosenFranchise } = await adminClient
+        .from("franchises")
+        .select("id")
+        .eq("id", franchiseId)
+        .maybeSingle();
+
+      if (chosenFranchise) {
+        finalMembershipFranchiseId = chosenFranchise.id;
+      }
+    }
+
     // 3. store_memberships row 생성 (중복 확인)
     try {
       // 기존 membership 확인
@@ -449,12 +497,13 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
         });
       }
 
-      // 새로운 membership 생성
+      // 새로운 membership 생성 (franchise_id는 매장 조회/생성 시 자동 인식된 값 또는 사용자가 선택한 값)
       const { data: newMembership, error: createError } = await adminClient
         .from("store_memberships")
         .insert({
           user_id: userId,
           store_id: finalStoreId,
+          franchise_id: finalMembershipFranchiseId,
           role: role,
           status: "pending",
           requested_at: new Date().toISOString(),

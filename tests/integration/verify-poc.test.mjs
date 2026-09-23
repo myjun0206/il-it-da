@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
 
 import { STEPS, main } from "../../scripts/verify-poc.mjs";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const packageJson = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 
 function captureOutput() {
   const stdout = [];
@@ -116,5 +122,65 @@ describe("verify-poc CLI", () => {
 
     assert.equal(code, 0);
     assert.equal(realSpawnAttempted, false);
+  });
+
+  test("typecheck step invokes the package.json typecheck script instead of a duplicated tsc command", () => {
+    const typecheckStep = STEPS.find((step) => step.name === "typecheck");
+    assert.ok(typecheckStep, "expected a typecheck step to exist");
+    assert.equal(typecheckStep.command, "npm");
+    assert.deepEqual(typecheckStep.args, ["run", "typecheck"]);
+  });
+
+  test("build only runs after typecheck succeeds, and is skipped when typecheck fails", async () => {
+    const output = captureOutput();
+    const { calls, runCommand } = makeRecordingRunner({ typecheck: 1 });
+
+    const code = await main([], { runCommand, stdout: output.writeOut, stderr: output.writeError });
+
+    assert.equal(code, 1);
+    assert.equal(calls.includes("build"), false);
+    assert.equal(calls[calls.length - 1], "typecheck");
+  });
+
+  test("typecheck failure preserves its non-zero exit code", async () => {
+    const output = captureOutput();
+    const { runCommand } = makeRecordingRunner({ typecheck: 2 });
+
+    const code = await main([], { runCommand, stdout: output.writeOut, stderr: output.writeError });
+
+    assert.equal(code, 2);
+    assert.match(output.stderr.join("\n"), /typecheck \(exit code 2\)/);
+  });
+
+  test("keeps exactly 7 verification steps in the documented order", () => {
+    assert.deepEqual(
+      STEPS.map((step) => step.name),
+      [
+        "check:integration",
+        "test:integration",
+        "test:rag",
+        "test:rag-eval",
+        "lint",
+        "typecheck",
+        "build",
+      ],
+    );
+  });
+
+  test("package.json defines a typecheck script running next typegen before tsc --noEmit", () => {
+    const typecheckScript = packageJson.scripts?.typecheck;
+    assert.ok(typecheckScript, "expected package.json to define a typecheck script");
+
+    const typegenIndex = typecheckScript.indexOf("next typegen");
+    const tscIndex = typecheckScript.indexOf("tsc --noEmit");
+    assert.ok(typegenIndex >= 0, "typecheck script must run `next typegen`");
+    assert.ok(tscIndex >= 0, "typecheck script must run `tsc --noEmit`");
+    assert.ok(typegenIndex < tscIndex, "next typegen must run before tsc --noEmit");
+  });
+
+  test("typecheck script chains typegen and tsc with && so a typegen failure short-circuits tsc", () => {
+    const typecheckScript = packageJson.scripts?.typecheck;
+    const [beforeTsc] = typecheckScript.split("tsc --noEmit");
+    assert.match(beforeTsc.trimEnd(), /&&\s*$/, "next typegen and tsc --noEmit must be joined with &&");
   });
 });
