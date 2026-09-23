@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useLayoutEffect, useEffect } from "react";
+import React, { useState, useLayoutEffect, useEffect, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ArrowRight, Building2 } from "lucide-react";
@@ -14,15 +14,31 @@ interface Franchise {
   name: string;
 }
 
+function subscribeNoop() {
+  return () => {};
+}
+
+// sessionStorage는 클라이언트에서만 존재하므로, setState 없이(hydration mismatch 없이)
+// "클라이언트에 마운트됐는지"를 판정한다.
+function useHasMounted(): boolean {
+  return useSyncExternalStore(
+    subscribeNoop,
+    () => true,
+    () => false,
+  );
+}
+
 export default function SignupOrganizationPage() {
   const router = useRouter();
   const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [mounted, setMounted] = useState(false);
+  const mounted = useHasMounted();
   const [brands, setBrands] = useState<Franchise[]>([]);
   const [isFetching, setIsFetching] = useState(true);
 
   useLayoutEffect(() => {
+    if (!mounted) return;
+
     const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
     if (!savedRole) {
       router.push("/signup/role");
@@ -30,8 +46,7 @@ export default function SignupOrganizationPage() {
       // 본사가 아니면 stores로 리다이렉트 (조직 선택은 본사만)
       router.push("/signup/stores");
     }
-    setMounted(true);
-  }, [router]);
+  }, [mounted, router]);
 
   useEffect(() => {
     // Fetch franchises from Supabase
@@ -39,7 +54,7 @@ export default function SignupOrganizationPage() {
       try {
         const supabase = createClient();
         const { data, error } = await supabase.from("franchises").select("id, name");
-        
+
         if (error) {
           console.error("Failed to fetch franchises:", error);
           setBrands([]);

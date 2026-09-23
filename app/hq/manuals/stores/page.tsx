@@ -6,11 +6,23 @@ import { Store, ExternalLink } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
+import type { ManualRecord } from "@/lib/types/manual";
 
 interface StoreInfo {
   id: string;
   name: string;
   manualCount: number;
+}
+
+interface StoreListItem {
+  id: string;
+  name: string;
+}
+
+type StoreManualItem = Pick<ManualRecord, "store_id">;
+
+function hasStoreId(manual: StoreManualItem): manual is StoreManualItem & { store_id: string } {
+  return Boolean(manual.store_id);
 }
 
 interface StoreViewStats {
@@ -83,17 +95,17 @@ export default function StoreManualViewPage() {
 
         // Fetch stores
         const storesResponse = await fetch("/api/stores");
-        const storesData = (await storesResponse.json()) as { stores?: any[] };
+        const storesData = (await storesResponse.json()) as { stores?: StoreListItem[] };
 
         // Fetch manuals
         const manualsResponse = await fetch("/api/manuals");
-        const manualsData = (await manualsResponse.json()) as { manuals?: any[] };
+        const manualsData = (await manualsResponse.json()) as { manuals?: StoreManualItem[] };
 
         const storesList = storesData.stores ?? [];
         const manualsList = manualsData.manuals ?? [];
 
         // Filter store manuals (those with store_id)
-        const storeManuals = manualsList.filter((m) => m.store_id);
+        const storeManuals = manualsList.filter(hasStoreId);
 
         // Create store info map with manual counts
         const storeInfoMap = new Map<string, { name: string; manualCount: number }>();

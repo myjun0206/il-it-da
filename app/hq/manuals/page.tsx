@@ -9,12 +9,17 @@ import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
 import Link from "next/link";
+import type { ManualRecord } from "@/lib/types/manual";
 
 interface ManualSummary {
   totalManuals: number;
   commonManuals: number;
   storeManuals: number;
 }
+
+type ManualSummaryItem = Pick<ManualRecord, "store_id"> & {
+  scope_type?: string | null;
+};
 
 export default function ManualOverviewPage() {
   const router = useRouter();
@@ -78,7 +83,7 @@ export default function ManualOverviewPage() {
 
         // Fetch all manuals
         const response = await fetch("/api/manuals");
-        const data = (await response.json()) as { manuals?: any[]; error?: string };
+        const data = (await response.json()) as { manuals?: ManualSummaryItem[]; error?: string };
 
         if (response.ok && data.manuals) {
           const manuals = data.manuals;

@@ -13,12 +13,27 @@ import {
   Menu,
   X,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 interface HQSidebarProps {
   userName: string;
   franchiseName: string;
   onLogout: () => void;
   activeMenu?: string;
+}
+
+interface HQSidebarSubmenuItem {
+  id: string;
+  label: string;
+  href?: string;
+}
+
+interface HQSidebarMenuItem {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  href?: string;
+  submenu?: HQSidebarSubmenuItem[];
 }
 
 export default function HQSidebar({
@@ -29,7 +44,7 @@ export default function HQSidebar({
 }: HQSidebarProps) {
   const [isOpen, setIsOpen] = useState(false);
 
-  const menuItems = [
+  const menuItems: HQSidebarMenuItem[] = [
     { id: "home", label: "홈", icon: House, href: "/hq" },
     {
       id: "manual",
@@ -53,7 +68,7 @@ export default function HQSidebar({
     { id: "notice", label: "소통", icon: Megaphone, href: "/hq/communication" },
   ];
 
-  const bottomMenuItems = [
+  const bottomMenuItems: HQSidebarMenuItem[] = [
     { id: "settings", label: "설정", icon: Settings },
   ];
 
@@ -89,8 +104,8 @@ export default function HQSidebar({
         <nav className="flex-1 pt-8 px-3 overflow-y-auto">
           {menuItems.map((item, index) => {
             const isActive = activeMenu === item.id;
-            const hasSubmenu = item.submenu && item.submenu.length > 0;
-            const hasActiveSubmenu = hasSubmenu && item.submenu.some((sub: any) => sub.id === activeMenu);
+            const hasSubmenu = Boolean(item.submenu && item.submenu.length > 0);
+            const hasActiveSubmenu = hasSubmenu && Boolean(item.submenu?.some((sub) => sub.id === activeMenu));
             const isGroupActive = isActive || hasActiveSubmenu;
 
             const buttonClass = `w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium transition-colors ${
@@ -120,7 +135,7 @@ export default function HQSidebar({
                 {/* Submenu */}
                 {item.submenu && isGroupActive && (
                   <div className="ml-4 mt-1">
-                    {item.submenu.map((sub: any) => {
+                    {item.submenu.map((sub) => {
                       const isSubActive = sub.id === activeMenu;
                       const subClass = `w-full block text-left px-4 py-3 text-sm font-medium rounded transition-colors ${
                         isSubActive

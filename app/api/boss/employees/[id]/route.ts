@@ -134,7 +134,7 @@ export async function PUT(
     const message = newStatus === "approved"
       ? `${membership.store_id}에서 당신의 가입 신청을 승인했습니다.`
       : `${membership.store_id}에서 당신의 가입 신청을 거절했습니다.`;
-    
+
     createNotification({
       recipientUserId: membership.user_id,
       type: "staff_approval_decision",

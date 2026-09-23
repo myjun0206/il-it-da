@@ -5,14 +5,14 @@ import { useRouter } from "next/navigation";
 
 /**
  * /signup/start
- * 
+ *
  * 새로운 회원가입 진입점.
  * 회원가입 외부(로그인 페이지, 랜딩 등)에서 "회원가입" 버튼을 클릭하면
  * 이 페이지로 진입한다.
- * 
+ *
  * 목적: 기존 회원가입 draft 상태를 모두 초기화한 후
  * /signup/role로 리다이렉트하는 것.
- * 
+ *
  * 이를 통해 "새로운 회원가입 시작"과 "signup 내부 navigation"을
  * 명확하게 구분한다.
  */

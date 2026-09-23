@@ -13,6 +13,7 @@ import {
 } from "@/lib/data/mockFranchises";
 import type { UserRole } from "@/lib/types/user";
 import type { Store } from "@/lib/types/store";
+import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
 
 type ApprovalStatus = "requestable" | "pending" | "approved" | "rejected";
 
@@ -20,23 +21,6 @@ interface StoreApprovalState {
   store: Store;
   status: ApprovalStatus;
   requestedAt?: string;
-}
-
-function clearSignupSessionStorage() {
-  sessionStorage.removeItem("signupRole");
-  sessionStorage.removeItem("signupTerms");
-  sessionStorage.removeItem("signupHQProfile");
-  sessionStorage.removeItem("signupProfile");
-  sessionStorage.removeItem("signupFranchise");
-  sessionStorage.removeItem("signupFranchiseConfirmed");
-  sessionStorage.removeItem("signupFranchiseName");
-  sessionStorage.removeItem("signupBrand");
-  sessionStorage.removeItem("signupStores");
-  sessionStorage.removeItem("signupSelectedStores");
-  sessionStorage.removeItem("signupStoreApprovals");
-  sessionStorage.removeItem("signupApprovalStatus");
-  sessionStorage.removeItem("signupApprovalSubmittedAt");
-  sessionStorage.removeItem("signupVerified");
 }
 
 // 타임스탬프를 한국식 날짜로 포맷
@@ -305,7 +289,7 @@ export default function SignupApprovalPage() {
           });
 
         if (authError) {
-          console.error("Test account signIn error:", authError);
+          logSafeAuthError("SIGNUP_APPROVAL_TEST_SIGNIN_FAILED", authError);
           alert(
             `테스트 계정 로그인 실패: ${authError.message || "알 수 없는 오류"}`
           );
@@ -322,18 +306,10 @@ export default function SignupApprovalPage() {
         // 이를 통해 이후 API 호출이 올바른 user_id를 사용하도록 보장
         const { data: sessionData } = await supabase.auth.getSession();
         if (!sessionData.session || sessionData.session.user.email !== profileEmail) {
-          console.error(
-            "Session verification failed after signInWithPassword",
-            {
-              expected: profileEmail,
-              actual: sessionData.session?.user.email,
-            }
-          );
+          console.error("Session verification failed after signInWithPassword");
           alert("세션 전환 실패. 다시 시도해주세요.");
           return false;
         }
-
-        console.log("Session verified for:", profileEmail, "user_id:", sessionData.session.user.id);
 
         return true;
       }
@@ -354,7 +330,7 @@ export default function SignupApprovalPage() {
         });
 
       if (authError) {
-        console.error("signUp error:", authError);
+        logSafeAuthError("SIGNUP_APPROVAL_SIGNUP_FAILED", authError);
         if (
           authError.message?.toLowerCase().includes("already") ||
           authError.message?.toLowerCase().includes("already registered") ||
@@ -379,10 +355,7 @@ export default function SignupApprovalPage() {
       // 이를 확인하지 않으면 바로 이어지는 store-membership 호출이 세션 누락(401)으로 실패할 수 있다.
       const { data: sessionData } = await supabase.auth.getSession();
       if (!sessionData.session || sessionData.session.user.email !== profileEmail) {
-        console.error("Session verification failed after signUp", {
-          expected: profileEmail,
-          actual: sessionData.session?.user.email,
-        });
+        logSafeAuthError("SIGNUP_APPROVAL_SESSION_VERIFY_FAILED", new Error("Session verification failed after signUp"));
         setSubmissionError("세션 확보에 실패했습니다. 다시 시도해주세요.");
         return false;
       }
@@ -390,7 +363,7 @@ export default function SignupApprovalPage() {
       setEmailAlreadyRegistered(false);
       return true;
     } catch (error) {
-      console.error("Auth session error:", error);
+      logSafeAuthError("SIGNUP_APPROVAL_AUTH_SESSION_ERROR", error);
       setSubmissionError("회원가입 중 오류가 발생했습니다.");
       return false;
     }
@@ -416,7 +389,7 @@ export default function SignupApprovalPage() {
       // 선택된 store 찾기
       const approval = storeApprovals.find((item) => item.store.id === storeId);
       if (!approval) {
-        console.error("Store approval not found:", storeId);
+        console.error("Store approval not found");
         setSubmissionError("매장 정보를 찾을 수 없습니다.");
         setSubmittingStoreIds((prev) => {
           const next = new Set(prev);

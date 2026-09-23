@@ -1,5 +1,5 @@
 -- 011: Notifications system for app events
--- 
+--
 -- Records user-facing notifications for:
 -- - Staff pending approval requests (recipient: store owner)
 -- - Owner pending approval requests (recipient: HQ admins)
