@@ -14,6 +14,7 @@ import {
   DEV_TEST_EMAIL_ROLE_MAP,
   DEV_TEST_PASSWORD,
 } from "@/lib/data/mockFranchises";
+import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
 
 // 이메일 정규화: 앞뒤 공백 제거 + 소문자 변환(테스트 이메일/도메인 비교에 공통 사용)
 const normalizeEmail = (value: string) => value.trim().toLowerCase();
@@ -536,7 +537,7 @@ function HQSignupProfile() {
 
         if (authError) {
           setIsLoading(false);
-          console.error("Test account signIn error:", authError);
+          logSafeAuthError("SIGNUP_PROFILE_TEST_SIGNIN_FAILED", authError);
           setErrors({
             companyEmail: `테스트 계정 로그인 실패: ${authError.message || "알 수 없는 오류"}`,
           });

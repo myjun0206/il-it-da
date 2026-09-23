@@ -8,6 +8,7 @@ import { Button } from "@/components/common/Button";
 import { Input, PasswordInput } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
 import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
+import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
 
 type OAuthProvider = "google" | "kakao";
 
@@ -54,7 +55,7 @@ function LoginPageContent() {
           }
         }
       } catch (e) {
-        console.error("Session check failed:", e);
+        logSafeAuthError("LOGIN_SESSION_CHECK_FAILED", e);
       }
     };
     
@@ -109,7 +110,7 @@ function LoginPageContent() {
       }
     } catch (e) {
       setIsLoading(false);
-      console.error("Login error:", e);
+      logSafeAuthError("LOGIN_SUBMIT_FAILED", e);
       setErrors((prev) => ({
         ...prev,
         email: "로그인 중 오류가 발생했습니다.",
@@ -133,7 +134,7 @@ function LoginPageContent() {
         throw error;
       }
     } catch (error) {
-      console.error("OAuth login failed:", error);
+      logSafeAuthError("LOGIN_OAUTH_FAILED", error);
       setErrors((prev) => ({
         ...prev,
         email: "SNS 로그인에 실패했습니다. 잠시 후 다시 시도해주세요.",

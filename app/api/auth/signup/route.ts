@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createSessionClient } from "@/lib/supabase/server";
+import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
 
 export const runtime = "nodejs";
 
@@ -159,9 +160,8 @@ function getErrorMetadata(error: unknown): Record<string, unknown> {
   };
 }
 
-function logSignupError(error: unknown): void {
-  console.error("[SIGNUP_ERROR]", error);
-  console.error("[SIGNUP_ERROR]", getErrorMetadata(error));
+function logSignupError(code: string, error: unknown): void {
+  logSafeAuthError(code, error);
 }
 
 // Supabase auth.admin.createUser()가 이미 가입된 이메일에 대해 내리는 email_exists/중복 에러를 구별해 내진다.
@@ -233,7 +233,7 @@ export async function POST(request: Request): Promise<NextResponse<SignupRespons
   if (missingEnvVars.length > 0) {
     const errorMessage = `Missing Supabase environment variables: ${missingEnvVars.join(", ")}`;
     const error = new Error(errorMessage);
-    logSignupError(error);
+    logSignupError("SIGNUP_MISSING_ENV_VARS", error);
     return NextResponse.json(
       { error: errorMessage },
       { status: 500 },
@@ -252,7 +252,7 @@ export async function POST(request: Request): Promise<NextResponse<SignupRespons
       .maybeSingle<VerificationRow>();
 
     if (verificationError) {
-      logSignupError(createSignupError("Email verification lookup failed", verificationError));
+      logSignupError("SIGNUP_VERIFICATION_LOOKUP_FAILED", createSignupError("Email verification lookup failed", verificationError));
       throw createSignupError("Email verification lookup failed", verificationError);
     }
 
@@ -263,7 +263,7 @@ export async function POST(request: Request): Promise<NextResponse<SignupRespons
         ? "Email verification has expired."
         : "Email has not been verified.";
       const error = new Error(`Email verification failed: ${detail}`);
-      logSignupError(error);
+      logSignupError("SIGNUP_VERIFICATION_REQUIRED", error);
       return NextResponse.json({ error: "Email verification is required.", detail }, { status: 400 });
     }
 
@@ -281,7 +281,7 @@ export async function POST(request: Request): Promise<NextResponse<SignupRespons
 
     if (authError) {
       const error = createSignupError("Supabase createUser failed", authError);
-      logSignupError(error);
+      logSignupError("SIGNUP_CREATE_USER_FAILED", error);
 
       if (isEmailAlreadyRegisteredError(authError)) {
         return NextResponse.json(
@@ -298,7 +298,7 @@ export async function POST(request: Request): Promise<NextResponse<SignupRespons
 
     if (!authData.user?.id) {
       const error = new Error("Supabase createUser did not return a created user id.");
-      logSignupError(error);
+      logSignupError("SIGNUP_CREATE_USER_NO_ID", error);
       throw error;
     }
 
@@ -316,7 +316,7 @@ export async function POST(request: Request): Promise<NextResponse<SignupRespons
 
     if (profileError) {
       await supabase.auth.admin.deleteUser(userId);
-      logSignupError(createSignupError("Profiles insert failed", profileError));
+      logSignupError("SIGNUP_PROFILE_INSERT_FAILED", createSignupError("Profiles insert failed", profileError));
       throw createSignupError("Profiles insert failed", profileError);
     }
 
@@ -333,7 +333,7 @@ export async function POST(request: Request): Promise<NextResponse<SignupRespons
         if (approvalError) {
           await supabase.from("profiles").delete().eq("id", userId);
           await supabase.auth.admin.deleteUser(userId);
-          logSignupError(createSignupError("Store approval requests insert failed", approvalError));
+          logSignupError("SIGNUP_STORE_APPROVAL_INSERT_FAILED", createSignupError("Store approval requests insert failed", approvalError));
           throw createSignupError("Store approval requests insert failed", approvalError);
         }
       }
@@ -345,13 +345,13 @@ export async function POST(request: Request): Promise<NextResponse<SignupRespons
       const { error: signInError } = await sessionClient.auth.signInWithPassword({ email, password });
 
       if (signInError) {
-        logSignupError(createSignupError("Post-signup sign-in failed", signInError));
+        logSignupError("SIGNUP_POST_SIGNIN_FAILED", createSignupError("Post-signup sign-in failed", signInError));
       }
     }
 
     return NextResponse.json({ userId, role: profileRole }, { status: 201 });
   } catch (error) {
-    logSignupError(error);
+    logSignupError("SIGNUP_UNEXPECTED", error);
     return NextResponse.json(
       { error: getErrorDetail(error) },
       { status: 500 },
