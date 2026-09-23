@@ -12,87 +12,27 @@ import { createClient } from "@/lib/supabase/client";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
 
-// Mock Data for Dashboard
-const dashboardMockData = {
-  pendingTasks: [
-    {
-      id: 1,
-      title: "승인 대기",
-      count: 3,
-      description: "새로운 점주 또는 지점 승인 요청",
-      icon: UserCheck,
-    },
-    {
-      id: 2,
-      title: "미처리 문의 · 요청",
-      count: 5,
-      description: "아직 처리되지 않은 지점 요청",
-      icon: MessageSquare,
-    },
-    {
-      id: 3,
-      title: "조치 필요 지점",
-      count: 3,
-      description: "운영 상태 확인이 필요한 지점",
-      icon: Store,
-    },
-  ],
-  storeStatus: [
-    { label: "전체 지점", count: 128, color: "bg-[var(--color-primary)]" },
-    { label: "운영 중", count: 121, color: "bg-green-500" },
-    { label: "오픈 준비", count: 4, color: "bg-blue-500" },
-    { label: "확인 필요", count: 3, color: "bg-orange-500" },
-  ],
-  recentRequests: [
-    {
-      id: 1,
-      store: "강남역점",
-      content: "신규 메뉴 매뉴얼 관련 문의",
-      time: "10분 전",
-      status: "대기",
-    },
-    {
-      id: 2,
-      store: "홍대점",
-      content: "근무 절차 수정 요청",
-      time: "1시간 전",
-      status: "확인 중",
-    },
-    {
-      id: 3,
-      store: "성수점",
-      content: "매장 운영 매뉴얼 문의",
-      time: "어제",
-      status: "완료",
-    },
-  ],
-  manualData: {
-    commonManuals: 24,
-    lastUpdate: "매장 오픈·마감 체크리스트",
-    lastUpdateDate: "오늘",
-    storeManuals: 36,
+// Pending tasks configuration (counts will be fetched from DB)
+const pendingTasksConfig = [
+  {
+    id: 1,
+    title: "승인 대기",
+    description: "새로운 점주 또는 지점 승인 요청",
+    icon: UserCheck,
   },
-  recentNotices: [
-    {
-      id: 1,
-      target: "전 지점",
-      title: "9월 운영 정책 변경 안내",
-      date: "2026.09.17",
-    },
-    {
-      id: 2,
-      target: "점주",
-      title: "신규 메뉴 교육 자료 안내",
-      date: "2026.09.16",
-    },
-    {
-      id: 3,
-      target: "전 지점",
-      title: "추석 연휴 매장 운영 안내",
-      date: "2026.09.15",
-    },
-  ],
-};
+  {
+    id: 2,
+    title: "미처리 문의 · 요청",
+    description: "아직 처리되지 않은 지점 요청",
+    icon: MessageSquare,
+  },
+  {
+    id: 3,
+    title: "조치 필요 지점",
+    description: "운영 상태 확인이 필요한 지점",
+    icon: Store,
+  },
+];
 
 export default function HQPage() {
   const router = useRouter();
@@ -100,6 +40,7 @@ export default function HQPage() {
   const [franchiseName, setFranchiseName] = useState("메가MGC커피");
   const [isReady, setIsReady] = useState(false);
   const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0);
+  const [totalStores, setTotalStores] = useState(0);
 
   useLayoutEffect(() => {
     // Check Supabase session
@@ -170,22 +111,30 @@ export default function HQPage() {
   }, []);
 
   useEffect(() => {
-    // Fetch pending approvals count (only owner memberships)
-    const fetchPendingCount = async () => {
+    // Fetch pending approvals count and total stores
+    const fetchDashboardData = async () => {
       try {
+        const supabase = createClient();
+
+        // Fetch pending approvals
         const response = await fetch("/api/hq/approvals?status=pending", { credentials: "include" });
         const result = await response.json();
-
         if (result.success && Array.isArray(result.data)) {
           setPendingApprovalsCount(result.data.length);
         }
+
+        // Fetch total stores
+        const { data: stores } = await supabase.from("stores").select("id");
+        if (stores) {
+          setTotalStores(stores.length);
+        }
       } catch (e) {
-        console.error("Failed to fetch pending approvals count:", e);
+        console.error("Failed to fetch dashboard data:", e);
       }
     };
 
     if (isReady) {
-      fetchPendingCount();
+      fetchDashboardData();
     }
   }, [isReady]);
 
@@ -203,19 +152,6 @@ export default function HQPage() {
   if (!isReady) {
     return null;
   }
-
-  const statusBadgeColor = (status: string) => {
-    switch (status) {
-      case "대기":
-        return "bg-yellow-100 text-yellow-700";
-      case "확인 중":
-        return "bg-blue-100 text-blue-700";
-      case "완료":
-        return "bg-green-100 text-green-700";
-      default:
-        return "bg-gray-100 text-gray-700";
-    }
-  };
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-default)]">
@@ -248,9 +184,16 @@ export default function HQPage() {
               확인이 필요한 업무
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-              {dashboardMockData.pendingTasks.map((task) => {
+              {pendingTasksConfig.map((task) => {
                 const Icon = task.icon;
-                const count = task.id === 1 ? pendingApprovalsCount : task.count;
+                let count = 0;
+                if (task.id === 1) {
+                  count = pendingApprovalsCount;
+                } else if (task.id === 2) {
+                  count = 0; // inquiries 테이블 없음
+                } else if (task.id === 3) {
+                  count = 0; // 정의 없음
+                }
                 return (
                   <div
                     key={task.id}
@@ -297,23 +240,38 @@ export default function HQPage() {
             </div>
             <div className="bg-white border border-[var(--color-border)] rounded-lg p-6">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-0">
-                {dashboardMockData.storeStatus.map((status, idx) => (
-                  <div
-                    key={idx}
-                    className={`flex flex-col items-center justify-center py-6 ${
-                      idx < dashboardMockData.storeStatus.length - 1
-                        ? "border-r border-[var(--color-border)]"
-                        : ""
-                    }`}
-                  >
-                    <p className="text-3xl font-bold text-[var(--color-text-primary)] mb-2">
-                      {status.count}
-                    </p>
-                    <p className="text-sm text-[var(--color-text-secondary)] text-center">
-                      {status.label}
-                    </p>
-                  </div>
-                ))}
+                <div className="flex flex-col items-center justify-center py-6 border-r border-[var(--color-border)]">
+                  <p className="text-3xl font-bold text-[var(--color-text-primary)] mb-2">
+                    {totalStores}
+                  </p>
+                  <p className="text-sm text-[var(--color-text-secondary)] text-center">
+                    전체 지점
+                  </p>
+                </div>
+                <div className="flex flex-col items-center justify-center py-6 border-r border-[var(--color-border)]">
+                  <p className="text-3xl font-bold text-[var(--color-text-primary)] mb-2">
+                    {totalStores}
+                  </p>
+                  <p className="text-sm text-[var(--color-text-secondary)] text-center">
+                    운영 중
+                  </p>
+                </div>
+                <div className="flex flex-col items-center justify-center py-6 border-r border-[var(--color-border)]">
+                  <p className="text-3xl font-bold text-[var(--color-text-primary)] mb-2">
+                    0
+                  </p>
+                  <p className="text-sm text-[var(--color-text-secondary)] text-center">
+                    오픈 준비
+                  </p>
+                </div>
+                <div className="flex flex-col items-center justify-center py-6">
+                  <p className="text-3xl font-bold text-[var(--color-text-primary)] mb-2">
+                    0
+                  </p>
+                  <p className="text-sm text-[var(--color-text-secondary)] text-center">
+                    확인 필요
+                  </p>
+                </div>
               </div>
             </div>
           </div>
@@ -350,31 +308,11 @@ export default function HQPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {dashboardMockData.recentRequests.map((request) => (
-                        <tr
-                          key={request.id}
-                          className="border-b border-[var(--color-border)] hover:bg-[var(--color-bg-surface)] transition-colors last:border-b-0"
-                        >
-                          <td className="px-6 py-4 text-sm text-[var(--color-text-primary)] font-medium">
-                            {request.store}
-                          </td>
-                          <td className="px-6 py-4 text-sm text-[var(--color-text-primary)]">
-                            {request.content}
-                          </td>
-                          <td className="px-6 py-4 text-sm text-[var(--color-text-secondary)]">
-                            {request.time}
-                          </td>
-                          <td className="px-6 py-4">
-                            <span
-                              className={`px-3 py-2 rounded text-sm font-medium inline-block ${statusBadgeColor(
-                                request.status
-                              )}`}
-                            >
-                              {request.status}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
+                      <tr className="border-b border-[var(--color-border)]">
+                        <td colSpan={4} className="px-6 py-8 text-center text-sm text-[var(--color-text-secondary)]">
+                          아직 접수된 문의·요청이 없습니다.
+                        </td>
+                      </tr>
                     </tbody>
                   </table>
                 </div>
@@ -397,7 +335,7 @@ export default function HQPage() {
                     공통 매뉴얼
                   </p>
                   <p className="text-2xl font-bold text-[var(--color-text-primary)]">
-                    {dashboardMockData.manualData.commonManuals}
+                    0
                     <span className="text-sm font-normal text-[var(--color-text-secondary)] ml-1">
                       개
                     </span>
@@ -409,20 +347,8 @@ export default function HQPage() {
                     지점별 매뉴얼
                   </p>
                   <p className="text-base text-[var(--color-text-primary)] font-medium">
-                    {dashboardMockData.manualData.storeManuals}
+                    0
                     <span className="text-sm font-normal text-[var(--color-text-secondary)]"> 개 지점에서 사용 중</span>
-                  </p>
-                </div>
-
-                <div className="border-t border-[var(--color-border)] pt-3">
-                  <p className="text-sm text-[var(--color-text-secondary)] mb-2">
-                    최근 업데이트
-                  </p>
-                  <p className="text-sm font-medium text-[var(--color-text-primary)] mb-1">
-                    {dashboardMockData.manualData.lastUpdate}
-                  </p>
-                  <p className="text-sm text-[var(--color-text-secondary)]">
-                    {dashboardMockData.manualData.lastUpdateDate}
                   </p>
                 </div>
               </div>
@@ -433,4 +359,3 @@ export default function HQPage() {
     </div>
   );
 }
-

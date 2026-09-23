@@ -6,82 +6,92 @@ import { ChevronRight } from "lucide-react";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
 
-const communicationMockData = {
-  notices: [
-    {
-      id: 1,
-      target: "전체",
-      title: "9월 운영 정책 변경 안내",
-      date: "2026.09.17",
-    },
-    {
-      id: 2,
-      target: "점주",
-      title: "신규 메뉴 교육 자료 안내",
-      date: "2026.09.16",
-    },
-    {
-      id: 3,
-      target: "전체",
-      title: "추석 연휴 매장 운영 안내",
-      date: "2026.09.15",
-    },
-  ],
-};
-
 export default function CommunicationPage() {
   const router = useRouter();
   const [userName, setUserName] = useState("본사 관리자");
   const [franchiseName, setFranchiseName] = useState("프랜차이즈");
+  const [isReady, setIsReady] = useState(false);
 
   useLayoutEffect(() => {
-    // 로그인 상태 확인
-    const loggedInRole = sessionStorage.getItem("loggedInRole");
-    if (loggedInRole !== "hq") {
-      router.push("/");
-      return;
-    }
+    // Check Supabase session
+    const checkAuth = async () => {
+      try {
+        const { createClient } = await import("@/lib/supabase/client");
+        const supabase = createClient();
+        const { data } = await supabase.auth.getSession();
+
+        if (!data.session?.user) {
+          router.push("/");
+          return;
+        }
+
+        const user = data.session.user;
+        const role = user.user_metadata?.role;
+
+        // Verify user is HQ
+        if (role !== "hq") {
+          router.push("/");
+          return;
+        }
+
+        setIsReady(true);
+      } catch (e) {
+        console.error("Auth check failed:", e);
+        router.push("/");
+      }
+    };
+
+    checkAuth();
   }, [router]);
 
   useEffect(() => {
-    const loggedInRole = sessionStorage.getItem("loggedInRole");
-    if (loggedInRole !== "hq") return;
+    // Set user info from metadata
+    const setUserInfo = async () => {
+      try {
+        const { createClient } = await import("@/lib/supabase/client");
+        const supabase = createClient();
+        const { data } = await supabase.auth.getSession();
 
-    // 프랜차이즈 정보 가져오기
-    const savedFranchiseName = sessionStorage.getItem("loggedInFranchiseName");
-    if (savedFranchiseName) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setFranchiseName(savedFranchiseName);
-    }
+        if (!data.session?.user) return;
 
-    // 사용자 이름 가져오기 (registeredAccounts에서 조회)
-    try {
-      const loggedInEmail = sessionStorage.getItem("loggedInEmail");
-      const accountsJson = sessionStorage.getItem("registeredAccounts");
-      if (accountsJson && loggedInEmail) {
-        const accounts = JSON.parse(accountsJson) as Array<{
-          companyEmail: string;
-          role: string;
-          name: string;
-        }>;
-        const account = accounts.find(
-          (acc) => acc.companyEmail === loggedInEmail && acc.role === "hq"
-        );
-        if (account && account.name) {
-          setUserName(account.name);
+        const user = data.session.user;
+        const name = user.user_metadata?.name;
+
+        // Set user name from metadata
+        if (name) {
+          setUserName(name);
         }
+
+        // Extract franchise name from user name
+        if (name && name.includes(" ")) {
+          const parts = name.split(" ");
+          if (parts[0]) {
+            setFranchiseName(parts[0]);
+          }
+        }
+      } catch (e) {
+        console.error("Set user info failed:", e);
       }
-    } catch (e) {
-      console.error("사용자 정보 로드 실패:", e);
-    }
+    };
+
+    setUserInfo();
   }, []);
 
-  const handleLogout = () => {
-    sessionStorage.clear();
-    router.push("/");
+  const handleLogout = async () => {
+    try {
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+      await supabase.auth.signOut();
+      router.push("/");
+    } catch (e) {
+      console.error("Logout failed:", e);
+      router.push("/");
+    }
   };
 
-
+  if (!isReady) {
+    return null;
+  }
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-default)]">
@@ -154,30 +164,11 @@ export default function CommunicationPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {communicationMockData.notices.map((notice) => (
-                      <tr
-                        key={notice.id}
-                        className="border-b border-[var(--color-border)] hover:bg-[var(--color-bg-surface)] transition-colors cursor-pointer"
-                      >
-                        <td className="px-6 py-4 text-sm text-[var(--color-text-primary)]">
-                          <span className="px-2 py-1 bg-[var(--color-bg-surface)] text-xs font-medium text-[var(--color-text-secondary)] rounded">
-                            {notice.target}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-sm font-medium text-[var(--color-text-primary)]">
-                          {notice.title}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-[var(--color-text-secondary)]">
-                          {notice.date}
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <ChevronRight
-                            size={18}
-                            className="text-[var(--color-text-secondary)]"
-                          />
-                        </td>
-                      </tr>
-                    ))}
+                    <tr className="border-b border-[var(--color-border)]">
+                      <td colSpan={4} className="px-6 py-8 text-center text-sm text-[var(--color-text-secondary)]">
+                        등록된 공지사항이 없습니다.
+                      </td>
+                    </tr>
                   </tbody>
                 </table>
               </div>

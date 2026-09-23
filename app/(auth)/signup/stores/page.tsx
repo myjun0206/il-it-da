@@ -9,7 +9,6 @@ import StoreMap from "@/components/signup/StoreMap";
 import SelectedStoreDisplay from "@/components/signup/SelectedStoreDisplay";
 import type { UserRole } from "@/lib/types/user";
 import type { Store } from "@/lib/types/store";
-import { mockStores } from "@/lib/data/mockStores";
 
 export interface SelectedStore {
   storeId: string;
@@ -83,10 +82,14 @@ export default function SignupStoresPage() {
     // 이전에 선택한 매장들 복원 (우선순위: signupSelectedStores > signupStores)
     // signupSelectedStores: Store[] 형식 (API 결과 또는 돌아올 때)
     // signupStores: SelectedStore[] 형식 (서버 저장 형식)
+    // BUG FIX: DEV test 반복 가입 시 이전 선택 매장이 누적되는 문제 해결
+    // 신규 가입 시작 시에만 selectedStores를 초기화하기 위해 signupProfile 존재 여부를 확인
+    // (signupProfile은 profile 페이지에서 설정되고, 가입 완료 시 clearSignupSessionStorage()로 삭제됨)
     let restoredStores: Store[] = [];
     
+    const savedSignupProfile = sessionStorage.getItem("signupProfile");
     const savedSelectedStores = sessionStorage.getItem("signupSelectedStores");
-    if (savedSelectedStores) {
+    if (savedSelectedStores && savedSignupProfile) {
       try {
         const parsed = JSON.parse(savedSelectedStores) as Store[];
         if (Array.isArray(parsed) && parsed.length > 0) {
@@ -97,25 +100,8 @@ export default function SignupStoresPage() {
       }
     }
 
-    // signupSelectedStores가 없으면, signupStores에서 복원 시도 (mockStores 매칭)
-    if (restoredStores.length === 0) {
-      const savedStores = sessionStorage.getItem("signupStores");
-      if (savedStores) {
-        try {
-          const parsed = JSON.parse(savedStores) as SelectedStore[];
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            restoredStores = parsed
-              .map((item) => {
-                const foundStore = mockStores.find((s) => s.id === item.storeId);
-                return foundStore;
-              })
-              .filter((s): s is Store => Boolean(s));
-          }
-        } catch (e) {
-          console.error("Failed to parse signupStores:", e);
-        }
-      }
-    }
+    // signupSelectedStores가 없으면, signupStores에서 복원 시도는 하지 않음
+    // (mockStores fallback이 제거됨)
 
     if (restoredStores.length > 0) {
       setSelectedStores(restoredStores);

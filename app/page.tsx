@@ -403,7 +403,7 @@ function LoginPageContent() {
                 아직 계정이 없으신가요?{" "}
               </span>
               <Link
-                href="/signup/role"
+                href="/signup/start"
                 className="font-semibold text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] transition-colors"
               >
                 회원가입
@@ -605,7 +605,7 @@ function LoginPageContent() {
                 아직 계정이 없으신가요?{" "}
               </span>
               <Link
-                href="/signup/role"
+                href="/signup/start"
                 className="font-semibold text-[var(--color-primary)] hover:text-[var(--color-primary-hover)]"
               >
                 회원가입

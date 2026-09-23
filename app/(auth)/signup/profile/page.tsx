@@ -74,7 +74,6 @@ function getOAuthDisplayName(metadata: Record<string, unknown>): string {
   const name = metadata.full_name ?? metadata.name ?? metadata.user_name;
   return typeof name === "string" ? name : "";
 }
-
 // ============= HQ 전용 기본정보 화면 =============
 function HQSignupProfile() {
   const router = useRouter();
@@ -82,9 +81,10 @@ function HQSignupProfile() {
     companyEmail: "",
     name: "",
     phone: "",
-    password: "",
-    passwordConfirm: "",
   });
+  // 비밀번호는 sessionStorage에 저장하지 않음 (보안상 이유로 React state에서만 유지)
+  const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [role, setRole] = useState<"hq" | "owner" | "staff" | null>(null);
@@ -95,9 +95,10 @@ function HQSignupProfile() {
     email: "",
     name: "",
     phone: "",
-    password: "",
-    passwordConfirm: "",
   });
+  // 비밀번호는 sessionStorage에 저장하지 않음 (React state에서만 유지)
+  const [ownerStaffPassword, setOwnerStaffPassword] = useState("");
+  const [ownerStaffPasswordConfirm, setOwnerStaffPasswordConfirm] = useState("");
 
   // HQ 전용: 회사 이메일 인증
   const [emailVerificationSent, setEmailVerificationSent] = useState(false);
@@ -136,14 +137,16 @@ function HQSignupProfile() {
     }
 
     if (savedRole === "hq") {
-      // HQ: 이전에 입력한 개인정보 복구
+      // HQ: 이전에 입력한 개인정보 복구 (password 제외)
       const savedProfile = sessionStorage.getItem("signupHQProfile");
       if (savedProfile) {
         try {
           const profile = JSON.parse(savedProfile);
-          setFormData(profile);
+          // password와 passwordConfirm은 복구하지 않음
+          const { password: _, passwordConfirm: __, ...profileData } = profile;
+          setFormData(profileData);
           // 이메일이 있으면 인증 완료 상태로 표시
-          if (profile.companyEmail) {
+          if (profileData.companyEmail) {
             setEmailVerified(true);
           }
         } catch (e) {
@@ -167,12 +170,14 @@ function HQSignupProfile() {
         }
       }
     } else if (savedRole === "owner" || savedRole === "staff") {
-      // owner/staff: 이전에 입력한 개인정보 복구
+      // owner/staff: 이전에 입력한 개인정보 복구 (password 제외)
       const savedProfile = sessionStorage.getItem("signupProfile");
       if (savedProfile) {
         try {
           const profile = JSON.parse(savedProfile);
-          setOwnerStaffFormData(profile);
+          // password와 passwordConfirm은 복구하지 않음
+          const { password: _, passwordConfirm: __, ...profileData } = profile;
+          setOwnerStaffFormData(profileData);
         } catch (e) {
           console.error("프로필 데이터 로드 실패:", e);
         }
@@ -180,13 +185,14 @@ function HQSignupProfile() {
     }
   }, []);
 
-  // formData가 변경될 때마다 sessionStorage에 저장
+  // HQ 폼데이터 변경 시 sessionStorage에 저장 (password 제외)
   useEffect(() => {
-    if (formData.name || formData.phone || formData.password || formData.passwordConfirm) {
+    if (formData.name || formData.phone) {
       sessionStorage.setItem("signupHQProfile", JSON.stringify(formData));
     }
   }, [formData]);
 
+  // OAuth 사용자 자동 채우기
   useEffect(() => {
     const loadOAuthUser = async () => {
       const supabase = createClient();
@@ -219,6 +225,13 @@ function HQSignupProfile() {
     void loadOAuthUser();
   }, []);
 
+  // Owner/Staff 폼데이터 변경 시 sessionStorage에 저장 (password 제외)
+  useEffect(() => {
+    if (ownerStaffFormData.name || ownerStaffFormData.phone) {
+      sessionStorage.setItem("signupProfile", JSON.stringify(ownerStaffFormData));
+    }
+  }, [ownerStaffFormData]);
+
   const isValidEmail = (email: string): boolean => {
     return email.includes("@") && email.length > 0;
   };
@@ -233,6 +246,11 @@ function HQSignupProfile() {
     setFranchiseConfirmed(false);
     setFranchiseNotFound(false);
     setErrors({ ...errors, companyEmail: "" });
+
+    // 이전 이메일의 인증 정보도 sessionStorage에서 제거
+    sessionStorage.removeItem("signupVerified");
+    sessionStorage.removeItem("signupFranchise");
+    sessionStorage.removeItem("signupFranchiseConfirmed");
   };
 
   const handleSendVerificationCode = async () => {
@@ -307,6 +325,29 @@ function HQSignupProfile() {
       setTimeout(() => {
         setEmailVerified(true);
         sessionStorage.setItem("signupVerified", "true");
+
+        // DEV 테스트 이메일 인증 성공
+        // 이메일 인증과 본사 직원 확인은 별개의 절차
+        // 인증 성공 직후에는 franchiseConfirmation을 설정하지만
+        // 사용자 확인을 거쳐야 franchiseConfirmed=true가 된다
+        const franchise = DEV_TEST_EMAIL_FRANCHISE_MAP[normalizedEmail];
+        if (franchise) {
+          setFranchiseConfirmation({
+            domain: franchise.name.toLowerCase().replace(/\s+/g, "-"),
+            name: franchise.name,
+            id: franchise.id,
+          });
+          // 이메일 인증 성공 ≠ 본사 직원 확인
+          // 사용자가 "맞습니다"를 클릭할 때까지 franchiseConfirmed = false
+          setFranchiseConfirmed(false);
+          // 이전 confirmation 상태 제거 (반복 가입 시 자동 통과 방지)
+          sessionStorage.removeItem("signupFranchiseConfirmed");
+          setFranchiseNotFound(false);
+        } else {
+          setFranchiseNotFound(true);
+          setFranchiseConfirmation(null);
+        }
+
         setIsVerifying(false);
       }, 600);
       return;
@@ -411,18 +452,53 @@ function HQSignupProfile() {
       newErrors.phone = "올바른 연락처 형식이 아닙니다";
     }
 
-    if (!isOAuthSignup && !formData.password) {
+    if (!isOAuthSignup && !password) {
       newErrors.password = "비밀번호를 입력해주세요";
-    } else if (!isOAuthSignup && formData.password.length < 8) {
+    } else if (!isOAuthSignup && password.length < 8) {
       newErrors.password = "비밀번호는 8글자 이상이어야 합니다";
     }
 
-    if (!isOAuthSignup && formData.password !== formData.passwordConfirm) {
+    if (!isOAuthSignup && password !== passwordConfirm) {
       newErrors.passwordConfirm = "비밀번호가 일치하지 않습니다";
     }
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
+  };
+
+  // HQ 폼 완성 여부를 판단 (state 변경 없이 사용 가능)
+  const isHQFormComplete = () => {
+    // 1. 이메일 인증 확인
+    if (!emailVerified) {
+      return false;
+    }
+
+    // 2. 프랜차이즈 확인 (React state 사용)
+    if (!franchiseConfirmed) {
+      return false;
+    }
+
+    // 3. 이름 검증 (2글자 이상)
+    if (!formData.name || formData.name.trim().length < 2) {
+      return false;
+    }
+
+    // 4. 연락처 검증 (비숫자 제거 후 10자 이상)
+    if (!formData.phone || formData.phone.replace(/[^0-9]/g, "").length < 10) {
+      return false;
+    }
+
+    // 5. 비밀번호 검증 (8글자 이상)
+    if (!password || password.length < 8) {
+      return false;
+    }
+
+    // 6. 비밀번호 확인 검증
+    if (password !== passwordConfirm) {
+      return false;
+    }
+
+    return true;
   };
 
   const handleContinue = async () => {
@@ -572,7 +648,7 @@ function HQSignupProfile() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           companyEmail: formData.companyEmail,
-          password: formData.password,
+          password: password,
           name: formData.name,
           phone: formData.phone,
           role: "hq",
@@ -592,7 +668,6 @@ function HQSignupProfile() {
         throw new Error(data.detail || data.error || "회원가입 중 오류가 발생했습니다.");
       }
 
-      clearSignupSessionStorage();
       // 가입 직후 세션이 이미 발급되므로 재로그인 없이 매뉴얼 온보딩으로 이동한다.
       router.push("/hq/manuals/onboarding");
     } catch (e) {
@@ -625,13 +700,13 @@ function HQSignupProfile() {
       newErrors.name = "이름은 2글자 이상이어야 합니다";
     }
 
-    if (!ownerStaffFormData.password) {
+    if (!ownerStaffPassword) {
       newErrors.password = "비밀번호를 입력해주세요";
-    } else if (ownerStaffFormData.password.length < 8) {
+    } else if (ownerStaffPassword.length < 8) {
       newErrors.password = "비밀번호는 8글자 이상이어야 합니다";
     }
 
-    if (ownerStaffFormData.password !== ownerStaffFormData.passwordConfirm) {
+    if (ownerStaffPassword !== ownerStaffPasswordConfirm) {
       newErrors.passwordConfirm = "비밀번호가 일치하지 않습니다";
     }
 
@@ -651,7 +726,7 @@ function HQSignupProfile() {
       // Supabase Auth 사용자 생성
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: ownerStaffFormData.email,
-        password: ownerStaffFormData.password,
+        password: ownerStaffPassword,
         options: {
           data: {
             role: role || "owner",
@@ -961,8 +1036,8 @@ function HQSignupProfile() {
                 </label>
                 <PasswordInput
                   placeholder="8글자 이상 입력해주세요"
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
                   error={errors.password}
                 />
               </div>
@@ -974,8 +1049,8 @@ function HQSignupProfile() {
                 </label>
                 <PasswordInput
                   placeholder="비밀번호를 다시 입력해주세요"
-                  value={formData.passwordConfirm}
-                  onChange={(e) => setFormData({ ...formData, passwordConfirm: e.target.value })}
+                  value={passwordConfirm}
+                  onChange={(e) => setPasswordConfirm(e.target.value)}
                   error={errors.passwordConfirm}
                 />
               </div>
@@ -1002,7 +1077,7 @@ function HQSignupProfile() {
               <div className="flex justify-center pt-8">
                 <Button
                   onClick={handleContinue}
-                  disabled={isLoading || !franchiseConfirmed}
+                  disabled={isLoading || !isHQFormComplete()}
                   variant="primary"
                   size="lg"
                   className="w-full sm:w-auto min-h-14 lg:min-h-16 px-8 lg:px-12 text-lg lg:text-xl font-semibold"
@@ -1027,9 +1102,10 @@ function OwnerStaffSignupProfile() {
     email: "",
     name: "",
     phone: "",
-    password: "",
-    passwordConfirm: "",
   });
+  // 비밀번호는 sessionStorage에 저장하지 않음 (보안상 이유로 React state에서만 유지)
+  const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(false);
 
@@ -1051,10 +1127,12 @@ function OwnerStaffSignupProfile() {
     if (savedProfile) {
       try {
         const profile = JSON.parse(savedProfile);
+        // password와 passwordConfirm은 복구하지 않음
+        const { password: _, passwordConfirm: __, ...profileData } = profile;
         // eslint-disable-next-line react-hooks/set-state-in-effect
-        setFormData(profile);
+        setFormData(profileData);
         // 이메일이 있으면 중복 확인 완료 상태로 표시
-        if (profile.email) {
+        if (profileData.email) {
           setEmailDuplicateChecked(true);
           setEmailVerified(true);
         }
@@ -1226,13 +1304,13 @@ function OwnerStaffSignupProfile() {
       newErrors.phone = "올바른 연락처 형식이 아닙니다";
     }
 
-    if (!isOAuthSignup && !formData.password) {
+    if (!isOAuthSignup && !password) {
       newErrors.password = "비밀번호를 입력해주세요";
-    } else if (!isOAuthSignup && formData.password.length < 8) {
+    } else if (!isOAuthSignup && password.length < 8) {
       newErrors.password = "비밀번호는 8글자 이상이어야 합니다";
     }
 
-    if (!isOAuthSignup && formData.password !== formData.passwordConfirm) {
+    if (!isOAuthSignup && password !== passwordConfirm) {
       newErrors.passwordConfirm = "비밀번호가 일치하지 않습니다";
     }
 
@@ -1490,8 +1568,8 @@ function OwnerStaffSignupProfile() {
                 </label>
                 <PasswordInput
                   placeholder="8글자 이상 입력해주세요"
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
                   error={errors.password}
                 />
               </div>
@@ -1503,8 +1581,8 @@ function OwnerStaffSignupProfile() {
                 </label>
                 <PasswordInput
                   placeholder="비밀번호를 다시 입력해주세요"
-                  value={formData.passwordConfirm}
-                  onChange={(e) => setFormData({ ...formData, passwordConfirm: e.target.value })}
+                  value={passwordConfirm}
+                  onChange={(e) => setPasswordConfirm(e.target.value)}
                   error={errors.passwordConfirm}
                 />
               </div>

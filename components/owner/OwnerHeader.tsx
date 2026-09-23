@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Bell } from "lucide-react";
+import NotificationCenter from "@/components/common/NotificationCenter";
 
 interface OwnerHeaderProps {
   userName: string;
@@ -17,11 +17,8 @@ export default function OwnerHeader({
       <div className="flex items-center justify-end px-6 h-full">
         {/* Right */}
         <div className="flex items-center gap-6">
-          {/* Notification */}
-          <button className="relative p-2 rounded-lg hover:bg-[var(--color-bg-surface)] transition-colors">
-            <Bell size={20} className="text-[var(--color-text-secondary)]" />
-            <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
-          </button>
+          {/* Notification Center */}
+          <NotificationCenter />
 
           {/* Profile */}
           <div className="flex items-center gap-3 pl-6 border-l border-[var(--color-border)]">
