@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { createNotification } from "@/lib/notifications";
 
 export const runtime = "nodejs";
 
@@ -473,6 +474,18 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
         );
       }
 
+      // Generate notifications asynchronously (don't await to keep response fast)
+      const userName = user.user_metadata?.name || user.email || "알 수 없는 사용자";
+      const storeNameForNotif = storeName || "";
+      
+      generateMembershipNotifications(
+        userId,
+        role,
+        finalStoreId,
+        storeNameForNotif,
+        userName
+      ).catch((e) => console.error("Failed to generate notifications:", e));
+
       return NextResponse.json({
         success: true,
         membershipId: newMembership.id,
@@ -490,5 +503,76 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
       { success: false, error: "Unexpected error", details: String(error) },
       { status: 500 }
     );
+  }
+}
+
+/**
+ * Generate notifications for new membership requests
+ * - Staff request: notify store owners
+ * - Owner request: notify all HQ users
+ */
+async function generateMembershipNotifications(
+  userId: string,
+  role: "owner" | "staff",
+  storeId: string,
+  storeName: string,
+  userName: string
+): Promise<void> {
+  try {
+    const adminClient = createAdminClient();
+
+    if (role === "staff") {
+      // Staff pending: notify store owners
+      const { data: ownerMemberships, error: queryError } = await adminClient
+        .from("store_memberships")
+        .select("user_id")
+        .eq("store_id", storeId)
+        .eq("role", "owner")
+        .eq("status", "approved");
+
+      if (queryError) {
+        console.error("Failed to find store owners:", queryError);
+        return;
+      }
+
+      if (ownerMemberships && ownerMemberships.length > 0) {
+        for (const membership of ownerMemberships) {
+          await createNotification({
+            recipientUserId: membership.user_id,
+            type: "staff_pending_approval",
+            title: "새로운 직원 승인 요청",
+            message: `${userName} 님이 ${storeName} 가입을 요청했습니다.`,
+            targetUrl: "/boss/employees",
+            relatedId: userId,
+          });
+        }
+      }
+    } else if (role === "owner") {
+      // Owner pending: notify all HQ users
+      const { data: hqUsers, error: queryError } = await adminClient
+        .from("profiles")
+        .select("id")
+        .eq("role", "hq");
+
+      if (queryError) {
+        console.error("Failed to find HQ users:", queryError);
+        return;
+      }
+
+      if (hqUsers && hqUsers.length > 0) {
+        for (const profile of hqUsers) {
+          await createNotification({
+            recipientUserId: profile.id,
+            type: "owner_pending_approval",
+            title: "새로운 점주 승인 요청",
+            message: `${storeName} 점주 가입 요청이 있습니다. (${userName})`,
+            targetUrl: "/hq/approvals",
+            relatedId: userId,
+          });
+        }
+      }
+    }
+  } catch (e) {
+    console.error("Error generating membership notifications:", e);
   }
 }

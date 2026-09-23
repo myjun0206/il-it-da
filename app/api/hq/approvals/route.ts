@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireHqUser } from "@/lib/supabase/hq-auth";
+import { createClient } from "@/lib/supabase/server";
+import { createNotification } from "@/lib/notifications";
 
 export const runtime = "nodejs";
 
@@ -300,6 +302,22 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
         { status: 500 }
       );
     }
+
+    // Generate notification for approval decision (async)
+    const action = body.action;
+    const title = action === "approve" ? "점주 가입이 승인되었습니다." : "점주 가입이 거절되었습니다.";
+    const message = action === "approve"
+      ? "축하합니다! 점주 가입 신청이 승인되었습니다."
+      : "죄송합니다. 점주 가입 신청이 거절되었습니다.";
+
+    createNotification({
+      recipientUserId: updated.user_id,
+      type: "approval_decision",
+      title,
+      message,
+      targetUrl: action === "approve" ? "/boss" : undefined,
+      relatedId: updated.id,
+    }).catch((e) => console.error("Failed to create approval notification:", e));
 
     return NextResponse.json({
       success: true,

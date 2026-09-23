@@ -46,6 +46,53 @@
   --foreground: var(--color-text-primary);
 }
 
+/* Dark mode */
+html.dark {
+  /* Primary Colors (Green - adjusted for dark background) */
+  --color-primary: #2db88f;
+  --color-primary-hover: #23986b;
+  --color-primary-light: #1c6b52;
+  --color-primary-accent: #1dd4bf;
+
+  /* Secondary Colors (Lighter navy for contrast) */
+  --color-secondary: #4b7a94;
+  --color-secondary-hover: #5a8fa8;
+  --color-secondary-light: #2d5a7a;
+
+  /* Text Colors */
+  --color-text-primary: #e5e5e5;
+  --color-text-secondary: #a8b5a9;
+  --color-text-tertiary: #888f8a;
+  --color-text-inverse: #0d1117;
+
+  /* Status Colors */
+  --color-status-success: #2db88f;
+  --color-status-warning: #f5b946;
+  --color-status-error: #e85252;
+  --color-status-info: #4d94ff;
+
+  /* Background Colors */
+  --color-bg-default: #0f1419;
+  --color-bg-surface: #1a2330;
+  --color-bg-light-mint: #1a3a2e;
+
+  /* Border Colors */
+  --color-border: #2d3f47;
+  --color-border-light: #1f3842;
+
+  /* Neutral Colors */
+  --color-neutral-white: #1a2330;
+  --color-neutral-off-white: #262e38;
+  --color-neutral-light-gray: #353f4a;
+  --color-neutral-gray: #4a5563;
+  --color-neutral-dark-gray: #b0b8c0;
+  --color-neutral-black: #e5e5e5;
+
+  /* Legacy (호환성 유지) */
+  --background: var(--color-bg-default);
+  --foreground: var(--color-text-primary);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -83,16 +130,36 @@ textarea:focus-visible {
   outline-offset: 2px;
 }
 
+html.dark button:focus-visible,
+html.dark a:focus-visible,
+html.dark input:focus-visible,
+html.dark textarea:focus-visible {
+  outline: 3px solid rgba(45, 184, 143, 0.38);
+  outline-offset: 2px;
+}
+
 .landing-shell {
   background: radial-gradient(circle at 80% 20%, rgba(220, 234, 216, 0.7), transparent 28%), linear-gradient(135deg, #f7f8f2 0%, #edf4ea 100%);
+}
+
+html.dark .landing-shell {
+  background: radial-gradient(circle at 80% 20%, rgba(28, 107, 82, 0.3), transparent 28%), linear-gradient(135deg, #0f1419 0%, #1a2e22 100%);
 }
 
 .dashboard-shell {
   background: #f7f9f5;
 }
 
+html.dark .dashboard-shell {
+  background: #0f1419;
+}
+
 .chat-shell {
   background: radial-gradient(circle at 12% 20%, rgba(219, 234, 215, 0.65), transparent 25%), #f5f7f2;
+}
+
+html.dark .chat-shell {
+  background: radial-gradient(circle at 12% 20%, rgba(28, 107, 82, 0.2), transparent 25%), #0f1419;
 }
 
 /* Hide scrollbar while keeping scroll functionality */

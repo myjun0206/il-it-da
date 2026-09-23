@@ -46,6 +46,8 @@ export default function SignupRolePage() {
 
   const handleNext = () => {
     if (selectedRole) {
+      // 새 회원가입: /signup/start에서 이미 초기화됨
+      // 역할만 저장하고 다음 단계로 이동
       sessionStorage.setItem("signupRole", selectedRole);
       router.push("/signup/terms");
     }
