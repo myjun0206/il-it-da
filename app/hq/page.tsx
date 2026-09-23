@@ -173,7 +173,7 @@ export default function HQPage() {
     // Fetch pending approvals count (only owner memberships)
     const fetchPendingCount = async () => {
       try {
-        const response = await fetch("/api/hq/approvals?status=pending");
+        const response = await fetch("/api/hq/approvals?status=pending", { credentials: "include" });
         const result = await response.json();
 
         if (result.success && Array.isArray(result.data)) {

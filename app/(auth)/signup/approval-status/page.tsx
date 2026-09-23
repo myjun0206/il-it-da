@@ -73,7 +73,7 @@ export default function SignupApprovalStatusPage() {
         });
 
         // Server API에서 실제 membership 정보 조회
-        const response = await fetch("/api/signup/store-membership");
+        const response = await fetch("/api/signup/store-membership", { credentials: "include" });
         const result = await response.json();
 
         console.log("[approval-status] GET /api/signup/store-membership response:", {
