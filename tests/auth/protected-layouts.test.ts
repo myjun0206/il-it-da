@@ -39,6 +39,10 @@ describe("server-side role-protected layouts", () => {
       test("renders children unchanged (no UI restructuring)", () => {
         assert.match(source, /return\s*<>\{children\}<\/>/);
       });
+
+      test('opts out of static prerendering via export const dynamic = "force-dynamic"', () => {
+        assert.match(source, /export\s+const\s+dynamic\s*=\s*["']force-dynamic["']\s*;/);
+      });
     });
   }
 });
