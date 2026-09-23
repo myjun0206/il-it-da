@@ -302,6 +302,16 @@ export async function POST(request: Request): Promise<NextResponse<SignupRespons
       throw error;
     }
 
+    if (process.env.NODE_ENV === "development") {
+      console.log("🔗 [DEV] Email Auth Link / Token:", {
+        context: "admin createUser",
+        email,
+        emailConfirm: true,
+        inbucketUrl: "http://localhost:54324",
+        note: "이 서버 가입 경로는 email_confirm=true로 사용자를 생성하므로 Supabase 인증 메일/링크가 발송되지 않습니다.",
+      });
+    }
+
     const userId = authData.user.id;
     const profileRole = role === "boss" ? "owner" : role;
     const { error: profileError } = await supabase.from("profiles").insert({
@@ -312,6 +322,8 @@ export async function POST(request: Request): Promise<NextResponse<SignupRespons
       phone: getString(body.phone) || null,
       company_email: getString(body.companyEmail) || null,
       brand_id: getString(body.brandId) || getString(body.selectedBrandId) || null,
+      approval_status: profileRole === "hq" ? "approved" : "pending",
+      approved_at: profileRole === "hq" ? new Date().toISOString() : null,
     });
 
     if (profileError) {

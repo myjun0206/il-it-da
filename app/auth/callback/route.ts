@@ -66,9 +66,9 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, approval_status")
     .eq("id", userData.user.id)
-    .maybeSingle<{ role: string }>();
+    .maybeSingle<{ role: string; approval_status: string | null }>();
 
   if (profileError) {
     return NextResponse.redirect(loginErrorUrl(requestUrl.origin, "profile_failed"));
@@ -80,6 +80,10 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   if (!isUserRole(profile.role)) {
     return NextResponse.redirect(loginErrorUrl(requestUrl.origin, "invalid_role"));
+  }
+
+  if (profile.role !== "hq" && profile.approval_status !== "approved") {
+    return NextResponse.redirect(new URL("/signup/approval-status", requestUrl.origin));
   }
 
   return NextResponse.redirect(new URL(ROLE_DESTINATIONS[profile.role], requestUrl.origin));

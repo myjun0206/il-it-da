@@ -121,6 +121,8 @@ export async function POST(request: Request): Promise<NextResponse<OAuthOnboardi
     phone,
     company_email: role === "hq" ? user.email.trim().toLowerCase() : null,
     brand_id: role === "hq" ? brandId : null,
+    approval_status: role === "hq" ? "approved" : "pending",
+    approved_at: role === "hq" ? new Date().toISOString() : null,
   });
 
   if (insertError) {

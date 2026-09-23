@@ -55,6 +55,7 @@ function clearSignupSessionStorage() {
   sessionStorage.removeItem("signupStoreApprovals");
   sessionStorage.removeItem("signupApprovalStatus");
   sessionStorage.removeItem("signupApprovalSubmittedAt");
+  sessionStorage.removeItem("signupPassword");
   sessionStorage.removeItem("signupVerified");
 }
 
@@ -722,6 +723,24 @@ function HQSignupProfile() {
     try {
       const supabase = createClient();
 
+      if (process.env.NODE_ENV === "development") {
+        console.log("🔗 [DEV] Email Auth Link / Token:", {
+          email: ownerStaffFormData.email,
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          inbucketUrl: "http://localhost:54324",
+          note: "Supabase 로컬 개발 환경에서는 Inbucket에서 실제 인증 메일 링크를 확인하세요.",
+        });
+        void fetch("/api/auth/dev-email-log", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            context: "signup-profile signUp",
+            email: ownerStaffFormData.email,
+            emailRedirectTo: `${window.location.origin}/auth/callback`,
+          }),
+        });
+      }
+
       // Supabase Auth 사용자 생성
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: ownerStaffFormData.email,
@@ -1359,6 +1378,7 @@ function OwnerStaffSignupProfile() {
       };
 
       sessionStorage.setItem("signupProfile", JSON.stringify(profileData));
+    sessionStorage.setItem("signupPassword", password);
       console.log("[SIGNUP_STEP3] Saved profile:", profileData);
       setIsLoading(false);
       router.push("/signup/stores");

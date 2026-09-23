@@ -93,6 +93,10 @@ export default function OwnerManualsPage() {
           router.push("/");
           return;
         }
+        if (profile.approvalStatus !== "approved") {
+          router.push("/signup/approval-status");
+          return;
+        }
 
         setIsReady(true);
       } catch (e) {

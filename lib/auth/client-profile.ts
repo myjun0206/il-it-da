@@ -5,6 +5,7 @@ import type { UserRole } from "@/lib/types/user";
 export type AuthenticatedProfile = {
   user: User;
   role: UserRole;
+  approvalStatus: "pending" | "approved" | "rejected";
 };
 
 export async function getAuthenticatedProfile(
@@ -18,9 +19,9 @@ export async function getAuthenticatedProfile(
 
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, approval_status")
     .eq("id", userData.user.id)
-    .maybeSingle<{ role: string }>();
+    .maybeSingle<{ role: string; approval_status: string | null }>();
 
   if (
     profileError ||
@@ -30,5 +31,9 @@ export async function getAuthenticatedProfile(
     return null;
   }
 
-  return { user: userData.user, role: profile.role };
+  const approvalStatus = profile.approval_status === "approved" || profile.approval_status === "rejected"
+    ? profile.approval_status
+    : "pending";
+
+  return { user: userData.user, role: profile.role, approvalStatus };
 }

@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search, ChevronRight, X, BookOpen, Plus, Edit2, Trash2 } from "lucide-react";
+import { Search, X, BookOpen, Plus, Edit2, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
@@ -105,6 +105,10 @@ export default function StoreManualsManagemntPage() {
 
         if (profile?.role !== "owner") {
           router.push("/");
+          return;
+        }
+        if (profile.approvalStatus !== "approved") {
+          router.push("/signup/approval-status");
           return;
         }
 

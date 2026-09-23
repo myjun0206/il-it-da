@@ -36,6 +36,7 @@ function clearSignupSessionStorage() {
   sessionStorage.removeItem("signupStoreApprovals");
   sessionStorage.removeItem("signupApprovalStatus");
   sessionStorage.removeItem("signupApprovalSubmittedAt");
+  sessionStorage.removeItem("signupPassword");
   sessionStorage.removeItem("signupVerified");
 }
 
@@ -56,6 +57,8 @@ function formatTimestamp(timestamp?: string): string {
     return "-";
   }
 }
+
+const SIGNUP_RETRY_COOLDOWN_MS = 25_000;
 
 export default function SignupApprovalPage() {
   const router = useRouter();
@@ -260,7 +263,12 @@ export default function SignupApprovalPage() {
     try {
       const profile = JSON.parse(signupProfile);
       const profileEmail = profile.email;
-      const profilePassword = profile.password;
+      const profilePassword = sessionStorage.getItem("signupPassword") || profile.password;
+
+      if (!profilePassword || typeof profilePassword !== "string" || profilePassword.length < 8) {
+        setSubmissionError("비밀번호 정보가 없습니다. 기본 정보 입력 단계에서 비밀번호를 다시 입력해주세요.");
+        return false;
+      }
 
       const isOAuthUser = currentUser?.identities?.some(
         (identity) => identity.provider === "google" || identity.provider === "kakao",
@@ -338,6 +346,63 @@ export default function SignupApprovalPage() {
         return true;
       }
 
+      const checkEmailResponse = await fetch("/api/auth/check-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: profileEmail }),
+      });
+      const checkEmailResult = (await checkEmailResponse.json()) as { available?: boolean; error?: string };
+
+      if (checkEmailResponse.ok && checkEmailResult.available === false) {
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+          email: profileEmail,
+          password: profilePassword,
+        });
+
+        if (signInError || !signInData.session) {
+          setEmailAlreadyRegistered(true);
+          setSubmissionError("이미 가입된 이메일입니다. 로그인 후 다시 진행해주세요.");
+          return false;
+        }
+
+        sessionStorage.removeItem("signupAuthAttemptEmail");
+        sessionStorage.removeItem("signupAuthAttemptAt");
+        return true;
+      }
+
+      const lastAttemptEmail = sessionStorage.getItem("signupAuthAttemptEmail");
+      const lastAttemptAt = Number(sessionStorage.getItem("signupAuthAttemptAt") || "0");
+      const elapsedSinceLastAttempt = Date.now() - lastAttemptAt;
+
+      if (lastAttemptEmail === profileEmail && elapsedSinceLastAttempt < SIGNUP_RETRY_COOLDOWN_MS) {
+        const remainingSeconds = Math.ceil((SIGNUP_RETRY_COOLDOWN_MS - elapsedSinceLastAttempt) / 1000);
+        setSubmissionError(`인증 요청이 너무 잦습니다. ${remainingSeconds}초 후 다시 시도해주세요.`);
+        return false;
+      }
+
+      sessionStorage.setItem("signupAuthAttemptEmail", profileEmail);
+      sessionStorage.setItem("signupAuthAttemptAt", String(Date.now()));
+
+      const emailRedirectTo = `${window.location.origin}/auth/callback?next=/signup/approval`;
+
+      if (process.env.NODE_ENV === "development") {
+        console.log("🔗 [DEV] Email Auth Link / Token:", {
+          email: profileEmail,
+          emailRedirectTo,
+          inbucketUrl: "http://localhost:54324",
+          note: "Supabase 로컬 개발 환경에서는 Inbucket에서 실제 인증 메일 링크를 확인하세요.",
+        });
+        void fetch("/api/auth/dev-email-log", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            context: "signup-approval signUp",
+            email: profileEmail,
+            emailRedirectTo,
+          }),
+        });
+      }
+
       // 일반 신규 이메일: signUp 사용
       const { data: authData, error: authError } =
         await supabase.auth.signUp({
@@ -349,19 +414,39 @@ export default function SignupApprovalPage() {
               name: profile.name,
             },
             // 이메일 인증(컨펌) 링크를 눌렀을 때 세션을 실제로 교환해 줄 콜백 경로로 되돌아오게 한다.
-            emailRedirectTo: `${window.location.origin}/auth/callback?next=/signup/approval`,
+            emailRedirectTo,
           },
         });
 
       if (authError) {
         console.error("signUp error:", authError);
+        const normalizedMessage = authError.message?.toLowerCase() || "";
         if (
-          authError.message?.toLowerCase().includes("already") ||
-          authError.message?.toLowerCase().includes("already registered") ||
-          authError.message?.toLowerCase().includes("user already exists")
+          normalizedMessage.includes("already") ||
+          normalizedMessage.includes("already registered") ||
+          normalizedMessage.includes("user already exists")
         ) {
-          setEmailAlreadyRegistered(true);
-          setSubmissionError("이미 가입된 이메일입니다. 로그인해 주세요.");
+          const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+            email: profileEmail,
+            password: profilePassword,
+          });
+
+          if (signInError || !signInData.session) {
+            setEmailAlreadyRegistered(true);
+            setSubmissionError("이미 가입된 이메일입니다. 로그인 후 다시 진행해주세요.");
+            return false;
+          }
+
+          sessionStorage.removeItem("signupAuthAttemptEmail");
+          sessionStorage.removeItem("signupAuthAttemptAt");
+          return true;
+        } else if (
+          normalizedMessage.includes("20 seconds") ||
+          normalizedMessage.includes("security purposes") ||
+          normalizedMessage.includes("rate limit") ||
+          normalizedMessage.includes("email rate limit")
+        ) {
+          setSubmissionError("이메일 발송 요청이 너무 많습니다. 잠시 후(또는 몇 분 뒤) 다시 시도해 주세요.");
         } else {
           setSubmissionError(`회원가입 중 오류: ${authError.message || "알 수 없는 오류"}`);
         }
@@ -388,6 +473,8 @@ export default function SignupApprovalPage() {
       }
 
       setEmailAlreadyRegistered(false);
+  sessionStorage.removeItem("signupAuthAttemptEmail");
+  sessionStorage.removeItem("signupAuthAttemptAt");
       return true;
     } catch (error) {
       console.error("Auth session error:", error);
@@ -555,6 +642,7 @@ export default function SignupApprovalPage() {
 
       setStoreApprovals(updatedApprovals);
       sessionStorage.setItem("signupStoreApprovals", JSON.stringify(updatedApprovals));
+      sessionStorage.removeItem("signupPassword");
 
       alert("승인 요청이 완료되었습니다.\n본사 승인을 기다려 주세요.");
 

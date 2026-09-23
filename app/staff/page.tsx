@@ -140,13 +140,17 @@ export default function StaffPage() {
 
         const { data: profile } = await supabase
           .from("profiles")
-          .select("role")
+          .select("role, approval_status")
           .eq("id", data.user.id)
-          .maybeSingle<{ role: string }>();
+          .maybeSingle<{ role: string; approval_status: string | null }>();
 
         // Verify user is staff
         if (profile?.role !== "staff") {
           router.push("/");
+          return;
+        }
+        if (profile.approval_status !== "approved") {
+          router.push("/signup/approval-status");
           return;
         }
       } catch (e) {

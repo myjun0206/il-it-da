@@ -19,6 +19,29 @@ interface StoreViewStats {
   totalStoreManuals: number;
 }
 
+type StoreListItem = {
+  id: string;
+  name: string;
+};
+
+type ManualListItem = {
+  store_id?: string | null;
+};
+
+async function readJsonResponse<T>(response: Response, fallbackMessage: string): Promise<T> {
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    throw new Error(fallbackMessage);
+  }
+
+  const data = (await response.json()) as T & { error?: string };
+  if (!response.ok) {
+    throw new Error(data.error || fallbackMessage);
+  }
+
+  return data;
+}
+
 export default function StoreManualViewPage() {
   const router = useRouter();
   const [userName, setUserName] = useState("본사 관리자");
@@ -83,11 +106,17 @@ export default function StoreManualViewPage() {
 
         // Fetch stores
         const storesResponse = await fetch("/api/stores");
-        const storesData = (await storesResponse.json()) as { stores?: any[] };
+        const storesData = await readJsonResponse<{ stores?: StoreListItem[] }>(
+          storesResponse,
+          "지점 목록을 불러오지 못했습니다.",
+        );
 
         // Fetch manuals
         const manualsResponse = await fetch("/api/manuals");
-        const manualsData = (await manualsResponse.json()) as { manuals?: any[] };
+        const manualsData = await readJsonResponse<{ manuals?: ManualListItem[] }>(
+          manualsResponse,
+          "매뉴얼 목록을 불러오지 못했습니다.",
+        );
 
         const storesList = storesData.stores ?? [];
         const manualsList = manualsData.manuals ?? [];
@@ -106,6 +135,7 @@ export default function StoreManualViewPage() {
         // Count manuals per store
         storeManuals.forEach((manual) => {
           const storeId = manual.store_id;
+          if (!storeId) return;
           const current = storeInfoMap.get(storeId);
           if (current) {
             storeInfoMap.set(storeId, { ...current, manualCount: current.manualCount + 1 });
