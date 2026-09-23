@@ -79,7 +79,6 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
   if (authorization.status === "UNAUTHENTICATED") {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
-  
   if (authorization.status === "FORBIDDEN") {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
