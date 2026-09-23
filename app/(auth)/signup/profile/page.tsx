@@ -669,7 +669,8 @@ function HQSignupProfile() {
       }
 
       // 가입 직후 세션이 이미 발급되므로 재로그인 없이 매뉴얼 온보딩으로 이동한다.
-      router.push("/hq/manuals/onboarding");
+      // replace로 이동해 브라우저 뒤로가기로 이미 제출한 가입 화면에 돌아가지 않게 한다.
+      router.replace("/hq/manuals/onboarding");
     } catch (e) {
       console.error("회원가입 실패:", e);
       setEmailAlreadyRegistered(false);
