@@ -45,7 +45,6 @@ export default function SignupStoresPage() {
     if (!savedRole) return;
 
     const profileData = sessionStorage.getItem("signupProfile");
-    console.log("[SIGNUP_STEP4] Loaded profile:", profileData);
 
     if (!profileData) {
       console.log("[SIGNUP_STEP4] Redirecting: signupProfile is missing");
@@ -60,7 +59,7 @@ export default function SignupStoresPage() {
         typeof parsedProfile.name !== "string" ||
         typeof parsedProfile.phone !== "string"
       ) {
-        console.log("[SIGNUP_STEP4] Redirecting: signupProfile is invalid", parsedProfile);
+        console.log("[SIGNUP_STEP4] Redirecting: signupProfile is invalid");
         router.replace("/signup/profile");
         return;
       }

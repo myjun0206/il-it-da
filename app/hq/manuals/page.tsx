@@ -2,19 +2,27 @@
 
 import React, { useEffect, useLayoutEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BookOpen, Store, ArrowRight } from "lucide-react";
+import { BookOpen, Store, ArrowRight, UploadCloud, CheckCircle2, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { createClient } from "@/lib/supabase/client";
 import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
 import Link from "next/link";
+import type { ManualRecord } from "@/lib/types/manual";
 
 interface ManualSummary {
   totalManuals: number;
   commonManuals: number;
   storeManuals: number;
 }
+
+type ManualSummaryItem = Pick<ManualRecord, "store_id"> & {
+  scope_type?: string | null;
+};
+
+// 온보딩 화면(app/hq/manuals/onboarding/page.tsx)과 같은 키를 사용한다.
+const MANUAL_UPLOAD_NOTICE_KEY = "ilitda:manual-upload-notice";
 
 export default function ManualOverviewPage() {
   const router = useRouter();
@@ -27,6 +35,23 @@ export default function ManualOverviewPage() {
     storeManuals: 0,
   });
   const [isLoadingSummary, setIsLoadingSummary] = useState(true);
+  // 온보딩 화면에서 업로드/승인 후 넘어온 경우, 등록 결과를 한 번만 보여준다.
+  // (이 페이지는 isReady 전까지 null을 렌더하므로 서버/클라이언트 초기값이 달라도 화면 불일치가 없다.)
+  const [uploadNotice, setUploadNotice] = useState<string | null>(() => {
+    try {
+      return typeof window === "undefined" ? null : sessionStorage.getItem(MANUAL_UPLOAD_NOTICE_KEY);
+    } catch {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      sessionStorage.removeItem(MANUAL_UPLOAD_NOTICE_KEY);
+    } catch {
+      // 저장소를 쓸 수 없는 환경이면 무시한다.
+    }
+  }, []);
 
   useLayoutEffect(() => {
     const checkAuth = async () => {
@@ -78,7 +103,7 @@ export default function ManualOverviewPage() {
 
         // Fetch all manuals
         const response = await fetch("/api/manuals");
-        const data = (await response.json()) as { manuals?: any[]; error?: string };
+        const data = (await response.json()) as { manuals?: ManualSummaryItem[]; error?: string };
 
         if (response.ok && data.manuals) {
           const manuals = data.manuals;
@@ -133,14 +158,41 @@ export default function ManualOverviewPage() {
 
         <main className="p-6 lg:p-8 max-w-7xl mx-auto">
           {/* Header */}
-          <div className="mb-8">
-            <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
-              매뉴얼 관리
-            </h1>
-            <p className="text-base text-[var(--color-text-secondary)]">
-              {franchiseName}의 공통 매뉴얼과 지점 매뉴얼을 한곳에서 확인하세요.
-            </p>
+          <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
+                매뉴얼 관리
+              </h1>
+              <p className="text-base text-[var(--color-text-secondary)]">
+                {franchiseName}의 공통 매뉴얼과 지점 매뉴얼을 한곳에서 확인하세요.
+              </p>
+            </div>
+            <Link href="/hq/manuals/onboarding?from=manuals" className="shrink-0">
+              <Button variant="primary">
+                <UploadCloud size={16} className="mr-2" /> 파일로 매뉴얼 추가
+              </Button>
+            </Link>
           </div>
+
+          {uploadNotice && (
+            <div
+              role="status"
+              className="mb-8 flex items-center gap-3 rounded-xl border border-[var(--color-primary)]/30 bg-[var(--color-primary-light)] px-5 py-4"
+            >
+              <CheckCircle2 size={20} className="shrink-0 text-[var(--color-primary)]" />
+              <p className="flex-1 text-sm font-medium text-[var(--color-primary)] break-keep">
+                {uploadNotice}
+              </p>
+              <button
+                type="button"
+                onClick={() => setUploadNotice(null)}
+                className="rounded-md p-1 text-[var(--color-primary)] hover:bg-white/60"
+                aria-label="알림 닫기"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
 
           {/* Summary Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">

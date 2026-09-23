@@ -6,6 +6,7 @@ import { Store, ExternalLink } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
+import type { ManualRecord } from "@/lib/types/manual";
 
 interface StoreInfo {
   id: string;
@@ -13,20 +14,22 @@ interface StoreInfo {
   manualCount: number;
 }
 
+interface StoreListItem {
+  id: string;
+  name: string;
+}
+
+type StoreManualItem = Pick<ManualRecord, "store_id">;
+
+function hasStoreId(manual: StoreManualItem): manual is StoreManualItem & { store_id: string } {
+  return Boolean(manual.store_id);
+}
+
 interface StoreViewStats {
   totalStores: number;
   storesWithManuals: number;
   totalStoreManuals: number;
 }
-
-type StoreListItem = {
-  id: string;
-  name: string;
-};
-
-type ManualListItem = {
-  store_id?: string | null;
-};
 
 async function readJsonResponse<T>(response: Response, fallbackMessage: string): Promise<T> {
   const contentType = response.headers.get("content-type") || "";
@@ -113,7 +116,7 @@ export default function StoreManualViewPage() {
 
         // Fetch manuals
         const manualsResponse = await fetch("/api/manuals");
-        const manualsData = await readJsonResponse<{ manuals?: ManualListItem[] }>(
+        const manualsData = await readJsonResponse<{ manuals?: StoreManualItem[] }>(
           manualsResponse,
           "매뉴얼 목록을 불러오지 못했습니다.",
         );
@@ -122,7 +125,7 @@ export default function StoreManualViewPage() {
         const manualsList = manualsData.manuals ?? [];
 
         // Filter store manuals (those with store_id)
-        const storeManuals = manualsList.filter((m) => m.store_id);
+        const storeManuals = manualsList.filter(hasStoreId);
 
         // Create store info map with manual counts
         const storeInfoMap = new Map<string, { name: string; manualCount: number }>();

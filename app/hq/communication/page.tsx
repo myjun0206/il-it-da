@@ -19,7 +19,7 @@ export default function CommunicationPage() {
         const { createClient } = await import("@/lib/supabase/client");
         const supabase = createClient();
         const { data } = await supabase.auth.getSession();
-        
+
         if (!data.session?.user) {
           router.push("/");
           return;
@@ -51,7 +51,7 @@ export default function CommunicationPage() {
         const { createClient } = await import("@/lib/supabase/client");
         const supabase = createClient();
         const { data } = await supabase.auth.getSession();
-        
+
         if (!data.session?.user) return;
 
         const user = data.session.user;

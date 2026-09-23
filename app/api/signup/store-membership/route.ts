@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { createNotification } from "@/lib/notifications";
 import { resolveFranchiseIdForStoreName } from "@/lib/supabase/resolve-store-franchise";
+import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
 
 export const runtime = "nodejs";
 
@@ -36,7 +37,9 @@ export async function GET(): Promise<NextResponse> {
     const { data: { user }, error: userError } = await serverClient.auth.getUser();
 
     if (userError || !user) {
-      console.log("[GET /api/signup/store-membership] Unauthorized - userError:", userError?.message);
+      if (userError) {
+        logSafeAuthError("STORE_MEMBERSHIP_GET_UNAUTHENTICATED", userError);
+      }
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
         { status: 401 }
@@ -44,10 +47,6 @@ export async function GET(): Promise<NextResponse> {
     }
 
     const userId = user.id;
-    console.log("[GET /api/signup/store-membership] Authenticated user:", {
-      email: user.email,
-      userId: userId,
-    });
 
     const adminClient = createAdminClient();
 
@@ -58,18 +57,11 @@ export async function GET(): Promise<NextResponse> {
       .eq("user_id", userId);
 
     if (membershipError) {
-      console.error("[GET /api/signup/store-membership] Failed to fetch memberships:", membershipError);
+      logSafeAuthError("STORE_MEMBERSHIP_GET_FETCH_FAILED", membershipError);
       return NextResponse.json(
         { success: false, error: "Failed to fetch memberships" },
         { status: 500 }
       );
-    }
-
-    console.log("[GET /api/signup/store-membership] Memberships found:", memberships?.length || 0);
-    if (memberships && memberships.length > 0) {
-      memberships.forEach((m, idx) => {
-        console.log(`  [${idx}] membershipId=${m.id}, user_id=${m.user_id}, store_id=${m.store_id}, status=${m.status}, role=${m.role}`);
-      });
     }
 
     if (!memberships || memberships.length === 0) {
@@ -96,7 +88,7 @@ export async function GET(): Promise<NextResponse> {
       .in("id", storeIds);
 
     if (storeError) {
-      console.error("Failed to fetch stores:", storeError);
+      logSafeAuthError("STORE_MEMBERSHIP_GET_STORES_FAILED", storeError);
       return NextResponse.json(
         { success: false, error: "Failed to fetch stores" },
         { status: 500 }
@@ -125,7 +117,7 @@ export async function GET(): Promise<NextResponse> {
       data: result,
     });
   } catch (error) {
-    console.error("GET /api/signup/store-membership error:", error);
+    logSafeAuthError("STORE_MEMBERSHIP_GET_UNEXPECTED", error);
     return NextResponse.json(
       { success: false, error: "Internal server error" },
       { status: 500 }
@@ -238,7 +230,7 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
               .eq("id", userId);
 
             if (updateError) {
-              console.error("Profile update error:", updateError);
+              logSafeAuthError("STORE_MEMBERSHIP_PROFILE_UPDATE_FAILED", updateError);
               return NextResponse.json(
                 {
                   success: false,
@@ -253,7 +245,7 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
         // full_name이 이미 있으면 그냥 스킵 (기존 값 유지)
       } else if (profileError) {
         // 다른 에러
-        console.error("Profile creation error:", profileError);
+        logSafeAuthError("STORE_MEMBERSHIP_PROFILE_CREATE_FAILED", profileError);
         return NextResponse.json(
           {
             success: false,
@@ -264,7 +256,7 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
         );
       }
     } catch (e) {
-      console.error("Profile creation exception:", e);
+      logSafeAuthError("STORE_MEMBERSHIP_PROFILE_CREATE_EXCEPTION", e);
       return NextResponse.json(
         { success: false, error: "Failed to create profile", details: String(e) },
         { status: 500 }
@@ -297,14 +289,6 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
     let finalFranchiseId: string | null = null;
 
     if (storeId || storeName) {
-      // Diagnostic: 요청 파라미터 로그
-      console.log("[POST /api/signup/store-membership] Store lookup requested:", {
-        storeId,
-        storeName,
-        role,
-        userId,
-      });
-
       // 기존 stores에서 조회 (storeName + franchise_id로 찾기)
       let existingStoreQuery = adminClient
         .from("stores")
@@ -317,7 +301,7 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
       const { data: existingStore, error: storeError } = await existingStoreQuery.single();
 
       if (storeError && storeError.code !== "PGRST116") {
-        console.error("[POST /api/signup/store-membership] Store lookup error:", storeError);
+        logSafeAuthError("STORE_MEMBERSHIP_STORE_LOOKUP_FAILED", storeError);
         return NextResponse.json(
           {
             success: false,
@@ -349,22 +333,10 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
             }
           }
         }
-
-        console.log("[POST /api/signup/store-membership] Found existing store:", {
-          storeName,
-          storeId: finalStoreId,
-          franchiseId: finalFranchiseId,
-        });
       } else {
         // 기존 store 없음
-        console.log("[POST /api/signup/store-membership] Store not found:", {
-          storeName,
-          role,
-        });
-
         if (role === "owner") {
-          // Owner: 새로운 store 생성
-          console.log("[POST /api/signup/store-membership] Creating new store for owner");
+          // Owner: 새로운 store 생성 (franchise_id는 위에서 이미 resolveFranchiseIdForStoreName으로 계산된 requestedFranchiseId 재사용)
 
           // UPSERT를 사용하거나 먼저 다시 조회 (race condition 방지)
           // 방법: 먼저 다시 확인
@@ -392,14 +364,7 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
               .single();
 
             if (insertError) {
-              // 상세 오류 로그 (개발환경용)
-              console.error("[POST /api/signup/store-membership] Store INSERT failed:", {
-                code: insertError.code,
-                message: insertError.message,
-                details: insertError.details,
-                hint: insertError.hint,
-                storeName,
-              });
+              logSafeAuthError("STORE_MEMBERSHIP_STORE_INSERT_FAILED", insertError);
 
               // 동시성으로 다른 요청이 생성했을 수 있음
               // 한 번 더 조회
@@ -415,10 +380,7 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
 
               if (retryError && retryError.code === "PGRST116") {
                 // 정말 생성 실패
-                console.error(
-                  "[POST /api/signup/store-membership] Store creation failed (retry also failed):",
-                  insertError
-                );
+                logSafeAuthError("STORE_MEMBERSHIP_STORE_INSERT_RETRY_FAILED", insertError);
                 return NextResponse.json(
                   {
                     success: false,
@@ -433,35 +395,19 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
                 // 다시 조회하니 있음 (다른 요청이 생성함)
                 finalStoreId = retryStore.id;
                 finalFranchiseId = retryStore.franchise_id;
-                console.log(
-                  "[POST /api/signup/store-membership] Store created by concurrent request:",
-                  { storeName, storeId: finalStoreId, franchiseId: finalFranchiseId }
-                );
               }
             } else {
               // 성공
               finalStoreId = newStore.id;
               finalFranchiseId = newStore.franchise_id;
-              console.log("[POST /api/signup/store-membership] New store created:", {
-                storeName,
-                storeId: finalStoreId,
-                franchiseId: finalFranchiseId,
-              });
             }
           } else if (!doubleCheckError && doubleCheckStore) {
             // 다시 확인하니 있음 (다른 요청이 생성함)
             finalStoreId = doubleCheckStore.id;
             finalFranchiseId = doubleCheckStore.franchise_id;
-            console.log(
-              "[POST /api/signup/store-membership] Store already exists (created by concurrent request):",
-              { storeName, storeId: finalStoreId, franchiseId: finalFranchiseId }
-            );
           }
         } else {
           // Staff: 새로운 store 생성 금지
-          console.log(
-            "[POST /api/signup/store-membership] Staff cannot request new store"
-          );
           return NextResponse.json(
             {
               success: false,
@@ -484,7 +430,6 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
     }
 
     if (!finalStoreId) {
-      console.error("[POST /api/signup/store-membership] Failed to determine finalStoreId");
       return NextResponse.json(
         { success: false, error: "Unable to determine store ID" },
         { status: 500 }
@@ -514,7 +459,7 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
         .single();
 
       if (lookupError && lookupError.code !== "PGRST116") {
-        console.error("Membership lookup error:", lookupError);
+        logSafeAuthError("STORE_MEMBERSHIP_LOOKUP_FAILED", lookupError);
         return NextResponse.json(
           {
             success: false,
@@ -548,7 +493,7 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
         .single();
 
       if (createError) {
-        console.error("Membership creation error:", createError);
+        logSafeAuthError("STORE_MEMBERSHIP_CREATE_FAILED", createError);
         return NextResponse.json(
           {
             success: false,
@@ -562,7 +507,7 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
       // Generate notifications asynchronously (don't await to keep response fast)
       const userName = user.user_metadata?.name || user.email || "알 수 없는 사용자";
       const storeNameForNotif = storeName || "";
-      
+
       generateMembershipNotifications(
         userId,
         role,
@@ -576,14 +521,14 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
         membershipId: newMembership.id,
       });
     } catch (e) {
-      console.error("Membership creation exception:", e);
+      logSafeAuthError("STORE_MEMBERSHIP_CREATE_EXCEPTION", e);
       return NextResponse.json(
         { success: false, error: "Failed to create membership", details: String(e) },
         { status: 500 }
       );
     }
   } catch (error) {
-    console.error("Unexpected error in POST /api/signup/store-membership:", error);
+    logSafeAuthError("STORE_MEMBERSHIP_POST_UNEXPECTED", error);
     return NextResponse.json(
       { success: false, error: "Unexpected error", details: String(error) },
       { status: 500 }

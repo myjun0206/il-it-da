@@ -45,6 +45,37 @@ npm run verify:poc
 - Windows PowerShell, macOS, Linux, GitHub Actions에서 동일하게 동작하도록 Node.js `child_process`만 사용하며 셸 전용 문법에 의존하지 않습니다.
 - 이 명령은 실제 Supabase/OpenAI 호출을 추가하지 않으며, 기존 `check:integration`/`test:integration`/`test:rag`/`test:rag-eval`/`lint`/`build`가 하던 동작만 순서대로 실행합니다.
 
+## 프론트엔드 품질 게이트 (`npm run check:frontend`)
+
+프론트엔드 작업자(예: UI/페이지/컴포넌트 변경)가 PR을 올리기 전에 로컬에서 미리 실행하는 명령입니다.
+`scripts/check-frontend.mjs`는 `scripts/verify-poc.mjs`의 단계 실행기(fail-fast, 실패 단계 종료 코드
+보존, `Passed steps: N/N` + `PASS` 출력 계약)를 그대로 재사용합니다.
+
+```bash
+npm run check:frontend
+```
+
+단계는 반드시 다음 순서로 하나씩 실행되며, 이전 단계가 성공해야 다음 단계가 실행됩니다.
+
+1. `lint`
+2. `typecheck` (`npm run typecheck`: `next typegen` → `tsc --noEmit`)
+3. `build` (`next build`)
+4. `git diff --check` (현재 작업트리의 trailing whitespace/충돌 마커 검사)
+5. `test:frontend` (라우트 엔트리 파일 존재, `/hq`·`/boss`·`/staff` 레이아웃의 `requireServerRole`+
+   `force-dynamic` 유지, client component가 server-only 역할 가드를 import하지 않는지, 저장소에
+   Git 충돌 마커가 없는지 확인하는 정적 구조 테스트)
+
+`git diff --check` 단계는 커밋 전 작업트리 상태만 검사합니다. 이미 커밋된 내용에 남아있는 공백
+문제는 잡지 못하므로, 커밋하기 직전에 로컬에서 실행하는 것이 가장 효과적입니다. GitHub Actions는
+PR과 develop push 시 동일한 `npm run check:frontend`를 실행해 로컬과 같은 방식으로 검증합니다.
+
+### 프론트엔드 작업 절차
+
+1. 항상 최신 `develop`에서 새 작업 브랜치를 만듭니다. `develop`에 직접 push하지 않습니다.
+2. UI 변경과 DB/RAG migration 변경을 같은 PR에 섞지 않습니다.
+3. PR을 올리기 전에 `npm run check:frontend`를 실행해 통과를 확인합니다.
+4. GitHub Actions의 Quality Gate가 성공한 뒤에만 `develop`에 병합합니다.
+
 ## PR 템플릿 사용하기
 
 GitHub에서 develop을 대상으로 PR을 생성하면 `.github/pull_request_template.md`가 자동으로

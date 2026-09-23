@@ -15,8 +15,13 @@
     "tests/rag/finalize-rag-query-response.test.ts",
     "tests/auth/dev-test-verification.test.ts",
     "tests/auth/safe-auth-log.test.ts",
+    "tests/auth/require-server-role.test.ts",
+    "tests/auth/protected-layouts.test.ts",
     "tests/manuals/upload-limits.test.ts",
     "tests/staff/approved-stores.test.ts",
+    "tests/rag/manual-indexing/validate.test.ts",
+    "tests/rag/manual-indexing/persist-chunks.test.ts",
+    "tests/rag/manual-indexing/pipeline.test.ts",
     "lib/rag/answer-prompt.ts",
     "lib/rag/chunk-manual.ts",
     "lib/rag/search-query.ts",
@@ -27,9 +32,14 @@
     "lib/rag/types.ts",
     "lib/auth/dev-test-verification.ts",
     "lib/auth/safe-auth-log.ts",
+    "lib/auth/server-role-guard-core.ts",
     "lib/data/mockFranchises.ts",
     "lib/manuals/upload-limits.ts",
-    "lib/staff/approved-stores.ts"
+    "lib/staff/approved-stores.ts",
+    "lib/rag/manual-indexing/types.ts",
+    "lib/rag/manual-indexing/validate.ts",
+    "lib/rag/manual-indexing/persist-chunks.ts",
+    "lib/rag/manual-indexing/pipeline.ts"
   ],
   "exclude": ["node_modules"]
 }

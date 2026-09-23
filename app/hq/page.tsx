@@ -122,7 +122,7 @@ export default function HQPage() {
         if (result.success && Array.isArray(result.data)) {
           setPendingApprovalsCount(result.data.length);
         }
-        
+
         // Fetch total stores
         const { data: stores } = await supabase.from("stores").select("id");
         if (stores) {
