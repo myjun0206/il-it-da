@@ -74,7 +74,7 @@ export default function OwnerDashboardPage() {
         }
 
         // Fetch approved stores for dropdown
-        const response = await fetch("/api/signup/store-membership");
+        const response = await fetch("/api/signup/store-membership", { credentials: "include" });
         const result = await response.json();
 
         if (response.ok && result.success && Array.isArray(result.data)) {

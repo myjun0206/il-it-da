@@ -30,12 +30,12 @@ export default function OwnerSidebar({
     { id: "home", label: "홈", icon: House, href: "/boss" },
     { id: "manual-common", label: "공통 매뉴얼", icon: BookOpen, href: "/boss/manuals" },
     { id: "manual-store", label: "지점 매뉴얼 관리", icon: FileText, href: "/boss/store-manuals" },
-    { id: "staff", label: "직원 관리", icon: Users, href: "#" },
-    { id: "notice", label: "공지사항", icon: Bell, href: "#" },
+    { id: "staff", label: "직원 관리", icon: Users, href: "/boss/employees" },
+    { id: "notice", label: "공지사항", icon: Bell, href: "/boss/notices" },
   ];
 
   const bottomMenuItems = [
-    { id: "settings", label: "설정", icon: Settings },
+    { id: "settings", label: "설정", icon: Settings, href: "/boss/settings" },
   ];
 
   return (
@@ -93,15 +93,38 @@ export default function OwnerSidebar({
 
         {/* Bottom Menu */}
         <div className="py-3 px-3 border-t border-[var(--color-border)]">
-          {bottomMenuItems.map((item) => (
-            <button
-              key={item.id}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
-            >
-              <item.icon size={20} />
-              <span>{item.label}</span>
-            </button>
-          ))}
+          {bottomMenuItems.map((item) => {
+            const isActive = activeMenu === item.id;
+            const itemClass = `w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium transition-colors ${
+              isActive
+                ? "bg-[var(--color-primary-light)]/30 text-[var(--color-primary)]"
+                : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+            }`;
+
+            if (item.href) {
+              return (
+                <Link
+                  key={item.id}
+                  href={item.href}
+                  className={itemClass}
+                  onClick={() => setIsOpen(false)}
+                >
+                  <item.icon size={20} />
+                  <span>{item.label}</span>
+                </Link>
+              );
+            }
+
+            return (
+              <button
+                key={item.id}
+                className={itemClass}
+              >
+                <item.icon size={20} />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
 
           {/* Divider */}
           <div className="my-1 mx-2 border-t border-[var(--color-border)]" />

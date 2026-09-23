@@ -1,18 +1,29 @@
 "use client";
 
-import React, { useState, useLayoutEffect } from "react";
+import React, { Suspense, useState, useLayoutEffect } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Check } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input, PasswordInput } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
 import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
+import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
 
 type OAuthProvider = "google" | "kakao" | "apple" | "custom:naver";
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginPageContent />
+    </Suspense>
+  );
+}
+
+function LoginPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const verificationError = searchParams.get("error") === "verification_failed";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
@@ -44,7 +55,7 @@ export default function LoginPage() {
           }
         }
       } catch (e) {
-        console.error("Session check failed:", e);
+        logSafeAuthError("LOGIN_SESSION_CHECK_FAILED", e);
       }
     };
     
@@ -99,7 +110,7 @@ export default function LoginPage() {
       }
     } catch (e) {
       setIsLoading(false);
-      console.error("Login error:", e);
+      logSafeAuthError("LOGIN_SUBMIT_FAILED", e);
       setErrors((prev) => ({
         ...prev,
         email: "로그인 중 오류가 발생했습니다.",
@@ -123,7 +134,7 @@ export default function LoginPage() {
         throw error;
       }
     } catch (error) {
-      console.error("OAuth login failed:", error);
+      logSafeAuthError("LOGIN_OAUTH_FAILED", error);
       setErrors((prev) => ({
         ...prev,
         email: "SNS 로그인에 실패했습니다. 잠시 후 다시 시도해주세요.",
@@ -232,6 +243,11 @@ export default function LoginPage() {
             </div>
 
             <form onSubmit={handleLogin} className="space-y-5">
+              {verificationError && (
+                <p className="rounded-lg border border-[var(--color-status-error)]/20 bg-red-50 px-4 py-3 text-sm text-[var(--color-status-error)]">
+                  이메일 인증 확인에 실패했습니다. 다시 시도하거나 재가입해 주세요.
+                </p>
+              )}
               <Input
                 label="아이디 또는 이메일"
                 type="email"
@@ -387,7 +403,7 @@ export default function LoginPage() {
                 아직 계정이 없으신가요?{" "}
               </span>
               <Link
-                href="/signup/role"
+                href="/signup/start"
                 className="font-semibold text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] transition-colors"
               >
                 회원가입
@@ -426,6 +442,11 @@ export default function LoginPage() {
             </div>
 
             <form onSubmit={handleLogin} className="space-y-4">
+              {verificationError && (
+                <p className="rounded-lg border border-[var(--color-status-error)]/20 bg-red-50 px-4 py-3 text-sm text-[var(--color-status-error)]">
+                  이메일 인증 확인에 실패했습니다. 다시 시도하거나 재가입해 주세요.
+                </p>
+              )}
               <Input
                 label="아이디 또는 이메일"
                 type="email"
@@ -584,7 +605,7 @@ export default function LoginPage() {
                 아직 계정이 없으신가요?{" "}
               </span>
               <Link
-                href="/signup/role"
+                href="/signup/start"
                 className="font-semibold text-[var(--color-primary)] hover:text-[var(--color-primary-hover)]"
               >
                 회원가입

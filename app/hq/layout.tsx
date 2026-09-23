@@ -1,15 +1,21 @@
 import { redirect } from "next/navigation";
 
-import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
-import { createClient } from "@/lib/supabase/server";
+import { requireServerRole } from "@/lib/auth/require-server-role";
 
-export default async function HQLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  const supabase = await createClient();
-  const profile = await getAuthenticatedProfile(supabase);
+// profiles.role은 요청 시점에만 판정할 수 있으므로,
+// 빌드 시 정적 사전 렌더링되지 않게 한다.
+export const dynamic = "force-dynamic";
 
-  if (profile?.role !== "hq") {
+export default async function HqLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const result = await requireServerRole("hq");
+
+  if (result.status !== "AUTHORIZED") {
     redirect("/");
   }
 
-  return children;
+  return <>{children}</>;
 }

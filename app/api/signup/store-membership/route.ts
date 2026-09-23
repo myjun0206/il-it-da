@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { createNotification } from "@/lib/notifications";
+import { resolveFranchiseIdForStoreName } from "@/lib/supabase/resolve-store-franchise";
+import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
 
 export const runtime = "nodejs";
 
@@ -9,6 +12,7 @@ interface CreateMembershipRequest {
   storeId?: string;
   storeName?: string;
   role: "owner" | "staff";
+  franchiseId?: string;
 }
 
 interface CreateMembershipResponse {
@@ -34,7 +38,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const { data: { user }, error: userError } = await serverClient.auth.getUser();
 
     if (userError || !user) {
-      console.log("[GET /api/signup/store-membership] Unauthorized - userError:", userError?.message);
+      if (userError) {
+        logSafeAuthError("STORE_MEMBERSHIP_GET_UNAUTHENTICATED", userError);
+      }
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
         { status: 401 }
@@ -42,10 +48,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     const userId = user.id;
-    console.log("[GET /api/signup/store-membership] Authenticated user:", {
-      email: user.email,
-      userId: userId,
-    });
 
     const adminClient = createAdminClient();
 
@@ -56,18 +58,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .eq("user_id", userId);
 
     if (membershipError) {
-      console.error("[GET /api/signup/store-membership] Failed to fetch memberships:", membershipError);
+      logSafeAuthError("STORE_MEMBERSHIP_GET_FETCH_FAILED", membershipError);
       return NextResponse.json(
         { success: false, error: "Failed to fetch memberships" },
         { status: 500 }
       );
-    }
-
-    console.log("[GET /api/signup/store-membership] Memberships found:", memberships?.length || 0);
-    if (memberships && memberships.length > 0) {
-      memberships.forEach((m, idx) => {
-        console.log(`  [${idx}] membershipId=${m.id}, user_id=${m.user_id}, store_id=${m.store_id}, status=${m.status}, role=${m.role}`);
-      });
     }
 
     if (!memberships || memberships.length === 0) {
@@ -94,7 +89,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .in("id", storeIds);
 
     if (storeError) {
-      console.error("Failed to fetch stores:", storeError);
+      logSafeAuthError("STORE_MEMBERSHIP_GET_STORES_FAILED", storeError);
       return NextResponse.json(
         { success: false, error: "Failed to fetch stores" },
         { status: 500 }
@@ -123,7 +118,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       data: result,
     });
   } catch (error) {
-    console.error("GET /api/signup/store-membership error:", error);
+    logSafeAuthError("STORE_MEMBERSHIP_GET_UNEXPECTED", error);
     return NextResponse.json(
       { success: false, error: "Internal server error" },
       { status: 500 }
@@ -142,7 +137,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
       );
     }
 
-    const { storeId, storeName, role } = body as CreateMembershipRequest;
+    const { storeId, storeName, role, franchiseId } = body as CreateMembershipRequest;
 
     if (!role || (role !== "owner" && role !== "staff")) {
       return NextResponse.json(
@@ -225,7 +220,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
             .eq("id", userId);
 
           if (updateError) {
-            console.error("Profile update error:", updateError);
+            logSafeAuthError("STORE_MEMBERSHIP_PROFILE_UPDATE_FAILED", updateError);
             return NextResponse.json(
               {
                 success: false,
@@ -239,7 +234,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
         // full_name이 이미 있으면 그냥 스킵 (기존 값 유지)
       } else if (profileError) {
         // 다른 에러
-        console.error("Profile creation error:", profileError);
+        logSafeAuthError("STORE_MEMBERSHIP_PROFILE_CREATE_FAILED", profileError);
         return NextResponse.json(
           {
             success: false,
@@ -250,7 +245,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
         );
       }
     } catch (e) {
-      console.error("Profile creation exception:", e);
+      logSafeAuthError("STORE_MEMBERSHIP_PROFILE_CREATE_EXCEPTION", e);
       return NextResponse.json(
         { success: false, error: "Failed to create profile", details: String(e) },
         { status: 500 }
@@ -259,25 +254,20 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
 
     // 2. stores row 생성/조회
     let finalStoreId: string | null = null;
+    // 매장이 속한 브랜드(franchise_id). 기존 매장이면 DB에 저장된 값을 그대로 쓰고,
+    // 신규 매장이면 매장명으로 franchises를 자동 매칭한다 (클라이언트가 보낸 브랜드명은 신뢰하지 않는다).
+    let finalFranchiseId: string | null = null;
 
     if (storeId || storeName) {
-      // Diagnostic: 요청 파라미터 로그
-      console.log("[POST /api/signup/store-membership] Store lookup requested:", {
-        storeId,
-        storeName,
-        role,
-        userId,
-      });
-
       // 기존 stores에서 조회 (storeName으로 찾기)
       const { data: existingStore, error: storeError } = await adminClient
         .from("stores")
-        .select("id")
+        .select("id, franchise_id")
         .eq("store_name", storeName)
         .single();
 
       if (storeError && storeError.code !== "PGRST116") {
-        console.error("[POST /api/signup/store-membership] Store lookup error:", storeError);
+        logSafeAuthError("STORE_MEMBERSHIP_STORE_LOOKUP_FAILED", storeError);
         return NextResponse.json(
           {
             success: false,
@@ -289,28 +279,38 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
       }
 
       if (existingStore) {
-        // 기존 store 찾음
+        // 기존 store 찾음 - 소속 브랜드는 DB에 저장된 franchise_id를 우선 사용하되,
+        // 마이그레이션 이전에 생성된 매장 등 franchise_id가 비어있으면 매장명으로 다시 자동 매칭해 채워 넣는다.
+        // (채워두지 않으면 이 매장의 승인 요청이 어느 HQ 승인 큐에도 걸리지 않게 된다.)
         finalStoreId = existingStore.id;
-        console.log("[POST /api/signup/store-membership] Found existing store:", {
-          storeName,
-          storeId: finalStoreId,
-        });
+        finalFranchiseId = existingStore.franchise_id;
+
+        if (!finalFranchiseId) {
+          const backfilledFranchiseId = await resolveFranchiseIdForStoreName(adminClient, storeName!);
+
+          if (backfilledFranchiseId) {
+            const { error: backfillError } = await adminClient
+              .from("stores")
+              .update({ franchise_id: backfilledFranchiseId })
+              .eq("id", existingStore.id);
+
+            if (!backfillError) {
+              finalFranchiseId = backfilledFranchiseId;
+            }
+          }
+        }
       } else {
         // 기존 store 없음
-        console.log("[POST /api/signup/store-membership] Store not found:", {
-          storeName,
-          role,
-        });
-
         if (role === "owner") {
           // Owner: 새로운 store 생성
-          console.log("[POST /api/signup/store-membership] Creating new store for owner");
+          // 매장명으로 소속 브랜드를 자동 인식한다 (예: "버거킹 종로구청점" -> 버거킹).
+          const autoDetectedFranchiseId = await resolveFranchiseIdForStoreName(adminClient, storeName!);
 
           // UPSERT를 사용하거나 먼저 다시 조회 (race condition 방지)
           // 방법: 먼저 다시 확인
           const { data: doubleCheckStore, error: doubleCheckError } = await adminClient
             .from("stores")
-            .select("id")
+            .select("id, franchise_id")
             .eq("store_name", storeName)
             .single();
 
@@ -320,36 +320,27 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
               .from("stores")
               .insert({
                 store_name: storeName,
+                franchise_id: autoDetectedFranchiseId,
                 // id, created_at은 defaults로 자동 생성
                 // boss_id는 선택사항 (NULL 허용)
               })
-              .select("id")
+              .select("id, franchise_id")
               .single();
 
             if (insertError) {
-              // 상세 오류 로그 (개발환경용)
-              console.error("[POST /api/signup/store-membership] Store INSERT failed:", {
-                code: insertError.code,
-                message: insertError.message,
-                details: insertError.details,
-                hint: insertError.hint,
-                storeName,
-              });
+              logSafeAuthError("STORE_MEMBERSHIP_STORE_INSERT_FAILED", insertError);
 
               // 동시성으로 다른 요청이 생성했을 수 있음
               // 한 번 더 조회
               const { data: retryStore, error: retryError } = await adminClient
                 .from("stores")
-                .select("id")
+                .select("id, franchise_id")
                 .eq("store_name", storeName)
                 .single();
 
               if (retryError && retryError.code === "PGRST116") {
                 // 정말 생성 실패
-                console.error(
-                  "[POST /api/signup/store-membership] Store creation failed (retry also failed):",
-                  insertError
-                );
+                logSafeAuthError("STORE_MEMBERSHIP_STORE_INSERT_RETRY_FAILED", insertError);
                 return NextResponse.json(
                   {
                     success: false,
@@ -363,32 +354,20 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
               if (retryStore) {
                 // 다시 조회하니 있음 (다른 요청이 생성함)
                 finalStoreId = retryStore.id;
-                console.log(
-                  "[POST /api/signup/store-membership] Store created by concurrent request:",
-                  { storeName, storeId: finalStoreId }
-                );
+                finalFranchiseId = retryStore.franchise_id;
               }
             } else {
               // 성공
               finalStoreId = newStore.id;
-              console.log("[POST /api/signup/store-membership] New store created:", {
-                storeName,
-                storeId: finalStoreId,
-              });
+              finalFranchiseId = newStore.franchise_id;
             }
           } else if (!doubleCheckError && doubleCheckStore) {
             // 다시 확인하니 있음 (다른 요청이 생성함)
             finalStoreId = doubleCheckStore.id;
-            console.log(
-              "[POST /api/signup/store-membership] Store already exists (created by concurrent request):",
-              { storeName, storeId: finalStoreId }
-            );
+            finalFranchiseId = doubleCheckStore.franchise_id;
           }
         } else {
           // Staff: 새로운 store 생성 금지
-          console.log(
-            "[POST /api/signup/store-membership] Staff cannot request new store"
-          );
           return NextResponse.json(
             {
               success: false,
@@ -411,11 +390,25 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
     }
 
     if (!finalStoreId) {
-      console.error("[POST /api/signup/store-membership] Failed to determine finalStoreId");
       return NextResponse.json(
         { success: false, error: "Unable to determine store ID" },
         { status: 500 }
       );
+    }
+
+    // 승인 화면 브랜드 드롭다운에서 사용자가 직접 고른 franchiseId가 있으면, 실존하는 프랜차이즈인지
+    // 검증한 뒤 이 요청의 franchise_id로 우선 사용한다(자동 인식이 틀렸을 때의 수동 보정 용도).
+    let finalMembershipFranchiseId = finalFranchiseId;
+    if (franchiseId) {
+      const { data: chosenFranchise } = await adminClient
+        .from("franchises")
+        .select("id")
+        .eq("id", franchiseId)
+        .maybeSingle();
+
+      if (chosenFranchise) {
+        finalMembershipFranchiseId = chosenFranchise.id;
+      }
     }
 
     // 3. store_memberships row 생성 (중복 확인)
@@ -429,7 +422,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
         .single();
 
       if (lookupError && lookupError.code !== "PGRST116") {
-        console.error("Membership lookup error:", lookupError);
+        logSafeAuthError("STORE_MEMBERSHIP_LOOKUP_FAILED", lookupError);
         return NextResponse.json(
           {
             success: false,
@@ -448,12 +441,13 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
         });
       }
 
-      // 새로운 membership 생성
+      // 새로운 membership 생성 (franchise_id는 매장 조회/생성 시 자동 인식된 값 또는 사용자가 선택한 값)
       const { data: newMembership, error: createError } = await adminClient
         .from("store_memberships")
         .insert({
           user_id: userId,
           store_id: finalStoreId,
+          franchise_id: finalMembershipFranchiseId,
           role: role,
           status: "pending",
           requested_at: new Date().toISOString(),
@@ -462,7 +456,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
         .single();
 
       if (createError) {
-        console.error("Membership creation error:", createError);
+        logSafeAuthError("STORE_MEMBERSHIP_CREATE_FAILED", createError);
         return NextResponse.json(
           {
             success: false,
@@ -473,22 +467,105 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
         );
       }
 
+      // Generate notifications asynchronously (don't await to keep response fast)
+      const userName = user.user_metadata?.name || user.email || "알 수 없는 사용자";
+      const storeNameForNotif = storeName || "";
+
+      generateMembershipNotifications(
+        userId,
+        role,
+        finalStoreId,
+        storeNameForNotif,
+        userName
+      ).catch((e) => console.error("Failed to generate notifications:", e));
+
       return NextResponse.json({
         success: true,
         membershipId: newMembership.id,
       });
     } catch (e) {
-      console.error("Membership creation exception:", e);
+      logSafeAuthError("STORE_MEMBERSHIP_CREATE_EXCEPTION", e);
       return NextResponse.json(
         { success: false, error: "Failed to create membership", details: String(e) },
         { status: 500 }
       );
     }
   } catch (error) {
-    console.error("Unexpected error in POST /api/signup/store-membership:", error);
+    logSafeAuthError("STORE_MEMBERSHIP_POST_UNEXPECTED", error);
     return NextResponse.json(
       { success: false, error: "Unexpected error", details: String(error) },
       { status: 500 }
     );
+  }
+}
+
+/**
+ * Generate notifications for new membership requests
+ * - Staff request: notify store owners
+ * - Owner request: notify all HQ users
+ */
+async function generateMembershipNotifications(
+  userId: string,
+  role: "owner" | "staff",
+  storeId: string,
+  storeName: string,
+  userName: string
+): Promise<void> {
+  try {
+    const adminClient = createAdminClient();
+
+    if (role === "staff") {
+      // Staff pending: notify store owners
+      const { data: ownerMemberships, error: queryError } = await adminClient
+        .from("store_memberships")
+        .select("user_id")
+        .eq("store_id", storeId)
+        .eq("role", "owner")
+        .eq("status", "approved");
+
+      if (queryError) {
+        console.error("Failed to find store owners:", queryError);
+        return;
+      }
+
+      if (ownerMemberships && ownerMemberships.length > 0) {
+        for (const membership of ownerMemberships) {
+          await createNotification({
+            recipientUserId: membership.user_id,
+            type: "staff_pending_approval",
+            title: "새로운 직원 승인 요청",
+            message: `${userName} 님이 ${storeName} 가입을 요청했습니다.`,
+            targetUrl: "/boss/employees",
+            relatedId: userId,
+          });
+        }
+      }
+    } else if (role === "owner") {
+      // Owner pending: notify all HQ users
+      const { data: hqUsers, error: queryError } = await adminClient
+        .from("profiles")
+        .select("id")
+        .eq("role", "hq");
+
+      if (queryError) {
+        console.error("Failed to find HQ users:", queryError);
+        return;
+      }
+
+      if (hqUsers && hqUsers.length > 0) {
+        for (const profile of hqUsers) {
+          await createNotification({
+            recipientUserId: profile.id,
+            type: "owner_pending_approval",
+            title: "새로운 점주 승인 요청",
+            message: `${storeName} 점주 가입 요청이 있습니다. (${userName})`,
+            targetUrl: "/hq/approvals",
+            relatedId: userId,
+          });
+        }
+      }
+    }
+  } catch (e) {
+    console.error("Error generating membership notifications:", e);
   }
 }

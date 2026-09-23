@@ -1,12 +1,13 @@
 "use client";
 
-import { FormEvent, startTransition, useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, Bot, CheckCircle2, ChevronRight, Clock3, Info, Paperclip, Send, Store, UserRound } from "lucide-react";
 
 import StaffHeader from "@/components/staff/StaffHeader";
 import StaffSidebar from "@/components/staff/StaffSidebar";
 import type { RagSource, RagStatus } from "@/lib/rag/types";
+import type { StaffStore } from "@/lib/staff/approved-stores";
 import { createClient } from "@/lib/supabase/client";
 
 type Message = {
@@ -16,11 +17,6 @@ type Message = {
   status?: RagStatus;
   source?: Partial<Pick<RagSource, "title" | "category">>;
   similarity?: number;
-};
-
-type StaffStore = {
-  id: string;
-  name: string;
 };
 
 type StoreMembership = {
@@ -73,63 +69,88 @@ export default function StaffPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [userName, setUserName] = useState("직원");
   const [storeName, setStoreName] = useState("매장");
-  const [availableStores, setAvailableStores] = useState<StaffStore[]>([]);
-  const [selectedStore, setSelectedStore] = useState<StaffStore | null>(null);
+const [stores, setStores] = useState<StaffStore[]>([]);
+const [selectedStore, setSelectedStore] = useState<StaffStore | null>(null);
+const [isStoresLoading, setIsStoresLoading] = useState(true);
+const [storesError, setStoresError] = useState("");
+const [storesReloadToken, setStoresReloadToken] = useState(0);
+
+function selectStore(storeId: string) {
+  if (isLoading || isStoresLoading) return;
+
+  const store = stores.find((candidate) => candidate.id === storeId) ?? null;
+
+  if (selectedStore?.id !== store?.id) {
+    setMessages(INITIAL_MESSAGES);
+    setInput("");
+    setErrorMessage("");
+  }
+
+  setSelectedStore(store);
+  setStoreName(store?.name ?? "매장");
+
+  if (store) {
+    sessionStorage.setItem(SELECTED_STORE_STORAGE_KEY, store.id);
+  } else {
+    sessionStorage.removeItem(SELECTED_STORE_STORAGE_KEY);
+  }
+}
 
   useEffect(() => {
-    const loadApprovedStores = async () => {
-      try {
-        const response = await fetch("/api/signup/store-membership");
-        const result = (await response.json()) as {
-          success?: boolean;
-          data?: StoreMembership[];
-        };
+    const controller = new AbortController();
 
-        if (!response.ok || !result.success || !Array.isArray(result.data)) {
-          throw new Error("Unable to load store memberships.");
+    async function loadApprovedStores() {
+      setIsStoresLoading(true);
+      setStoresError("");
+
+      try {
+        const response = await fetch("/api/staff/stores", { signal: controller.signal });
+        if (response.status === 401) {
+          router.push("/");
+          return;
         }
 
-        const stores = result.data
-          .filter((membership) => membership.role === "staff" && membership.status === "approved")
-          .map((membership) => ({ id: membership.storeId, name: membership.storeName }));
-        const storedStoreId = sessionStorage.getItem(SELECTED_STORE_STORAGE_KEY);
-        const restoredStore = stores.find((store) => store.id === storedStoreId) ?? null;
+        const payload = (await response.json()) as { stores?: StaffStore[]; error?: string };
+        if (!response.ok || !Array.isArray(payload.stores)) {
+          throw new Error("Unable to load approved stores.");
+        }
 
-        if (!restoredStore) {
+        if (controller.signal.aborted) return;
+
+        const availableStores = payload.stores;
+        const storedStoreId = sessionStorage.getItem(SELECTED_STORE_STORAGE_KEY);
+        const restoredStore =
+          availableStores.find((store) => store.id === storedStoreId) ?? null;
+
+        if (restoredStore) {
+          setSelectedStore(restoredStore);
+          setStoreName(restoredStore.name);
+        } else if (availableStores.length === 1) {
+          setSelectedStore(availableStores[0]);
+          setStoreName(availableStores[0].name);
+        } else {
+          setSelectedStore(null);
+          setStoreName("매장");
+        }
+        if (!restoredStore && storedStoreId) {
           sessionStorage.removeItem(SELECTED_STORE_STORAGE_KEY);
         }
-
-        startTransition(() => {
-          setAvailableStores(stores);
-          setSelectedStore(restoredStore);
-          setStoreName(restoredStore?.name ?? "매장");
-        });
       } catch {
-        setErrorMessage("승인된 근무 매장을 불러오지 못했습니다.");
+        if (controller.signal.aborted) return;
+        setStores([]);
+        setSelectedStore(null);
+        setStoreName("매장");
+        setStoresError("승인된 소속 매장을 불러오지 못했습니다. 다시 시도해 주세요.");
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsStoresLoading(false);
+        }
       }
-    };
-
-    void loadApprovedStores();
-  }, []);
-
-  function selectStore(storeId: string) {
-    if (isLoading) return;
-
-    const store = availableStores.find((availableStore) => availableStore.id === storeId) ?? null;
-    if (selectedStore?.id !== store?.id) {
-      setMessages(INITIAL_MESSAGES);
-      setInput("");
-      setErrorMessage("");
     }
-    setSelectedStore(store);
-    setStoreName(store?.name ?? "매장");
 
-    if (store) {
-      sessionStorage.setItem(SELECTED_STORE_STORAGE_KEY, store.id);
-    } else {
-      sessionStorage.removeItem(SELECTED_STORE_STORAGE_KEY);
-    }
-  }
+    loadApprovedStores();
+    return () => controller.abort();
+  }, [router, storesReloadToken]);
 
   useEffect(() => {
     // Check Supabase session - redirect if needed
@@ -178,14 +199,6 @@ export default function StaffPage() {
         // Set user name from metadata
         if (name) {
           setUserName(name);
-          // Extract store name from user name or use default
-          // Format: "매장명 직원명" -> "매장명"
-          if (name.includes(" ")) {
-            const parts = name.split(" ");
-            if (parts[0]) {
-              setStoreName(parts[0]);
-            }
-          }
         }
       } catch (e) {
         console.error("Set user info failed:", e);
@@ -209,9 +222,13 @@ export default function StaffPage() {
   async function sendMessage(event?: FormEvent) {
     event?.preventDefault();
     const question = input.trim();
-    if (!question || isLoading) return;
+    if (!question || isLoading || isStoresLoading) return;
     if (!selectedStore) {
-      setErrorMessage("먼저 근무 매장을 선택해 주세요.");
+      setErrorMessage(
+        stores.length === 0
+          ? "승인된 소속 매장이 없습니다. 관리자에게 승인 상태를 확인해 주세요."
+          : "먼저 근무 매장을 선택해 주세요.",
+      );
       return;
     }
     setInput("");
@@ -298,19 +315,46 @@ export default function StaffPage() {
                 <select
                   id="staff-store"
                   value={selectedStore?.id ?? ""}
-                  disabled={isLoading}
+                  disabled={isLoading || isStoresLoading || stores.length === 0}
                   onChange={(event) => selectStore(event.target.value)}
                   className="mt-0.5 w-full bg-transparent text-sm font-semibold text-[var(--color-text-primary)] outline-none disabled:cursor-not-allowed disabled:opacity-70"
                 >
-                  <option value="">
-                    {availableStores.length > 0 ? "매장을 선택해 주세요" : "승인된 근무 매장이 없습니다"}
-                  </option>
-                  {availableStores.map((store) => (
-                    <option key={store.id} value={store.id}>{store.name}</option>
-                  ))}
+<option value="">
+  {isStoresLoading
+    ? "승인된 매장 정보를 불러오는 중..."
+    : stores.length > 0
+      ? "매장을 선택해 주세요"
+      : "승인된 근무 매장이 없습니다"}
+</option>
+
+{stores.map((store) => (
+  <option key={store.id} value={store.id}>
+    {store.name}
+  </option>
+))}
+
                 </select>
               </div>
             </div>
+
+            {storesError && (
+              <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                <span>{storesError}</span>
+                <button
+                  type="button"
+                  onClick={() => setStoresReloadToken((value) => value + 1)}
+                  className="shrink-0 font-semibold text-red-700 hover:text-red-900"
+                >
+                  다시 시도
+                </button>
+              </div>
+            )}
+
+            {!isStoresLoading && !storesError && stores.length === 0 && (
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                승인된 소속 매장이 없습니다. 관리자에게 승인 상태를 확인해 주세요.
+              </div>
+            )}
 
             {/* Chat Container - takes remaining space */}
             <div className="bg-white border border-[var(--color-border)] rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
@@ -358,7 +402,7 @@ export default function StaffPage() {
                     key={question}
                     type="button"
                     aria-label={`질문: ${question}`}
-                    disabled={isLoading}
+                    disabled={isLoading || isStoresLoading || !selectedStore}
                     onClick={() => {
                       setInput(question);
                       sendMessage({ preventDefault: () => {} } as FormEvent);
@@ -384,7 +428,7 @@ export default function StaffPage() {
 
                 <input
                   value={input}
-                  disabled={isLoading}
+                  disabled={isLoading || isStoresLoading || !selectedStore}
                   onChange={event => setInput(event.target.value)}
                   placeholder={isLoading ? "답변을 기다리는 중이에요…" : "질문을 입력하세요"}
                   aria-label="질문 입력창"
@@ -393,7 +437,7 @@ export default function StaffPage() {
 
                 <button
                   type="submit"
-                  disabled={isLoading || !input.trim()}
+                  disabled={isLoading || isStoresLoading || !selectedStore || !input.trim()}
                   aria-label="메시지 보내기"
                   className="flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary)]/90 transition-colors flex-shrink-0 disabled:cursor-not-allowed disabled:bg-[var(--color-primary)]/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
                 >

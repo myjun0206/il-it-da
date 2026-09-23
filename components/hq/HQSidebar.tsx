@@ -13,12 +13,27 @@ import {
   Menu,
   X,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 interface HQSidebarProps {
   userName: string;
   franchiseName: string;
   onLogout: () => void;
   activeMenu?: string;
+}
+
+interface HQSidebarSubmenuItem {
+  id: string;
+  label: string;
+  href?: string;
+}
+
+interface HQSidebarMenuItem {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  href?: string;
+  submenu?: HQSidebarSubmenuItem[];
 }
 
 export default function HQSidebar({
@@ -29,7 +44,7 @@ export default function HQSidebar({
 }: HQSidebarProps) {
   const [isOpen, setIsOpen] = useState(false);
 
-  const menuItems = [
+  const menuItems: HQSidebarMenuItem[] = [
     { id: "home", label: "홈", icon: House, href: "/hq" },
     {
       id: "manual",
@@ -37,8 +52,8 @@ export default function HQSidebar({
       icon: BookOpen,
       href: "/hq/manuals",
       submenu: [
-        { id: "manual-common", label: "공통 매뉴얼 관리" },
-        { id: "manual-store", label: "지점 매뉴얼 보기" },
+        { id: "manual-common", label: "공통 매뉴얼 관리", href: "/hq/manuals/common" },
+        { id: "manual-store", label: "지점 매뉴얼 보기", href: "/hq/manuals/stores" },
       ],
     },
     {
@@ -53,7 +68,7 @@ export default function HQSidebar({
     { id: "notice", label: "소통", icon: Megaphone, href: "/hq/communication" },
   ];
 
-  const bottomMenuItems = [
+  const bottomMenuItems: HQSidebarMenuItem[] = [
     { id: "settings", label: "설정", icon: Settings },
   ];
 
@@ -89,12 +104,18 @@ export default function HQSidebar({
         <nav className="flex-1 pt-8 px-3 overflow-y-auto">
           {menuItems.map((item, index) => {
             const isActive = activeMenu === item.id;
+            const hasSubmenu = Boolean(item.submenu && item.submenu.length > 0);
+            const hasActiveSubmenu = hasSubmenu && Boolean(item.submenu?.some((sub) => sub.id === activeMenu));
+            const isGroupActive = isActive || hasActiveSubmenu;
+
             const buttonClass = `w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium transition-colors ${
               index > 0 ? "mt-1" : ""
             } ${
               isActive
                 ? "bg-[var(--color-primary-light)]/30 text-[var(--color-primary)]"
-                : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                : hasActiveSubmenu
+                  ? "bg-[var(--color-primary-light)]/15 text-[var(--color-text-primary)]"
+                  : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
             }`;
 
             return (
@@ -112,16 +133,26 @@ export default function HQSidebar({
                 )}
 
                 {/* Submenu */}
-                {item.submenu && isActive && (
+                {item.submenu && isGroupActive && (
                   <div className="ml-4 mt-1">
-                    {item.submenu.map((sub) => (
-                      <button
-                        key={sub.id}
-                        className="w-full text-left px-4 py-3 text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors"
-                      >
-                        {sub.label}
-                      </button>
-                    ))}
+                    {item.submenu.map((sub) => {
+                      const isSubActive = sub.id === activeMenu;
+                      const subClass = `w-full block text-left px-4 py-3 text-sm font-medium rounded transition-colors ${
+                        isSubActive
+                          ? "bg-[var(--color-primary-light)]/25 text-[var(--color-primary)]"
+                          : "text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
+                      }`;
+
+                      return sub.href ? (
+                        <Link key={sub.id} href={sub.href} className={subClass}>
+                          {sub.label}
+                        </Link>
+                      ) : (
+                        <button key={sub.id} className={subClass}>
+                          {sub.label}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
