@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { requireHqUser } from "@/lib/supabase/hq-auth";
-import { saveManualGroupsWithChunks } from "@/lib/rag/save-manual-sections";
+import { saveManualGroupsWithChunks, type ManualItemInput } from "@/lib/rag/save-manual-sections";
 import type { ManualRecord } from "@/lib/types/manual";
 
 export const runtime = "nodejs";
@@ -28,19 +28,36 @@ function getString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function parseItems(items: unknown): string[] | null {
+// items는 문자열(본문만) 또는 { title?, content } 객체 배열을 받는다. 본문이 비어 있는 항목이 하나라도 있으면 거부한다.
+function parseItems(items: unknown): ManualItemInput[] | null {
   if (!Array.isArray(items) || items.length === 0) {
     return null;
   }
 
-  const parsed: string[] = [];
+  const parsed: ManualItemInput[] = [];
 
   for (const raw of items) {
-    const content = getString(raw);
-    if (!content) {
-      return null;
+    if (typeof raw === "string") {
+      const content = getString(raw);
+      if (!content) {
+        return null;
+      }
+      parsed.push(content);
+      continue;
     }
-    parsed.push(content);
+
+    if (raw && typeof raw === "object") {
+      const record = raw as { title?: unknown; content?: unknown };
+      const content = getString(record.content);
+      if (!content) {
+        return null;
+      }
+      const title = getString(record.title);
+      parsed.push(title ? { title: title.slice(0, 100), content } : content);
+      continue;
+    }
+
+    return null;
   }
 
   return parsed;

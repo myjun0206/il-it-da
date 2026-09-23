@@ -4,10 +4,22 @@ import { chunkManualText } from "@/lib/rag/chunk-manual";
 import type { HqAuthResult } from "@/lib/supabase/hq-auth";
 import type { ManualRecord } from "@/lib/types/manual";
 
+// 세부 항목은 기존처럼 문자열(본문만)이거나, 소제목이 있는 경우 { title, content } 객체로 받는다.
+// 소제목이 없으면 기존 규칙대로 자식 행의 title에 대주제명을 그대로 쓴다.
+export type ManualItemInput = string | { title?: string; content: string };
+
 export type ManualGroupInput = {
   topic: string;
-  items: string[];
+  items: ManualItemInput[];
 };
+
+function normalizeItem(item: ManualItemInput, topic: string): { title: string; content: string } {
+  if (typeof item === "string") {
+    return { title: topic, content: item || "내용 없음" };
+  }
+  const title = item.title?.trim();
+  return { title: title || topic, content: item.content?.trim() || "내용 없음" };
+}
 
 const MANUAL_SELECT_COLUMNS =
   "id, brand_name, franchise_id, store_id, parent_manual_id, title, category, content, status, created_at, updated_at";
@@ -47,7 +59,8 @@ async function syncChunksForManuals(supabase: SupabaseClient, manuals: ManualRec
 
 /**
  * 주제 1개 = 부모 카드 1개, 세부 내용 N개 = parent_manual_id로 연결된 자식 행 N개.
- * 부모/자식 모두 title과 category를 같은 대주제명으로 맞추고, 지침 문장(번호 포함)은 오직 content에만 담는다.
+ * category는 부모/자식 모두 대주제명으로 맞춘다. 자식 title은 소제목이 있으면 소제목, 없으면 대주제명을 쓰고,
+ * 지침 문장(번호 포함)은 오직 content에만 담는다.
  * 여러 그룹을 한 번에 저장할 수 있어 파일 업로드(대주제별로 여러 그룹)와
  * 단건 작성(그룹 1개)을 같은 함수로 처리한다. 청크 동기화 실패는 저장 자체를 막지 않는다.
  */
@@ -91,17 +104,20 @@ export async function saveManualGroupsWithChunks(
     const { data: childrenData, error: childrenError } = await supabase
       .from("manuals")
       .insert(
-        items.map((content) => ({
-          brand_name: hqUser.brandName,
-          franchise_id: hqUser.franchiseId,
-          store_id: storeId ?? null,
-          scope_type: scopeType,
-          parent_manual_id: parent.id,
-          title: topic,
-          category: topic,
-          content: content || "내용 없음",
-          status: "approved",
-        })),
+        items.map((item) => {
+          const { title, content } = normalizeItem(item, topic);
+          return {
+            brand_name: hqUser.brandName,
+            franchise_id: hqUser.franchiseId,
+            store_id: storeId ?? null,
+            scope_type: scopeType,
+            parent_manual_id: parent.id,
+            title,
+            category: topic,
+            content,
+            status: "approved",
+          };
+        }),
       )
       .select(MANUAL_SELECT_COLUMNS);
 
