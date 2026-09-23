@@ -32,6 +32,9 @@ function clearSignupSessionStorage() {
   sessionStorage.removeItem("signupStoreApprovals");
   sessionStorage.removeItem("signupApprovalStatus");
   sessionStorage.removeItem("signupApprovalSubmittedAt");
+  sessionStorage.removeItem("signupPassword");
+  sessionStorage.removeItem("signupAuthAttemptEmail");
+  sessionStorage.removeItem("signupAuthAttemptAt");
   sessionStorage.removeItem("signupVerified");
 }
 

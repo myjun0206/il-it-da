@@ -81,6 +81,16 @@ export async function POST(request: Request): Promise<NextResponse<SendVerificat
       throw error;
     }
 
+    if (isDevelopmentEnvironment()) {
+      console.log("🔗 [DEV] Email Auth Link / Token:", {
+        email,
+        verificationCode: code,
+        expiresAt,
+        inbucketUrl: "http://localhost:54324",
+        note: "로컬 Supabase Inbucket을 사용하는 경우 위 URL에서 수신 메일과 인증 링크를 확인할 수 있습니다.",
+      });
+    }
+
     return NextResponse.json({ sent: true, expiresAt }, { status: 200 });
   } catch (error) {
     logSafeAuthError("SEND_VERIFICATION_FAILED", error);

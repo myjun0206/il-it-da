@@ -2,7 +2,6 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireHqUser } from "@/lib/supabase/hq-auth";
-import { createClient } from "@/lib/supabase/server";
 import { createNotification } from "@/lib/notifications";
 
 export const runtime = "nodejs";
@@ -27,7 +26,10 @@ type StoreMembership = {
   rejected_at: string | null;
   rejected_by: string | null;
   user_name?: string;
+  user_email?: string | null;
   store_name?: string;
+  has_owner_conflict?: boolean;
+  existing_owner_names?: string[];
 };
 
 type ApprovalItem = {
@@ -54,6 +56,35 @@ function forbiddenResponse() {
     { success: false, error: "Forbidden: User is not HQ" },
     { status: 403 },
   );
+}
+
+async function syncProfileApprovalStatus(adminClient: ReturnType<typeof createAdminClient>, userId: string): Promise<void> {
+  const { data: memberships, error } = await adminClient
+    .from("store_memberships")
+    .select("status, approved_at, approved_by")
+    .eq("user_id", userId);
+
+  if (error) {
+    throw error;
+  }
+
+  const hasApproved = (memberships ?? []).some((membership) => membership.status === "approved");
+  const hasPending = (memberships ?? []).some((membership) => membership.status === "pending");
+  const firstApproved = (memberships ?? []).find((membership) => membership.status === "approved");
+  const approvalStatus = hasApproved ? "approved" : hasPending ? "pending" : "rejected";
+
+  const { error: profileUpdateError } = await adminClient
+    .from("profiles")
+    .update({
+      approval_status: approvalStatus,
+      approved_at: approvalStatus === "approved" ? firstApproved?.approved_at ?? new Date().toISOString() : null,
+      approved_by: approvalStatus === "approved" ? firstApproved?.approved_by ?? null : null,
+    })
+    .eq("id", userId);
+
+  if (profileUpdateError) {
+    throw profileUpdateError;
+  }
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -92,10 +123,23 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const userIds = [...new Set(memberships.map((membership) => membership.user_id))];
   const storeIds = [...new Set(memberships.map((membership) => membership.store_id))];
+  const { data: ownerMemberships, error: ownerMembershipError } = await adminClient
+    .from("store_memberships")
+    .select("user_id, store_id")
+    .in("store_id", storeIds)
+    .eq("role", "owner")
+    .eq("status", "approved");
+
+  if (ownerMembershipError) {
+    return NextResponse.json({ success: false, error: "Failed to fetch approvals" }, { status: 500 });
+  }
+
+  const ownerUserIds = [...new Set((ownerMemberships ?? []).map((membership) => membership.user_id))];
+  const profileUserIds = [...new Set([...userIds, ...ownerUserIds])];
   const { data: profiles, error: profileError } = await adminClient
     .from("profiles")
-    .select("id, full_name")
-    .in("id", userIds);
+    .select("id, full_name, email")
+    .in("id", profileUserIds);
   const { data: stores, error: storeError } = await adminClient
     .from("stores")
     .select("id, store_name")
@@ -106,13 +150,27 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   const namesByUserId = new Map((profiles ?? []).map((profile) => [profile.id, profile.full_name]));
+  const emailsByUserId = new Map((profiles ?? []).map((profile) => [profile.id, profile.email]));
   const namesByStoreId = new Map((stores ?? []).map((store) => [store.id, store.store_name]));
   const data: ApprovalItem[] = memberships.map((membership) => ({
-    membership: {
-      ...membership,
-      user_name: namesByUserId.get(membership.user_id) || "Unknown User",
-      store_name: namesByStoreId.get(membership.store_id) || "Unknown Store",
-    },
+    membership: (() => {
+      const existingOwners = (ownerMemberships ?? []).filter(
+        (ownerMembership) =>
+          ownerMembership.store_id === membership.store_id &&
+          ownerMembership.user_id !== membership.user_id,
+      );
+
+      return {
+        ...membership,
+        user_name: namesByUserId.get(membership.user_id) || "Unknown User",
+        user_email: emailsByUserId.get(membership.user_id) || null,
+        store_name: namesByStoreId.get(membership.store_id) || "Unknown Store",
+        has_owner_conflict: membership.role === "owner" && existingOwners.length > 0,
+        existing_owner_names: existingOwners.map(
+          (ownerMembership) => namesByUserId.get(ownerMembership.user_id) || "Unknown Owner",
+        ),
+      };
+    })(),
   }));
 
   return NextResponse.json({ success: true, data });
@@ -158,9 +216,13 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
   if (membership.role !== "owner" && membership.role !== "staff") {
     return forbiddenResponse();
   }
-  if (membership.status !== "pending") {
+  const allowedCurrentStatuses = body.action === "approve"
+    ? ["pending", "rejected"]
+    : ["pending", "approved"];
+
+  if (!allowedCurrentStatuses.includes(membership.status)) {
     return NextResponse.json(
-      { success: false, error: "Only pending memberships can be updated" },
+      { success: false, error: "This membership cannot be updated with the requested action" },
       { status: 400 },
     );
   }
@@ -190,7 +252,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     .update(update)
     .eq("id", membership.id)
     .eq("franchise_id", hqUser.franchiseId)
-    .eq("status", "pending")
+    .in("status", allowedCurrentStatuses)
     .select()
     .maybeSingle();
 
@@ -204,13 +266,23 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
 
   if (!updated) {
     return NextResponse.json(
-      { success: false, error: "Only pending memberships can be updated" },
+      { success: false, error: "This membership cannot be updated with the requested action" },
       { status: 400 },
     );
   }
 
-  // Generate notification for approval decision (async)
   const action = body.action;
+  try {
+    await syncProfileApprovalStatus(adminClient, updated.user_id);
+  } catch (profileUpdateError) {
+    console.error("Failed to sync profile approval status:", profileUpdateError);
+    return NextResponse.json(
+      { success: false, error: "Failed to sync profile approval status" },
+      { status: 500 },
+    );
+  }
+
+  // Generate notification for approval decision (async)
   const title = action === "approve" ? "점주 가입이 승인되었습니다." : "점주 가입이 거절되었습니다.";
   const message = action === "approve"
     ? "축하합니다! 점주 가입 신청이 승인되었습니다."

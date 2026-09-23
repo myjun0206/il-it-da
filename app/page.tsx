@@ -48,6 +48,8 @@ function LoginPageContent() {
           // Redirect based on role
           if (role === "hq") {
             router.push("/hq");
+          } else if (profile.approvalStatus !== "approved") {
+            router.push("/signup/approval-status");
           } else if (role === "owner") {
             router.push("/boss");
           } else if (role === "staff") {
@@ -85,7 +87,15 @@ function LoginPageContent() {
         body: JSON.stringify({ email, password }),
       });
 
-      const result: { user?: { id: string; email: string; role: string }; error?: string } =
+      const result: {
+        user?: {
+          id: string;
+          email: string;
+          role: string;
+          approvalStatus?: "pending" | "approved" | "rejected";
+        };
+        error?: string;
+      } =
         await response.json();
 
       if (!response.ok || !result.user) {
@@ -100,6 +110,8 @@ function LoginPageContent() {
       // Role-based redirect
       if (result.user.role === "hq") {
         router.push("/hq");
+      } else if (result.user.approvalStatus !== "approved") {
+        router.push("/signup/approval-status");
       } else if (result.user.role === "owner") {
         router.push("/boss");
       } else if (result.user.role === "staff") {
@@ -300,6 +312,16 @@ function LoginPageContent() {
                 </Link>
               </div>
 
+              <Button
+                type="button"
+                variant="outline"
+                size="md"
+                onClick={() => router.push("/signup/approval-status")}
+                className="w-full border-[var(--color-primary)] text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/20"
+              >
+                승인 확인하기
+              </Button>
+
               <div className="flex items-center gap-3 my-6">
                 <div className="flex-1 border-t border-[var(--color-border)]"></div>
                 <span className="text-sm text-[var(--color-text-tertiary)] whitespace-nowrap">
@@ -499,6 +521,16 @@ function LoginPageContent() {
                 </Link>
               </div>
 
+              <Button
+                type="button"
+                variant="outline"
+                size="md"
+                onClick={() => router.push("/signup/approval-status")}
+                className="w-full border-[var(--color-primary)] text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/20"
+              >
+                승인 확인하기
+              </Button>
+
               <div className="relative my-4">
                 <div className="absolute inset-0 flex items-center">
                   <div className="w-full border-t border-[var(--color-border)]"></div>
@@ -614,6 +646,7 @@ function LoginPageContent() {
           </div>
         </div>
       </div>
+
     </div>
   );
 }

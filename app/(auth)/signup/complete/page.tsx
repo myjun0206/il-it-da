@@ -53,6 +53,9 @@ export default function SignupCompletePage() {
     sessionStorage.removeItem("signupSelectedStores");
     sessionStorage.removeItem("signupApprovalStatus");
     sessionStorage.removeItem("signupApprovalSubmittedAt");
+    sessionStorage.removeItem("signupPassword");
+    sessionStorage.removeItem("signupAuthAttemptEmail");
+    sessionStorage.removeItem("signupAuthAttemptAt");
     
     // 로그인 페이지로 이동
     router.push("/");

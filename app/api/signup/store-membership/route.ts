@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { createNotification } from "@/lib/notifications";
@@ -31,7 +30,7 @@ interface MembershipWithStore {
   requestedAt?: string;
 }
 
-export async function GET(request: NextRequest): Promise<NextResponse> {
+export async function GET(): Promise<NextResponse> {
   try {
     // 현재 인증된 사용자 확보
     const serverClient = await createClient();
@@ -126,7 +125,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 }
 
-export async function POST(request: NextRequest): Promise<NextResponse<CreateMembershipResponse>> {
+export async function POST(request: Request): Promise<NextResponse<CreateMembershipResponse>> {
   try {
     // 요청 본문 파싱
     const body = (await request.json()) as unknown;
@@ -162,9 +161,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
     const adminClient = createAdminClient();
     const { data: authorizedProfile, error: authorizedProfileError } = await adminClient
       .from("profiles")
-      .select("role")
+      .select("role, approval_status")
       .eq("id", userId)
-      .maybeSingle<{ role: string }>();
+      .maybeSingle<{ role: string; approval_status: string | null }>();
 
     if (authorizedProfileError) {
       return NextResponse.json(
@@ -194,13 +193,18 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
 
       // auth user metadata에서 name 가져오기 (fallback: email)
       const userName = user.user_metadata?.name || user.email || "Unknown User";
+      const userEmail = user.email?.trim().toLowerCase() || null;
+      const userPhone = typeof user.user_metadata?.phone === "string" ? user.user_metadata.phone : null;
 
       const { error: profileError } = await adminClient
         .from("profiles")
         .insert({
           id: userId,
+          email: userEmail,
           role: profileRole,
           full_name: userName,
+          phone: userPhone,
+          approval_status: "pending",
         });
 
       // 중복 PK 에러: 기존 profile이 있음
@@ -208,27 +212,34 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
         // 기존 profile 조회
         const { data: existingProfile, error: fetchError } = await adminClient
           .from("profiles")
-          .select("full_name")
+          .select("email, full_name, phone, approval_status, brand_id")
           .eq("id", userId)
           .single();
 
-        if (!fetchError && existingProfile && !existingProfile.full_name) {
-          // full_name이 NULL이면 업데이트
-          const { error: updateError } = await adminClient
-            .from("profiles")
-            .update({ full_name: userName })
-            .eq("id", userId);
+        if (!fetchError && existingProfile) {
+          const profileUpdates: Record<string, unknown> = {};
+          if (userEmail && existingProfile.email !== userEmail) profileUpdates.email = userEmail;
+          if (!existingProfile.full_name) profileUpdates.full_name = userName;
+          if (userPhone && !existingProfile.phone) profileUpdates.phone = userPhone;
+          if (!existingProfile.approval_status) profileUpdates.approval_status = "pending";
 
-          if (updateError) {
-            logSafeAuthError("STORE_MEMBERSHIP_PROFILE_UPDATE_FAILED", updateError);
-            return NextResponse.json(
-              {
-                success: false,
-                error: "Failed to update profile",
-                details: updateError.message,
-              },
-              { status: 500 }
-            );
+          if (Object.keys(profileUpdates).length > 0) {
+            const { error: updateError } = await adminClient
+              .from("profiles")
+              .update(profileUpdates)
+              .eq("id", userId);
+
+            if (updateError) {
+              logSafeAuthError("STORE_MEMBERSHIP_PROFILE_UPDATE_FAILED", updateError);
+              return NextResponse.json(
+                {
+                  success: false,
+                  error: "Failed to update profile",
+                  details: updateError.message,
+                },
+                { status: 500 }
+              );
+            }
           }
         }
         // full_name이 이미 있으면 그냥 스킵 (기존 값 유지)
@@ -252,6 +263,25 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
       );
     }
 
+    let requestedFranchiseId: string | null = null;
+    if (franchiseId) {
+      const { data: chosenFranchise, error: chosenFranchiseError } = await adminClient
+        .from("franchises")
+        .select("id")
+        .eq("id", franchiseId)
+        .maybeSingle<{ id: string }>();
+
+      if (chosenFranchiseError || !chosenFranchise) {
+        return NextResponse.json(
+          { success: false, error: "Invalid franchiseId" },
+          { status: 400 },
+        );
+      }
+      requestedFranchiseId = chosenFranchise.id;
+    } else if (storeName) {
+      requestedFranchiseId = await resolveFranchiseIdForStoreName(adminClient, storeName);
+    }
+
     // 2. stores row 생성/조회
     let finalStoreId: string | null = null;
     // 매장이 속한 브랜드(franchise_id). 기존 매장이면 DB에 저장된 값을 그대로 쓰고,
@@ -259,12 +289,16 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
     let finalFranchiseId: string | null = null;
 
     if (storeId || storeName) {
-      // 기존 stores에서 조회 (storeName으로 찾기)
-      const { data: existingStore, error: storeError } = await adminClient
+      // 기존 stores에서 조회 (storeName + franchise_id로 찾기)
+      let existingStoreQuery = adminClient
         .from("stores")
         .select("id, franchise_id")
-        .eq("store_name", storeName)
-        .single();
+        .eq("store_name", storeName);
+      existingStoreQuery = requestedFranchiseId
+        ? existingStoreQuery.eq("franchise_id", requestedFranchiseId)
+        : existingStoreQuery.is("franchise_id", null);
+
+      const { data: existingStore, error: storeError } = await existingStoreQuery.single();
 
       if (storeError && storeError.code !== "PGRST116") {
         logSafeAuthError("STORE_MEMBERSHIP_STORE_LOOKUP_FAILED", storeError);
@@ -302,17 +336,19 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
       } else {
         // 기존 store 없음
         if (role === "owner") {
-          // Owner: 새로운 store 생성
-          // 매장명으로 소속 브랜드를 자동 인식한다 (예: "버거킹 종로구청점" -> 버거킹).
-          const autoDetectedFranchiseId = await resolveFranchiseIdForStoreName(adminClient, storeName!);
+          // Owner: 새로운 store 생성 (franchise_id는 위에서 이미 resolveFranchiseIdForStoreName으로 계산된 requestedFranchiseId 재사용)
 
           // UPSERT를 사용하거나 먼저 다시 조회 (race condition 방지)
           // 방법: 먼저 다시 확인
-          const { data: doubleCheckStore, error: doubleCheckError } = await adminClient
+          let doubleCheckStoreQuery = adminClient
             .from("stores")
             .select("id, franchise_id")
-            .eq("store_name", storeName)
-            .single();
+            .eq("store_name", storeName);
+          doubleCheckStoreQuery = requestedFranchiseId
+            ? doubleCheckStoreQuery.eq("franchise_id", requestedFranchiseId)
+            : doubleCheckStoreQuery.is("franchise_id", null);
+
+          const { data: doubleCheckStore, error: doubleCheckError } = await doubleCheckStoreQuery.single();
 
           if (doubleCheckError && doubleCheckError.code === "PGRST116") {
             // 정말 없음 - INSERT
@@ -320,7 +356,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
               .from("stores")
               .insert({
                 store_name: storeName,
-                franchise_id: autoDetectedFranchiseId,
+                franchise_id: requestedFranchiseId,
                 // id, created_at은 defaults로 자동 생성
                 // boss_id는 선택사항 (NULL 허용)
               })
@@ -332,11 +368,15 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
 
               // 동시성으로 다른 요청이 생성했을 수 있음
               // 한 번 더 조회
-              const { data: retryStore, error: retryError } = await adminClient
+              let retryStoreQuery = adminClient
                 .from("stores")
                 .select("id, franchise_id")
-                .eq("store_name", storeName)
-                .single();
+                .eq("store_name", storeName);
+              retryStoreQuery = requestedFranchiseId
+                ? retryStoreQuery.eq("franchise_id", requestedFranchiseId)
+                : retryStoreQuery.is("franchise_id", null);
+
+              const { data: retryStore, error: retryError } = await retryStoreQuery.single();
 
               if (retryError && retryError.code === "PGRST116") {
                 // 정말 생성 실패
@@ -396,19 +436,16 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
       );
     }
 
-    // 승인 화면 브랜드 드롭다운에서 사용자가 직접 고른 franchiseId가 있으면, 실존하는 프랜차이즈인지
-    // 검증한 뒤 이 요청의 franchise_id로 우선 사용한다(자동 인식이 틀렸을 때의 수동 보정 용도).
-    let finalMembershipFranchiseId = finalFranchiseId;
-    if (franchiseId) {
-      const { data: chosenFranchise } = await adminClient
-        .from("franchises")
-        .select("id")
-        .eq("id", franchiseId)
-        .maybeSingle();
+    const finalMembershipFranchiseId = requestedFranchiseId ?? finalFranchiseId;
 
-      if (chosenFranchise) {
-        finalMembershipFranchiseId = chosenFranchise.id;
-      }
+    if (finalMembershipFranchiseId) {
+      await adminClient
+        .from("profiles")
+        .update({
+          brand_id: finalMembershipFranchiseId,
+          approval_status: authorizedProfile?.approval_status === "approved" ? "approved" : "pending",
+        })
+        .eq("id", userId);
     }
 
     // 3. store_memberships row 생성 (중복 확인)

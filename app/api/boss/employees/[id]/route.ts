@@ -16,6 +16,35 @@ interface UpdateMembershipResponse {
   error?: string;
 }
 
+async function syncProfileApprovalStatus(adminClient: ReturnType<typeof createAdminClient>, userId: string): Promise<void> {
+  const { data: memberships, error } = await adminClient
+    .from("store_memberships")
+    .select("status, approved_at, approved_by")
+    .eq("user_id", userId);
+
+  if (error) {
+    throw error;
+  }
+
+  const hasApproved = (memberships ?? []).some((membership) => membership.status === "approved");
+  const hasPending = (memberships ?? []).some((membership) => membership.status === "pending");
+  const firstApproved = (memberships ?? []).find((membership) => membership.status === "approved");
+  const approvalStatus = hasApproved ? "approved" : hasPending ? "pending" : "rejected";
+
+  const { error: profileUpdateError } = await adminClient
+    .from("profiles")
+    .update({
+      approval_status: approvalStatus,
+      approved_at: approvalStatus === "approved" ? firstApproved?.approved_at ?? new Date().toISOString() : null,
+      approved_by: approvalStatus === "approved" ? firstApproved?.approved_by ?? null : null,
+    })
+    .eq("id", userId);
+
+  if (profileUpdateError) {
+    throw profileUpdateError;
+  }
+}
+
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -125,6 +154,16 @@ export async function PUT(
       console.error("[PUT /api/boss/employees/[id]] Update error:", updateError);
       return NextResponse.json(
         { success: false, error: "상태 변경 중 오류가 발생했습니다." },
+        { status: 500 }
+      );
+    }
+
+    try {
+      await syncProfileApprovalStatus(adminClient, membership.user_id);
+    } catch (profileUpdateError) {
+      console.error("[PUT /api/boss/employees/[id]] Profile approval sync error:", profileUpdateError);
+      return NextResponse.json(
+        { success: false, error: "프로필 승인 상태 변경 중 오류가 발생했습니다." },
         { status: 500 }
       );
     }

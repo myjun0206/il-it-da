@@ -42,17 +42,42 @@ export async function POST(request: Request): Promise<NextResponse<CheckEmailRes
 
   try {
     const supabase = createAdminClient();
-    const { data, error } = await supabase
+    const { data: rpcResult, error: rpcError } = await supabase.rpc("email_exists_for_signup", {
+      check_email: email,
+    });
+
+    if (!rpcError && typeof rpcResult === "boolean") {
+      return NextResponse.json({ available: !rpcResult }, { status: 200 });
+    }
+
+    const { data: profile, error: profileError } = await supabase
       .from("profiles")
       .select("id")
       .eq("email", email)
       .maybeSingle();
 
-    if (error) {
-      throw error;
+    if (profileError) {
+      throw profileError;
     }
 
-    return NextResponse.json({ available: !data }, { status: 200 });
+    if (profile) {
+      return NextResponse.json({ available: false }, { status: 200 });
+    }
+
+    const { data: usersPage, error: usersError } = await supabase.auth.admin.listUsers({
+      page: 1,
+      perPage: 1000,
+    });
+
+    if (usersError) {
+      throw usersError;
+    }
+
+    const existsInAuth = usersPage.users.some(
+      (user) => user.email?.trim().toLowerCase() === email,
+    );
+
+    return NextResponse.json({ available: !existsInAuth }, { status: 200 });
   } catch (error) {
     console.error("[AUTH] Check email failed:", error);
     return NextResponse.json({ error: "Unable to check email." }, { status: 500 });

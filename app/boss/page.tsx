@@ -52,11 +52,15 @@ export default function OwnerDashboardPage() {
 
         const { data: profile } = await supabase
           .from("profiles")
-          .select("role")
+          .select("role, approval_status")
           .eq("id", data.user.id)
-          .maybeSingle<{ role: string }>();
+          .maybeSingle<{ role: string; approval_status: string | null }>();
         if (profile?.role !== "owner") {
           router.push("/");
+          return;
+        }
+        if (profile.approval_status !== "approved") {
+          router.push("/signup/approval-status");
           return;
         }
 
