@@ -179,7 +179,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<CreateMem
     }
 
     const hasSocialIdentity = user.identities?.some(
-      (identity) => identity.provider === "google" || identity.provider === "kakao",
+      (identity) => identity.provider === "google" || identity.provider === "kakao" || identity.provider === "apple" || identity.provider === "custom:naver",
     );
     const isEmailSignup = user.app_metadata?.provider === "email" && !hasSocialIdentity;
     const canCreateInitialEmailProfile =

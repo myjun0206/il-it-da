@@ -253,10 +253,10 @@ export default function SignupApprovalPage() {
       const profilePassword = profile.password;
 
       const isOAuthUser = currentUser?.identities?.some(
-        (identity) => identity.provider === "google" || identity.provider === "kakao",
-      ) || currentUser?.app_metadata?.provider === "google" || currentUser?.app_metadata?.provider === "kakao";
+        (identity) => identity.provider === "google" || identity.provider === "kakao" || identity.provider === "apple" || identity.provider === "custom:naver",
+      ) || currentUser?.app_metadata?.provider === "google" || currentUser?.app_metadata?.provider === "kakao" || currentUser?.app_metadata?.provider === "apple" || currentUser?.app_metadata?.provider === "custom:naver";
 
-      if (currentUser && currentUser.email === profileEmail && isOAuthUser) {
+      if (currentUser && isOAuthUser) {
         return true;
       }
 

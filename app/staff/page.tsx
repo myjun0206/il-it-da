@@ -6,7 +6,6 @@ import { AlertCircle, Bot, CheckCircle2, ChevronRight, Clock3, Info, Paperclip, 
 
 import StaffHeader from "@/components/staff/StaffHeader";
 import StaffSidebar from "@/components/staff/StaffSidebar";
-import { DEMO_STORES, findDemoStore, type DemoStore } from "@/lib/data/demoStores";
 import type { RagSource, RagStatus } from "@/lib/rag/types";
 import { createClient } from "@/lib/supabase/client";
 
@@ -17,6 +16,18 @@ type Message = {
   status?: RagStatus;
   source?: Partial<Pick<RagSource, "title" | "category">>;
   similarity?: number;
+};
+
+type StaffStore = {
+  id: string;
+  name: string;
+};
+
+type StoreMembership = {
+  storeId: string;
+  storeName: string;
+  role: string;
+  status: string;
 };
 
 const statusBadgeConfig = {
@@ -33,7 +44,7 @@ const quickQuestions = [
   "매장 청소 체크리스트 보여줘",
   "신규 알바가 꼭 알아야 할 내용은?",
 ];
-const SELECTED_STORE_STORAGE_KEY = "staffDemoStoreId";
+const SELECTED_STORE_STORAGE_KEY = "staffSelectedStoreId";
 const INITIAL_MESSAGES: Message[] = [
   { from: "ai", text: "안녕하세요!\n일잇다 AI입니다.\n매장 업무와 관련된 궁금한 점이 있다면 언제든 물어보세요.\n매뉴얼을 기반으로 정확하고 친절하게 답변해드릴게요.", time: "오후 1:58" },
   { from: "ai", text: "아래 예시 질문을 참고하거나,\n직접 궁금한 내용을 입력해보세요.", time: "오후 1:58" },
@@ -62,32 +73,56 @@ export default function StaffPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [userName, setUserName] = useState("직원");
   const [storeName, setStoreName] = useState("매장");
-  const [selectedStore, setSelectedStore] = useState<DemoStore | null>(null);
+  const [availableStores, setAvailableStores] = useState<StaffStore[]>([]);
+  const [selectedStore, setSelectedStore] = useState<StaffStore | null>(null);
 
   useEffect(() => {
-    // PoC demo selection only. Real authorization must resolve the user's permitted store server-side.
-    const storedStoreId = sessionStorage.getItem(SELECTED_STORE_STORAGE_KEY);
-    if (!storedStoreId) return;
+    const loadApprovedStores = async () => {
+      try {
+        const response = await fetch("/api/signup/store-membership");
+        const result = (await response.json()) as {
+          success?: boolean;
+          data?: StoreMembership[];
+        };
 
-    const storedStore = findDemoStore(storedStoreId);
-    if (!storedStore) {
-      sessionStorage.removeItem(SELECTED_STORE_STORAGE_KEY);
-      return;
-    }
+        if (!response.ok || !result.success || !Array.isArray(result.data)) {
+          throw new Error("Unable to load store memberships.");
+        }
 
-    startTransition(() => setSelectedStore(storedStore));
+        const stores = result.data
+          .filter((membership) => membership.role === "staff" && membership.status === "approved")
+          .map((membership) => ({ id: membership.storeId, name: membership.storeName }));
+        const storedStoreId = sessionStorage.getItem(SELECTED_STORE_STORAGE_KEY);
+        const restoredStore = stores.find((store) => store.id === storedStoreId) ?? null;
+
+        if (!restoredStore) {
+          sessionStorage.removeItem(SELECTED_STORE_STORAGE_KEY);
+        }
+
+        startTransition(() => {
+          setAvailableStores(stores);
+          setSelectedStore(restoredStore);
+          setStoreName(restoredStore?.name ?? "매장");
+        });
+      } catch {
+        setErrorMessage("승인된 근무 매장을 불러오지 못했습니다.");
+      }
+    };
+
+    void loadApprovedStores();
   }, []);
 
   function selectStore(storeId: string) {
     if (isLoading) return;
 
-    const store = findDemoStore(storeId) ?? null;
+    const store = availableStores.find((availableStore) => availableStore.id === storeId) ?? null;
     if (selectedStore?.id !== store?.id) {
       setMessages(INITIAL_MESSAGES);
       setInput("");
       setErrorMessage("");
     }
     setSelectedStore(store);
+    setStoreName(store?.name ?? "매장");
 
     if (store) {
       sessionStorage.setItem(SELECTED_STORE_STORAGE_KEY, store.id);
@@ -267,8 +302,10 @@ export default function StaffPage() {
                   onChange={(event) => selectStore(event.target.value)}
                   className="mt-0.5 w-full bg-transparent text-sm font-semibold text-[var(--color-text-primary)] outline-none disabled:cursor-not-allowed disabled:opacity-70"
                 >
-                  <option value="">매장을 선택해 주세요</option>
-                  {DEMO_STORES.map((store) => (
+                  <option value="">
+                    {availableStores.length > 0 ? "매장을 선택해 주세요" : "승인된 근무 매장이 없습니다"}
+                  </option>
+                  {availableStores.map((store) => (
                     <option key={store.id} value={store.id}>{store.name}</option>
                   ))}
                 </select>

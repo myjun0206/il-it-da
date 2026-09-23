@@ -9,7 +9,7 @@ import { Input, PasswordInput } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
 import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 
-type OAuthProvider = "google" | "kakao";
+type OAuthProvider = "google" | "kakao" | "apple" | "custom:naver";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -297,7 +297,7 @@ export default function LoginPage() {
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
-                    console.log("Naver login");
+                    void handleOAuthLogin("custom:naver");
                   }}
                   className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
                   style={{ width: "52px", height: "52px" }}
@@ -367,7 +367,7 @@ export default function LoginPage() {
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
-                    console.log("Apple login");
+                    void handleOAuthLogin("apple");
                   }}
                   className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
                   style={{ width: "52px", height: "52px" }}
@@ -494,7 +494,7 @@ export default function LoginPage() {
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
-                    console.log("Naver login");
+                    void handleOAuthLogin("custom:naver");
                   }}
                   className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
                   style={{ width: "52px", height: "52px" }}
@@ -564,7 +564,7 @@ export default function LoginPage() {
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
-                    console.log("Apple login");
+                    void handleOAuthLogin("apple");
                   }}
                   className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
                   style={{ width: "52px", height: "52px" }}

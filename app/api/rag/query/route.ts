@@ -3,6 +3,7 @@
 import { buildAnswerPromptMessages, buildManualContext } from "@/lib/rag/answer-prompt";
 import { searchManualChunks } from "@/lib/rag/search-manual-chunks";
 import { validateQueryRequest } from "@/lib/rag/validate-query-request";
+import { createClient } from "@/lib/supabase/server";
 import type {
   ManualChunkMatch,
   RagQueryResponse,
@@ -70,6 +71,44 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
     return NextResponse.json({ error: validation.error }, { status: validation.status });
   }
   const { question, storeId } = validation.data;
+
+  const supabase = await createClient();
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+
+  if (userError || !userData.user) {
+    return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
+  }
+
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", userData.user.id)
+    .maybeSingle<{ role: string }>();
+
+  if (profileError) {
+    return NextResponse.json({ error: "사용자 권한을 확인하지 못했습니다." }, { status: 500 });
+  }
+
+  if (profile?.role !== "staff") {
+    return NextResponse.json({ error: "직원만 이용할 수 있습니다." }, { status: 403 });
+  }
+
+  const { data: membership, error: membershipError } = await supabase
+    .from("store_memberships")
+    .select("id")
+    .eq("user_id", userData.user.id)
+    .eq("store_id", storeId)
+    .eq("role", "staff")
+    .eq("status", "approved")
+    .maybeSingle<{ id: string }>();
+
+  if (membershipError) {
+    return NextResponse.json({ error: "매장 접근 권한을 확인하지 못했습니다." }, { status: 500 });
+  }
+
+  if (!membership) {
+    return NextResponse.json({ error: "승인된 근무 매장만 조회할 수 있습니다." }, { status: 403 });
+  }
 
   try {
     const searchResults = await searchManualChunks(question, storeId); // Supabase Pgvector 기반 매뉴얼 청크 검색

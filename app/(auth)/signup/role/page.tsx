@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Building2, Store, UserRound, Check, ChevronLeft } from "lucide-react";
 import { Button } from "@/components/common/Button";
+import { createClient } from "@/lib/supabase/client";
 
 type Role = "hq" | "owner" | "staff";
 
@@ -43,6 +44,32 @@ const roles: RoleCard[] = [
 export default function SignupRolePage() {
   const router = useRouter();
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
+  const [isOAuthSignup, setIsOAuthSignup] = useState(false);
+  const [isAuthChecked, setIsAuthChecked] = useState(false);
+
+  useEffect(() => {
+    const checkOAuthUser = async () => {
+      try {
+        const supabase = createClient();
+        const { data } = await supabase.auth.getUser();
+        const user = data.user;
+        const hasOAuthIdentity = user?.identities?.some(
+          (identity) => identity.provider === "google" || identity.provider === "kakao" || identity.provider === "apple" || identity.provider === "custom:naver",
+        );
+        const primaryProvider = user?.app_metadata?.provider;
+
+        setIsOAuthSignup(Boolean(
+          hasOAuthIdentity || primaryProvider === "google" || primaryProvider === "kakao" || primaryProvider === "apple" || primaryProvider === "custom:naver",
+        ));
+      } finally {
+        setIsAuthChecked(true);
+      }
+    };
+
+    void checkOAuthUser();
+  }, []);
+
+  const availableRoles = isOAuthSignup ? roles.filter((role) => role.id !== "hq") : roles;
 
   const handleNext = () => {
     if (selectedRole) {
@@ -116,8 +143,8 @@ export default function SignupRolePage() {
           </div>
 
           {/* Role Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 lg:gap-8 mb-12 lg:mb-16">
-            {roles.map((role) => {
+          <div className={`grid grid-cols-1 ${isOAuthSignup ? "md:grid-cols-2" : "md:grid-cols-3"} gap-6 lg:gap-8 mb-12 lg:mb-16`}>
+            {isAuthChecked && availableRoles.map((role) => {
               const isSelected = selectedRole === role.id;
               const IconComponent = role.icon;
 

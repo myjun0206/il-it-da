@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useLayoutEffect, useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronRight } from "lucide-react";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
+import { createClient } from "@/lib/supabase/client";
 
 const communicationMockData = {
   notices: [
@@ -34,19 +35,7 @@ export default function CommunicationPage() {
   const [userName, setUserName] = useState("본사 관리자");
   const [franchiseName, setFranchiseName] = useState("프랜차이즈");
 
-  useLayoutEffect(() => {
-    // 로그인 상태 확인
-    const loggedInRole = sessionStorage.getItem("loggedInRole");
-    if (loggedInRole !== "hq") {
-      router.push("/");
-      return;
-    }
-  }, [router]);
-
   useEffect(() => {
-    const loggedInRole = sessionStorage.getItem("loggedInRole");
-    if (loggedInRole !== "hq") return;
-
     // 프랜차이즈 정보 가져오기
     const savedFranchiseName = sessionStorage.getItem("loggedInFranchiseName");
     if (savedFranchiseName) {
@@ -76,7 +65,9 @@ export default function CommunicationPage() {
     }
   }, []);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    const supabase = createClient();
+    await supabase.auth.signOut();
     sessionStorage.clear();
     router.push("/");
   };

@@ -10,7 +10,6 @@ type OAuthOnboardingBody = {
   role?: unknown;
   name?: unknown;
   phone?: unknown;
-  brandId?: unknown;
 };
 
 type OAuthOnboardingResponse = {
@@ -29,10 +28,10 @@ function getRole(value: unknown): UserRole | null {
 
 function isOAuthUser(user: { identities?: Array<{ provider?: string }> | null; app_metadata?: Record<string, unknown> }): boolean {
   const identityProvider = user.identities?.some(
-    (identity) => identity.provider === "google" || identity.provider === "kakao",
+    (identity) => identity.provider === "google" || identity.provider === "kakao" || identity.provider === "apple" || identity.provider === "custom:naver",
   );
   const primaryProvider = user.app_metadata?.provider;
-  return Boolean(identityProvider || primaryProvider === "google" || primaryProvider === "kakao");
+  return Boolean(identityProvider || primaryProvider === "google" || primaryProvider === "kakao" || primaryProvider === "apple" || primaryProvider === "custom:naver");
 }
 
 export async function POST(request: Request): Promise<NextResponse<OAuthOnboardingResponse>> {
@@ -47,14 +46,9 @@ export async function POST(request: Request): Promise<NextResponse<OAuthOnboardi
   const role = getRole(body.role);
   const name = getString(body.name);
   const phone = getString(body.phone);
-  const brandId = getString(body.brandId);
 
   if (!role || !name || !phone) {
     return NextResponse.json({ error: "role, name, and phone are required." }, { status: 400 });
-  }
-
-  if (role === "hq" && !brandId) {
-    return NextResponse.json({ error: "HQ users must select a franchise." }, { status: 400 });
   }
 
   const sessionClient = await createClient();
@@ -69,8 +63,11 @@ export async function POST(request: Request): Promise<NextResponse<OAuthOnboardi
     return NextResponse.json({ error: "OAuth 사용자만 이용할 수 있습니다." }, { status: 403 });
   }
 
-  if (!user.email) {
-    return NextResponse.json({ error: "SNS 계정에서 이메일 정보를 제공해야 합니다." }, { status: 400 });
+  if (role === "hq") {
+    return NextResponse.json(
+      { error: "본사 관리자는 이메일과 비밀번호로 가입해야 합니다." },
+      { status: 403 },
+    );
   }
 
   const adminClient = createAdminClient();
@@ -96,31 +93,14 @@ export async function POST(request: Request): Promise<NextResponse<OAuthOnboardi
     return NextResponse.json({ userId: user.id, role: existingProfile.role });
   }
 
-  if (role === "hq") {
-    const { data: franchise, error: franchiseError } = await adminClient
-      .from("franchises")
-      .select("id, domain")
-      .eq("id", brandId as string)
-      .maybeSingle<{ id: string; domain: string }>();
-
-    if (franchiseError || !franchise) {
-      return NextResponse.json({ error: "유효한 프랜차이즈를 확인하지 못했습니다." }, { status: 400 });
-    }
-
-    const emailDomain = user.email.split("@")[1]?.toLowerCase();
-    if (!emailDomain || emailDomain !== franchise.domain.trim().toLowerCase()) {
-      return NextResponse.json({ error: "회사 이메일과 프랜차이즈 정보가 일치하지 않습니다." }, { status: 403 });
-    }
-  }
-
   const { error: insertError } = await adminClient.from("profiles").insert({
     id: user.id,
-    email: user.email.trim().toLowerCase(),
+    email: user.email?.trim().toLowerCase() || null,
     full_name: name,
     role,
     phone,
-    company_email: role === "hq" ? user.email.trim().toLowerCase() : null,
-    brand_id: role === "hq" ? brandId : null,
+    company_email: null,
+    brand_id: null,
   });
 
   if (insertError) {
