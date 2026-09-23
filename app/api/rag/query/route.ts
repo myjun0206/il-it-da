@@ -75,6 +75,7 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
   const { question, storeId } = validation.data;
 
   const authorization = await authorizeRagStoreAccessForRequest(storeId);
+
   if (authorization.status === "UNAUTHENTICATED") {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }

@@ -65,10 +65,10 @@ function isOAuthUser(user: {
   app_metadata?: Record<string, unknown>;
 }): boolean {
   const identityProvider = user.identities?.some(
-    (identity) => identity.provider === "google" || identity.provider === "kakao",
+    (identity) => identity.provider === "google" || identity.provider === "kakao" || identity.provider === "apple" || identity.provider === "custom:naver",
   );
   const primaryProvider = user.app_metadata?.provider;
-  return Boolean(identityProvider || primaryProvider === "google" || primaryProvider === "kakao");
+  return Boolean(identityProvider || primaryProvider === "google" || primaryProvider === "kakao" || primaryProvider === "apple" || primaryProvider === "custom:naver");
 }
 
 function getOAuthDisplayName(metadata: Record<string, unknown>): string {
@@ -1168,14 +1168,14 @@ function OwnerStaffSignupProfile() {
       const { data, error } = await supabase.auth.getUser();
       const user = data.user;
 
-      if (error || !user || !isOAuthUser(user) || !user.email) return;
+      if (error || !user || !isOAuthUser(user)) return;
 
       setIsOAuthSignup(true);
       setEmailDuplicateChecked(true);
       setEmailVerified(true);
       setFormData((current) => ({
         ...current,
-        email: user.email ?? current.email,
+        email: user.email ?? "",
         name: current.name || getOAuthDisplayName(user.user_metadata),
         password: "",
         passwordConfirm: "",
@@ -1302,9 +1302,9 @@ function OwnerStaffSignupProfile() {
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
 
-    if (!formData.email) {
+    if (!isOAuthSignup && !formData.email) {
       newErrors.email = "이메일을 입력해주세요";
-    } else if (!formData.email.includes("@")) {
+    } else if (!isOAuthSignup && !formData.email.includes("@")) {
       newErrors.email = "올바른 이메일 형식이 아닙니다";
     }
 
@@ -1358,7 +1358,7 @@ function OwnerStaffSignupProfile() {
         }
 
         sessionStorage.setItem("signupProfile", JSON.stringify({
-          email: formData.email,
+          email: formData.email || null,
           name: formData.name,
           phone: formData.phone,
           role,
@@ -1620,7 +1620,7 @@ function OwnerStaffSignupProfile() {
                 <Button
                   type="button"
                   onClick={handleContinue}
-                  disabled={isLoading || !emailVerified}
+                  disabled={isLoading || (!isOAuthSignup && !emailVerified)}
                   variant="primary"
                   size="lg"
                   className="w-full sm:w-auto min-h-14 lg:min-h-16 px-8 lg:px-12 text-lg lg:text-xl font-semibold"

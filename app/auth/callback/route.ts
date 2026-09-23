@@ -59,11 +59,6 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.redirect(loginErrorUrl(requestUrl.origin, "user_failed"));
   }
 
-  if (!userData.user.email) {
-    await supabase.auth.signOut();
-    return NextResponse.redirect(loginErrorUrl(requestUrl.origin, "missing_email"));
-  }
-
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("role, approval_status")

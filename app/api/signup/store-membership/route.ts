@@ -173,7 +173,7 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
     }
 
     const hasSocialIdentity = user.identities?.some(
-      (identity) => identity.provider === "google" || identity.provider === "kakao",
+      (identity) => identity.provider === "google" || identity.provider === "kakao" || identity.provider === "apple" || identity.provider === "custom:naver",
     );
     const isEmailSignup = user.app_metadata?.provider === "email" && !hasSocialIdentity;
     const canCreateInitialEmailProfile =

@@ -19,6 +19,13 @@ type Message = {
   similarity?: number;
 };
 
+type StoreMembership = {
+  storeId: string;
+  storeName: string;
+  role: string;
+  status: string;
+};
+
 const statusBadgeConfig = {
   answered: { label: "매뉴얼 기반 답변", icon: CheckCircle2, className: "border border-[#7cd4b6] bg-[#e8f9f4] text-[#0d5d4d]" },
   cautious: { label: "확인 권장", icon: AlertCircle, className: "border border-[#f0c965] bg-[#fffaed] text-[#7a5a18]" },
@@ -33,6 +40,7 @@ const quickQuestions = [
   "매장 청소 체크리스트 보여줘",
   "신규 알바가 꼭 알아야 할 내용은?",
 ];
+const SELECTED_STORE_STORAGE_KEY = "staffSelectedStoreId";
 const INITIAL_MESSAGES: Message[] = [
   { from: "ai", text: "안녕하세요!\n일잇다 AI입니다.\n매장 업무와 관련된 궁금한 점이 있다면 언제든 물어보세요.\n매뉴얼을 기반으로 정확하고 친절하게 답변해드릴게요.", time: "오후 1:58" },
   { from: "ai", text: "아래 예시 질문을 참고하거나,\n직접 궁금한 내용을 입력해보세요.", time: "오후 1:58" },
@@ -61,24 +69,32 @@ export default function StaffPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [userName, setUserName] = useState("직원");
   const [storeName, setStoreName] = useState("매장");
-  const [stores, setStores] = useState<StaffStore[]>([]);
-  const [selectedStore, setSelectedStore] = useState<StaffStore | null>(null);
-  const [isStoresLoading, setIsStoresLoading] = useState(true);
-  const [storesError, setStoresError] = useState("");
-  const [storesReloadToken, setStoresReloadToken] = useState(0);
+const [stores, setStores] = useState<StaffStore[]>([]);
+const [selectedStore, setSelectedStore] = useState<StaffStore | null>(null);
+const [isStoresLoading, setIsStoresLoading] = useState(true);
+const [storesError, setStoresError] = useState("");
+const [storesReloadToken, setStoresReloadToken] = useState(0);
 
-  function selectStore(storeId: string) {
-    if (isLoading || isStoresLoading) return;
+function selectStore(storeId: string) {
+  if (isLoading || isStoresLoading) return;
 
-    const store = stores.find((candidate) => candidate.id === storeId) ?? null;
-    if (selectedStore?.id !== store?.id) {
-      setMessages(INITIAL_MESSAGES);
-      setInput("");
-      setErrorMessage("");
-    }
-    setSelectedStore(store);
-    setStoreName(store?.name ?? "매장");
+  const store = stores.find((candidate) => candidate.id === storeId) ?? null;
+
+  if (selectedStore?.id !== store?.id) {
+    setMessages(INITIAL_MESSAGES);
+    setInput("");
+    setErrorMessage("");
   }
+
+  setSelectedStore(store);
+  setStoreName(store?.name ?? "매장");
+
+  if (store) {
+    sessionStorage.setItem(SELECTED_STORE_STORAGE_KEY, store.id);
+  } else {
+    sessionStorage.removeItem(SELECTED_STORE_STORAGE_KEY);
+  }
+}
 
   useEffect(() => {
     const controller = new AbortController();
@@ -101,13 +117,23 @@ export default function StaffPage() {
 
         if (controller.signal.aborted) return;
 
-        setStores(payload.stores);
-        if (payload.stores.length === 1) {
-          setSelectedStore(payload.stores[0]);
-          setStoreName(payload.stores[0].name);
+        const availableStores = payload.stores;
+        const storedStoreId = sessionStorage.getItem(SELECTED_STORE_STORAGE_KEY);
+        const restoredStore =
+          availableStores.find((store) => store.id === storedStoreId) ?? null;
+
+        if (restoredStore) {
+          setSelectedStore(restoredStore);
+          setStoreName(restoredStore.name);
+        } else if (availableStores.length === 1) {
+          setSelectedStore(availableStores[0]);
+          setStoreName(availableStores[0].name);
         } else {
           setSelectedStore(null);
           setStoreName("매장");
+        }
+        if (!restoredStore && storedStoreId) {
+          sessionStorage.removeItem(SELECTED_STORE_STORAGE_KEY);
         }
       } catch {
         if (controller.signal.aborted) return;
@@ -297,12 +323,20 @@ export default function StaffPage() {
                   onChange={(event) => selectStore(event.target.value)}
                   className="mt-0.5 w-full bg-transparent text-sm font-semibold text-[var(--color-text-primary)] outline-none disabled:cursor-not-allowed disabled:opacity-70"
                 >
-                  <option value="">
-                    {isStoresLoading ? "승인된 매장 정보를 불러오는 중..." : "매장을 선택해 주세요"}
-                  </option>
-                  {stores.map((store) => (
-                    <option key={store.id} value={store.id}>{store.name}</option>
-                  ))}
+<option value="">
+  {isStoresLoading
+    ? "승인된 매장 정보를 불러오는 중..."
+    : stores.length > 0
+      ? "매장을 선택해 주세요"
+      : "승인된 근무 매장이 없습니다"}
+</option>
+
+{stores.map((store) => (
+  <option key={store.id} value={store.id}>
+    {store.name}
+  </option>
+))}
+
                 </select>
               </div>
             </div>

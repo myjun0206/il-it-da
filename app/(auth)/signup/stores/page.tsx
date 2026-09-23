@@ -55,7 +55,9 @@ export default function SignupStoresPage() {
     try {
       const parsedProfile = JSON.parse(profileData) as { email?: unknown; name?: unknown; phone?: unknown };
       if (
-        typeof parsedProfile.email !== "string" ||
+        (parsedProfile.email !== null &&
+          parsedProfile.email !== undefined &&
+          typeof parsedProfile.email !== "string") ||
         typeof parsedProfile.name !== "string" ||
         typeof parsedProfile.phone !== "string"
       ) {

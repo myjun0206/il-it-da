@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useLayoutEffect, useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronRight } from "lucide-react";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
+import { createClient } from "@/lib/supabase/client";
 
 export default function CommunicationPage() {
   const router = useRouter();
@@ -12,79 +12,56 @@ export default function CommunicationPage() {
   const [franchiseName, setFranchiseName] = useState("프랜차이즈");
   const [isReady, setIsReady] = useState(false);
 
-  useLayoutEffect(() => {
-    // Check Supabase session
-    const checkAuth = async () => {
-      try {
-        const { createClient } = await import("@/lib/supabase/client");
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-
-        if (!data.session?.user) {
-          router.push("/");
-          return;
-        }
-
-        const user = data.session.user;
-        const role = user.user_metadata?.role;
-
-        // Verify user is HQ
-        if (role !== "hq") {
-          router.push("/");
-          return;
-        }
-
-        setIsReady(true);
-      } catch (e) {
-        console.error("Auth check failed:", e);
-        router.push("/");
-      }
-    };
-
-    checkAuth();
-  }, [router]);
-
   useEffect(() => {
-    // Set user info from metadata
     const setUserInfo = async () => {
       try {
-        const { createClient } = await import("@/lib/supabase/client");
         const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
+        const { data } = await supabase.auth.getUser();
 
-        if (!data.session?.user) return;
+        if (!data.user) {
+          router.push("/");
+          return;
+        }
 
-        const user = data.session.user;
-        const name = user.user_metadata?.name;
+        const name = data.user.user_metadata?.name;
 
-        // Set user name from metadata
         if (name) {
           setUserName(name);
         }
 
-        // Extract franchise name from user name
-        if (name && name.includes(" ")) {
+        // 기존에 저장된 프랜차이즈 이름이 있으면 화면 표시용으로 사용
+        const savedFranchiseName = sessionStorage.getItem(
+          "loggedInFranchiseName"
+        );
+
+        if (savedFranchiseName) {
+          setFranchiseName(savedFranchiseName);
+        } else if (name && name.includes(" ")) {
           const parts = name.split(" ");
+
           if (parts[0]) {
             setFranchiseName(parts[0]);
           }
         }
-      } catch (e) {
-        console.error("Set user info failed:", e);
+
+        setIsReady(true);
+      } catch (error) {
+        console.error("Set user info failed:", error);
+        router.push("/");
       }
     };
 
     setUserInfo();
-  }, []);
+  }, [router]);
 
   const handleLogout = async () => {
     try {
-      const { createClient } = await import("@/lib/supabase/client");
       const supabase = createClient();
       await supabase.auth.signOut();
+      sessionStorage.clear();
       router.push("/");
-    } catch (e) {
-      console.error("Logout failed:", e);
+    } catch (error) {
+      console.error("Logout failed:", error);
       router.push("/");
     }
   };
@@ -140,6 +117,7 @@ export default function CommunicationPage() {
                   전체 지점과 점주에게 전달한 공지를 확인하세요.
                 </p>
               </div>
+
               <button className="px-4 py-2 bg-[var(--color-primary)] text-white text-sm font-medium rounded-lg hover:opacity-90 transition-opacity">
                 + 새 공지 작성
               </button>
@@ -163,9 +141,13 @@ export default function CommunicationPage() {
                       <th className="px-6 py-3 text-right text-sm font-semibold text-[var(--color-text-primary)]"></th>
                     </tr>
                   </thead>
+
                   <tbody>
                     <tr className="border-b border-[var(--color-border)]">
-                      <td colSpan={4} className="px-6 py-8 text-center text-sm text-[var(--color-text-secondary)]">
+                      <td
+                        colSpan={4}
+                        className="px-6 py-8 text-center text-sm text-[var(--color-text-secondary)]"
+                      >
                         등록된 공지사항이 없습니다.
                       </td>
                     </tr>
