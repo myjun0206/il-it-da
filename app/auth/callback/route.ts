@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import type { UserRole } from "@/lib/types/user";
 
+export const runtime = "nodejs";
+
 const ROLE_DESTINATIONS: Record<UserRole, string> = {
   hq: "/hq",
   owner: "/boss",
@@ -13,6 +15,23 @@ function loginErrorUrl(origin: string, error: string): URL {
   const url = new URL("/", origin);
   url.searchParams.set("oauthError", error);
   return url;
+}
+
+function signupApprovalUrl(origin: string, next: string | null): URL | null {
+  if (!next) {
+    return null;
+  }
+
+  const url = new URL(next, origin);
+  if (url.origin !== origin || url.pathname !== "/signup/approval") {
+    return null;
+  }
+
+  return url;
+}
+
+function isUserRole(value: unknown): value is UserRole {
+  return value === "hq" || value === "owner" || value === "staff";
 }
 
 export async function GET(request: Request): Promise<NextResponse> {
@@ -27,14 +46,16 @@ export async function GET(request: Request): Promise<NextResponse> {
   const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
 
   if (exchangeError) {
-    console.error("[AUTH_OAUTH_CALLBACK] Code exchange failed:", exchangeError.message);
     return NextResponse.redirect(loginErrorUrl(requestUrl.origin, "exchange_failed"));
   }
 
-  const { data: userData, error: userError } = await supabase.auth.getUser();
+  const approvalUrl = signupApprovalUrl(requestUrl.origin, requestUrl.searchParams.get("next"));
+  if (approvalUrl) {
+    return NextResponse.redirect(approvalUrl);
+  }
 
+  const { data: userData, error: userError } = await supabase.auth.getUser();
   if (userError || !userData.user) {
-    console.error("[AUTH_OAUTH_CALLBACK] User verification failed:", userError?.message);
     return NextResponse.redirect(loginErrorUrl(requestUrl.origin, "user_failed"));
   }
 
@@ -50,7 +71,6 @@ export async function GET(request: Request): Promise<NextResponse> {
     .maybeSingle<{ role: string }>();
 
   if (profileError) {
-    console.error("[AUTH_OAUTH_CALLBACK] Profile lookup failed:", profileError.message);
     return NextResponse.redirect(loginErrorUrl(requestUrl.origin, "profile_failed"));
   }
 
@@ -58,8 +78,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.redirect(new URL("/signup/role?auth=oauth", requestUrl.origin));
   }
 
-  if (profile.role !== "hq" && profile.role !== "owner" && profile.role !== "staff") {
-    console.error("[AUTH_OAUTH_CALLBACK] Invalid profile role for user:", userData.user.id);
+  if (!isUserRole(profile.role)) {
     return NextResponse.redirect(loginErrorUrl(requestUrl.origin, "invalid_role"));
   }
 

@@ -87,6 +87,7 @@ function HQSignupProfile() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [role, setRole] = useState<"hq" | "owner" | "staff" | null>(null);
+  const [emailAlreadyRegistered, setEmailAlreadyRegistered] = useState(false);
 
   // owner/staff 전용: 간단한 프로필 폼
   const [ownerStaffFormData, setOwnerStaffFormData] = useState({
@@ -577,7 +578,14 @@ function HQSignupProfile() {
           brandId: franchise.id,
         }),
       });
-      const data = (await response.json()) as { userId?: string; error?: string; detail?: string };
+      const data = (await response.json()) as { userId?: string; error?: string; detail?: string; code?: string };
+
+      if (data.code === "email_exists") {
+        setEmailAlreadyRegistered(true);
+        setErrors({ form: data.error || "이미 가입된 이메일입니다. 로그인해 주세요." });
+        setIsLoading(false);
+        return;
+      }
 
       if (!response.ok || !data.userId) {
         throw new Error(data.detail || data.error || "회원가입 중 오류가 발생했습니다.");
@@ -588,6 +596,7 @@ function HQSignupProfile() {
       router.push("/hq/manuals/onboarding");
     } catch (e) {
       console.error("회원가입 실패:", e);
+      setEmailAlreadyRegistered(false);
       setErrors({
         form: e instanceof Error ? e.message : "회원가입 중 오류가 발생했습니다.",
       });
@@ -972,9 +981,20 @@ function HQSignupProfile() {
               </>)}
 
               {errors.form && (
-                <p className="mb-4 text-center text-sm text-[var(--color-status-error)]">
-                  {errors.form}
-                </p>
+                <div className="mb-4 text-center">
+                  <p className="text-sm text-[var(--color-status-error)]">{errors.form}</p>
+                  {emailAlreadyRegistered && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => router.push("/")}
+                      className="mt-2"
+                    >
+                      로그인하러 가기
+                    </Button>
+                  )}
+                </div>
               )}
 
               {/* Next Button */}
