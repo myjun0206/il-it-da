@@ -9,7 +9,7 @@ Runs the full PoC integration verification sequence, one step at a time:
   3. test:rag
   4. test:rag-eval
   5. lint
-  6. typecheck (tsc --noEmit)
+  6. typecheck (npm run typecheck: next typegen then tsc --noEmit)
   7. build
 
 Stops at the first failing step. No environment variable values, file
@@ -28,7 +28,7 @@ const STEPS = [
   { name: "test:rag", command: "npm", args: ["run", "test:rag"] },
   { name: "test:rag-eval", command: "npm", args: ["run", "test:rag-eval"] },
   { name: "lint", command: "npm", args: ["run", "lint"] },
-  { name: "typecheck", command: "npx", args: ["tsc", "--noEmit"] },
+  { name: "typecheck", command: "npm", args: ["run", "typecheck"] },
   { name: "build", command: "npm", args: ["run", "build"] },
 ];
 

@@ -11,6 +11,7 @@
     "check:integration": "node scripts/check-integration.mjs",
     "test:integration": "node --test tests/integration/check-repository.test.mjs tests/integration/check-integration.test.mjs tests/integration/verify-poc.test.mjs",
     "verify:poc": "node scripts/verify-poc.mjs",
+    "typecheck": "next typegen && tsc --noEmit",
     "validate:rag-dataset": "node scripts/validate-rag-dataset.mjs",
     "convert:rag-dataset": "node scripts/convert-rag-csv-to-json.mjs",
     "eval:rag-dataset": "node scripts/evaluate-rag-dataset.mjs",
