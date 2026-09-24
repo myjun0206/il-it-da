@@ -23,23 +23,6 @@ interface StoreApprovalState {
   requestedAt?: string;
 }
 
-function clearSignupSessionStorage() {
-  sessionStorage.removeItem("signupRole");
-  sessionStorage.removeItem("signupTerms");
-  sessionStorage.removeItem("signupHQProfile");
-  sessionStorage.removeItem("signupProfile");
-  sessionStorage.removeItem("signupFranchise");
-  sessionStorage.removeItem("signupFranchiseConfirmed");
-  sessionStorage.removeItem("signupFranchiseName");
-  sessionStorage.removeItem("signupBrand");
-  sessionStorage.removeItem("signupStores");
-  sessionStorage.removeItem("signupSelectedStores");
-  sessionStorage.removeItem("signupStoreApprovals");
-  sessionStorage.removeItem("signupApprovalStatus");
-  sessionStorage.removeItem("signupApprovalSubmittedAt");
-  sessionStorage.removeItem("signupVerified");
-}
-
 // 타임스탬프를 한국식 날짜로 포맷
 function formatTimestamp(timestamp?: string): string {
   if (!timestamp) return "-";
@@ -666,7 +649,6 @@ export default function SignupApprovalPage() {
   const storeCount = selectedStores.length;
   const roleLabel = role === "owner" ? "점주" : "직원";
   const requestableCount = storeApprovals.filter((item) => item.status === "requestable").length;
-  const pendingCount = storeApprovals.filter((item) => item.status === "pending").length;
   const allApprovalsPending = storeApprovals.length > 0 && storeApprovals.every((item) => item.status === "pending");
 
   const isEmpty = selectedStores.length === 0;

@@ -271,7 +271,6 @@ export default function StoreManualsManagementPage() {
   useEffect(() => {
     if (!isReady || !selectedStoreId) return;
 
-    setIsLoadingManuals(true);
     fetchManualsData(selectedStoreId)
       .then((manuals) => {
         if (manuals) {

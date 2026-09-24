@@ -75,7 +75,7 @@ export default function HqStoreDetailPage() {
       const supabase = createClient();
       await supabase.auth.signOut();
     } finally {
-      window.location.href = "/";
+      router.push("/");
     }
   };
 
