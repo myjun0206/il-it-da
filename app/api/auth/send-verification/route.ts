@@ -22,7 +22,7 @@ type SendVerificationResponse = {
 };
 
 function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase();
+  return email.replace(/[\u200B-\u200D\uFEFF]/g, "").trim().toLowerCase();
 }
 
 function isValidEmail(email: string): boolean {
@@ -49,7 +49,10 @@ export async function POST(request: Request): Promise<NextResponse<SendVerificat
   const email = normalizeEmail(body.email);
 
   if (!isValidEmail(email)) {
-    return NextResponse.json({ error: "Invalid email address." }, { status: 400 });
+    return NextResponse.json(
+      { error: "유효하지 않은 이메일 형식입니다. 공백이나 형식을 확인해주세요." },
+      { status: 400 },
+    );
   }
 
   // 실제 이메일 발송 서비스가 아직 연결되지 않았다: 운영(및 development가 아닌 모든 환경)에서는

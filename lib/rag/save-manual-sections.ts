@@ -88,7 +88,12 @@ export async function saveManualGroupsWithChunks(
   for (const group of groups) {
     const items = group.items.length > 0 ? group.items : ["내용 없음"];
     const topic = group.topic || "제목 없음";
-    const category = group.category?.trim() || topic;
+    // 2026-09-24: 과거에는 `group.category?.trim() || topic`이었다 - category가 비어 있으면
+    // topic(타이틀)을 그대로 category로 대입해, 카테고리와 타이틀이 동일하게 저장되는 버그의
+    // 근본 원인이었다. 병합/롤백 시 이 fallback이 되살아나지 않도록 주석으로 남겨두고 비활성화한다.
+    // 절대 이 줄을 되살리지 말 것(topic을 category의 fallback으로 쓰지 말 것):
+    // const category = group.category?.trim() || topic;
+    const category = group.category?.trim() || "미분류";
 
     const { data: parentData, error: parentError } = await supabase
       .from("manuals")

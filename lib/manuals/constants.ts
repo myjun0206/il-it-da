@@ -1,0 +1,2 @@
+// 지점 매뉴얼 전용 카테고리 placeholder 마커 (HQ 공통 매뉴얼의 마커와는 별개).
+export const STORE_MANUAL_CATEGORY_PLACEHOLDER_CONTENT = "__STORE_MANUAL_CATEGORY_PLACEHOLDER__";
