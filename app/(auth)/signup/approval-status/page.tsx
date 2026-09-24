@@ -3,7 +3,6 @@
 import React, { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CheckCircle, Clock3, XCircle } from "lucide-react";
 
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
@@ -30,21 +29,15 @@ type StatusResult = {
 
 const statusView = {
   pending: {
-    icon: Clock3,
     title: "승인 대기 중",
-    message: "관리자가 가입 신청을 확인하고 있습니다. 승인 후 서비스를 이용할 수 있습니다.",
     className: "border-orange-200 bg-orange-50 text-orange-700",
   },
   approved: {
-    icon: CheckCircle,
     title: "승인 완료",
-    message: "가입 승인이 완료되었습니다. 로그인 후 서비스를 이용해 주세요.",
     className: "border-green-200 bg-green-50 text-green-700",
   },
   rejected: {
-    icon: XCircle,
     title: "승인 거절",
-    message: "가입 신청이 거절되었습니다. 입력 정보를 확인하거나 관리자에게 문의해 주세요.",
     className: "border-red-200 bg-red-50 text-red-700",
   },
 } as const;
@@ -124,9 +117,6 @@ function SignupApprovalStatusContent() {
     }
   };
 
-  const current = result?.status ? statusView[result.status] : null;
-  const Icon = current?.icon;
-
   const handleBackToLogin = async () => {
     setIsSigningOut(true);
     try {
@@ -167,24 +157,6 @@ function SignupApprovalStatusContent() {
         {result && !result.found && (
           <div className="mt-6 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-surface)] p-4 text-sm text-[var(--color-text-primary)]">
             해당 이메일로 가입 신청 내역을 찾지 못했습니다.
-          </div>
-        )}
-
-        {current && Icon && (
-          <div className={`mt-6 rounded-lg border p-4 ${current.className}`}>
-            <div className="flex gap-3">
-              <Icon size={22} className="mt-0.5 flex-shrink-0" />
-              <div>
-                <p className="font-bold">{current.title}</p>
-                <p className="mt-1 text-sm">{current.message}</p>
-                {result?.role && (
-                  <p className="mt-3 text-xs opacity-80">
-                    역할: {result.role === "owner" ? "점주" : result.role === "staff" ? "알바생" : "본사"}
-                    {result.fullName ? ` · ${result.fullName}` : ""}
-                  </p>
-                )}
-              </div>
-            </div>
           </div>
         )}
 

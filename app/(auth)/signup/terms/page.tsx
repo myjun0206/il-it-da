@@ -186,19 +186,6 @@ export default function SignupTermsPage() {
             />
           </div>
 
-          {/* RIGHT: Progress */}
-          <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-            <span className="text-base sm:text-lg lg:text-[17px] font-semibold text-[var(--color-text-secondary)]">
-              {initialData.role === "hq" ? "2 / 3" : "2 / 5"}
-            </span>
-            {/* Progress Bar */}
-            <div className="w-20 sm:w-28 h-2 bg-[var(--color-border-light)] rounded-full overflow-hidden flex-shrink-0">
-              <div
-                className="h-full bg-[var(--color-primary)] rounded-full transition-all duration-300"
-                style={{ width: initialData.role === "hq" ? "66%" : "40%" }}
-              />
-            </div>
-          </div>
         </div>
       </header>
 

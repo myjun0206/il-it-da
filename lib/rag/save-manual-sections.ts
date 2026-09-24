@@ -11,6 +11,7 @@ import type { ManualRecord } from "@/lib/types/manual";
 export type ManualItemInput = string | { title?: string; content: string };
 
 export type ManualGroupInput = {
+  category?: string;
   topic: string;
   items: ManualItemInput[];
 };
@@ -87,6 +88,7 @@ export async function saveManualGroupsWithChunks(
   for (const group of groups) {
     const items = group.items.length > 0 ? group.items : ["내용 없음"];
     const topic = group.topic || "제목 없음";
+    const category = group.category?.trim() || topic;
 
     const { data: parentData, error: parentError } = await supabase
       .from("manuals")
@@ -97,7 +99,7 @@ export async function saveManualGroupsWithChunks(
         scope_type: scopeType,
         parent_manual_id: null,
         title: topic,
-        category: topic,
+        category,
         content: `${items.length}개 항목`,
         status: "approved",
       })
@@ -124,7 +126,7 @@ export async function saveManualGroupsWithChunks(
             scope_type: scopeType,
             parent_manual_id: parent.id,
             title,
-            category: topic,
+            category,
             content,
             status: "approved",
           };

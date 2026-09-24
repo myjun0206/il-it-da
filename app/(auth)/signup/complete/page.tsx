@@ -81,9 +81,8 @@ export default function SignupCompletePage() {
                 <ChevronLeft size={24} />
                 <span className="hidden sm:inline text-base font-semibold">이전</span>
               </button>
-              <img src="/logo.svg" alt="일잇다" className="h-8 lg:h-9" />
-              <div className="text-sm sm:text-base font-semibold text-[var(--color-text-secondary)]">
-                3 / 3
+              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex-shrink-0">
+                <img src="/logo.svg" alt="일잇다" className="h-8 lg:h-9" />
               </div>
             </div>
           </header>
