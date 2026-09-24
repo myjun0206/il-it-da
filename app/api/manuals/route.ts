@@ -9,6 +9,8 @@ import type { ManualRecord } from "@/lib/types/manual";
 export const runtime = "nodejs";
 
 type CreateManualGroupRequestBody = {
+  category?: unknown;
+  categoryOnly?: unknown;
   topic?: unknown;
   items?: unknown;
   storeId?: unknown;
@@ -23,6 +25,22 @@ type CreateManualsResponse = {
   manuals?: ManualRecord[];
   error?: string;
 };
+
+type UpdateManualsRequestBody = {
+  action?: unknown;
+  category?: unknown;
+  newCategory?: unknown;
+};
+
+type UpdateManualsResponse = {
+  manuals?: ManualRecord[];
+  updatedCount?: number;
+  error?: string;
+};
+
+const CATEGORY_PLACEHOLDER_CONTENT = "__HQ_MANUAL_CATEGORY_PLACEHOLDER__";
+const MANUAL_SELECT_COLUMNS =
+  "id, brand_name, franchise_id, store_id, parent_manual_id, title, category, content, status, created_at, updated_at";
 
 function getString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -113,6 +131,7 @@ export async function GET(request: Request): Promise<NextResponse<ManualsListRes
     const { searchParams } = new URL(request.url);
     const storeIdParam = getString(searchParams.get("storeId") ?? undefined);
     const storeId = profile.role === "owner" ? null : storeIdParam;
+    const includeCategoryPlaceholders = profile.role === "hq" && searchParams.get("includeCategoryPlaceholders") === "1";
 
     // 쿼리 구성
     const supabase = createAdminClient();
@@ -134,7 +153,11 @@ export async function GET(request: Request): Promise<NextResponse<ManualsListRes
       return NextResponse.json({ error: "매뉴얼 목록을 불러오지 못했습니다." }, { status: 500 });
     }
 
-    return NextResponse.json({ manuals: (data ?? []) as ManualRecord[] });
+    const manuals = ((data ?? []) as ManualRecord[]).filter(
+      (manual) => includeCategoryPlaceholders || manual.content !== CATEGORY_PLACEHOLDER_CONTENT,
+    );
+
+    return NextResponse.json({ manuals });
   } catch (e) {
     console.error("GET /api/manuals error:", e);
     return NextResponse.json({ error: "서버 오류가 발생했습니다." }, { status: 500 });
@@ -157,8 +180,38 @@ export async function POST(request: Request): Promise<NextResponse<CreateManuals
   }
 
   const topic = getString(body.topic);
+  const category = getString(body.category);
   const items = parseItems(body.items);
   const storeId = getString(body.storeId);
+
+  if (body.categoryOnly === true) {
+    if (!category) {
+      return NextResponse.json({ error: "카테고리를 입력해주세요." }, { status: 400 });
+    }
+
+    const supabase = createAdminClient();
+    const { data, error } = await supabase
+      .from("manuals")
+      .insert({
+        brand_name: hqUser.brandName,
+        franchise_id: hqUser.franchiseId,
+        store_id: null,
+        scope_type: "hq",
+        parent_manual_id: null,
+        title: category,
+        category,
+        content: CATEGORY_PLACEHOLDER_CONTENT,
+        status: "draft",
+      })
+      .select(MANUAL_SELECT_COLUMNS)
+      .single();
+
+    if (error || !data) {
+      return NextResponse.json({ error: "카테고리 저장 중 오류가 발생했습니다." }, { status: 500 });
+    }
+
+    return NextResponse.json({ manuals: [data as ManualRecord] }, { status: 201 });
+  }
 
   if (!topic || !items) {
     return NextResponse.json({ error: "주제와 내용을 모두 입력해주세요." }, { status: 400 });
@@ -167,7 +220,7 @@ export async function POST(request: Request): Promise<NextResponse<CreateManuals
   const supabase = createAdminClient();
 
   try {
-    const manuals = await saveManualGroupsWithChunks(supabase, hqUser, [{ topic, items }], storeId);
+    const manuals = await saveManualGroupsWithChunks(supabase, hqUser, [{ category, topic, items }], storeId);
     return NextResponse.json({ manuals }, { status: 201 });
   } catch (e) {
     return NextResponse.json(
@@ -175,6 +228,106 @@ export async function POST(request: Request): Promise<NextResponse<CreateManuals
       { status: 500 },
     );
   }
+}
+
+export async function PATCH(request: Request): Promise<NextResponse<UpdateManualsResponse>> {
+  const hqUser = await requireHqUser();
+
+  if (!hqUser) {
+    return NextResponse.json({ error: "본사 관리자만 접근할 수 있습니다." }, { status: 403 });
+  }
+
+  let body: UpdateManualsRequestBody;
+
+  try {
+    body = (await request.json()) as UpdateManualsRequestBody;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+  }
+
+  if (body.action !== "rename-category" && body.action !== "delete-category") {
+    return NextResponse.json({ error: "지원하지 않는 작업입니다." }, { status: 400 });
+  }
+
+  const category = getString(body.category);
+
+  if (!category) {
+    return NextResponse.json({ error: "카테고리를 입력해주세요." }, { status: 400 });
+  }
+
+  const supabase = createAdminClient();
+
+  if (body.action === "delete-category") {
+    let targetQuery = supabase
+      .from("manuals")
+      .select("id")
+      .eq("category", category)
+      .is("store_id", null);
+
+    targetQuery = hqUser.franchiseId
+      ? targetQuery.eq("franchise_id", hqUser.franchiseId)
+      : targetQuery.eq("brand_name", hqUser.brandName);
+
+    const { data: targets, error: targetError } = await targetQuery;
+
+    if (targetError) {
+      return NextResponse.json({ error: "삭제할 카테고리 조회 중 오류가 발생했습니다." }, { status: 500 });
+    }
+
+    const ids = (targets ?? []).map((row) => row.id as string);
+
+    if (ids.length === 0) {
+      return NextResponse.json({ error: "삭제할 카테고리를 찾지 못했습니다." }, { status: 404 });
+    }
+
+    let childrenQuery = supabase.from("manuals").delete().in("parent_manual_id", ids);
+    childrenQuery = hqUser.franchiseId
+      ? childrenQuery.eq("franchise_id", hqUser.franchiseId)
+      : childrenQuery.eq("brand_name", hqUser.brandName);
+
+    const { error: childrenError } = await childrenQuery;
+
+    if (childrenError) {
+      return NextResponse.json({ error: "카테고리 하위 매뉴얼 삭제 중 오류가 발생했습니다." }, { status: 500 });
+    }
+
+    let parentQuery = supabase.from("manuals").delete().in("id", ids);
+    parentQuery = hqUser.franchiseId
+      ? parentQuery.eq("franchise_id", hqUser.franchiseId)
+      : parentQuery.eq("brand_name", hqUser.brandName);
+
+    const { data, error } = await parentQuery.select("id");
+
+    if (error) {
+      return NextResponse.json({ error: "카테고리 삭제 중 오류가 발생했습니다." }, { status: 500 });
+    }
+
+    return NextResponse.json({ updatedCount: (data ?? []).length });
+  }
+
+  const newCategory = getString(body.newCategory);
+
+  if (!newCategory) {
+    return NextResponse.json({ error: "새 카테고리를 입력해주세요." }, { status: 400 });
+  }
+
+  let query = supabase
+    .from("manuals")
+    .update({ category: newCategory, updated_at: new Date().toISOString() })
+    .eq("category", category)
+    .is("store_id", null);
+
+  query = hqUser.franchiseId
+    ? query.eq("franchise_id", hqUser.franchiseId)
+    : query.eq("brand_name", hqUser.brandName);
+
+  const { data, error } = await query.select(MANUAL_SELECT_COLUMNS);
+
+  if (error) {
+    return NextResponse.json({ error: "카테고리 이름 변경 중 오류가 발생했습니다." }, { status: 500 });
+  }
+
+  return NextResponse.json({ manuals: (data ?? []) as ManualRecord[], updatedCount: (data ?? []).length });
 }
 
 type DeleteAllManualsResponse = {

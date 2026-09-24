@@ -120,6 +120,17 @@ export async function DELETE(
   const { id } = await params;
   const supabase = createAdminClient();
 
+  let childrenQuery = supabase.from("manuals").delete().eq("parent_manual_id", id);
+  childrenQuery = hqUser.franchiseId
+    ? childrenQuery.eq("franchise_id", hqUser.franchiseId)
+    : childrenQuery.eq("brand_name", hqUser.brandName);
+
+  const { error: childrenDeleteError } = await childrenQuery;
+
+  if (childrenDeleteError) {
+    return NextResponse.json({ error: "하위 매뉴얼 삭제 중 오류가 발생했습니다." }, { status: 500 });
+  }
+
   // Scope the delete to the caller's own franchise (or brand_name for legacy rows without franchise_id).
   // public.manual_chunks rows cascade-delete automatically via manual_chunks_manual_id_fkey.
   let query = supabase.from("manuals").delete().eq("id", id);
