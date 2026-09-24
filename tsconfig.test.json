@@ -22,6 +22,8 @@
     "tests/rag/manual-indexing/validate.test.ts",
     "tests/rag/manual-indexing/persist-chunks.test.ts",
     "tests/rag/manual-indexing/pipeline.test.ts",
+    "tests/rag/manual-indexing/reembed-approved-manuals.test.ts",
+    "tests/rag/manual-indexing/from-parsed-groups.test.ts",
     "lib/rag/answer-prompt.ts",
     "lib/rag/chunk-manual.ts",
     "lib/rag/search-query.ts",
@@ -39,7 +41,9 @@
     "lib/rag/manual-indexing/types.ts",
     "lib/rag/manual-indexing/validate.ts",
     "lib/rag/manual-indexing/persist-chunks.ts",
-    "lib/rag/manual-indexing/pipeline.ts"
+    "lib/rag/manual-indexing/pipeline.ts",
+    "lib/rag/manual-indexing/reembed-approved-manuals.ts",
+    "lib/rag/manual-indexing/from-parsed-groups.ts"
   ],
   "exclude": ["node_modules"]
 }
