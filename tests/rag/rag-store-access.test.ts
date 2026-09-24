@@ -4,6 +4,7 @@ import { describe, test } from "node:test";
 import {
   authorizeRagStoreAccess,
   isApprovedStaffMembership,
+  resolveStoreFranchiseScope,
   runAuthorizedRagStoreOperation,
   type RagStoreAccessDependencies,
 } from "../../lib/rag/rag-store-access.ts";
@@ -182,5 +183,46 @@ describe("runAuthorizedRagStoreOperation", () => {
     assert.equal(result.authorization.status, "AUTHORIZED");
     assert.equal(result.value, "search-result");
     assert.equal(calls, 1);
+  });
+});
+
+describe("resolveStoreFranchiseScope", () => {
+  test("resolves the franchise id from server data (stores.franchise_id) only", async () => {
+    const result = await resolveStoreFranchiseScope("store-a", {
+      getStoreFranchiseId: async (storeId) => (storeId === "store-a" ? "franchise-real" : null),
+    });
+
+    assert.deepEqual(result, { status: "RESOLVED", franchiseId: "franchise-real" });
+  });
+
+  test("fails closed (UNRESOLVED) when the store has no franchise_id", async () => {
+    const result = await resolveStoreFranchiseScope("store-a", {
+      getStoreFranchiseId: async () => null,
+    });
+
+    assert.deepEqual(result, { status: "UNRESOLVED" });
+  });
+
+  test("fails closed (UNRESOLVED) instead of throwing when the lookup errors, without leaking the raw error", async () => {
+    const result = await resolveStoreFranchiseScope("store-a", {
+      getStoreFranchiseId: async () => {
+        throw new Error("raw database detail that must not leak");
+      },
+    });
+
+    assert.deepEqual(result, { status: "UNRESOLVED" });
+    assert.equal(JSON.stringify(result).includes("raw database detail"), false);
+  });
+
+  test("ignores any body-supplied franchiseId: the dependency only ever receives the already-authorized storeId", async () => {
+    const receivedStoreIds: string[] = [];
+    await resolveStoreFranchiseScope("authorized-store", {
+      getStoreFranchiseId: async (storeId) => {
+        receivedStoreIds.push(storeId);
+        return "franchise-real";
+      },
+    });
+
+    assert.deepEqual(receivedStoreIds, ["authorized-store"]);
   });
 });

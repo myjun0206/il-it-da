@@ -67,3 +67,36 @@ export async function runAuthorizedRagStoreOperation<T>(
 
   return { authorization, value: await operation() };
 }
+
+export type ResolveStoreFranchiseScopeResult =
+  | { status: "RESOLVED"; franchiseId: string }
+  | { status: "UNRESOLVED" };
+
+export type ResolveStoreFranchiseScopeDependencies = {
+  getStoreFranchiseId: (storeId: string) => Promise<string | null>;
+};
+
+/**
+ * Resolves the already-authorized target store's franchise id from server
+ * data only (never trusts a client-supplied franchiseId). Fails closed
+ * (UNRESOLVED) on any lookup error or missing/null franchise_id, so callers
+ * never fall back to searching without a real franchise scope.
+ */
+export async function resolveStoreFranchiseScope(
+  storeId: string,
+  dependencies: ResolveStoreFranchiseScopeDependencies,
+): Promise<ResolveStoreFranchiseScopeResult> {
+  let franchiseId: string | null;
+
+  try {
+    franchiseId = await dependencies.getStoreFranchiseId(storeId);
+  } catch {
+    return { status: "UNRESOLVED" };
+  }
+
+  if (!franchiseId) {
+    return { status: "UNRESOLVED" };
+  }
+
+  return { status: "RESOLVED", franchiseId };
+}

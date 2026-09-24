@@ -1,7 +1,10 @@
 ﻿import { NextResponse } from "next/server";
 
 import { buildAnswerPromptMessages, buildManualContext } from "@/lib/rag/answer-prompt";
-import { authorizeRagStoreAccessForRequest } from "@/lib/rag/authorize-rag-store-access";
+import {
+  authorizeRagStoreAccessForRequest,
+  resolveRagStoreFranchiseForRequest,
+} from "@/lib/rag/authorize-rag-store-access";
 import { finalizeRagQueryResponse } from "@/lib/rag/finalize-rag-query-response";
 import { saveQuestionLog } from "@/lib/rag/save-question-log";
 import { searchManualChunks } from "@/lib/rag/search-manual-chunks";
@@ -84,7 +87,14 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
   }
 
   try {
-    const searchResults = await searchManualChunks(question, storeId); // Supabase Pgvector 기반 매뉴얼 청크 검색
+    // 인증된 storeId로만 franchise 범위를 서버에서 결정한다(요청 body의 franchiseId는 신뢰하지 않음).
+    // 확인할 수 없으면 검색 자체를 실행하지 않는다(fail-closed).
+    const franchiseScope = await resolveRagStoreFranchiseForRequest(storeId);
+    if (franchiseScope.status !== "RESOLVED") {
+      throw new Error("Unable to resolve store franchise scope.");
+    }
+
+    const searchResults = await searchManualChunks(question, storeId, franchiseScope.franchiseId); // Supabase Pgvector 기반 매뉴얼 청크 검색
 
     if (searchResults.length === 0) {
       const response = await finalizeRagQueryResponse({

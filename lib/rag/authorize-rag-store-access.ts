@@ -3,7 +3,9 @@ import "server-only";
 import {
   authorizeRagStoreAccess,
   isApprovedStaffMembership,
+  resolveStoreFranchiseScope,
   type RagStoreAuthorization,
+  type ResolveStoreFranchiseScopeResult,
 } from "@/lib/rag/rag-store-access";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -33,6 +35,32 @@ export async function authorizeRagStoreAccessForRequest(
       }
 
       return isApprovedStaffMembership(data, userId, requestedStoreId);
+    },
+  });
+}
+
+/**
+ * Resolves the franchise scope for an already-authorized storeId, using only
+ * the stores.franchise_id column (from 011_store_franchise_mapping.sql) via
+ * the service-role client — never a request-body value.
+ */
+export async function resolveRagStoreFranchiseForRequest(
+  storeId: string,
+): Promise<ResolveStoreFranchiseScopeResult> {
+  return resolveStoreFranchiseScope(storeId, {
+    async getStoreFranchiseId(requestedStoreId) {
+      const adminClient = createAdminClient();
+      const { data, error } = await adminClient
+        .from("stores")
+        .select("franchise_id")
+        .eq("id", requestedStoreId)
+        .maybeSingle<{ franchise_id: string | null }>();
+
+      if (error) {
+        throw error;
+      }
+
+      return data?.franchise_id ?? null;
     },
   });
 }
