@@ -153,4 +153,3 @@ export function parseManualText(text: string): AnalyzedManualGroup[] {
 
   return groups;
 }
-

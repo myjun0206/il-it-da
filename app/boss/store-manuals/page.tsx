@@ -1532,4 +1532,3 @@ export default function StoreManualsManagementPage() {
     </div>
   );
 }
-

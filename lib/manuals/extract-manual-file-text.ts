@@ -113,4 +113,3 @@ export function rowsToFlatText(rows: string[][]): string {
 
   return lines.join("\n\n");
 }
-

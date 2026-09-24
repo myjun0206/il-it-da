@@ -114,6 +114,3 @@ export function splitTextIntoManualItems(text: string): string[] {
 
   return text.trim() ? [text.trim()] : [];
 }
-
-
-

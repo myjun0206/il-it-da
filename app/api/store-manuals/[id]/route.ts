@@ -130,7 +130,6 @@ export async function PATCH(
     );
   }
 }
-
 /**
  * 점주가 자신의 store_id 범위에 속한 매뉴얼 한 건을 삭제한다.
  * 부모(타이틀)를 삭제하면 그 안의 모든 자식(세부 매뉴얼)도 함께 삭제된다.
@@ -202,4 +201,3 @@ export async function DELETE(
     );
   }
 }
-
