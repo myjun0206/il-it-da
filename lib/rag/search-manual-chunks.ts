@@ -92,6 +92,7 @@ function parseChunkMatches(data: unknown): ManualChunkMatch[] {
 export async function searchManualChunks(
   question: string,
   storeId: string,
+  franchiseId: string,
   matchCount = 5,
 ): Promise<ManualChunkMatch[]> {
   const normalizedQuestion = validateAndNormalizeQuestion(question);
@@ -102,11 +103,13 @@ export async function searchManualChunks(
   const embedding = await createEmbedding(formattedQuery);
   const supabase = createAdminClient();
 
-  const { data, error } = await supabase.rpc("match_manual_chunks_hybrid_by_store", {
+  // HQ 공통 매뉴얼(scope_type='hq', store_id is null, 같은 franchise) + 자기 store 전용 매뉴얼만 반환하는 scoped RPC(018 migration).
+  const { data, error } = await supabase.rpc("match_manual_chunks_hybrid_scoped", {
     query_embedding: embedding,
     query_text: normalizedQuestion,
     query_keywords: queryKeywords,
     target_store_id: storeId,
+    target_franchise_id: franchiseId,
     match_count: validatedMatchCount,
   });
 

@@ -13,6 +13,7 @@
     "tests/rag/save-question-log.test.ts",
     "tests/rag/rag-store-access.test.ts",
     "tests/rag/finalize-rag-query-response.test.ts",
+    "tests/rag/manual-search-scope.test.ts",
     "tests/auth/dev-test-verification.test.ts",
     "tests/auth/safe-auth-log.test.ts",
     "tests/auth/require-server-role.test.ts",
