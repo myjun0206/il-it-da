@@ -25,6 +25,10 @@
     "tests/rag/manual-indexing/pipeline.test.ts",
     "tests/rag/manual-indexing/reembed-approved-manuals.test.ts",
     "tests/rag/manual-indexing/from-parsed-groups.test.ts",
+    "tests/rag/save-manual-sections.test.ts",
+    "tests/rag/manuals-cascade-delete.test.ts",
+    "tests/manuals/detect-manual-item.test.ts",
+    "tests/manuals/parse-excel-table.test.ts",
     "lib/rag/answer-prompt.ts",
     "lib/rag/chunk-manual.ts",
     "lib/rag/search-query.ts",
@@ -44,7 +48,10 @@
     "lib/rag/manual-indexing/persist-chunks.ts",
     "lib/rag/manual-indexing/pipeline.ts",
     "lib/rag/manual-indexing/reembed-approved-manuals.ts",
-    "lib/rag/manual-indexing/from-parsed-groups.ts"
+    "lib/rag/manual-indexing/from-parsed-groups.ts",
+    "lib/rag/save-manual-sections.ts",
+    "lib/manuals/detect-manual-item.ts",
+    "lib/manuals/parse-excel-table.ts"
   ],
   "exclude": ["node_modules"]
 }
