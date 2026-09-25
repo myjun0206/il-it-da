@@ -49,6 +49,7 @@ const REQUIRED_FILES = [
   "lib/rag/save-question-log.ts",
   "supabase/migrations/001_initial_rag_schema.sql",
   "supabase/migrations/006_auth_store_memberships.sql",
+  "supabase/migrations/018_scoped_hybrid_manual_search.sql",
 ];
 
 function result(level, code, message, file) {
@@ -290,6 +291,89 @@ function checkRagThresholds(content, file = "app/api/rag/query/route.ts") {
   return results;
 }
 
+const SCOPED_RPC_NAME = "match_manual_chunks_hybrid_scoped";
+const SCOPED_RPC_PARAMS = [
+  "query_embedding",
+  "query_text",
+  "query_keywords",
+  "target_store_id",
+  "target_franchise_id",
+  "match_count",
+];
+const MIGRATION_018_FILE = "supabase/migrations/018_scoped_hybrid_manual_search.sql";
+const SEARCH_MANUAL_CHUNKS_FILE = "lib/rag/search-manual-chunks.ts";
+
+// 018 migration의 SQL 함수 시그니처와 search-manual-chunks.ts의 실제 호출부가 어긋나지 않는지
+// 정적으로 확인한다(실제 Supabase에 함수가 존재하는지는 이 검사로 알 수 없다 — 별도 DB 점검 필요).
+function checkScopedRpcMigrationContract(migrationContent, callSiteContent) {
+  const results = [];
+
+  if (!migrationContent) {
+    results.push(result(
+      "error",
+      "SCOPED_RPC_MIGRATION_MISSING",
+      "The scoped hybrid search RPC migration was not found.",
+      MIGRATION_018_FILE,
+    ));
+    return results;
+  }
+
+  if (!new RegExp(`function\\s+public\\.${SCOPED_RPC_NAME}\\s*\\(`).test(migrationContent)) {
+    results.push(result(
+      "error",
+      "SCOPED_RPC_FUNCTION_NOT_DEFINED",
+      "The expected scoped hybrid search RPC function name was not found in the migration.",
+      MIGRATION_018_FILE,
+    ));
+  }
+
+  for (const paramName of SCOPED_RPC_PARAMS) {
+    if (!new RegExp(`\\b${paramName}\\b`).test(migrationContent)) {
+      results.push(result(
+        "error",
+        "SCOPED_RPC_PARAM_MISSING_IN_MIGRATION",
+        "A parameter expected by the TypeScript call site is missing from the migration's function signature.",
+        MIGRATION_018_FILE,
+      ));
+    }
+  }
+
+  if (!callSiteContent) {
+    results.push(result(
+      "error",
+      "SCOPED_RPC_CALL_SITE_MISSING",
+      "The TypeScript RPC call site file was not found.",
+      SEARCH_MANUAL_CHUNKS_FILE,
+    ));
+    return results;
+  }
+
+  if (!callSiteContent.includes(`"${SCOPED_RPC_NAME}"`) && !callSiteContent.includes(`'${SCOPED_RPC_NAME}'`)) {
+    results.push(result(
+      "error",
+      "SCOPED_RPC_NOT_CALLED",
+      "The TypeScript call site does not call the expected scoped hybrid search RPC.",
+      SEARCH_MANUAL_CHUNKS_FILE,
+    ));
+  }
+
+  for (const paramName of SCOPED_RPC_PARAMS) {
+    if (paramName === "match_count") {
+      continue; // has a default in SQL; the call site may omit or rename this one safely.
+    }
+    if (!new RegExp(`${paramName}\\s*:`).test(callSiteContent)) {
+      results.push(result(
+        "error",
+        "SCOPED_RPC_PARAM_MISSING_IN_CALL_SITE",
+        "A parameter defined by the migration's function signature is missing from the TypeScript call site.",
+        SEARCH_MANUAL_CHUNKS_FILE,
+      ));
+    }
+  }
+
+  return results;
+}
+
 function stripComments(content) {
   return content
     .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -438,6 +522,10 @@ async function checkRepository({ rootDir = process.cwd(), gitRunner = defaultGit
     ...checkRequiredFiles(fileSet),
     ...checkServiceRoleExposure(files),
     ...checkRagThresholds(files.find(({ file }) => file === "app/api/rag/query/route.ts")?.content ?? ""),
+    ...checkScopedRpcMigrationContract(
+      files.find(({ file }) => file === MIGRATION_018_FILE)?.content ?? "",
+      files.find(({ file }) => file === SEARCH_MANUAL_CHUNKS_FILE)?.content ?? "",
+    ),
     ...checkSensitiveLogging(files),
   ];
 
@@ -465,6 +553,7 @@ export {
   checkRagThresholds,
   checkRepository,
   checkRequiredFiles,
+  checkScopedRpcMigrationContract,
   checkSensitiveLogging,
   checkServiceRoleExposure,
   checkTrackedEnvironmentFiles,

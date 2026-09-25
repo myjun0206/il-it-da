@@ -42,7 +42,18 @@ function createFixture() {
   writeFixtureFile(rootDir, "app/api/webhooks/index-manual/route.ts");
   writeFixtureFile(rootDir, "lib/supabase/admin.ts", "export function createAdminClient() {}\n");
   writeFixtureFile(rootDir, "lib/rag/index-approved-manual.ts");
-  writeFixtureFile(rootDir, "lib/rag/search-manual-chunks.ts");
+  writeFixtureFile(
+    rootDir,
+    "lib/rag/search-manual-chunks.ts",
+    'supabase.rpc("match_manual_chunks_hybrid_scoped", {\n'
+    + "  query_embedding: embedding,\n"
+    + "  query_text: normalizedQuestion,\n"
+    + "  query_keywords: queryKeywords,\n"
+    + "  target_store_id: storeId,\n"
+    + "  target_franchise_id: franchiseId,\n"
+    + "  match_count: validatedMatchCount,\n"
+    + "});\n",
+  );
   writeFixtureFile(rootDir, "lib/rag/save-question-log.ts");
   for (let prefix = 1; prefix <= 6; prefix += 1) {
     const fileName = prefix === 1
@@ -52,6 +63,21 @@ function createFixture() {
         : `${String(prefix).padStart(3, "0")}_migration.sql`;
     writeFixtureFile(rootDir, `supabase/migrations/${fileName}`);
   }
+  writeFixtureFile(
+    rootDir,
+    "supabase/migrations/018_scoped_hybrid_manual_search.sql",
+    "create or replace function public.match_manual_chunks_hybrid_scoped(\n"
+    + "  query_embedding extensions.vector(1536),\n"
+    + "  query_text text,\n"
+    + "  query_keywords text[],\n"
+    + "  target_store_id uuid,\n"
+    + "  target_franchise_id uuid,\n"
+    + "  match_count integer default 5\n"
+    + ")\n"
+    + "returns table (chunk_id uuid)\n"
+    + "language sql\n"
+    + "as $$ select 1 $$;\n",
+  );
   return rootDir;
 }
 
@@ -170,6 +196,61 @@ describe("repository integration checks", () => {
     const rootDir = createFixture();
     writeFixtureFile(rootDir, "app/api/rag/query/route.ts", "const ANSWERED_THRESHOLD = 0.61;\nconst CAUTIOUS_THRESHOLD = 0.40;\n");
     assert.equal(hasCode(await runFixture(rootDir), "RAG_THRESHOLD_MISMATCH"), true);
+  });
+
+  test("accepts a scoped RPC migration whose signature matches the TypeScript call site", async () => {
+    const report = await runFixture(createFixture());
+    assert.equal(hasCode(report, "SCOPED_RPC_MIGRATION_MISSING"), false);
+    assert.equal(hasCode(report, "SCOPED_RPC_FUNCTION_NOT_DEFINED"), false);
+    assert.equal(hasCode(report, "SCOPED_RPC_PARAM_MISSING_IN_MIGRATION"), false);
+    assert.equal(hasCode(report, "SCOPED_RPC_NOT_CALLED"), false);
+    assert.equal(hasCode(report, "SCOPED_RPC_PARAM_MISSING_IN_CALL_SITE"), false);
+  });
+
+  test("detects a missing scoped RPC migration file", async () => {
+    const rootDir = createFixture();
+    unlinkSync(path.join(rootDir, "supabase/migrations/018_scoped_hybrid_manual_search.sql"));
+    assert.equal(hasCode(await runFixture(rootDir), "SCOPED_RPC_MIGRATION_MISSING"), true);
+  });
+
+  test("detects when the migration drops a parameter the call site still sends", async () => {
+    const rootDir = createFixture();
+    writeFixtureFile(
+      rootDir,
+      "supabase/migrations/018_scoped_hybrid_manual_search.sql",
+      "create or replace function public.match_manual_chunks_hybrid_scoped(\n"
+      + "  query_embedding extensions.vector(1536),\n"
+      + "  query_text text,\n"
+      + "  query_keywords text[],\n"
+      + "  target_store_id uuid,\n"
+      + "  match_count integer default 5\n"
+      + ")\n"
+      + "returns table (chunk_id uuid)\n"
+      + "language sql\n"
+      + "as $$ select 1 $$;\n",
+    );
+    assert.equal(hasCode(await runFixture(rootDir), "SCOPED_RPC_PARAM_MISSING_IN_MIGRATION"), true);
+  });
+
+  test("detects when the call site stops calling the scoped RPC", async () => {
+    const rootDir = createFixture();
+    writeFixtureFile(rootDir, "lib/rag/search-manual-chunks.ts", 'supabase.rpc("match_manual_chunks_hybrid_by_store", {});\n');
+    assert.equal(hasCode(await runFixture(rootDir), "SCOPED_RPC_NOT_CALLED"), true);
+  });
+
+  test("detects when the call site drops a parameter the migration requires", async () => {
+    const rootDir = createFixture();
+    writeFixtureFile(
+      rootDir,
+      "lib/rag/search-manual-chunks.ts",
+      'supabase.rpc("match_manual_chunks_hybrid_scoped", {\n'
+      + "  query_embedding: embedding,\n"
+      + "  query_text: normalizedQuestion,\n"
+      + "  query_keywords: queryKeywords,\n"
+      + "  target_store_id: storeId,\n"
+      + "});\n",
+    );
+    assert.equal(hasCode(await runFixture(rootDir), "SCOPED_RPC_PARAM_MISSING_IN_CALL_SITE"), true);
   });
 
   test("allows a questionLength metrics log", async () => {
