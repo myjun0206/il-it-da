@@ -293,6 +293,9 @@ export default function ManualOnboardingPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           topic: groupTopic,
+          // save-manual-sections.ts가 더 이상 topic을 category의 기본값으로 쓰지 않으므로,
+          // 이 화면은 항상 주제명을 카테고리로 명시해서 넘긴다(기존과 동일한 결과, 이제는 명시적).
+          category: groupTopic.trim(),
           // 소제목은 자식 행의 title로 따로 저장된다(비어 있으면 서버에서 주제명을 사용).
           items: sections.map((s) => ({ title: s.title.trim(), content: s.content.trim() })),
         }),

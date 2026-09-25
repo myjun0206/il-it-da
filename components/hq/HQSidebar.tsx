@@ -60,8 +60,9 @@ export default function HQSidebar({
       id: "store",
       label: "지점 관리",
       icon: Store,
+      href: "/hq/stores",
       submenu: [
-        { id: "store-status", label: "지점 현황" },
+        { id: "store-status", label: "지점 현황", href: "/hq/stores" },
         { id: "store-request", label: "문의 · 요청" },
       ],
     },

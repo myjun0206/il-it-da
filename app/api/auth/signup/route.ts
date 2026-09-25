@@ -46,7 +46,7 @@ type VerificationRow = {
 };
 
 function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase();
+  return email.replace(/[\u200B-\u200D\uFEFF]/g, "").trim().toLowerCase();
 }
 
 function isValidEmail(email: string): boolean {
@@ -222,7 +222,12 @@ export async function POST(request: Request): Promise<NextResponse<SignupRespons
   const email = normalizeEmail(primaryEmail);
 
   if (!isValidEmail(email)) {
-    return NextResponse.json({ error: "Invalid email address." }, { status: 400 });
+    // Supabase Dashboard > Authentication > Providers > Email에서 Email provider가
+    // 활성화되어 있는지, 허용/차단 도메인 설정이 가입 도메인을 막고 있지 않은지도 확인한다.
+    return NextResponse.json(
+      { error: "유효하지 않은 이메일 형식입니다. 공백이나 형식을 확인해주세요." },
+      { status: 400 },
+    );
   }
 
   if (password.length < 8) {

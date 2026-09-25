@@ -23,7 +23,7 @@ function signupApprovalUrl(origin: string, next: string | null): URL | null {
   }
 
   const url = new URL(next, origin);
-  if (url.origin !== origin || url.pathname !== "/signup/approval") {
+  if (url.origin !== origin || !["/signup/stores", "/signup/approval"].includes(url.pathname)) {
     return null;
   }
 

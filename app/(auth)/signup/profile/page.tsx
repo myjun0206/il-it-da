@@ -16,8 +16,18 @@ import {
 } from "@/lib/data/mockFranchises";
 import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
 
-// 이메일 정규화: 앞뒤 공백 제거 + 소문자 변환(테스트 이메일/도메인 비교에 공통 사용)
-const normalizeEmail = (value: string) => value.trim().toLowerCase();
+// 이메일 정규화: zero-width 문자와 앞뒤 공백 제거 + 소문자 변환
+const normalizeEmail = (value: string) =>
+  value.replace(/[\u200B-\u200D\uFEFF]/g, "").trim().toLowerCase();
+
+function getFriendlyEmailError(error: unknown): string {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (message.includes("email") && message.includes("invalid")) {
+    return "유효하지 않은 이메일 형식입니다. 공백이나 형식을 확인해주세요.";
+  }
+
+  return "회원가입 중 오류가 발생했습니다.";
+}
 
 // public.franchises 테이블에 이메일 도메인을 조회해 프랜차이즈 정보를 가져온다 (app/api/franchises/lookup).
 async function getFranchiseByEmail(
@@ -724,10 +734,11 @@ function HQSignupProfile() {
 
     try {
       const supabase = createClient();
+      const normalizedEmail = normalizeEmail(ownerStaffFormData.email);
 
       if (process.env.NODE_ENV === "development") {
         console.log("🔗 [DEV] Email Auth Link / Token:", {
-          email: ownerStaffFormData.email,
+          email: normalizedEmail,
           emailRedirectTo: `${window.location.origin}/auth/callback`,
           inbucketUrl: "http://localhost:54324",
           note: "Supabase 로컬 개발 환경에서는 Inbucket에서 실제 인증 메일 링크를 확인하세요.",
@@ -737,21 +748,23 @@ function HQSignupProfile() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             context: "signup-profile signUp",
-            email: ownerStaffFormData.email,
+            email: normalizedEmail,
             emailRedirectTo: `${window.location.origin}/auth/callback`,
           }),
         });
       }
 
       // Supabase Auth 사용자 생성
+      const emailRedirectTo = `${window.location.origin}/auth/callback?next=/signup/stores`;
       const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: ownerStaffFormData.email,
+        email: normalizedEmail,
         password: ownerStaffPassword,
         options: {
           data: {
             role: role || "owner",
             name: ownerStaffFormData.name,
-          }
+          },
+          emailRedirectTo,
         }
       });
 
@@ -760,12 +773,12 @@ function HQSignupProfile() {
         if (authError.message?.includes("already registered")) {
           setErrors({ email: "이미 등록된 이메일입니다." });
         } else {
-          setErrors({ email: authError.message || "회원가입 중 오류가 발생했습니다." });
+          setErrors({ email: getFriendlyEmailError(authError) });
         }
         return;
       }
 
-      // user와 session이 모두 있는지 확인
+      // 이메일 인증이 필요한 프로젝트에서는 signUp 직후 session이 없는 것이 정상이다.
       if (!authData.user) {
         setIsLoading(false);
         setErrors({ email: "사용자 생성에 실패했습니다." });
@@ -773,8 +786,16 @@ function HQSignupProfile() {
       }
 
       if (!authData.session) {
+        sessionStorage.setItem(
+          "signupProfile",
+          JSON.stringify({
+            email: normalizedEmail,
+            name: ownerStaffFormData.name,
+            phone: ownerStaffFormData.phone,
+          })
+        );
         setIsLoading(false);
-        setErrors({ email: "로그인 세션을 생성할 수 없습니다. Supabase 이메일 설정을 확인해주세요." });
+        setErrors({ email: "인증 메일을 확인해주세요. 메일의 인증 링크를 클릭하면 매장 선택을 계속할 수 있습니다." });
         return;
       }
 

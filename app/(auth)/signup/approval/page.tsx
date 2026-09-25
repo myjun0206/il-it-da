@@ -23,23 +23,6 @@ interface StoreApprovalState {
   requestedAt?: string;
 }
 
-function clearSignupSessionStorage() {
-  sessionStorage.removeItem("signupRole");
-  sessionStorage.removeItem("signupTerms");
-  sessionStorage.removeItem("signupHQProfile");
-  sessionStorage.removeItem("signupProfile");
-  sessionStorage.removeItem("signupFranchise");
-  sessionStorage.removeItem("signupFranchiseConfirmed");
-  sessionStorage.removeItem("signupFranchiseName");
-  sessionStorage.removeItem("signupBrand");
-  sessionStorage.removeItem("signupStores");
-  sessionStorage.removeItem("signupSelectedStores");
-  sessionStorage.removeItem("signupStoreApprovals");
-  sessionStorage.removeItem("signupApprovalStatus");
-  sessionStorage.removeItem("signupApprovalSubmittedAt");
-  sessionStorage.removeItem("signupVerified");
-}
-
 // 타임스탬프를 한국식 날짜로 포맷
 function formatTimestamp(timestamp?: string): string {
   if (!timestamp) return "-";
@@ -446,9 +429,9 @@ export default function SignupApprovalPage() {
       }
 
       if (!authData.user || !authData.session) {
-        // 이메일 인증(컨펌)이 필요한 프로젝트 설정이면 signUp 직후 세션이 없어 이후 API 호출이
-        // "Auth session missing"으로 실패한다. 세션이 없으면 여기서 명확히 실패 처리한다.
-        setSubmissionError("이메일 인증 후 다시 로그인해주세요. 세션을 확보하지 못했습니다.");
+        // 이메일 인증이 필요한 프로젝트에서는 signUp 직후 session이 없는 것이 정상이다.
+        // 인증 링크를 콜백에서 교환한 뒤 같은 페이지로 돌아오면 현재 세션을 재사용한다.
+        setSubmissionError("인증 메일을 확인한 뒤 메일의 인증 링크를 클릭하고, 이 페이지에서 다시 승인 요청해주세요.");
         return false;
       }
 
@@ -666,7 +649,6 @@ export default function SignupApprovalPage() {
   const storeCount = selectedStores.length;
   const roleLabel = role === "owner" ? "점주" : "직원";
   const requestableCount = storeApprovals.filter((item) => item.status === "requestable").length;
-  const pendingCount = storeApprovals.filter((item) => item.status === "pending").length;
   const allApprovalsPending = storeApprovals.length > 0 && storeApprovals.every((item) => item.status === "pending");
 
   const isEmpty = selectedStores.length === 0;
