@@ -919,6 +919,9 @@ export default function StoreManualsManagementPage() {
                   />
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" onClick={() => router.push("/boss/store-manuals/upload")}>
+                    <FileText size={16} className="mr-2" /> 미리보기로 올리기
+                  </Button>
                   <Button variant="outline" onClick={openAnalyzeFilePicker} isLoading={isAnalyzing}>
                     <Sparkles size={16} className="mr-2" /> 매뉴얼 분석
                   </Button>

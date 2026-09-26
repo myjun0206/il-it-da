@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireHqUser } from "@/lib/supabase/hq-auth";
-import { saveManualGroupsWithChunks } from "@/lib/rag/save-manual-sections";
-import type { AnalyzedManualGroup } from "@/lib/manuals/analyze-manual-with-ai";
+import { createClient } from "@/lib/supabase/server";
+import { requireStoreOwner } from "@/lib/manuals/store-manual-auth";
 import {
   extractManualGroups,
   getFileExtension,
@@ -11,22 +10,33 @@ import {
   XLSX_EXTENSIONS,
 } from "@/lib/manuals/extract-manual-groups";
 import { isFileSizeWithinLimit, isPlausibleXlsxMimeType } from "@/lib/manuals/upload-limits";
-import type { ManualRecord } from "@/lib/types/manual";
+import { buildManualPreview, type ManualUploadPreview } from "@/lib/manuals/build-manual-preview";
 
 export const runtime = "nodejs";
 
-type UploadManualsResponse = {
-  manuals?: ManualRecord[];
+type PreviewManualsResponse = {
+  preview?: ManualUploadPreview;
   error?: string;
 };
 
-// 파일 하나 안에 여러 카테고리/타이틀/세부 매뉴얼이 섞여 있을 수 있으므로,
-// 파일명을 카테고리로 강제하지 않고 extractManualGroups(표 구조 또는 텍스트 패턴 인식, 100% 로컬 규칙 기반)로 분석한다.
-export async function POST(request: Request): Promise<NextResponse<UploadManualsResponse>> {
-  const hqUser = await requireHqUser();
+function getString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
 
-  if (!hqUser) {
-    return NextResponse.json({ error: "본사 관리자만 접근할 수 있습니다." }, { status: 403 });
+/**
+ * Store-owner counterpart of /api/manuals/preview: same parsing (extractManualGroups) and same
+ * classification/preview builder (buildManualPreview) as the HQ route, but scoped to a single
+ * store. Never touches Supabase manuals/manual_chunks - only requireStoreOwner's own auth reads
+ * happen here. storeId is never trusted from the client as-is: requireStoreOwner re-checks it
+ * against the caller's own approved owner membership (store_memberships) and fails closed
+ * (returns null -> 403) for a pending/rejected/other-owner's store.
+ */
+export async function POST(request: Request): Promise<NextResponse<PreviewManualsResponse>> {
+  const serverClient = await createClient();
+  const { data: userData, error: userError } = await serverClient.auth.getUser();
+
+  if (userError || !userData.user) {
+    return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
   }
 
   let formData: FormData;
@@ -35,6 +45,19 @@ export async function POST(request: Request): Promise<NextResponse<UploadManuals
     formData = await request.formData();
   } catch {
     return NextResponse.json({ error: "Invalid form data." }, { status: 400 });
+  }
+
+  const storeId = getString(formData.get("storeId"));
+
+  if (!storeId) {
+    return NextResponse.json({ error: "지점 ID가 필요합니다." }, { status: 400 });
+  }
+
+  const adminClient = createAdminClient();
+  const storeAuth = await requireStoreOwner(adminClient, userData.user.id, storeId);
+
+  if (!storeAuth) {
+    return NextResponse.json({ error: "이 지점에 대한 접근 권한이 없습니다." }, { status: 403 });
   }
 
   const file = formData.get("file");
@@ -71,12 +94,12 @@ export async function POST(request: Request): Promise<NextResponse<UploadManuals
     return NextResponse.json({ error: "지원하지 않는 파일 형식입니다." }, { status: 400 });
   }
 
-  let groups: AnalyzedManualGroup[];
+  let groups;
 
   try {
     groups = await extractManualGroups(file, extension);
   } catch (parseError) {
-    console.error("[MANUALS_UPLOAD] parse failed:", parseError);
+    console.error("[STORE_MANUALS_PREVIEW] parse failed:", parseError);
     const message =
       parseError instanceof Error && parseError.message
         ? parseError.message
@@ -91,16 +114,8 @@ export async function POST(request: Request): Promise<NextResponse<UploadManuals
     );
   }
 
-  const supabase = createAdminClient();
+  // storeAuth.storeId (server-verified), never the raw request value, decides scopeType "store".
+  const preview = buildManualPreview(groups, { storeId: storeAuth.storeId });
 
-  try {
-    const manuals = await saveManualGroupsWithChunks(supabase, hqUser, groups);
-    return NextResponse.json({ manuals }, { status: 201 });
-  } catch (e) {
-    console.error("[MANUALS_UPLOAD] save failed:", e);
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "매뉴얼 저장 중 오류가 발생했습니다." },
-      { status: 500 },
-    );
-  }
+  return NextResponse.json({ preview }, { status: 200 });
 }

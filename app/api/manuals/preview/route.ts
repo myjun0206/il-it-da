@@ -1,9 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { createAdminClient } from "@/lib/supabase/admin";
 import { requireHqUser } from "@/lib/supabase/hq-auth";
-import { saveManualGroupsWithChunks } from "@/lib/rag/save-manual-sections";
-import type { AnalyzedManualGroup } from "@/lib/manuals/analyze-manual-with-ai";
 import {
   extractManualGroups,
   getFileExtension,
@@ -11,18 +8,22 @@ import {
   XLSX_EXTENSIONS,
 } from "@/lib/manuals/extract-manual-groups";
 import { isFileSizeWithinLimit, isPlausibleXlsxMimeType } from "@/lib/manuals/upload-limits";
-import type { ManualRecord } from "@/lib/types/manual";
+import { buildManualPreview, type ManualUploadPreview } from "@/lib/manuals/build-manual-preview";
 
 export const runtime = "nodejs";
 
-type UploadManualsResponse = {
-  manuals?: ManualRecord[];
+type PreviewManualsResponse = {
+  preview?: ManualUploadPreview;
   error?: string;
 };
 
-// 파일 하나 안에 여러 카테고리/타이틀/세부 매뉴얼이 섞여 있을 수 있으므로,
-// 파일명을 카테고리로 강제하지 않고 extractManualGroups(표 구조 또는 텍스트 패턴 인식, 100% 로컬 규칙 기반)로 분석한다.
-export async function POST(request: Request): Promise<NextResponse<UploadManualsResponse>> {
+/**
+ * Parses an uploaded file into detail-manual groups and classifies them into top categories,
+ * but never touches Supabase - no manuals/manual_chunks INSERT/UPDATE/DELETE happens here.
+ * The HQ user reviews/edits this response, then POSTs the edited result to
+ * /api/manuals/preview/confirm to actually save it.
+ */
+export async function POST(request: Request): Promise<NextResponse<PreviewManualsResponse>> {
   const hqUser = await requireHqUser();
 
   if (!hqUser) {
@@ -71,12 +72,16 @@ export async function POST(request: Request): Promise<NextResponse<UploadManuals
     return NextResponse.json({ error: "지원하지 않는 파일 형식입니다." }, { status: 400 });
   }
 
-  let groups: AnalyzedManualGroup[];
+  // storeId is intentionally never read from the request here (client input is untrusted for
+  // scope): this preview route only ever runs the HQ (requireHqUser) path, so the resulting
+  // preview is always scopeType "hq". A store-owner preview endpoint is a separate follow-up
+  // (see final report) and must resolve storeId the same trusted way store-manuals routes do.
+  let groups;
 
   try {
     groups = await extractManualGroups(file, extension);
   } catch (parseError) {
-    console.error("[MANUALS_UPLOAD] parse failed:", parseError);
+    console.error("[MANUALS_PREVIEW] parse failed:", parseError);
     const message =
       parseError instanceof Error && parseError.message
         ? parseError.message
@@ -91,16 +96,7 @@ export async function POST(request: Request): Promise<NextResponse<UploadManuals
     );
   }
 
-  const supabase = createAdminClient();
+  const preview = buildManualPreview(groups);
 
-  try {
-    const manuals = await saveManualGroupsWithChunks(supabase, hqUser, groups);
-    return NextResponse.json({ manuals }, { status: 201 });
-  } catch (e) {
-    console.error("[MANUALS_UPLOAD] save failed:", e);
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "매뉴얼 저장 중 오류가 발생했습니다." },
-      { status: 500 },
-    );
-  }
+  return NextResponse.json({ preview }, { status: 200 });
 }
