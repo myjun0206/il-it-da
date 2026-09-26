@@ -4,6 +4,13 @@ export const MAX_UPLOAD_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 export const MAX_XLSX_SHEET_COUNT = 20;
 export const MAX_XLSX_ROWS_PER_SHEET = 5_000;
 
+// preview/confirm의 confirm 단계는 파일이 아닌 클라이언트 JSON을 받으므로 파일 상한과 별도로 제한한다.
+export const MAX_CONFIRM_MANUAL_COUNT = 1_000;
+export const MAX_CONFIRM_TOTAL_ITEM_COUNT = 5_000;
+export const MAX_CONFIRM_TITLE_LENGTH = 200;
+export const MAX_CONFIRM_CATEGORY_LENGTH = 100;
+export const MAX_CONFIRM_ITEM_CONTENT_LENGTH = 20_000;
+
 // 브라우저가 .xlsx/.xls에 대해 흔히 보내는 MIME 타입 + 빈 값/octet-stream(제네릭)까지만 허용한다.
 // 확장자만 바꾼 명백히 다른 타입(예: image/*, text/html)은 이 목록에 없으므로 거부된다.
 const ALLOWED_XLSX_MIME_TYPES = new Set([

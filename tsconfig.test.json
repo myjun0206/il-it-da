@@ -31,6 +31,15 @@
     "tests/manuals/parse-excel-table.test.ts",
     "tests/manuals/manual-format-fixtures.test.ts",
     "tests/manuals/manual-category-taxonomy.test.ts",
+    "tests/manuals/manual-category-rules.test.ts",
+    "tests/manuals/build-manual-preview.test.ts",
+    "tests/manuals/fixture-parser-integration.test.ts",
+    "tests/manuals/manual-preview-api.test.ts",
+    "tests/manuals/manual-onboarding-preview-ui.test.ts",
+    "tests/manuals/store-manual-preview-api.test.ts",
+    "tests/manuals/store-manual-auth.test.ts",
+    "tests/manuals/store-manual-upload-ui.test.ts",
+    "tests/manuals/manual-confirm-flow.test.ts",
     "lib/rag/answer-prompt.ts",
     "lib/rag/chunk-manual.ts",
     "lib/rag/search-query.ts",
@@ -53,7 +62,12 @@
     "lib/rag/manual-indexing/from-parsed-groups.ts",
     "lib/rag/save-manual-sections.ts",
     "lib/manuals/detect-manual-item.ts",
-    "lib/manuals/parse-excel-table.ts"
+    "lib/manuals/parse-excel-table.ts",
+    "lib/manuals/manual-category-rules.ts",
+    "lib/manuals/build-manual-preview.ts",
+    "lib/manuals/extract-manual-groups.ts",
+    "lib/manuals/parse-confirmed-manual-groups.ts",
+    "lib/manuals/store-manual-auth.ts"
   ],
   "exclude": ["node_modules"]
 }

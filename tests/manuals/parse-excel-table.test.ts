@@ -201,14 +201,17 @@ describe("parseExcelTableGroups (runtime fixture tests)", () => {
 
 describe("app/api/manuals/upload/route.ts (Excel wiring contract)", () => {
   const source = readSource("app/api/manuals/upload/route.ts");
+  // extractManualGroups moved to lib/manuals/extract-manual-groups.ts so the new preview route
+  // can reuse the exact same parsing logic instead of duplicating it (see final report).
+  const extractorSource = readSource("lib/manuals/extract-manual-groups.ts");
 
   test("routes .xlsx/.xls/.csv through parseExcelTableGroups first, falling back to parseManualText only when it returns null", () => {
-    assert.match(source, /return parseExcelTableGroups\(rows\) \?\? parseManualText\(rowsToFlatText\(rows\)\)/);
+    assert.match(extractorSource, /return parseExcelTableGroups\(rows\) \?\? parseManualText\(rowsToFlatText\(rows\)\)/);
   });
 
   test("still supports the existing .txt/.md/.docx contract unchanged (parseManualText, not the table parser)", () => {
-    assert.match(source, /if \(TEXT_EXTENSIONS\.has\(extension\)\) \{\s*\n\s*return parseManualText\(await file\.text\(\)\);/);
-    assert.match(source, /if \(extension === "\.docx"\) \{\s*\n\s*return parseManualText\(await extractDocxManualText\(file\)\);/);
+    assert.match(extractorSource, /if \(TEXT_EXTENSIONS\.has\(extension\)\) \{\s*\n\s*return parseManualText\(await file\.text\(\)\);/);
+    assert.match(extractorSource, /if \(extension === "\.docx"\) \{\s*\n\s*return parseManualText\(await extractDocxManualText\(file\)\);/);
   });
 
   test("the parsed groups are saved via saveManualGroupsWithChunks, the same function HQ manual create/store-manual create use", () => {
@@ -218,5 +221,7 @@ describe("app/api/manuals/upload/route.ts (Excel wiring contract)", () => {
   test("no AI/OpenAI/Vision classification is used for Excel parsing (parseManualText is a local-rules-only fallback)", () => {
     assert.equal(source.includes("openai"), false);
     assert.equal(source.toLowerCase().includes("vision"), false);
+    assert.equal(extractorSource.includes("openai"), false);
+    assert.equal(extractorSource.toLowerCase().includes("vision"), false);
   });
 });
