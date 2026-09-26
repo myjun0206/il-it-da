@@ -25,6 +25,27 @@ HQ·점주 매뉴얼 파일 업로드 → 미리보기 → 확정 저장 흐름�
   `parseConfirmedManualGroups`로 제목/카테고리/본문/개수·길이 제한을 다시 검증한다.
   `tempId`, `scopeType`, `franchiseId`, `brandName`은 요청에서 읽지 않는다.
 
+### HQ 공식 파일 업로드 경로
+
+HQ에서 파일로 매뉴얼을 추가하는 공식 경로는 **preview → 사용자 검토 → confirm** 하나뿐이다.
+`app/hq/manuals/page.tsx`와 `app/hq/manuals/common/page.tsx`의 파일 추가 버튼은 모두
+`/hq/manuals/onboarding?from=manuals`로 이동한다. 저장 전 확인 없이 바로 쓰는 화면은 없다.
+
+`POST /api/manuals/upload`는 확인 단계 없이 즉시 저장하던 구식 경로다. 앱 화면에서는 더 이상
+호출하지 않지만 외부/기존 호출자를 위해 **호환 목적으로 남겨둔다.** 삭제 조건은 라우트 상단
+주석에 적어 두었다. 이 경로도 아래의 중복 방지 보호를 똑같이 받는다.
+
+### 중복 저장 방지
+
+`manuals`에 실제로 쓰는 **모든** 경로는 `lib/manuals/save-manuals-with-batch.ts`의
+`saveManualGroupsWithBatchGuard`를 거친다(preview confirm 2개, legacy upload, HQ/점주 단건 생성,
+점주 batch-create). 새 저장 경로를 만들 때도 이 함수만 쓰면 보호가 따라온다.
+세부 계약은 [manual-upload-duplicate-prevention.md](manual-upload-duplicate-prevention.md) 참고.
+
+content fingerprint는 **미리보기 시점이 아니라 confirm 시점의 최종 편집 결과**로 계산한다.
+따라서 사용자가 제목이나 분류를 바꿔도 저장이 거부되지 않는다. 미리보기는 저장 요청을 식별하는
+key만 발급한다.
+
 ## 3. 저장 구조와 범위
 
 - `manuals.category` = 상위 카테고리 라벨. 부모(주제 카드)와 자식(세부 항목) 모두 같은 값을 저장한다.
@@ -37,6 +58,9 @@ HQ·점주 매뉴얼 파일 업로드 → 미리보기 → 확정 저장 흐름�
 - 분류하지 못한 항목은 내부 키(`unclassified`)가 아니라 "분류 확인 필요" 라벨로 저장된다.
 
 ## 4. 파서 규칙 추가 위치
+
+파서를 손볼 때 **출력 계약 `{ category, topic, items }`만 유지하면 된다.** 미리보기·분류·저장·중복
+방지는 그 뒤에서 알아서 동작하므로 저장 경로나 API를 함께 고칠 필요가 없다.
 
 - 표(CSV/XLSX): `lib/manuals/parse-excel-table.ts`
 - 텍스트(TXT/MD/DOCX 본문): `lib/manuals/analyze-manual-with-ai.ts`의 `parseManualText`
@@ -53,6 +77,11 @@ HQ·점주 매뉴얼 파일 업로드 → 미리보기 → 확정 저장 흐름�
 
 ## 6. 브라우저 수동 검증
 
+> **020 마이그레이션을 적용하기 전에는 저장 테스트를 하지 말 것.**
+> `manual_upload_batches` 테이블과 `manuals.upload_batch_id`가 없으면 모든 저장 경로가 실패한다.
+> 미리보기까지는 DB를 건드리지 않으므로 그 전 단계만 확인할 수 있다.
+
+- [ ] HQ: 매뉴얼 허브·공통 매뉴얼 화면의 파일 추가 버튼이 모두 미리보기 화면으로 이동하는지
 - [ ] HQ: CSV/XLSX/TXT/MD/DOCX 각각 업로드 → 미리보기 요약(세부 매뉴얼 수, 항목 수) 표시
 - [ ] 카테고리 이름 변경, 다른 카테고리로 이동, 저장 제외/복원 후 저장 → 목록에 반영
 - [ ] 모든 항목 제외 시 저장 불가 안내, 저장 버튼 연타 시 1회만 저장
@@ -66,3 +95,7 @@ HQ·점주 매뉴얼 파일 업로드 → 미리보기 → 확정 저장 흐름�
 
 실제 DB 데이터 변경(마이그레이션 적용, `stores.franchise_id` 백필, 기존 매뉴얼 재분류 등)은
 별도 승인 후에만 진행한다.
+
+**중복 방지 기능은 `020_manual_upload_batches.sql`을 쓴다.** 이 PR이 먼저 develop에 병합될
+예정이라 020을 선점했고, 공지사항 마이그레이션은 021 이후 번호를 사용한다. 두 마이그레이션은
+서로 건드리는 테이블이 없어 순서가 기술적으로 중요하지는 않지만, 배포 시점은 함께 정해야 한다.

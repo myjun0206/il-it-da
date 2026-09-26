@@ -59,6 +59,7 @@ describe("app/api/manuals/preview/route.ts (preview never writes to Supabase)", 
 
 describe("app/api/manuals/preview/confirm/route.ts (only route that actually saves)", () => {
   const source = readSource("app/api/manuals/preview/confirm/route.ts");
+  const guardSource = readSource("lib/manuals/save-manuals-with-batch.ts");
 
   test("resolves scope only via requireHqUser(), never a client-supplied franchiseId/brandName", () => {
     assert.match(source, /requireHqUser\(\)/);
@@ -72,8 +73,10 @@ describe("app/api/manuals/preview/confirm/route.ts (only route that actually sav
   });
 
   test("reuses saveManualGroupsWithChunks instead of a new duplicated save/chunk/embed implementation", () => {
-    assert.match(source, /from "@\/lib\/rag\/save-manual-sections"/);
-    assert.match(source, /saveManualGroupsWithChunks\(supabase, hqUser, groups\)/);
+    // 저장 호출은 중복 방지 가드와 함께 lib/manuals/save-manuals-with-batch.ts로 옵겨졌다.
+    assert.match(source, /from "@\/lib\/manuals\/save-manuals-with-batch"/);
+    assert.match(guardSource, /from "@\/lib\/rag\/save-manual-sections"/);
+    assert.match(guardSource, /saveManualGroupsWithChunks\(client, auth, groups, storeId, undefined, claim\.batchId\)/);
   });
 
   test("reuses the shared parseConfirmedManualGroups instead of duplicating the confirm-payload parsing rule", () => {
@@ -99,7 +102,7 @@ describe("app/api/manuals/preview/confirm/route.ts (only route that actually sav
 
   test("never logs the raw request body/manual content, only a fixed log line with the caught error object", () => {
     assert.equal(/console\.error\([^)]*body/i.test(source), false);
-    assert.match(source, /console\.error\("\[MANUALS_PREVIEW_CONFIRM\] save failed:", e\)/);
+    assert.match(guardSource, /console\.error\("\[MANUAL_SAVE_GUARD\] save failed:", \{ name: e instanceof Error \? e\.name : "UnknownError" \}\)/);
   });
 });
 

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { requireHqUser } from "@/lib/supabase/hq-auth";
@@ -14,6 +15,7 @@ export const runtime = "nodejs";
 
 type PreviewManualsResponse = {
   preview?: ManualUploadPreview;
+  idempotencyKey?: string;
   error?: string;
 };
 
@@ -98,5 +100,6 @@ export async function POST(request: Request): Promise<NextResponse<PreviewManual
 
   const preview = buildManualPreview(groups);
 
-  return NextResponse.json({ preview }, { status: 200 });
+  // 이 미리보기 세션 1회당 1개. 같은 저장 요청이 재전송돼도 같은 key로 묶여 한 번만 저장된다.
+  return NextResponse.json({ preview, idempotencyKey: randomUUID() }, { status: 200 });
 }

@@ -80,7 +80,9 @@ describe("app/api/store-manuals/preview/confirm/route.ts (store confirm re-verif
   });
 
   test("saves with the server-verified storeAuth (franchiseId/brandName/storeId), never a client-supplied value", () => {
-    assert.match(source, /saveManualGroupsWithChunks\(adminClient, storeAuth, groups, storeAuth\.storeId\)/);
+    assert.match(source, /auth: storeAuth,/);
+    assert.match(source, /storeId: storeAuth\.storeId,/);
+    assert.match(source, /scope: \{ scopeType: "store", franchiseId: storeAuth\.franchiseId, storeId: storeAuth\.storeId \}/);
   });
 
   test("reuses the shared parseConfirmedManualGroups instead of duplicating the confirm-payload parsing rule", () => {
@@ -90,7 +92,8 @@ describe("app/api/store-manuals/preview/confirm/route.ts (store confirm re-verif
 
   test("never logs the raw request body/manual content, only a fixed log line with the caught error object", () => {
     assert.equal(/console\.error\([^)]*body/i.test(source), false);
-    assert.match(source, /console\.error\("\[STORE_MANUALS_PREVIEW_CONFIRM\] save failed:", e\)/);
+    const guardSource = readSource("lib/manuals/save-manuals-with-batch.ts");
+    assert.match(guardSource, /console\.error\("\[MANUAL_SAVE_GUARD\] save failed:", \{ name: e instanceof Error \? e\.name : "UnknownError" \}\)/);
   });
 });
 
@@ -100,8 +103,9 @@ describe("existing store-manual API contracts are untouched (no regression)", ()
     assert.match(source, /return NextResponse\.json\(\{ groups \}\);/);
   });
 
-  test("app/api/store-manuals/batch-create/route.ts still accepts { storeId, groups } and calls saveManualGroupsWithChunks the same way", () => {
+  test("app/api/store-manuals/batch-create/route.ts still accepts { storeId, groups } and now saves through the shared batch guard", () => {
     const source = readSource("app/api/store-manuals/batch-create/route.ts");
-    assert.match(source, /saveManualGroupsWithChunks\(adminClient, storeAuth, groups, storeId\)/);
+    assert.match(source, /parseGroups\(body\.groups\)/);
+    assert.match(source, /saveManualGroupsWithBatchGuard\(adminClient, \{/);
   });
 });
