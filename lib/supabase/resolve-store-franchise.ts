@@ -23,9 +23,14 @@ export async function resolveFranchiseIdForStoreName(
     return null;
   }
 
-  const matches = (franchises as { id: string; name: string }[])
-    .filter((franchise) => normalizedStoreName.startsWith(franchise.name.trim().toLowerCase()))
-    .sort((a, b) => b.name.length - a.name.length);
+  const matches = (franchises as { id: string; name: string | null }[])
+    // 이름이 비어있는(공백) franchise row는 제외한다 - 그대로 두면 모든 store가
+    // `"anything".startsWith("")`에 걸려 이 브랜드로 잘못 몰리게 된다(브랜드 쏠림 버그).
+    .filter((franchise) => {
+      const normalizedFranchiseName = franchise.name?.trim().toLowerCase();
+      return !!normalizedFranchiseName && normalizedStoreName.startsWith(normalizedFranchiseName);
+    })
+    .sort((a, b) => (b.name?.trim().length ?? 0) - (a.name?.trim().length ?? 0));
 
   return matches[0]?.id ?? null;
 }

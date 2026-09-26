@@ -1,7 +1,12 @@
 export const AUTH_CALLBACK_PATH = "/auth/callback";
 export const DEFAULT_AUTH_NEXT_PATH = "/signup/complete";
 
-const ALLOWED_AUTH_NEXT_PATHS = new Set(["/signup/complete", "/signup/stores"]);
+const ALLOWED_AUTH_NEXT_PATHS = new Set([
+  "/signup/complete",
+  "/signup/stores",
+  "/signup/approval",
+  "/signup/approval-status",
+]);
 const AUTH_QUERY_PARAMS = ["code", "token_hash", "type"] as const;
 
 export function getSafeAuthNextPath(value: string | null): string {
