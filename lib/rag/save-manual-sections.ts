@@ -81,6 +81,7 @@ export async function saveManualGroupsWithChunks(
   groups: ManualGroupInput[],
   storeId?: string,
   indexManual: (manualId: string) => Promise<unknown> = indexManualById,
+  uploadBatchId?: string | null,
 ): Promise<ManualRecord[]> {
   const scopeType = storeId ? "store" : "hq";
   const allManuals: ManualRecord[] = [];
@@ -107,6 +108,7 @@ export async function saveManualGroupsWithChunks(
         category,
         content: `${items.length}개 항목`,
         status: "approved",
+        upload_batch_id: uploadBatchId ?? null,
       })
       .select(MANUAL_SELECT_COLUMNS)
       .single();
@@ -134,6 +136,7 @@ export async function saveManualGroupsWithChunks(
             category,
             content,
             status: "approved",
+            upload_batch_id: uploadBatchId ?? null,
           };
         }),
       )

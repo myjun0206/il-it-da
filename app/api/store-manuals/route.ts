@@ -4,7 +4,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { requireStoreOwner } from "@/lib/manuals/store-manual-auth";
 import { STORE_MANUAL_CATEGORY_PLACEHOLDER_CONTENT } from "@/lib/manuals/constants";
-import { saveManualGroupsWithChunks, type ManualItemInput } from "@/lib/rag/save-manual-sections";
+import { type ManualItemInput } from "@/lib/rag/save-manual-sections";
+import { saveManualGroupsWithBatchGuard } from "@/lib/manuals/save-manuals-with-batch";
 import type { ManualRecord } from "@/lib/types/manual";
 
 export const runtime = "nodejs";
@@ -207,8 +208,24 @@ export async function POST(request: Request): Promise<NextResponse<CreateStoreMa
       return NextResponse.json({ error: "카테고리를 선택해주세요." }, { status: 400 });
     }
 
-    const manuals = await saveManualGroupsWithChunks(adminClient, storeAuth, [{ category, topic, items }], storeId);
-    return NextResponse.json({ manuals }, { status: 201 });
+    // 단건 작성에는 미리보기 단계가 없어 발급된 key가 없다. guard가 요청단위 key를 만들고,
+    // 같은 내용의 재전송은 content fingerprint로 걸러낸다.
+    const result = await saveManualGroupsWithBatchGuard(adminClient, {
+      auth: storeAuth,
+      groups: [{ category, topic, items }],
+      storeId: storeAuth.storeId,
+      scope: { scopeType: "store", franchiseId: storeAuth.franchiseId, storeId: storeAuth.storeId },
+    });
+
+    if (result.kind === "blocked") {
+      return NextResponse.json({ error: result.error }, { status: result.status });
+    }
+
+    if (result.kind === "save_failed") {
+      return NextResponse.json({ error: result.error }, { status: 500 });
+    }
+
+    return NextResponse.json({ manuals: result.manuals }, { status: result.kind === "saved" ? 201 : 200 });
   } catch (e) {
     console.error("POST /api/store-manuals error:", e);
     return NextResponse.json(

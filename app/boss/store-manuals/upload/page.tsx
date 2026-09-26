@@ -55,6 +55,7 @@ export default function StoreManualUploadPage() {
   const [categoryLabels, setCategoryLabels] = useState<Record<string, string>>({});
   const [manualEdits, setManualEdits] = useState<Record<string, ManualEditState>>({});
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+  const [idempotencyKey, setIdempotencyKey] = useState("");
   const [error, setError] = useState("");
   const [pendingLeave, setPendingLeave] = useState<{ title: string; run: () => void } | null>(null);
 
@@ -180,14 +181,19 @@ export default function StoreManualUploadPage() {
           method: "POST",
           body: formData,
         });
-        const data = (await response.json()) as { preview?: ManualUploadPreview; error?: string };
+        const data = (await response.json()) as {
+          preview?: ManualUploadPreview;
+          idempotencyKey?: string;
+          error?: string;
+        };
 
-        if (!response.ok || !data.preview) {
+        if (!response.ok || !data.preview || !data.idempotencyKey) {
           throw new Error(data.error || "파일을 분석하는 중 오류가 발생했습니다.");
         }
 
         const nextPreview = data.preview;
         setPreview(nextPreview);
+        setIdempotencyKey(data.idempotencyKey);
         setCategoryLabels(
           Object.fromEntries(nextPreview.categories.map((category) => [category.tempId, category.label])),
         );
@@ -225,6 +231,7 @@ export default function StoreManualUploadPage() {
 
   const resetToUpload = () => {
     setPreview(null);
+    setIdempotencyKey("");
     setCategoryLabels({});
     setManualEdits({});
     setCollapsedCategories(new Set());
@@ -267,7 +274,7 @@ export default function StoreManualUploadPage() {
   };
 
   const handleSave = async () => {
-    if (!preview || !storeId || isSubmittingRef.current) return;
+    if (!preview || !storeId || !idempotencyKey || isSubmittingRef.current) return;
 
     setError("");
 
@@ -287,7 +294,7 @@ export default function StoreManualUploadPage() {
       const response = await fetch("/api/store-manuals/preview/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storeId, manuals: payloadManuals }),
+        body: JSON.stringify({ storeId, manuals: payloadManuals, idempotencyKey }),
       });
       const data = (await response.json()) as { error?: string };
 

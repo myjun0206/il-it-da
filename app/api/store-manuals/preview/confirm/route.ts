@@ -3,8 +3,10 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { requireStoreOwner } from "@/lib/manuals/store-manual-auth";
-import { saveManualGroupsWithChunks } from "@/lib/rag/save-manual-sections";
 import { parseConfirmedManualGroups } from "@/lib/manuals/parse-confirmed-manual-groups";
+import { saveManualGroupsWithBatchGuard } from "@/lib/manuals/save-manuals-with-batch";
+import { IDEMPOTENCY_KEY_PATTERN } from "@/lib/manuals/manual-upload-batch";
+import { MISSING_KEY_MESSAGE } from "@/lib/manuals/manual-upload-batch-messages";
 import type { ManualRecord } from "@/lib/types/manual";
 
 export const runtime = "nodejs";
@@ -17,6 +19,7 @@ type ConfirmManualsResponse = {
 type ConfirmManualsRequestBody = {
   storeId?: unknown;
   manuals?: unknown;
+  idempotencyKey?: unknown;
 };
 
 function getString(value: unknown): string | undefined {
@@ -37,6 +40,9 @@ function getString(value: unknown): string | undefined {
  * - scopeType is always "store" and storeId is always storeAuth.storeId (server-verified),
  *   never a client-supplied value - body.franchiseId/body.brandName/body.scopeType are never
  *   read at all.
+ *
+ * 중복 저장 방지: HQ confirm과 같은 saveManualGroupsWithBatchGuard를 재사용하되,
+ * 범위는 검증된 storeAuth.storeId로만 잡는다(다른 지점은 같은 내용이어도 별개로 허용된다).
  */
 export async function POST(request: Request): Promise<NextResponse<ConfirmManualsResponse>> {
   const serverClient = await createClient();
@@ -67,6 +73,15 @@ export async function POST(request: Request): Promise<NextResponse<ConfirmManual
     return NextResponse.json({ error: "이 지점에 대한 접근 권한이 없습니다." }, { status: 403 });
   }
 
+  const idempotencyKey =
+    typeof body.idempotencyKey === "string" && IDEMPOTENCY_KEY_PATTERN.test(body.idempotencyKey.trim())
+      ? body.idempotencyKey.trim()
+      : null;
+
+  if (!idempotencyKey) {
+    return NextResponse.json({ error: MISSING_KEY_MESSAGE }, { status: 400 });
+  }
+
   const groups = parseConfirmedManualGroups(body.manuals);
 
   if (!groups) {
@@ -76,14 +91,22 @@ export async function POST(request: Request): Promise<NextResponse<ConfirmManual
     );
   }
 
-  try {
-    const manuals = await saveManualGroupsWithChunks(adminClient, storeAuth, groups, storeAuth.storeId);
-    return NextResponse.json({ manuals }, { status: 201 });
-  } catch (e) {
-    console.error("[STORE_MANUALS_PREVIEW_CONFIRM] save failed:", e);
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "매뉴얼 저장 중 오류가 발생했습니다." },
-      { status: 500 },
-    );
+  const result = await saveManualGroupsWithBatchGuard(adminClient, {
+    auth: storeAuth,
+    groups,
+    storeId: storeAuth.storeId,
+    scope: { scopeType: "store", franchiseId: storeAuth.franchiseId, storeId: storeAuth.storeId },
+    idempotencyKey,
+  });
+
+  if (result.kind === "blocked") {
+    return NextResponse.json({ error: result.error }, { status: result.status });
   }
+
+  if (result.kind === "save_failed") {
+    return NextResponse.json({ error: result.error }, { status: 500 });
+  }
+
+  // 같은 요청이 이미 성공했다면 그때 만든 행을 그대로 돌려준다(새 행을 만들지 않는다).
+  return NextResponse.json({ manuals: result.manuals }, { status: result.kind === "saved" ? 201 : 200 });
 }
