@@ -1,0 +1,62 @@
+{
+  "brandName": "M Coffee",
+  "sourceScopeType": "common",
+  "scopeType": "hq",
+  "categories": [
+    {
+      "key": "store_operations_staff",
+      "label": "매장 운영 및 직원 업무",
+      "manualTitles": [
+        "프랜차이즈 매뉴얼 적용 원칙",
+        "신규 직원 업무 안내",
+        "교대 및 인수인계",
+        "교대 인수인계 체크리스트"
+      ]
+    },
+    {
+      "key": "opening_closing",
+      "label": "오픈 및 마감",
+      "manualTitles": [
+        "오픈 운영",
+        "마감 운영"
+      ]
+    },
+    {
+      "key": "ordering_payment_customer_service",
+      "label": "주문·결제 및 고객 응대",
+      "manualTitles": [
+        "고객 응대 및 주문 처리",
+        "POS 및 결제 관리",
+        "환불·취소·보상 처리 기준",
+        "주문·포장·픽업 처리",
+        "쿠폰·포인트·프로모션 관리",
+        "분실물 및 고객 물품 대응"
+      ]
+    },
+    {
+      "key": "menu_recipe",
+      "label": "메뉴 제조 및 레시피",
+      "manualTitles": [
+        "음료 제조 및 레시피 관리"
+      ]
+    },
+    {
+      "key": "inventory_ordering_equipment",
+      "label": "재고·발주 및 장비",
+      "manualTitles": [
+        "재고 관리",
+        "재고 발주 기준",
+        "장비 세척 및 관리"
+      ]
+    },
+    {
+      "key": "hygiene_safety_emergency",
+      "label": "위생·안전 및 비상 대응",
+      "manualTitles": [
+        "위생 및 청소 관리",
+        "긴급 상황 대응",
+        "식품 안전 및 이물질 대응"
+      ]
+    }
+  ]
+}
