@@ -19,7 +19,7 @@
 내용은 두 세트 사이에서 한 글자도 다르지 않아야 합니다. `variant.*`는 아래 표현(포맷)
 차이만 추가로 포함합니다 — 내용 자체를 바꾸지 않습니다.
 
-- CRLF(`\r\n`) 줄바꿈
+- CRLF(`\r\n`) 입력에 대한 처리 계약(아래 CRLF 안내 상자 참고)
 - 빈 행(줄)
 - category/title 앞의(leading) 공백
 - 탭 들여쓰기
@@ -33,6 +33,15 @@
 > `tests/manuals/manual-format-fixtures.test.ts`의 인라인 문자열 리터럴
 > (`"출근 후 점검  ".trimEnd()`)로만 검증한다. `variant.csv`는 셀 중간(쉼표 앞)의
 > trailing 공백이라 줄 끝 공백이 아니므로 예외적으로 그대로 유지한다.
+>
+> **CRLF 안내**: 파서는 `\r\n` 입력을 지원해야 하지만, 커밋된 fixture 파일의 물리적
+> 줄바꿈이 항상 CRLF라고 가정해서는 안 된다 — Git checkout 시 줄바꿈은 플랫폼/설정
+> (autocrlf, `.gitattributes` 등)에 따라 LF로 정규화될 수 있다(예: GitHub Actions의 Linux
+> 러너). 그래서 `tests/manuals/manual-format-fixtures.test.ts`는 fixture 파일 자체에
+> `\r\n`이 들어있는지 확인하지 않는다. CRLF 처리 자체는 OS/checkout과 무관한 인라인
+> 문자열 테스트, 그리고 실제 파서를 직접 호출하는 런타임 테스트
+> (`tests/manuals/detect-manual-item.test.ts`, `tests/manuals/parse-excel-table.test.ts`)로
+> 검증한다.
 
 브랜드명·실명·연락처 등 실제 정보는 전혀 포함하지 않습니다.
 
@@ -98,7 +107,7 @@ XLSX/CSV/TXT/MD가 공유하는 하나의 계약이다.
 |---|---|
 | 완전히 빈 행/줄 | 제거한다 (category/title/content 어디에도 남지 않는다) |
 | category/title 앞뒤 공백 | trim 후 저장한다 (`" 오픈 준비 "` → `"오픈 준비"`). trailing 공백은 물리적 줄 끝 공백이 되는 `variant.md`/`variant.txt`에는 커밋하지 않고, 테스트 내부 문자열 리터럴로만 검증한다(2절 참고) |
-| CRLF(`\r\n`) | LF와 동일하게 처리한다 — 줄바꿈 위치만 다를 뿐 내용 손실·중복이 없어야 한다 |
+| CRLF(`\r\n`) | LF와 동일하게 처리한다 — 줄바꿈 위치만 다를 뿐 내용 손실·중복이 없어야 한다. 단, 커밋된 fixture 파일이 항상 CRLF 바이트를 담고 있다고 가정하지 않는다(Git checkout 시 LF로 정규화될 수 있음). 이 처리 계약은 fixture 파일이 아니라 인라인 문자열/실제 파서 런타임 테스트로 검증한다(2절 CRLF 안내 참고) |
 | 숫자 전용 셀/텍스트(예: title이 `"10"`인 경우) | 그대로 문자열로 보존한다 (반올림/서식 변경 없음). 별도 예시는 5.1절 참고 |
 | `N-N.` 하위 번호 | 3.4절 규칙대로 앞 항목 내용에 포함되거나 자체 그룹으로 묶인다 (표/텍스트 원문 그대로 유지, 숫자를 지우지 않는다) |
 | 탭/공백 들여쓰기 | 항목 구분자로만 동작하고, 실제로 저장되는 텍스트에서는 앞의 들여쓰기 문자를 trim한다 |

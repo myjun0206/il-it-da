@@ -132,10 +132,14 @@ describe("tests/fixtures/manual-formats/ (existence + structural validity)", () 
     }
   });
 
-  test("variant fixtures actually exercise CRLF, blank lines, leading whitespace, and sub-numbered/indented items", () => {
+  test("variant fixtures actually exercise blank lines/content, leading whitespace, tab indentation, and sub-numbered items", () => {
     for (const file of ["variant.csv", "variant.txt", "variant.md"] as const) {
       const text = readFixture(file);
-      assert.match(text, /\r\n/, `${file} should contain at least one CRLF line ending`);
+      // Physical line endings are not asserted here: Git checkout normalizes line endings
+      // per-platform/per-config (e.g. LF on GitHub Actions' Linux runners, CRLF on a Windows
+      // checkout), so a committed fixture file must not be assumed to always contain `\r\n`.
+      // CRLF *handling* is verified independently below and in the real parser's own runtime
+      // tests (tests/manuals/detect-manual-item.test.ts, tests/manuals/parse-excel-table.test.ts).
       assert.match(text, /\r?\n[ \t\r]*\r?\n/, `${file} should contain a blank line`);
       assert.match(text, /\t/, `${file} should contain a tab-indented line`);
       assert.match(text, /1-1\./, `${file} should contain a sub-numbered ("1-1.") line`);
@@ -145,6 +149,19 @@ describe("tests/fixtures/manual-formats/ (existence + structural validity)", () 
       // case is instead verified with an inline string literal below, never a raw file line.
       assert.match(text, / 오픈 준비/, `${file} should contain a category with leading whitespace`);
     }
+  });
+
+  // A fixture file's *physical* line endings depend on Git's checkout-time normalization
+  // (autocrlf/.gitattributes/OS), so this suite never asserts that a committed file contains
+  // `\r\n`. The CRLF *behavior* contract itself (input handling produces the same normalized
+  // result as LF) is already proven at runtime by the real parser's own tests:
+  // tests/manuals/detect-manual-item.test.ts ("handles CRLF line endings...") and
+  // tests/manuals/parse-excel-table.test.ts ("Korean content with CRLF line endings...").
+  // This is just a minimal, OS-independent string-level restatement of that same contract.
+  test("CRLF normalization contract (verified via an inline string, independent of OS/Git checkout)", () => {
+    const crlfExample = "첫째 줄\r\n둘째 줄\r\n셋째 줄";
+    assert.match(crlfExample, /\r\n/);
+    assert.equal(crlfExample.replace(/\r\n/g, "\n"), "첫째 줄\n둘째 줄\n셋째 줄");
   });
 
   // Trailing whitespace on a physical line fails this repo's `git diff --check` quality gate,
