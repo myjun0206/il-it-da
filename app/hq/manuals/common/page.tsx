@@ -8,6 +8,7 @@ import { Input } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
+import { ManualSearchReadinessPanel } from "@/components/manuals/ManualSearchReadinessPanel";
 import type { ManualRecord } from "@/lib/types/manual";
 
 type ManualGroup = {
@@ -762,6 +763,11 @@ export default function ManualDashboardPage() {
                 handleFileSelected(file);
               }
             }}
+          />
+
+          <ManualSearchReadinessPanel
+            readinessUrl="/api/manuals/search-readiness"
+            reindexUrl="/api/manuals/search-readiness/reindex"
           />
 
           {isLoadingManuals ? (

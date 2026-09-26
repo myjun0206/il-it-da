@@ -9,6 +9,7 @@ import { createClient } from "@/lib/supabase/client";
 import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
+import { ManualSearchReadinessPanel } from "@/components/manuals/ManualSearchReadinessPanel";
 import type { ManualRecord } from "@/lib/types/manual";
 import type { AnalyzedManualGroup } from "@/lib/manuals/analyze-manual-with-ai";
 
@@ -903,6 +904,14 @@ export default function StoreManualsManagementPage() {
             <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
               <p className="text-sm text-red-600">{analyzeError}</p>
             </div>
+          )}
+
+          {selectedStoreId && (
+            <ManualSearchReadinessPanel
+              readinessUrl={`/api/store-manuals/search-readiness?storeId=${selectedStoreId}`}
+              reindexUrl="/api/store-manuals/search-readiness/reindex"
+              storeId={selectedStoreId}
+            />
           )}
 
           {isLoadingManuals ? (

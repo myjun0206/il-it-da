@@ -40,6 +40,8 @@
     "tests/manuals/store-manual-auth.test.ts",
     "tests/manuals/store-manual-upload-ui.test.ts",
     "tests/manuals/manual-confirm-flow.test.ts",
+    "tests/manuals/manual-search-readiness.test.ts",
+    "tests/manuals/manual-readiness-api.test.ts",
     "lib/rag/answer-prompt.ts",
     "lib/rag/chunk-manual.ts",
     "lib/rag/search-query.ts",
@@ -67,7 +69,9 @@
     "lib/manuals/build-manual-preview.ts",
     "lib/manuals/extract-manual-groups.ts",
     "lib/manuals/parse-confirmed-manual-groups.ts",
-    "lib/manuals/store-manual-auth.ts"
+    "lib/manuals/store-manual-auth.ts",
+    "lib/manuals/manual-search-readiness.ts",
+    "lib/manuals/manual-reindex-guard.ts"
   ],
   "exclude": ["node_modules"]
 }

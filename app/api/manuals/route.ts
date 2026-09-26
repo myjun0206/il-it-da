@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { requireHqUser } from "@/lib/supabase/hq-auth";
+import { HQ_MANUAL_CATEGORY_PLACEHOLDER_CONTENT } from "@/lib/manuals/constants";
 import { saveManualGroupsWithChunks, type ManualItemInput } from "@/lib/rag/save-manual-sections";
 import type { ManualRecord } from "@/lib/types/manual";
 
@@ -38,7 +39,7 @@ type UpdateManualsResponse = {
   error?: string;
 };
 
-const CATEGORY_PLACEHOLDER_CONTENT = "__HQ_MANUAL_CATEGORY_PLACEHOLDER__";
+const CATEGORY_PLACEHOLDER_CONTENT = HQ_MANUAL_CATEGORY_PLACEHOLDER_CONTENT;
 const MANUAL_SELECT_COLUMNS =
   "id, brand_name, franchise_id, store_id, parent_manual_id, title, category, content, status, created_at, updated_at";
 
