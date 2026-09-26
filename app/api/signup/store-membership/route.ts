@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { createNotification } from "@/lib/notifications";
-import { resolveFranchiseIdForStoreName } from "@/lib/supabase/resolve-store-franchise";
+import { upsertSignupProfile, submitStoreMembershipRequest } from "@/lib/signup/store-membership-service";
 import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
 
 export const runtime = "nodejs";
@@ -186,423 +185,50 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
       );
     }
 
-    // 1. profiles row 생성 또는 업데이트 (full_name이 없으면 채우기)
-    try {
-      // 선택한 role이 'owner' 또는 'staff'인지 다시 확인
-      const profileRole = role === "owner" ? "owner" : "staff";
+    // profiles row 생성 또는 업데이트 (full_name이 없으면 채우기)
+    const userName = user.user_metadata?.name || user.email || "Unknown User";
+    const userPhone = typeof user.user_metadata?.phone === "string" ? user.user_metadata.phone : null;
 
-      // auth user metadata에서 name 가져오기 (fallback: email)
-      const userName = user.user_metadata?.name || user.email || "Unknown User";
-      const userEmail = user.email?.trim().toLowerCase() || null;
-      const userPhone = typeof user.user_metadata?.phone === "string" ? user.user_metadata.phone : null;
+    const profileResult = await upsertSignupProfile(adminClient, {
+      userId,
+      email: user.email ?? null,
+      role,
+      name: userName,
+      phone: userPhone,
+    });
 
-      const { error: profileError } = await adminClient
-        .from("profiles")
-        .insert({
-          id: userId,
-          email: userEmail,
-          role: profileRole,
-          full_name: userName,
-          phone: userPhone,
-          approval_status: "pending",
-        });
-
-      // 중복 PK 에러: 기존 profile이 있음
-      if (profileError && profileError.code === "23505") {
-        // 기존 profile 조회
-        const { data: existingProfile, error: fetchError } = await adminClient
-          .from("profiles")
-          .select("email, full_name, phone, approval_status, brand_id")
-          .eq("id", userId)
-          .single();
-
-        if (!fetchError && existingProfile) {
-          const profileUpdates: Record<string, unknown> = {};
-          if (userEmail && existingProfile.email !== userEmail) profileUpdates.email = userEmail;
-          if (!existingProfile.full_name) profileUpdates.full_name = userName;
-          if (userPhone && !existingProfile.phone) profileUpdates.phone = userPhone;
-          if (!existingProfile.approval_status) profileUpdates.approval_status = "pending";
-
-          if (Object.keys(profileUpdates).length > 0) {
-            const { error: updateError } = await adminClient
-              .from("profiles")
-              .update(profileUpdates)
-              .eq("id", userId);
-
-            if (updateError) {
-              logSafeAuthError("STORE_MEMBERSHIP_PROFILE_UPDATE_FAILED", updateError);
-              return NextResponse.json(
-                {
-                  success: false,
-                  error: "Failed to update profile",
-                  details: updateError.message,
-                },
-                { status: 500 }
-              );
-            }
-          }
-        }
-        // full_name이 이미 있으면 그냥 스킵 (기존 값 유지)
-      } else if (profileError) {
-        // 다른 에러
-        logSafeAuthError("STORE_MEMBERSHIP_PROFILE_CREATE_FAILED", profileError);
-        return NextResponse.json(
-          {
-            success: false,
-            error: "Failed to create profile",
-            details: profileError.message,
-          },
-          { status: 500 }
-        );
-      }
-    } catch (e) {
-      logSafeAuthError("STORE_MEMBERSHIP_PROFILE_CREATE_EXCEPTION", e);
+    if (!profileResult.success) {
       return NextResponse.json(
-        { success: false, error: "Failed to create profile", details: String(e) },
+        { success: false, error: profileResult.error, details: profileResult.details },
         { status: 500 }
       );
     }
 
-    let requestedFranchiseId: string | null = null;
-    if (franchiseId) {
-      const { data: chosenFranchise, error: chosenFranchiseError } = await adminClient
-        .from("franchises")
-        .select("id")
-        .eq("id", franchiseId)
-        .maybeSingle<{ id: string }>();
+    // 매장 조회/생성 + store_memberships row 생성 + 알림 발송
+    const membershipResult = await submitStoreMembershipRequest(adminClient, {
+      userId,
+      userName,
+      role,
+      storeId,
+      storeName,
+      franchiseId,
+      currentApprovalStatus: authorizedProfile?.approval_status ?? null,
+    });
 
-      if (chosenFranchiseError || !chosenFranchise) {
-        return NextResponse.json(
-          { success: false, error: "Invalid franchiseId" },
-          { status: 400 },
-        );
-      }
-      requestedFranchiseId = chosenFranchise.id;
-    } else if (storeName) {
-      requestedFranchiseId = await resolveFranchiseIdForStoreName(adminClient, storeName);
-    }
-
-    // 2. stores row 생성/조회
-    let finalStoreId: string | null = null;
-    // 매장이 속한 브랜드(franchise_id). 기존 매장이면 DB에 저장된 값을 그대로 쓰고,
-    // 신규 매장이면 매장명으로 franchises를 자동 매칭한다 (클라이언트가 보낸 브랜드명은 신뢰하지 않는다).
-    let finalFranchiseId: string | null = null;
-
-    if (storeId || storeName) {
-      // 기존 stores에서 조회 (storeName + franchise_id로 찾기)
-      let existingStoreQuery = adminClient
-        .from("stores")
-        .select("id, franchise_id")
-        .eq("store_name", storeName);
-      existingStoreQuery = requestedFranchiseId
-        ? existingStoreQuery.eq("franchise_id", requestedFranchiseId)
-        : existingStoreQuery.is("franchise_id", null);
-
-      const { data: existingStore, error: storeError } = await existingStoreQuery.single();
-
-      if (storeError && storeError.code !== "PGRST116") {
-        logSafeAuthError("STORE_MEMBERSHIP_STORE_LOOKUP_FAILED", storeError);
-        return NextResponse.json(
-          {
-            success: false,
-            error: "Failed to lookup store",
-            details: storeError.message,
-          },
-          { status: 500 }
-        );
-      }
-
-      if (existingStore) {
-        // 기존 store 찾음 - 소속 브랜드는 DB에 저장된 franchise_id를 우선 사용하되,
-        // 마이그레이션 이전에 생성된 매장 등 franchise_id가 비어있으면 매장명으로 다시 자동 매칭해 채워 넣는다.
-        // (채워두지 않으면 이 매장의 승인 요청이 어느 HQ 승인 큐에도 걸리지 않게 된다.)
-        finalStoreId = existingStore.id;
-        finalFranchiseId = existingStore.franchise_id;
-
-        if (!finalFranchiseId) {
-          const backfilledFranchiseId = await resolveFranchiseIdForStoreName(adminClient, storeName!);
-
-          if (backfilledFranchiseId) {
-            const { error: backfillError } = await adminClient
-              .from("stores")
-              .update({ franchise_id: backfilledFranchiseId })
-              .eq("id", existingStore.id);
-
-            if (!backfillError) {
-              finalFranchiseId = backfilledFranchiseId;
-            }
-          }
-        }
-      } else {
-        // 기존 store 없음
-        if (role === "owner") {
-          // Owner: 새로운 store 생성 (franchise_id는 위에서 이미 resolveFranchiseIdForStoreName으로 계산된 requestedFranchiseId 재사용)
-
-          // UPSERT를 사용하거나 먼저 다시 조회 (race condition 방지)
-          // 방법: 먼저 다시 확인
-          let doubleCheckStoreQuery = adminClient
-            .from("stores")
-            .select("id, franchise_id")
-            .eq("store_name", storeName);
-          doubleCheckStoreQuery = requestedFranchiseId
-            ? doubleCheckStoreQuery.eq("franchise_id", requestedFranchiseId)
-            : doubleCheckStoreQuery.is("franchise_id", null);
-
-          const { data: doubleCheckStore, error: doubleCheckError } = await doubleCheckStoreQuery.single();
-
-          if (doubleCheckError && doubleCheckError.code === "PGRST116") {
-            // 정말 없음 - INSERT
-            const { data: newStore, error: insertError } = await adminClient
-              .from("stores")
-              .insert({
-                store_name: storeName,
-                franchise_id: requestedFranchiseId,
-                // id, created_at은 defaults로 자동 생성
-                // boss_id는 선택사항 (NULL 허용)
-              })
-              .select("id, franchise_id")
-              .single();
-
-            if (insertError) {
-              logSafeAuthError("STORE_MEMBERSHIP_STORE_INSERT_FAILED", insertError);
-
-              // 동시성으로 다른 요청이 생성했을 수 있음
-              // 한 번 더 조회
-              let retryStoreQuery = adminClient
-                .from("stores")
-                .select("id, franchise_id")
-                .eq("store_name", storeName);
-              retryStoreQuery = requestedFranchiseId
-                ? retryStoreQuery.eq("franchise_id", requestedFranchiseId)
-                : retryStoreQuery.is("franchise_id", null);
-
-              const { data: retryStore, error: retryError } = await retryStoreQuery.single();
-
-              if (retryError && retryError.code === "PGRST116") {
-                // 정말 생성 실패
-                logSafeAuthError("STORE_MEMBERSHIP_STORE_INSERT_RETRY_FAILED", insertError);
-                return NextResponse.json(
-                  {
-                    success: false,
-                    error: "매장 정보를 등록하는 중 오류가 발생했습니다.",
-                    details: insertError.message,
-                  },
-                  { status: 500 }
-                );
-              }
-
-              if (retryStore) {
-                // 다시 조회하니 있음 (다른 요청이 생성함)
-                finalStoreId = retryStore.id;
-                finalFranchiseId = retryStore.franchise_id;
-              }
-            } else {
-              // 성공
-              finalStoreId = newStore.id;
-              finalFranchiseId = newStore.franchise_id;
-            }
-          } else if (!doubleCheckError && doubleCheckStore) {
-            // 다시 확인하니 있음 (다른 요청이 생성함)
-            finalStoreId = doubleCheckStore.id;
-            finalFranchiseId = doubleCheckStore.franchise_id;
-          }
-        } else {
-          // Staff: 새로운 store 생성 금지
-          return NextResponse.json(
-            {
-              success: false,
-              error: "선택한 매장을 찾을 수 없습니다.",
-              details: `Store with name "${storeName}" not found. Staff must select an existing store.`,
-            },
-            { status: 404 }
-          );
-        }
-      }
-    } else {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "storeName is required",
-          details: "매장 정보가 필요합니다.",
-        },
-        { status: 400 }
-      );
-    }
-
-    if (!finalStoreId) {
-      return NextResponse.json(
-        { success: false, error: "Unable to determine store ID" },
-        { status: 500 }
-      );
-    }
-
-    const finalMembershipFranchiseId = requestedFranchiseId ?? finalFranchiseId;
-
-    if (finalMembershipFranchiseId) {
-      await adminClient
-        .from("profiles")
-        .update({
-          brand_id: finalMembershipFranchiseId,
-          approval_status: authorizedProfile?.approval_status === "approved" ? "approved" : "pending",
-        })
-        .eq("id", userId);
-    }
-
-    // 3. store_memberships row 생성 (중복 확인)
-    try {
-      // 기존 membership 확인
-      const { data: existingMembership, error: lookupError } = await adminClient
-        .from("store_memberships")
-        .select("id, status")
-        .eq("user_id", userId)
-        .eq("store_id", finalStoreId)
-        .single();
-
-      if (lookupError && lookupError.code !== "PGRST116") {
-        logSafeAuthError("STORE_MEMBERSHIP_LOOKUP_FAILED", lookupError);
-        return NextResponse.json(
-          {
-            success: false,
-            error: "Failed to lookup existing membership",
-            details: lookupError.message,
-          },
-          { status: 500 }
-        );
-      }
-
-      if (existingMembership) {
-        // 이미 존재하면 기존 membership ID 반환
-        return NextResponse.json({
-          success: true,
-          membershipId: existingMembership.id,
-        });
-      }
-
-      // 새로운 membership 생성 (franchise_id는 매장 조회/생성 시 자동 인식된 값 또는 사용자가 선택한 값)
-      const { data: newMembership, error: createError } = await adminClient
-        .from("store_memberships")
-        .insert({
-          user_id: userId,
-          store_id: finalStoreId,
-          franchise_id: finalMembershipFranchiseId,
-          role: role,
-          status: "pending",
-          requested_at: new Date().toISOString(),
-        })
-        .select("id")
-        .single();
-
-      if (createError) {
-        logSafeAuthError("STORE_MEMBERSHIP_CREATE_FAILED", createError);
-        return NextResponse.json(
-          {
-            success: false,
-            error: "Failed to create store membership",
-            details: createError.message,
-          },
-          { status: 500 }
-        );
-      }
-
-      // Generate notifications asynchronously (don't await to keep response fast)
-      const userName = user.user_metadata?.name || user.email || "알 수 없는 사용자";
-      const storeNameForNotif = storeName || "";
-
-      generateMembershipNotifications(
-        userId,
-        role,
-        finalStoreId,
-        storeNameForNotif,
-        userName
-      ).catch((e) => console.error("Failed to generate notifications:", e));
-
-      return NextResponse.json({
-        success: true,
-        membershipId: newMembership.id,
-      });
-    } catch (e) {
-      logSafeAuthError("STORE_MEMBERSHIP_CREATE_EXCEPTION", e);
-      return NextResponse.json(
-        { success: false, error: "Failed to create membership", details: String(e) },
-        { status: 500 }
-      );
-    }
+    return NextResponse.json(
+      {
+        success: membershipResult.success,
+        membershipId: membershipResult.membershipId,
+        error: membershipResult.error,
+        details: membershipResult.details,
+      },
+      { status: membershipResult.status }
+    );
   } catch (error) {
     logSafeAuthError("STORE_MEMBERSHIP_POST_UNEXPECTED", error);
     return NextResponse.json(
       { success: false, error: "Unexpected error", details: String(error) },
       { status: 500 }
     );
-  }
-}
-
-/**
- * Generate notifications for new membership requests
- * - Staff request: notify store owners
- * - Owner request: notify all HQ users
- */
-async function generateMembershipNotifications(
-  userId: string,
-  role: "owner" | "staff",
-  storeId: string,
-  storeName: string,
-  userName: string
-): Promise<void> {
-  try {
-    const adminClient = createAdminClient();
-
-    if (role === "staff") {
-      // Staff pending: notify store owners
-      const { data: ownerMemberships, error: queryError } = await adminClient
-        .from("store_memberships")
-        .select("user_id")
-        .eq("store_id", storeId)
-        .eq("role", "owner")
-        .eq("status", "approved");
-
-      if (queryError) {
-        console.error("Failed to find store owners:", queryError);
-        return;
-      }
-
-      if (ownerMemberships && ownerMemberships.length > 0) {
-        for (const membership of ownerMemberships) {
-          await createNotification({
-            recipientUserId: membership.user_id,
-            type: "staff_pending_approval",
-            title: "새로운 직원 승인 요청",
-            message: `${userName} 님이 ${storeName} 가입을 요청했습니다.`,
-            targetUrl: "/boss/employees",
-            relatedId: userId,
-          });
-        }
-      }
-    } else if (role === "owner") {
-      // Owner pending: notify all HQ users
-      const { data: hqUsers, error: queryError } = await adminClient
-        .from("profiles")
-        .select("id")
-        .eq("role", "hq");
-
-      if (queryError) {
-        console.error("Failed to find HQ users:", queryError);
-        return;
-      }
-
-      if (hqUsers && hqUsers.length > 0) {
-        for (const profile of hqUsers) {
-          await createNotification({
-            recipientUserId: profile.id,
-            type: "owner_pending_approval",
-            title: "새로운 점주 승인 요청",
-            message: `${storeName} 점주 가입 요청이 있습니다. (${userName})`,
-            targetUrl: "/hq/approvals",
-            relatedId: userId,
-          });
-        }
-      }
-    }
-  } catch (e) {
-    console.error("Error generating membership notifications:", e);
   }
 }

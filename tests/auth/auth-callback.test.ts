@@ -21,6 +21,11 @@ describe("auth callback URLs", () => {
     assert.equal(getSafeAuthNextPath("/admin"), "/signup/complete");
   });
 
+  test("preserves approval flow destinations", () => {
+    assert.equal(getSafeAuthNextPath("/signup/approval"), "/signup/approval");
+    assert.equal(getSafeAuthNextPath("/signup/approval-status"), "/signup/approval-status");
+  });
+
   test("moves a code received on a signup page back through the callback", () => {
     const result = getCorrectedAuthCallbackUrl(
       new URL("https://example.com/signup/stores?code=pkce-code&mode=add"),
