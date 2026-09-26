@@ -15,12 +15,14 @@ type LoginResponseBody = {
     id: string;
     email: string;
     role: string;
+    approvalStatus: "pending" | "approved" | "rejected";
   };
   error?: string;
 };
 
 type ProfileRoleRow = {
   role: string;
+  approval_status: string | null;
 };
 
 function getString(value: unknown): string | undefined {
@@ -61,7 +63,7 @@ export async function POST(request: Request): Promise<NextResponse<LoginResponse
   const adminClient = createAdminClient();
   const { data: profile, error: profileError } = await adminClient
     .from("profiles")
-    .select("role")
+    .select("role, approval_status")
     .eq("id", authData.user.id)
     .maybeSingle<ProfileRoleRow>();
 
@@ -77,6 +79,9 @@ export async function POST(request: Request): Promise<NextResponse<LoginResponse
       id: authData.user.id,
       email: authData.user.email ?? email,
       role: profile.role,
+      approvalStatus: profile.approval_status === "approved" || profile.approval_status === "rejected"
+        ? profile.approval_status
+        : "pending",
     },
   });
 }

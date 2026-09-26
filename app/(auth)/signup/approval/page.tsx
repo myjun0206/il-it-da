@@ -13,6 +13,7 @@ import {
 } from "@/lib/data/mockFranchises";
 import type { UserRole } from "@/lib/types/user";
 import type { Store } from "@/lib/types/store";
+import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
 
 type ApprovalStatus = "requestable" | "pending" | "approved" | "rejected";
 
@@ -20,23 +21,6 @@ interface StoreApprovalState {
   store: Store;
   status: ApprovalStatus;
   requestedAt?: string;
-}
-
-function clearSignupSessionStorage() {
-  sessionStorage.removeItem("signupRole");
-  sessionStorage.removeItem("signupTerms");
-  sessionStorage.removeItem("signupHQProfile");
-  sessionStorage.removeItem("signupProfile");
-  sessionStorage.removeItem("signupFranchise");
-  sessionStorage.removeItem("signupFranchiseConfirmed");
-  sessionStorage.removeItem("signupFranchiseName");
-  sessionStorage.removeItem("signupBrand");
-  sessionStorage.removeItem("signupStores");
-  sessionStorage.removeItem("signupSelectedStores");
-  sessionStorage.removeItem("signupStoreApprovals");
-  sessionStorage.removeItem("signupApprovalStatus");
-  sessionStorage.removeItem("signupApprovalSubmittedAt");
-  sessionStorage.removeItem("signupVerified");
 }
 
 // 타임스탬프를 한국식 날짜로 포맷
@@ -57,6 +41,8 @@ function formatTimestamp(timestamp?: string): string {
   }
 }
 
+const SIGNUP_RETRY_COOLDOWN_MS = 25_000;
+
 export default function SignupApprovalPage() {
   const router = useRouter();
   const [role, setRole] = useState<UserRole | null>(null);
@@ -65,7 +51,6 @@ export default function SignupApprovalPage() {
   const [storeApprovals, setStoreApprovals] = useState<StoreApprovalState[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const [submittingStoreIds, setSubmittingStoreIds] = useState<Set<string>>(new Set());
   const [submissionError, setSubmissionError] = useState("");
   const [emailAlreadyRegistered, setEmailAlreadyRegistered] = useState(false);
 
@@ -244,7 +229,9 @@ export default function SignupApprovalPage() {
   };
 
   // Auth session 확보 (테스트 계정은 signInWithPassword, 신규 이메일은 signUp)
-  const ensureSignupAuthSession = async (): Promise<boolean> => {
+  const ensureSignupAuthSession = async (
+    pendingStores: StoreApprovalState[] = []
+  ): Promise<boolean> => {
     const supabase = createClient();
     const { data: { user: currentUser } } = await supabase.auth.getUser();
 
@@ -260,7 +247,20 @@ export default function SignupApprovalPage() {
     try {
       const profile = JSON.parse(signupProfile);
       const profileEmail = profile.email;
-      const profilePassword = profile.password;
+      const profilePassword = sessionStorage.getItem("signupPassword") || profile.password;
+
+      if (!profilePassword || typeof profilePassword !== "string" || profilePassword.length < 8) {
+        setSubmissionError("비밀번호 정보가 없습니다. 기본 정보 입력 단계에서 비밀번호를 다시 입력해주세요.");
+        return false;
+      }
+
+      const isOAuthUser = currentUser?.identities?.some(
+        (identity) => identity.provider === "google" || identity.provider === "kakao" || identity.provider === "apple" || identity.provider === "custom:naver",
+      ) || currentUser?.app_metadata?.provider === "google" || currentUser?.app_metadata?.provider === "kakao" || currentUser?.app_metadata?.provider === "apple" || currentUser?.app_metadata?.provider === "custom:naver";
+
+      if (currentUser && isOAuthUser) {
+        return true;
+      }
 
       // 현재 user가 있고 email + role이 signup 대상과 정확히 일치하면 재사용
       if (currentUser && currentUser.email === profileEmail) {
@@ -271,8 +271,10 @@ export default function SignupApprovalPage() {
         }
       }
 
-      // 현재 user가 다른 사용자라면 signOut
-      if (currentUser && currentUser.email !== profileEmail) {
+      // 현재 user가 다른 사용자이거나(이메일 불일치), 이메일은 같지만 역할이 다르면
+      // (예: staff로 시작했다가 owner로 다시 가입) 그 세션을 남겨둔 채 signUp을 호출하면
+      // Supabase가 AuthApiError를 반환할 수 있으므로 먼저 로그아웃해 세션을 비운다.
+      if (currentUser) {
         await supabase.auth.signOut();
       }
 
@@ -297,7 +299,7 @@ export default function SignupApprovalPage() {
           });
 
         if (authError) {
-          console.error("Test account signIn error:", authError);
+          logSafeAuthError("SIGNUP_APPROVAL_TEST_SIGNIN_FAILED", authError);
           alert(
             `테스트 계정 로그인 실패: ${authError.message || "알 수 없는 오류"}`
           );
@@ -314,23 +316,74 @@ export default function SignupApprovalPage() {
         // 이를 통해 이후 API 호출이 올바른 user_id를 사용하도록 보장
         const { data: sessionData } = await supabase.auth.getSession();
         if (!sessionData.session || sessionData.session.user.email !== profileEmail) {
-          console.error(
-            "Session verification failed after signInWithPassword",
-            {
-              expected: profileEmail,
-              actual: sessionData.session?.user.email,
-            }
-          );
+          console.error("Session verification failed after signInWithPassword");
           alert("세션 전환 실패. 다시 시도해주세요.");
           return false;
         }
 
-        console.log("Session verified for:", profileEmail, "user_id:", sessionData.session.user.id);
-
         return true;
       }
 
+      const checkEmailResponse = await fetch("/api/auth/check-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: profileEmail }),
+      });
+      const checkEmailResult = (await checkEmailResponse.json()) as { available?: boolean; error?: string };
+
+      if (checkEmailResponse.ok && checkEmailResult.available === false) {
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+          email: profileEmail,
+          password: profilePassword,
+        });
+
+        if (signInError || !signInData.session) {
+          setEmailAlreadyRegistered(true);
+          setSubmissionError("이미 가입된 이메일입니다. 로그인 후 다시 진행해주세요.");
+          return false;
+        }
+
+        sessionStorage.removeItem("signupAuthAttemptEmail");
+        sessionStorage.removeItem("signupAuthAttemptAt");
+        return true;
+      }
+
+      const lastAttemptEmail = sessionStorage.getItem("signupAuthAttemptEmail");
+      const lastAttemptAt = Number(sessionStorage.getItem("signupAuthAttemptAt") || "0");
+      const elapsedSinceLastAttempt = Date.now() - lastAttemptAt;
+
+      if (lastAttemptEmail === profileEmail && elapsedSinceLastAttempt < SIGNUP_RETRY_COOLDOWN_MS) {
+        const remainingSeconds = Math.ceil((SIGNUP_RETRY_COOLDOWN_MS - elapsedSinceLastAttempt) / 1000);
+        setSubmissionError(`인증 요청이 너무 잦습니다. ${remainingSeconds}초 후 다시 시도해주세요.`);
+        return false;
+      }
+
+      sessionStorage.setItem("signupAuthAttemptEmail", profileEmail);
+      sessionStorage.setItem("signupAuthAttemptAt", String(Date.now()));
+
+      const emailRedirectTo = `${window.location.origin}/auth/callback?next=/signup/approval`;
+
+      if (process.env.NODE_ENV === "development") {
+        console.log("🔗 [DEV] Email Auth Link / Token:", {
+          email: profileEmail,
+          emailRedirectTo,
+          inbucketUrl: "http://localhost:54324",
+          note: "Supabase 로컬 개발 환경에서는 Inbucket에서 실제 인증 메일 링크를 확인하세요.",
+        });
+        void fetch("/api/auth/dev-email-log", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            context: "signup-approval signUp",
+            email: profileEmail,
+            emailRedirectTo,
+          }),
+        });
+      }
+
       // 일반 신규 이메일: signUp 사용
+      // pendingStores는 이메일 인증 콜백(app/auth/callback/route.ts)이 세션 확보 직후
+      // 서버에서 직접 읽어 매장 승인 신청을 자동으로 일괄 처리하는 데 사용한다.
       const { data: authData, error: authError } =
         await supabase.auth.signUp({
           email: profileEmail,
@@ -339,21 +392,54 @@ export default function SignupApprovalPage() {
             data: {
               role: signupRole,
               name: profile.name,
+              phone: profile.phone,
+              pendingStores: pendingStores.map((item) => ({
+                storeId: item.store.id,
+                storeName: item.store.name,
+              })),
             },
             // 이메일 인증(컨펌) 링크를 눌렀을 때 세션을 실제로 교환해 줄 콜백 경로로 되돌아오게 한다.
-            emailRedirectTo: `${window.location.origin}/auth/callback?next=/signup/approval`,
+            emailRedirectTo,
           },
         });
 
       if (authError) {
-        console.error("signUp error:", authError);
+        logSafeAuthError("SIGNUP_APPROVAL_SIGNUP_FAILED", authError);
+        const normalizedMessage = authError.message?.toLowerCase() || "";
         if (
-          authError.message?.toLowerCase().includes("already") ||
-          authError.message?.toLowerCase().includes("already registered") ||
-          authError.message?.toLowerCase().includes("user already exists")
+          normalizedMessage.includes("already") ||
+          normalizedMessage.includes("already registered") ||
+          normalizedMessage.includes("user already exists")
         ) {
-          setEmailAlreadyRegistered(true);
-          setSubmissionError("이미 가입된 이메일입니다. 로그인해 주세요.");
+          const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+            email: profileEmail,
+            password: profilePassword,
+          });
+
+          if (signInError || !signInData.session) {
+            setEmailAlreadyRegistered(true);
+            setSubmissionError("이미 가입된 이메일입니다. 로그인 후 다시 진행해주세요.");
+            return false;
+          }
+
+          sessionStorage.removeItem("signupAuthAttemptEmail");
+          sessionStorage.removeItem("signupAuthAttemptAt");
+          return true;
+        } else if (
+          normalizedMessage.includes("20 seconds") ||
+          normalizedMessage.includes("security purposes") ||
+          normalizedMessage.includes("rate limit") ||
+          normalizedMessage.includes("email rate limit")
+        ) {
+          setSubmissionError("이메일 발송 요청이 너무 많습니다. 잠시 후(또는 몇 분 뒤) 다시 시도해 주세요.");
+        } else if (
+          normalizedMessage.includes("session") ||
+          normalizedMessage.includes("token") ||
+          normalizedMessage.includes("expired")
+        ) {
+          // 만료/무효 세션이 남아있는 상태로 signUp을 호출한 경우 - 세션을 정리하고 재시도를 안내한다.
+          await supabase.auth.signOut();
+          setSubmissionError("인증 세션이 만료되었습니다. 페이지를 새로고침한 뒤 다시 시도해주세요.");
         } else {
           setSubmissionError(`회원가입 중 오류: ${authError.message || "알 수 없는 오류"}`);
         }
@@ -361,9 +447,10 @@ export default function SignupApprovalPage() {
       }
 
       if (!authData.user || !authData.session) {
-        // 이메일 인증(컨펌)이 필요한 프로젝트 설정이면 signUp 직후 세션이 없어 이후 API 호출이
-        // "Auth session missing"으로 실패한다. 세션이 없으면 여기서 명확히 실패 처리한다.
-        setSubmissionError("이메일 인증 후 다시 로그인해주세요. 세션을 확보하지 못했습니다.");
+        // 이메일 인증이 필요한 프로젝트에서는 signUp 직후 session이 없는 것이 정상이다.
+        // 인증 링크를 클릭하면 콜백에서 세션을 확보하는 즉시 선택했던 매장들의 승인 신청이
+        // 자동으로 일괄 처리되므로, 사용자는 여기로 다시 돌아와 버튼을 다시 누를 필요가 없다.
+        setSubmissionError("인증 메일을 확인한 뒤 메일의 인증 링크를 클릭해주세요. 링크를 클릭하면 선택하신 매장의 승인 신청이 자동으로 접수됩니다.");
         return false;
       }
 
@@ -371,111 +458,19 @@ export default function SignupApprovalPage() {
       // 이를 확인하지 않으면 바로 이어지는 store-membership 호출이 세션 누락(401)으로 실패할 수 있다.
       const { data: sessionData } = await supabase.auth.getSession();
       if (!sessionData.session || sessionData.session.user.email !== profileEmail) {
-        console.error("Session verification failed after signUp", {
-          expected: profileEmail,
-          actual: sessionData.session?.user.email,
-        });
+        logSafeAuthError("SIGNUP_APPROVAL_SESSION_VERIFY_FAILED", new Error("Session verification failed after signUp"));
         setSubmissionError("세션 확보에 실패했습니다. 다시 시도해주세요.");
         return false;
       }
 
       setEmailAlreadyRegistered(false);
+  sessionStorage.removeItem("signupAuthAttemptEmail");
+  sessionStorage.removeItem("signupAuthAttemptAt");
       return true;
     } catch (error) {
-      console.error("Auth session error:", error);
+      logSafeAuthError("SIGNUP_APPROVAL_AUTH_SESSION_ERROR", error);
       setSubmissionError("회원가입 중 오류가 발생했습니다.");
       return false;
-    }
-  };
-
-  const handleRequestApproval = async (storeId: string) => {
-    setSubmissionError("");
-    setEmailAlreadyRegistered(false);
-    setSubmittingStoreIds((prev) => new Set(prev).add(storeId));
-
-    try {
-      // Auth session 확보 (테스트 계정 또는 신규 회원)
-      const isAuthenticated = await ensureSignupAuthSession();
-      if (!isAuthenticated) {
-        setSubmittingStoreIds((prev) => {
-          const next = new Set(prev);
-          next.delete(storeId);
-          return next;
-        });
-        return;
-      }
-
-      // 선택된 store 찾기
-      const approval = storeApprovals.find((item) => item.store.id === storeId);
-      if (!approval) {
-        console.error("Store approval not found:", storeId);
-        setSubmissionError("매장 정보를 찾을 수 없습니다.");
-        setSubmittingStoreIds((prev) => {
-          const next = new Set(prev);
-          next.delete(storeId);
-          return next;
-        });
-        return;
-      }
-
-      // API 호출 (userId는 서버에서 auth.getUser()로 직접 가져옴)
-      const response = await fetch("/api/signup/store-membership", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          storeId: approval.store.id,
-          storeName: approval.store.name,
-          role: role,
-        }),
-      });
-
-      const result = (await response.json()) as { success: boolean; error?: string };
-
-      if (!result.success) {
-        console.error("Membership 생성 실패:", result);
-        setSubmissionError(`매장 "${approval.store.name}" 승인 요청 중 오류: ${result.error || "알 수 없는 오류"}`);
-        setSubmittingStoreIds((prev) => {
-          const next = new Set(prev);
-          next.delete(storeId);
-          return next;
-        });
-        return;
-      }
-
-      // 상태 업데이트
-      setStoreApprovals((prev) =>
-        prev.map((item) =>
-          item.store.id === storeId
-            ? {
-                ...item,
-                status: "pending" as ApprovalStatus,
-                requestedAt: new Date().toISOString(),
-              }
-            : item
-        )
-      );
-
-      // sessionStorage 동기화
-      const updatedApprovals = storeApprovals.map((item) =>
-        item.store.id === storeId
-          ? {
-              ...item,
-              status: "pending" as ApprovalStatus,
-              requestedAt: new Date().toISOString(),
-            }
-          : item
-      );
-      sessionStorage.setItem("signupStoreApprovals", JSON.stringify(updatedApprovals));
-    } catch (e) {
-      console.error("승인 요청 중 오류:", e);
-      setSubmissionError("승인 요청 중 오류가 발생했습니다.");
-    } finally {
-      setSubmittingStoreIds((prev) => {
-        const next = new Set(prev);
-        next.delete(storeId);
-        return next;
-      });
     }
   };
 
@@ -497,9 +492,21 @@ export default function SignupApprovalPage() {
     setEmailAlreadyRegistered(false);
 
     try {
-      // Auth session 확보
-      const isAuthenticated = await ensureSignupAuthSession();
+      // Auth session 확보 (아직 이메일 인증 전이라면 requestableApprovals를 signUp metadata에
+      // 담아 인증 콜백이 자동으로 일괄 처리하도록 한다)
+      const isAuthenticated = await ensureSignupAuthSession(requestableApprovals);
       if (!isAuthenticated) {
+        setIsLoading(false);
+        return;
+      }
+
+      // ensureSignupAuthSession이 true를 반환해도 그 사이 세션이 끊겼을 가능성에 대비해,
+      // 매장별 승인 신청 API를 호출하기 직전 세션이 실제로 살아있는지 한 번 더 확인한다.
+      // 세션이 없으면 API를 호출하지 않고 즉시 안내 후 중단한다.
+      const supabase = createClient();
+      const { data: sessionCheck } = await supabase.auth.getSession();
+      if (!sessionCheck.session) {
+        setSubmissionError("인증 세션을 확인할 수 없습니다. 페이지를 새로고침한 뒤 다시 시도해주세요.");
         setIsLoading(false);
         return;
       }
@@ -547,6 +554,7 @@ export default function SignupApprovalPage() {
 
       setStoreApprovals(updatedApprovals);
       sessionStorage.setItem("signupStoreApprovals", JSON.stringify(updatedApprovals));
+      sessionStorage.removeItem("signupPassword");
 
       alert("승인 요청이 완료되었습니다.\n본사 승인을 기다려 주세요.");
 
@@ -581,7 +589,6 @@ export default function SignupApprovalPage() {
   const storeCount = selectedStores.length;
   const roleLabel = role === "owner" ? "점주" : "직원";
   const requestableCount = storeApprovals.filter((item) => item.status === "requestable").length;
-  const pendingCount = storeApprovals.filter((item) => item.status === "pending").length;
   const allApprovalsPending = storeApprovals.length > 0 && storeApprovals.every((item) => item.status === "pending");
 
   const isEmpty = selectedStores.length === 0;
@@ -611,17 +618,6 @@ export default function SignupApprovalPage() {
               />
             </div>
 
-            <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-              <span className="text-base sm:text-lg lg:text-[17px] font-semibold text-[var(--color-text-secondary)]">
-                5 / 5
-              </span>
-              <div className="w-20 sm:w-28 h-2 bg-[var(--color-border-light)] rounded-full overflow-hidden flex-shrink-0">
-                <div
-                  className="h-full bg-[var(--color-primary)] rounded-full transition-all duration-300"
-                  style={{ width: "100%" }}
-                />
-              </div>
-            </div>
           </div>
         </header>
 
@@ -690,7 +686,7 @@ export default function SignupApprovalPage() {
                       className="h-9 px-3 sm:px-4 text-sm flex-shrink-0"
                     >
                       <Check size={16} className="mr-1.5" />
-                      {isLoading ? "신청 중..." : "모두 승인 요청"}
+                      {isLoading ? "신청 중..." : "승인 신청"}
                     </Button>
                   </div>
                 </div>
@@ -714,26 +710,23 @@ export default function SignupApprovalPage() {
 
                 {/* Store Approval Cards */}
                 <div className="space-y-3">
-                  {storeApprovals.map((approval, index) => {
+                  {storeApprovals
+                    .filter((approval) => approval.status !== "rejected")
+                    .map((approval, index) => {
                     const store = approval.store;
-                    const isSubmitting = submittingStoreIds.has(store.id);
                     const statusLabel =
                       approval.status === "requestable"
                         ? "신청 전"
                         : approval.status === "pending"
                         ? "승인 대기"
-                        : approval.status === "approved"
-                        ? "승인 완료"
-                        : "승인 거절";
+                        : "승인 완료";
 
                     const statusColor =
                       approval.status === "requestable"
                         ? "text-[var(--color-text-secondary)]"
                         : approval.status === "pending"
                         ? "text-[var(--color-status-warning)]"
-                        : approval.status === "approved"
-                        ? "text-[var(--color-status-success)]"
-                        : "text-[var(--color-status-error)]";
+                        : "text-[var(--color-status-success)]";
 
                     const requestedAtFormatted = formatTimestamp(approval.requestedAt);
                     const brandLogoPath = getBrandLogoPath(store.brandName);
@@ -833,18 +826,7 @@ export default function SignupApprovalPage() {
                                 <Trash2 size={14} className="mr-1" />
                                 삭제
                               </Button>
-                              {approval.status === "requestable" ? (
-                                <Button
-                                  type="button"
-                                  variant="primary"
-                                  size="sm"
-                                  onClick={() => handleRequestApproval(store.id)}
-                                  disabled={isSubmitting}
-                                  className="h-8 px-3 text-xs sm:text-sm flex-shrink-0"
-                                >
-                                  {isSubmitting ? "신청 중..." : "승인 신청"}
-                                </Button>
-                              ) : approval.status === "pending" ? (
+                              {approval.status === "pending" ? (
                                 <Button
                                   type="button"
                                   variant="outline"
@@ -864,17 +846,7 @@ export default function SignupApprovalPage() {
                                 >
                                   승인 완료
                                 </Button>
-                              ) : (
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={true}
-                                  className="h-8 px-3 text-xs sm:text-sm flex-shrink-0"
-                                >
-                                  승인 거절
-                                </Button>
-                              )}
+                              ) : null}
                             </div>
                           </div>
                         </div>

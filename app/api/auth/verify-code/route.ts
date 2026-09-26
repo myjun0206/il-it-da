@@ -23,7 +23,7 @@ type VerifyCodeResponse = {
 };
 
 function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase();
+  return email.replace(/[\u200B-\u200D\uFEFF]/g, "").trim().toLowerCase();
 }
 
 function isValidEmail(email: string): boolean {
@@ -62,7 +62,10 @@ export async function POST(request: Request): Promise<NextResponse<VerifyCodeRes
   const code = body.code.trim();
 
   if (!isValidEmail(email) || !isSixDigitCode(code)) {
-    return NextResponse.json({ error: "Invalid verification request." }, { status: 400 });
+    return NextResponse.json(
+      { error: isValidEmail(email) ? "인증번호를 정확히 입력해주세요." : "유효하지 않은 이메일 형식입니다. 공백이나 형식을 확인해주세요." },
+      { status: 400 },
+    );
   }
 
   try {

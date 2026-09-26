@@ -4,6 +4,7 @@ import React, { useLayoutEffect, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
 
@@ -20,6 +21,8 @@ interface Membership {
   rejected_by: string | null;
   user_name?: string;
   store_name?: string;
+  has_owner_conflict?: boolean;
+  existing_owner_names?: string[];
 }
 
 interface ApprovalItem {
@@ -44,6 +47,8 @@ export default function HQApprovalsPage() {
     storeName?: string;
     userName?: string;
     role?: string;
+    hasOwnerConflict?: boolean;
+    existingOwnerNames?: string[];
   }>({ open: false });
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -52,18 +57,10 @@ export default function HQApprovalsPage() {
     const checkAuth = async () => {
       try {
         const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-
-        if (!data.session?.user) {
-          router.push("/");
-          return;
-        }
-
-        const user = data.session.user;
-        const role = user.user_metadata?.role;
+        const profile = await getAuthenticatedProfile(supabase);
 
         // Verify user is HQ
-        if (role !== "hq") {
+        if (profile?.role !== "hq") {
           router.push("/");
           return;
         }
@@ -173,7 +170,14 @@ export default function HQApprovalsPage() {
     }
   };
 
-  const handleApprove = (membershipId: string, storeName: string, userName: string, role: string) => {
+  const handleApprove = (
+    membershipId: string,
+    storeName: string,
+    userName: string,
+    role: string,
+    hasOwnerConflict?: boolean,
+    existingOwnerNames?: string[],
+  ) => {
     setConfirmDialog({
       open: true,
       membershipId,
@@ -181,6 +185,8 @@ export default function HQApprovalsPage() {
       storeName,
       userName,
       role,
+      hasOwnerConflict,
+      existingOwnerNames,
     });
   };
 
@@ -463,7 +469,14 @@ export default function HQApprovalsPage() {
                             {membership.user_name || "Unknown"}
                           </td>
                           <td className="px-6 py-4 text-sm text-[var(--color-text-primary)]">
-                            {membership.store_name || "Unknown"}
+                            <div className="space-y-2">
+                              <p>{membership.store_name || "Unknown"}</p>
+                              {membership.has_owner_conflict && (
+                                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+                                  ⚠️ 이미 다른 점장(Owner)이 등록된 점포입니다.
+                                </div>
+                              )}
+                            </div>
                           </td>
                           <td className="px-6 py-4 text-sm text-[var(--color-text-secondary)]">
                             {formatTimestamp(membership.requested_at)}
@@ -486,7 +499,9 @@ export default function HQApprovalsPage() {
                                       membership.id,
                                       membership.store_name || "Unknown",
                                       membership.user_name || "Unknown",
-                                      membership.role || "owner"
+                                      membership.role || "owner",
+                                      membership.has_owner_conflict,
+                                      membership.existing_owner_names,
                                     )
                                   }
                                   className="px-3 py-1.5 bg-green-100 text-green-700 rounded hover:bg-green-200 transition-colors font-medium text-sm flex items-center gap-1"
@@ -560,6 +575,18 @@ export default function HQApprovalsPage() {
               </span>
               의 점주 가입 요청을 승인하시겠습니까?
             </p>
+
+            {confirmDialog.hasOwnerConflict && (
+              <div className="mb-6 rounded-lg border-2 border-red-300 bg-red-50 p-4 text-red-800">
+                <p className="font-bold">⚠️ [강한 경고]</p>
+                <p className="mt-1 text-sm font-semibold">
+                  해당 점포에 이미 다른 점장(Owner)이 등록되어 있습니다. 승인 시 기존 점장과의 권한 충돌이 발생할 수 있습니다.
+                </p>
+                {confirmDialog.existingOwnerNames && confirmDialog.existingOwnerNames.length > 0 && (
+                  <p className="mt-2 text-xs">기존 점장: {confirmDialog.existingOwnerNames.join(", ")}</p>
+                )}
+              </div>
+            )}
 
             {/* Application Info Card */}
             <div className="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-lg p-6 mb-8">

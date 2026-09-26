@@ -23,11 +23,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+          # Full history is required so `git diff --check <base>...<head>` (PR) and
+          # `git diff --check <before>..<after>` (push) can resolve both endpoints;
+          # a shallow checkout would only contain the single checked-out commit.
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -53,8 +61,10 @@ jobs:
       - name: Validate example RAG question set
         run: npm run validate:rag-dataset -- --input examples/rag-eval/question-set.example.json
 
-      - name: Run ESLint
-        run: npm run lint
-
-      - name: Run Next.js build
-        run: npm run build
+      - name: Run frontend quality gate (lint, typecheck, build, whitespace/conflict check, structure tests)
+        run: npm run check:frontend
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_AFTER_SHA: ${{ github.sha }}

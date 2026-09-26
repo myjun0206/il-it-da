@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    { "caseId": "CAL-001-a", "questionId": "Q-HOURS-1", "groupId": "business-hours", "partition": "calibration", "expectedStatus": "answered", "similarity": 0.82, "answerCorrect": true, "scopeSafe": true },
+    { "caseId": "CAL-002-a", "questionId": "Q-HOURS-2", "groupId": "business-hours", "partition": "calibration", "expectedStatus": "answered", "similarity": 0.71, "answerCorrect": true, "scopeSafe": true },
+    { "caseId": "CAL-003-a", "questionId": "Q-STORAGE-1", "groupId": "storage-location", "partition": "calibration", "expectedStatus": "answered", "similarity": 0.63, "answerCorrect": true, "scopeSafe": true },
+    { "caseId": "CAL-004-a", "questionId": "Q-STORAGE-2", "groupId": "storage-location", "partition": "calibration", "expectedStatus": "answered", "similarity": 0.58, "answerCorrect": false, "scopeSafe": true },
+    { "caseId": "CAL-005-a", "questionId": "Q-EQUIP-1", "groupId": "equipment-location", "partition": "calibration", "expectedStatus": "cautious", "similarity": 0.52, "answerCorrect": true, "scopeSafe": true },
+    { "caseId": "CAL-006-a", "questionId": "Q-EQUIP-2", "groupId": "equipment-location", "partition": "calibration", "expectedStatus": "cautious", "similarity": 0.45, "answerCorrect": true, "scopeSafe": true },
+    { "caseId": "CAL-007-a", "questionId": "Q-POLICY-1", "groupId": "refund-policy", "partition": "calibration", "expectedStatus": "cautious", "similarity": 0.41, "answerCorrect": true, "scopeSafe": true },
+    { "caseId": "CAL-008-a", "questionId": "Q-OOS-1", "groupId": "out-of-scope", "partition": "calibration", "expectedStatus": "insufficient", "similarity": 0.12, "answerCorrect": false, "scopeSafe": true },
+    { "caseId": "CAL-009-a", "questionId": "Q-OOS-2", "groupId": "out-of-scope", "partition": "calibration", "expectedStatus": "insufficient", "similarity": null, "answerCorrect": false, "scopeSafe": true },
+    { "caseId": "CAL-010-a", "questionId": "Q-OOS-3", "groupId": "out-of-scope", "partition": "calibration", "expectedStatus": "insufficient", "similarity": 0.28, "answerCorrect": false, "scopeSafe": true },
+    { "caseId": "CAL-011-a", "questionId": "Q-SCOPE-1", "groupId": "store-isolation", "partition": "calibration", "expectedStatus": "insufficient", "similarity": 0.66, "answerCorrect": false, "scopeSafe": true },
+    { "caseId": "CAL-012-a", "questionId": "Q-HOURS-3", "groupId": "business-hours", "partition": "calibration", "expectedStatus": "answered", "similarity": 0.77, "answerCorrect": true, "scopeSafe": true },
+    { "caseId": "CAL-013-a", "questionId": "Q-STAFF-1", "groupId": "staff-schedule", "partition": "calibration", "expectedStatus": "cautious", "similarity": 0.48, "answerCorrect": true, "scopeSafe": true },
+    { "caseId": "CAL-014-a", "questionId": "Q-STAFF-2", "groupId": "staff-schedule", "partition": "calibration", "expectedStatus": "answered", "similarity": 0.68, "answerCorrect": true, "scopeSafe": true },
+    { "caseId": "CAL-015-a", "questionId": "Q-OOS-4", "groupId": "weather-question", "partition": "calibration", "expectedStatus": "insufficient", "similarity": 0.05, "answerCorrect": false, "scopeSafe": true },
+    { "caseId": "VAL-001-a", "questionId": "Q-HOURS-4", "groupId": "business-hours-validation", "partition": "validation", "expectedStatus": "answered", "similarity": 0.79, "answerCorrect": true, "scopeSafe": true },
+    { "caseId": "VAL-002-a", "questionId": "Q-STORAGE-3", "groupId": "storage-location-validation", "partition": "validation", "expectedStatus": "answered", "similarity": 0.61, "answerCorrect": true, "scopeSafe": true },
+    { "caseId": "VAL-003-a", "questionId": "Q-EQUIP-3", "groupId": "equipment-location-validation", "partition": "validation", "expectedStatus": "cautious", "similarity": 0.47, "answerCorrect": true, "scopeSafe": true },
+    { "caseId": "VAL-004-a", "questionId": "Q-OOS-5", "groupId": "out-of-scope-validation", "partition": "validation", "expectedStatus": "insufficient", "similarity": 0.18, "answerCorrect": false, "scopeSafe": true },
+    { "caseId": "VAL-005-a", "questionId": "Q-POLICY-2", "groupId": "refund-policy-validation", "partition": "validation", "expectedStatus": "cautious", "similarity": 0.39, "answerCorrect": true, "scopeSafe": true }
+  ]
+}

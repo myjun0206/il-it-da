@@ -7,6 +7,10 @@ import { Check } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input, PasswordInput } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
+import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
+import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
+
+type OAuthProvider = "google" | "kakao" | "apple" | "custom:naver";
 
 export default function LoginPage() {
   return (
@@ -30,15 +34,22 @@ function LoginPageContent() {
   useLayoutEffect(() => {
     const checkSession = async () => {
       try {
+        const oauthError = new URLSearchParams(window.location.search).get("oauthError");
+        if (oauthError) {
+          setErrors({ email: "SNS 로그인을 완료하지 못했습니다. 다시 시도해주세요." });
+        }
+
         const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
+        const profile = await getAuthenticatedProfile(supabase);
         
-        if (data.session?.user) {
-          const role = data.session.user.user_metadata?.role;
+        if (profile) {
+          const role = profile.role;
           
           // Redirect based on role
           if (role === "hq") {
             router.push("/hq");
+          } else if (profile.approvalStatus !== "approved") {
+            router.push("/signup/approval-status");
           } else if (role === "owner") {
             router.push("/boss");
           } else if (role === "staff") {
@@ -46,7 +57,7 @@ function LoginPageContent() {
           }
         }
       } catch (e) {
-        console.error("Session check failed:", e);
+        logSafeAuthError("LOGIN_SESSION_CHECK_FAILED", e);
       }
     };
     
@@ -76,7 +87,15 @@ function LoginPageContent() {
         body: JSON.stringify({ email, password }),
       });
 
-      const result: { user?: { id: string; email: string; role: string }; error?: string } =
+      const result: {
+        user?: {
+          id: string;
+          email: string;
+          role: string;
+          approvalStatus?: "pending" | "approved" | "rejected";
+        };
+        error?: string;
+      } =
         await response.json();
 
       if (!response.ok || !result.user) {
@@ -91,6 +110,8 @@ function LoginPageContent() {
       // Role-based redirect
       if (result.user.role === "hq") {
         router.push("/hq");
+      } else if (result.user.approvalStatus !== "approved") {
+        router.push("/signup/approval-status");
       } else if (result.user.role === "owner") {
         router.push("/boss");
       } else if (result.user.role === "staff") {
@@ -101,10 +122,34 @@ function LoginPageContent() {
       }
     } catch (e) {
       setIsLoading(false);
-      console.error("Login error:", e);
+      logSafeAuthError("LOGIN_SUBMIT_FAILED", e);
       setErrors((prev) => ({
         ...prev,
         email: "로그인 중 오류가 발생했습니다.",
+      }));
+    }
+  };
+
+  const handleOAuthLogin = async (provider: OAuthProvider) => {
+    setErrors({});
+
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
+
+      if (error) {
+        throw error;
+      }
+    } catch (error) {
+      logSafeAuthError("LOGIN_OAUTH_FAILED", error);
+      setErrors((prev) => ({
+        ...prev,
+        email: "SNS 로그인에 실패했습니다. 잠시 후 다시 시도해주세요.",
       }));
     }
   };
@@ -267,6 +312,16 @@ function LoginPageContent() {
                 </Link>
               </div>
 
+              <Button
+                type="button"
+                variant="outline"
+                size="md"
+                onClick={() => router.push("/signup/approval-status")}
+                className="w-full border-[var(--color-primary)] text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/20"
+              >
+                승인 확인하기
+              </Button>
+
               <div className="flex items-center gap-3 my-6">
                 <div className="flex-1 border-t border-[var(--color-border)]"></div>
                 <span className="text-sm text-[var(--color-text-tertiary)] whitespace-nowrap">
@@ -280,7 +335,7 @@ function LoginPageContent() {
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
-                    console.log("Naver login");
+                    void handleOAuthLogin("custom:naver");
                   }}
                   className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
                   style={{ width: "52px", height: "52px" }}
@@ -297,7 +352,7 @@ function LoginPageContent() {
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
-                    console.log("Kakao login");
+                    void handleOAuthLogin("kakao");
                   }}
                   className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
                   style={{ width: "52px", height: "52px" }}
@@ -314,7 +369,7 @@ function LoginPageContent() {
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
-                    console.log("Google login");
+                    void handleOAuthLogin("google");
                   }}
                   className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
                   style={{ width: "52px", height: "52px" }}
@@ -350,7 +405,7 @@ function LoginPageContent() {
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
-                    console.log("Apple login");
+                    void handleOAuthLogin("apple");
                   }}
                   className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
                   style={{ width: "52px", height: "52px" }}
@@ -370,7 +425,7 @@ function LoginPageContent() {
                 아직 계정이 없으신가요?{" "}
               </span>
               <Link
-                href="/signup/role"
+                href="/signup/start"
                 className="font-semibold text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] transition-colors"
               >
                 회원가입
@@ -466,6 +521,16 @@ function LoginPageContent() {
                 </Link>
               </div>
 
+              <Button
+                type="button"
+                variant="outline"
+                size="md"
+                onClick={() => router.push("/signup/approval-status")}
+                className="w-full border-[var(--color-primary)] text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/20"
+              >
+                승인 확인하기
+              </Button>
+
               <div className="relative my-4">
                 <div className="absolute inset-0 flex items-center">
                   <div className="w-full border-t border-[var(--color-border)]"></div>
@@ -482,7 +547,7 @@ function LoginPageContent() {
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
-                    console.log("Naver login");
+                    void handleOAuthLogin("custom:naver");
                   }}
                   className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
                   style={{ width: "52px", height: "52px" }}
@@ -499,7 +564,7 @@ function LoginPageContent() {
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
-                    console.log("Kakao login");
+                    void handleOAuthLogin("kakao");
                   }}
                   className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
                   style={{ width: "52px", height: "52px" }}
@@ -516,7 +581,7 @@ function LoginPageContent() {
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
-                    console.log("Google login");
+                    void handleOAuthLogin("google");
                   }}
                   className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
                   style={{ width: "52px", height: "52px" }}
@@ -552,7 +617,7 @@ function LoginPageContent() {
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
-                    console.log("Apple login");
+                    void handleOAuthLogin("apple");
                   }}
                   className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
                   style={{ width: "52px", height: "52px" }}
@@ -572,7 +637,7 @@ function LoginPageContent() {
                 아직 계정이 없으신가요?{" "}
               </span>
               <Link
-                href="/signup/role"
+                href="/signup/start"
                 className="font-semibold text-[var(--color-primary)] hover:text-[var(--color-primary-hover)]"
               >
                 회원가입
@@ -581,6 +646,7 @@ function LoginPageContent() {
           </div>
         </div>
       </div>
+
     </div>
   );
 }

@@ -1,21 +1,44 @@
 "use client";
 
-import React, { useState, useLayoutEffect } from "react";
+import React, { useState, useLayoutEffect, useEffect, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ArrowRight, Building2 } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Card } from "@/components/common/Card";
 import type { UserRole } from "@/lib/types/user";
-import { mockBrands } from "@/lib/data/mockStores";
+import { createClient } from "@/lib/supabase/client";
+
+interface Franchise {
+  id: string;
+  name: string;
+}
+
+function subscribeNoop() {
+  return () => {};
+}
+
+// sessionStorage는 클라이언트에서만 존재하므로, setState 없이(hydration mismatch 없이)
+// "클라이언트에 마운트됐는지"를 판정한다.
+function useHasMounted(): boolean {
+  return useSyncExternalStore(
+    subscribeNoop,
+    () => true,
+    () => false,
+  );
+}
 
 export default function SignupOrganizationPage() {
   const router = useRouter();
   const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [mounted] = useState(() => typeof window !== 'undefined');
+  const mounted = useHasMounted();
+  const [brands, setBrands] = useState<Franchise[]>([]);
+  const [isFetching, setIsFetching] = useState(true);
 
   useLayoutEffect(() => {
+    if (!mounted) return;
+
     const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
     if (!savedRole) {
       router.push("/signup/role");
@@ -23,7 +46,33 @@ export default function SignupOrganizationPage() {
       // 본사가 아니면 stores로 리다이렉트 (조직 선택은 본사만)
       router.push("/signup/stores");
     }
-  }, [router]);
+  }, [mounted, router]);
+
+  useEffect(() => {
+    // Fetch franchises from Supabase
+    const fetchFranchises = async () => {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase.from("franchises").select("id, name");
+
+        if (error) {
+          console.error("Failed to fetch franchises:", error);
+          setBrands([]);
+        } else {
+          setBrands(data || []);
+        }
+      } catch (e) {
+        console.error("Failed to fetch franchises:", e);
+        setBrands([]);
+      } finally {
+        setIsFetching(false);
+      }
+    };
+
+    if (mounted) {
+      fetchFranchises();
+    }
+  }, [mounted]);
 
   if (!mounted) {
     return null;
@@ -51,7 +100,7 @@ export default function SignupOrganizationPage() {
       <div className="flex flex-col min-h-screen">
         {/* Header */}
         <div className="border-b border-[var(--color-border)] bg-[var(--color-bg-surface)]">
-          <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
+          <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center">
             <Link
               href="/signup/terms"
               className="flex items-center gap-1 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
@@ -59,9 +108,6 @@ export default function SignupOrganizationPage() {
               <ChevronLeft size={20} />
               <span className="text-sm font-medium">이전</span>
             </Link>
-            <div className="text-sm text-[var(--color-text-tertiary)]">
-              5단계 / 7단계
-            </div>
           </div>
         </div>
 
@@ -80,39 +126,49 @@ export default function SignupOrganizationPage() {
 
             {/* Brand List */}
             <div className="space-y-3 mb-8">
-              {mockBrands.map((brand) => (
-                <Card
-                  key={brand.id}
-                  onClick={() => setSelectedBrand(brand.id)}
-                  padding="md"
-                  className={`cursor-pointer transition-all ${
-                    selectedBrand === brand.id
-                      ? "ring-2 ring-[var(--color-primary)] shadow-lg"
-                      : "hover:shadow-md"
-                  }`}
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-[var(--color-primary-light)]">
-                      <Building2 size={24} className="text-[var(--color-primary)]" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-semibold text-[var(--color-text-primary)]">
-                        {brand.name}
-                      </h3>
-                      <p className="text-sm text-[var(--color-text-secondary)]">
-                        브랜드 ID: {brand.id}
-                      </p>
-                    </div>
-                    {selectedBrand === brand.id && (
-                      <div className="flex-shrink-0">
-                        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--color-primary)]">
-                          <span className="text-white text-sm font-bold">✓</span>
-                        </div>
+              {isFetching ? (
+                <div className="text-center py-8 text-[var(--color-text-secondary)]">
+                  브랜드 로딩 중...
+                </div>
+              ) : brands.length === 0 ? (
+                <div className="text-center py-8 text-[var(--color-text-secondary)]">
+                  사용 가능한 브랜드가 없습니다.
+                </div>
+              ) : (
+                brands.map((brand) => (
+                  <Card
+                    key={brand.id}
+                    onClick={() => setSelectedBrand(brand.id)}
+                    padding="md"
+                    className={`cursor-pointer transition-all ${
+                      selectedBrand === brand.id
+                        ? "ring-2 ring-[var(--color-primary)] shadow-lg"
+                        : "hover:shadow-md"
+                    }`}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-[var(--color-primary-light)]">
+                        <Building2 size={24} className="text-[var(--color-primary)]" />
                       </div>
-                    )}
-                  </div>
-                </Card>
-              ))}
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold text-[var(--color-text-primary)]">
+                          {brand.name}
+                        </h3>
+                        <p className="text-sm text-[var(--color-text-secondary)]">
+                          브랜드 ID: {brand.id}
+                        </p>
+                      </div>
+                      {selectedBrand === brand.id && (
+                        <div className="flex-shrink-0">
+                          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--color-primary)]">
+                            <span className="text-white text-sm font-bold">✓</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </Card>
+                ))
+              )}
             </div>
 
             {/* Button Group */}
@@ -132,7 +188,7 @@ export default function SignupOrganizationPage() {
                 variant="primary"
                 size="md"
                 onClick={handleContinue}
-                disabled={!selectedBrand}
+                disabled={!selectedBrand || isFetching}
                 isLoading={isLoading}
                 className="w-full sm:w-auto"
               >

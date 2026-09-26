@@ -1,13 +1,28 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { chunkManualText } from "@/lib/rag/chunk-manual";
+import { indexManualById } from "@/lib/rag/index-manual";
+import { reembedApprovedManuals } from "@/lib/rag/manual-indexing/reembed-approved-manuals";
 import type { HqAuthResult } from "@/lib/supabase/hq-auth";
 import type { ManualRecord } from "@/lib/types/manual";
 
+// 세부 항목은 기존처럼 문자열(본문만)이거나, 소제목이 있는 경우 { title, content } 객체로 받는다.
+// 소제목이 없으면 기존 규칙대로 자식 행의 title에 대주제명을 그대로 쓴다.
+export type ManualItemInput = string | { title?: string; content: string };
+
 export type ManualGroupInput = {
+  category?: string;
   topic: string;
-  items: string[];
+  items: ManualItemInput[];
 };
+
+function normalizeItem(item: ManualItemInput, topic: string): { title: string; content: string } {
+  if (typeof item === "string") {
+    return { title: topic, content: item || "내용 없음" };
+  }
+  const title = item.title?.trim();
+  return { title: title || topic, content: item.content?.trim() || "내용 없음" };
+}
 
 const MANUAL_SELECT_COLUMNS =
   "id, brand_name, franchise_id, store_id, parent_manual_id, title, category, content, status, created_at, updated_at";
@@ -18,7 +33,11 @@ function logSafeManualError(code: string, error: unknown): void {
   console.error(`[MANUALS] ${code}`, { name });
 }
 
-async function syncChunksForManuals(supabase: SupabaseClient, manuals: ManualRecord[]): Promise<void> {
+async function syncChunksForManuals(
+  supabase: SupabaseClient,
+  manuals: ManualRecord[],
+  indexManual: (manualId: string) => Promise<unknown> = indexManualById,
+): Promise<void> {
   if (manuals.length === 0) {
     return;
   }
@@ -43,11 +62,16 @@ async function syncChunksForManuals(supabase: SupabaseClient, manuals: ManualRec
   } catch (chunkParseError) {
     logSafeManualError("MANUAL_CHUNKING_FAILED", chunkParseError);
   }
+
+  // 위 insert는 embedding=null placeholder만 남기므로, RAG 검색에 잡힐 수 있도록
+  // 실제 embedding을 즉시 재생성한다([id]/route.ts, batch-update/route.ts와 동일한 재사용 패턴).
+  await reembedApprovedManuals(manuals, indexManual, logSafeManualError);
 }
 
 /**
  * 주제 1개 = 부모 카드 1개, 세부 내용 N개 = parent_manual_id로 연결된 자식 행 N개.
- * 부모/자식 모두 title과 category를 같은 대주제명으로 맞추고, 지침 문장(번호 포함)은 오직 content에만 담는다.
+ * category는 부모/자식 모두 대주제명으로 맞춘다. 자식 title은 소제목이 있으면 소제목, 없으면 대주제명을 쓰고,
+ * 지침 문장(번호 포함)은 오직 content에만 담는다.
  * 여러 그룹을 한 번에 저장할 수 있어 파일 업로드(대주제별로 여러 그룹)와
  * 단건 작성(그룹 1개)을 같은 함수로 처리한다. 청크 동기화 실패는 저장 자체를 막지 않는다.
  */
@@ -56,6 +80,7 @@ export async function saveManualGroupsWithChunks(
   hqUser: HqAuthResult,
   groups: ManualGroupInput[],
   storeId?: string,
+  indexManual: (manualId: string) => Promise<unknown> = indexManualById,
 ): Promise<ManualRecord[]> {
   const scopeType = storeId ? "store" : "hq";
   const allManuals: ManualRecord[] = [];
@@ -63,6 +88,12 @@ export async function saveManualGroupsWithChunks(
   for (const group of groups) {
     const items = group.items.length > 0 ? group.items : ["내용 없음"];
     const topic = group.topic || "제목 없음";
+    // 2026-09-24: 과거에는 `group.category?.trim() || topic`이었다 - category가 비어 있으면
+    // topic(타이틀)을 그대로 category로 대입해, 카테고리와 타이틀이 동일하게 저장되는 버그의
+    // 근본 원인이었다. 병합/롤백 시 이 fallback이 되살아나지 않도록 주석으로 남겨두고 비활성화한다.
+    // 절대 이 줄을 되살리지 말 것(topic을 category의 fallback으로 쓰지 말 것):
+    // const category = group.category?.trim() || topic;
+    const category = group.category?.trim() || "미분류";
 
     const { data: parentData, error: parentError } = await supabase
       .from("manuals")
@@ -73,7 +104,7 @@ export async function saveManualGroupsWithChunks(
         scope_type: scopeType,
         parent_manual_id: null,
         title: topic,
-        category: topic,
+        category,
         content: `${items.length}개 항목`,
         status: "approved",
       })
@@ -91,17 +122,20 @@ export async function saveManualGroupsWithChunks(
     const { data: childrenData, error: childrenError } = await supabase
       .from("manuals")
       .insert(
-        items.map((content) => ({
-          brand_name: hqUser.brandName,
-          franchise_id: hqUser.franchiseId,
-          store_id: storeId ?? null,
-          scope_type: scopeType,
-          parent_manual_id: parent.id,
-          title: topic,
-          category: topic,
-          content: content || "내용 없음",
-          status: "approved",
-        })),
+        items.map((item) => {
+          const { title, content } = normalizeItem(item, topic);
+          return {
+            brand_name: hqUser.brandName,
+            franchise_id: hqUser.franchiseId,
+            store_id: storeId ?? null,
+            scope_type: scopeType,
+            parent_manual_id: parent.id,
+            title,
+            category,
+            content,
+            status: "approved",
+          };
+        }),
       )
       .select(MANUAL_SELECT_COLUMNS);
 
@@ -113,7 +147,7 @@ export async function saveManualGroupsWithChunks(
     const children = (childrenData ?? []) as ManualRecord[];
     allManuals.push(...children);
 
-    await syncChunksForManuals(supabase, children);
+    await syncChunksForManuals(supabase, children, indexManual);
   }
 
   return allManuals;
@@ -127,6 +161,7 @@ export async function addItemsToManualGroup(
   supabase: SupabaseClient,
   parent: ManualRecord,
   items: string[],
+  indexManual: (manualId: string) => Promise<unknown> = indexManualById,
 ): Promise<ManualRecord[]> {
   if (items.length === 0) {
     return [];
@@ -156,7 +191,7 @@ export async function addItemsToManualGroup(
 
   const children = (data ?? []) as ManualRecord[];
 
-  await syncChunksForManuals(supabase, children);
+  await syncChunksForManuals(supabase, children, indexManual);
 
   return children;
 }

@@ -114,7 +114,7 @@ export default function SignupVerificationPage() {
       <div className="flex flex-col min-h-screen">
         {/* Header */}
         <div className="border-b border-[var(--color-border)] bg-[var(--color-bg-surface)]">
-          <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
+          <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center">
             <Link
               href="/signup/stores"
               className="flex items-center gap-1 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
@@ -122,9 +122,6 @@ export default function SignupVerificationPage() {
               <ChevronLeft size={20} />
               <span className="text-sm font-medium">이전</span>
             </Link>
-            <div className="text-sm text-[var(--color-text-tertiary)]">
-              5 / 5
-            </div>
           </div>
         </div>
 
