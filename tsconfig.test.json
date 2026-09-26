@@ -29,6 +29,8 @@
     "tests/rag/manuals-cascade-delete.test.ts",
     "tests/manuals/detect-manual-item.test.ts",
     "tests/manuals/parse-excel-table.test.ts",
+    "tests/manuals/manual-format-fixtures.test.ts",
+    "tests/manuals/manual-category-taxonomy.test.ts",
     "lib/rag/answer-prompt.ts",
     "lib/rag/chunk-manual.ts",
     "lib/rag/search-query.ts",
