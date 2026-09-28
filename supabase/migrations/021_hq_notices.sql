@@ -1,4 +1,4 @@
--- 020: HQ notices (본사 → 지점/점주 공지사항)
+-- 021: HQ notices (본사 → 지점/점주 공지사항)
 --
 -- 본사(HQ) 관리자가 자기 프랜차이즈의 전체 지점 또는 특정 지점 하나에 공지를 작성한다.
 -- - target_type = 'all'   : franchise 전체 지점 대상 (target_store_id = null)

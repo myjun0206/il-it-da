@@ -295,7 +295,7 @@ export default function StoreManualUploadPage() {
         throw new Error(data.error || "매뉴얼 저장 중 오류가 발생했습니다.");
       }
 
-      setUploadNotice(`세부 매뉴얼 ${includedCount}개를 저장했어요.`);
+      setUploadNotice(`세부 매뉴얼 ${includedCount}개를 저장했어요. 검색 준비 상태를 확인해 주세요.`);
       isLeavingRef.current = true;
       router.replace("/boss/store-manuals");
     } catch (e) {
