@@ -105,6 +105,14 @@ export async function PUT(
       );
     }
 
+    // 점주는 직원(staff) membership만 승인/거절한다. (점주 승인은 HQ 권한)
+    if (membership.role !== "staff") {
+      return NextResponse.json(
+        { success: false, error: "이 직원을 관리할 권한이 없습니다." },
+        { status: 403 }
+      );
+    }
+
     // 4. 현재 owner가 해당 store의 approved owner인지 검증 (store_id 기준)
     const { data: ownerMembership, error: ownerError } = await adminClient
       .from("store_memberships")

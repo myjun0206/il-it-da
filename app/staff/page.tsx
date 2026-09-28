@@ -118,6 +118,8 @@ function selectStore(storeId: string) {
         if (controller.signal.aborted) return;
 
         const availableStores = payload.stores;
+        // 근무 매장 선택지/빈 상태 판단은 stores 기준이므로 반드시 함께 반영한다.
+        setStores(availableStores);
         const storedStoreId = sessionStorage.getItem(SELECTED_STORE_STORAGE_KEY);
         const restoredStore =
           availableStores.find((store) => store.id === storedStoreId) ?? null;
