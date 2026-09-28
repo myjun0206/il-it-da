@@ -3,11 +3,11 @@
 import React, { useEffect, useLayoutEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { BookOpen, ChevronDown, ChevronRight, Megaphone, RefreshCw, Store, UserCheck, UserPlus } from "lucide-react";
+import { BookOpen, ChevronRight, Megaphone, RefreshCw, Store, UserCheck, UserPlus } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
-import { persistSelectedStore, resolveOwnerCurrentStore, type OwnerStore } from "@/lib/owner/current-store";
+import { resolveOwnerCurrentStore } from "@/lib/owner/current-store";
 
 interface StaffMember {
   membershipId: string;
@@ -205,9 +205,7 @@ export default function OwnerDashboardPage() {
   const [franchiseName, setFranchiseName] = useState("");
   const [selectedStoreId, setSelectedStoreId] = useState("");
   const [selectedStoreName, setSelectedStoreName] = useState("");
-  const [approvedStores, setApprovedStores] = useState<OwnerStore[]>([]);
   const [storesError, setStoresError] = useState(false);
-  const [storeDropdownOpen, setStoreDropdownOpen] = useState(false);
   const [overview, setOverview] = useState<OverviewState>({ status: "loading" });
 
   // Authorization & Data Loading
@@ -258,7 +256,6 @@ export default function OwnerDashboardPage() {
         if (resolution.status === "error") {
           setStoresError(true);
         } else {
-          setApprovedStores(resolution.stores);
           if (resolution.current) {
             setSelectedStoreId(resolution.current.storeId);
             setSelectedStoreName(resolution.current.storeName);
@@ -285,14 +282,6 @@ export default function OwnerDashboardPage() {
       isCancelled = true;
     };
   }, [selectedStoreId]);
-
-  const handleStoreChange = (store: OwnerStore) => {
-    setSelectedStoreId(store.storeId);
-    setSelectedStoreName(store.storeName);
-    persistSelectedStore(store);
-    setStoreDropdownOpen(false);
-    if (store.storeId !== selectedStoreId) setOverview({ status: "loading" });
-  };
 
   const handleRetry = () => {
     if (!selectedStoreId) return;
@@ -435,37 +424,7 @@ export default function OwnerDashboardPage() {
                       승인 완료
                     </span>
                   </div>
-                  {approvedStores.length > 1 && (
-                    <div className="relative">
-                      <button
-                        type="button"
-                        onClick={() => setStoreDropdownOpen(!storeDropdownOpen)}
-                        aria-expanded={storeDropdownOpen}
-                        className="flex min-h-[44px] items-center gap-2 px-4 border border-[var(--color-border)] rounded-lg text-sm font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-bg-default)] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
-                      >
-                        매장 변경
-                        <ChevronDown size={18} aria-hidden="true" />
-                      </button>
-                      {storeDropdownOpen && (
-                        <div className="absolute right-0 mt-2 w-64 bg-white border border-[var(--color-border)] rounded-lg shadow-lg z-10">
-                          {approvedStores.map((store) => (
-                            <button
-                              key={store.storeId}
-                              type="button"
-                              onClick={() => handleStoreChange(store)}
-                              className={`w-full text-left px-4 py-3 hover:bg-[var(--color-bg-default)] transition-colors ${
-                                selectedStoreId === store.storeId
-                                  ? "bg-[var(--color-primary-light)]/30 text-[var(--color-primary)]"
-                                  : "text-[var(--color-text-primary)]"
-                              }`}
-                            >
-                              <p className="font-semibold">{store.storeName}</p>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  {/* 여러 운영 매장 간 전환은 상단 헤더의 "현재 운영 매장"에서 한다. */}
                 </div>
               )}
             </section>

@@ -11,13 +11,13 @@ function readSource(relativePath: string): string {
 }
 
 describe("server-side role-protected layouts", () => {
-  const cases: Array<{ file: string; role: "hq" | "owner" | "staff" }> = [
+  const cases: Array<{ file: string; role: "hq" | "owner" | "staff"; expectsWrapper?: string }> = [
     { file: "app/hq/layout.tsx", role: "hq" },
     { file: "app/boss/layout.tsx", role: "owner" },
-    { file: "app/staff/layout.tsx", role: "staff" },
+    { file: "app/staff/layout.tsx", role: "staff", expectsWrapper: "StaffShell" },
   ];
 
-  for (const { file, role } of cases) {
+  for (const { file, role, expectsWrapper } of cases) {
     describe(file, () => {
       const source = readSource(file);
 
@@ -36,8 +36,12 @@ describe("server-side role-protected layouts", () => {
         assert.match(source, /redirect\(\s*["']\/["']\s*\)/);
       });
 
-      test("renders children unchanged (no UI restructuring)", () => {
-        assert.match(source, /return\s*<>\{children\}<\/>/);
+      test(expectsWrapper ? `wraps children in ${expectsWrapper}` : "renders children unchanged (no UI restructuring)", () => {
+        if (expectsWrapper) {
+          assert.match(source, new RegExp(`return\\s*<${expectsWrapper}>\\{children\\}</${expectsWrapper}>`));
+        } else {
+          assert.match(source, /return\s*<>\{children\}<\/>/);
+        }
       });
 
       test('opts out of static prerendering via export const dynamic = "force-dynamic"', () => {

@@ -106,6 +106,14 @@ export async function PUT(
       );
     }
 
+    // 점주는 직원(staff) membership만 승인/거절한다. (점주 승인은 HQ 권한)
+    if (membership.role !== "staff") {
+      return NextResponse.json(
+        { success: false, error: "이 직원을 관리할 권한이 없습니다." },
+        { status: 403 }
+      );
+    }
+
     // 4. 현재 owner가 해당 store의 approved owner인지 검증 (store_id 기준)
     const { data: ownerMembership, error: ownerError } = await adminClient
       .from("store_memberships")
@@ -183,10 +191,17 @@ export async function PUT(
     }
 
     // Generate notification for staff approval decision (async)
-    const title = newStatus === "approved" ? "직원 승인이 완료되었습니다." : "직원 승인이 거절되었습니다.";
+    // 알림 문구에는 매장 UUID 대신 실제 매장명을 쓴다. (조회 실패 시 일반 문구)
+    const { data: store } = await adminClient
+      .from("stores")
+      .select("store_name")
+      .eq("id", membership.store_id)
+      .maybeSingle<{ store_name: string | null }>();
+    const storeLabel = store?.store_name?.trim() || "매장";
+    const title = newStatus === "approved" ? "근무 매장 승인이 완료되었습니다." : "근무 매장 신청이 거절되었습니다.";
     const message = newStatus === "approved"
-      ? `${membership.store_id}에서 당신의 가입 신청을 승인했습니다.`
-      : `${membership.store_id}에서 당신의 가입 신청을 거절했습니다.`;
+      ? `${storeLabel}에서 근무 신청을 승인했습니다.`
+      : `${storeLabel}에서 근무 신청을 거절했습니다.`;
 
     createNotification({
       recipientUserId: membership.user_id,

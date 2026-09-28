@@ -1,17 +1,21 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, CheckCircle2, Eye, EyeOff } from "lucide-react";
+import { AlertCircle, CheckCircle2, Eye, EyeOff, Trash2 } from "lucide-react";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
 import ThemeSelector from "@/components/common/ThemeSelector";
+import ProfileAvatar from "@/components/common/ProfileAvatar";
 import { createClient } from "@/lib/supabase/client";
+import { uploadProfileAvatarClient, deleteProfileAvatarClient } from "@/lib/supabase/storage-profile-avatar";
 
 interface AccountInfo {
   name: string;
   email: string;
   franchiseName: string | null;
+  avatarUrl: string | null;
+  userId: string;
   // 이메일/비밀번호 로그인 수단이 있는 계정만 비밀번호를 변경할 수 있다.
   hasPasswordLogin: boolean;
 }
@@ -82,6 +86,7 @@ export default function HqSettingsPage() {
   const router = useRouter();
   const [account, setAccount] = useState<AccountInfo | null>(null);
   const [error, setError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
@@ -94,6 +99,10 @@ export default function HqSettingsPage() {
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [isSavingPassword, setIsSavingPassword] = useState(false);
   const [passwordFeedback, setPasswordFeedback] = useState<Feedback>(null);
+
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [avatarFeedback, setAvatarFeedback] = useState<Feedback>(null);
 
   useEffect(() => {
     const loadAccount = async () => {
@@ -108,9 +117,9 @@ export default function HqSettingsPage() {
 
         const { data: profile } = await supabase
           .from("profiles")
-          .select("full_name, brand_id")
+          .select("full_name, brand_id, avatar_url")
           .eq("id", user.id)
-          .maybeSingle<{ full_name: string | null; brand_id: string | null }>();
+          .maybeSingle<{ full_name: string | null; brand_id: string | null; avatar_url: string | null }>();
 
         // 소속 프랜차이즈는 profiles.brand_id와 기존 franchises 목록 API로만 확인한다.
         let franchiseName: string | null = null;
@@ -131,6 +140,8 @@ export default function HqSettingsPage() {
           name: profile?.full_name || user.user_metadata?.name || "",
           email: user.email ?? "",
           franchiseName,
+          avatarUrl: profile?.avatar_url || null,
+          userId: user.id,
           hasPasswordLogin: providers.includes("email"),
         });
       } catch (e) {
@@ -248,6 +259,88 @@ export default function HqSettingsPage() {
     }
   };
 
+  const handleAvatarFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // 미리보기
+    const reader = new FileReader();
+    reader.onload = () => {
+      setAvatarPreview(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleUploadAvatar = async () => {
+    if (!fileInputRef.current?.files?.[0] || !account) return;
+    if (isUploadingAvatar) return;
+
+    const file = fileInputRef.current.files[0];
+    const mimeType = file.type;
+
+    setIsUploadingAvatar(true);
+    setAvatarFeedback(null);
+
+    try {
+      const result = await uploadProfileAvatarClient(file, mimeType);
+
+      if (result.success && result.avatarUrl) {
+        setAccount((prev) =>
+          prev ? { ...prev, avatarUrl: result.avatarUrl! } : prev
+        );
+        setAvatarPreview(null);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        setAvatarFeedback({ type: "success", message: "프로필 사진이 저장되었습니다." });
+        // 헤더/프로필 메뉴 즉시 반영용 새로고침
+        void createClient().auth.refreshSession();
+      } else {
+        setAvatarFeedback({
+          type: "error",
+          message: result.error || "프로필 사진 업로드에 실패했습니다.",
+        });
+      }
+    } catch (e) {
+      setAvatarFeedback({
+        type: "error",
+        message: e instanceof Error ? e.message : "프로필 사진 업로드 중 오류가 발생했습니다.",
+      });
+    } finally {
+      setIsUploadingAvatar(false);
+    }
+  };
+
+  const handleDeleteAvatar = async () => {
+    if (!account || !account.avatarUrl) return;
+    if (!window.confirm("프로필 사진을 삭제할까요?")) return;
+
+    setAvatarFeedback(null);
+
+    try {
+      const result = await deleteProfileAvatarClient();
+
+      if (result.success) {
+        setAccount((prev) =>
+          prev ? { ...prev, avatarUrl: null } : prev
+        );
+        setAvatarPreview(null);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        setAvatarFeedback({ type: "success", message: "프로필 사진이 삭제되었습니다." });
+        // 헤더/프로필 메뉴 즉시 반영용 새로고침
+        void createClient().auth.refreshSession();
+      } else {
+        setAvatarFeedback({
+          type: "error",
+          message: result.error || "프로필 사진 삭제에 실패했습니다.",
+        });
+      }
+    } catch (e) {
+      setAvatarFeedback({
+        type: "error",
+        message: e instanceof Error ? e.message : "프로필 사진 삭제 중 오류가 발생했습니다.",
+      });
+    }
+  };
+
   const displayName = account?.name || "본사 관리자";
   const headerFranchiseName = account?.franchiseName || displayName.split(" ")[0] || "본사";
 
@@ -300,6 +393,74 @@ export default function HqSettingsPage() {
                   기본 정보
                 </h2>
                 <p className="mb-5 text-sm text-[var(--color-text-secondary)]">서비스에서 사용하는 내 정보를 관리합니다.</p>
+
+                {/* 프로필 사진 */}
+                <div className={rowClass}>
+                  <span className={rowLabelClass}>프로필 사진</span>
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 flex-1">
+                    <ProfileAvatar
+                      name={displayName}
+                      avatarUrl={avatarPreview || account.avatarUrl}
+                      size="lg"
+                      className="w-12 h-12"
+                    />
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                      onChange={handleAvatarFileSelect}
+                      disabled={isUploadingAvatar}
+                      className="hidden"
+                      aria-label="프로필 사진 선택"
+                    />
+                    {avatarPreview ? (
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={handleUploadAvatar}
+                          disabled={isUploadingAvatar}
+                          className={primaryButtonClass}
+                        >
+                          {isUploadingAvatar ? "저장 중..." : "저장"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAvatarPreview(null);
+                            if (fileInputRef.current) fileInputRef.current.value = "";
+                          }}
+                          disabled={isUploadingAvatar}
+                          className={secondaryButtonClass}
+                        >
+                          취소
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={isUploadingAvatar}
+                          className={secondaryButtonClass}
+                        >
+                          사진 변경
+                        </button>
+                        {account.avatarUrl && (
+                          <button
+                            type="button"
+                            onClick={handleDeleteAvatar}
+                            disabled={isUploadingAvatar}
+                            aria-label="프로필 사진 삭제"
+                            className="inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-lg text-sm font-medium text-red-700 transition-colors hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <Trash2 size={18} aria-hidden="true" />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <FeedbackMessage feedback={avatarFeedback} />
 
                 {isEditingName ? (
                   <form onSubmit={handleSaveName} className={rowClass}>

@@ -254,25 +254,37 @@ export async function upsertSignupProfile(
   const email = input.email?.trim().toLowerCase() || null;
 
   try {
-    const { error: profileError } = await adminClient.from("profiles").insert({
-      id: userId,
-      user_id: userId,
-      email,
-      role,
-      full_name: name,
-      phone,
-      approval_status: "pending",
-    });
+    // 기존 profile이 있으면 insert를 시도하지 않는다. (이미 가입한 직원의 추가 근무 매장 신청 등)
+    // 예전에는 insert의 중복 키 에러(23505)로 기존 profile을 감지했는데, 실제 DB의 profiles에
+    // NOT NULL 컬럼이 추가되면서 insert가 23505보다 먼저 not-null 에러(23502)로 실패해 기존 사용자도 막혔다.
+    // user_id까지 읽어 023의 복수 브랜드 프로필 계약(auth 사용자 역참조)을 아래에서 보완한다.
+    const { data: existingProfile, error: fetchError } = await adminClient
+      .from("profiles")
+      .select("email, full_name, phone, approval_status, brand_id, user_id")
+      .eq("id", userId)
+      .maybeSingle();
 
-    // 중복 PK 에러: 기존 profile이 있음
-    if (profileError && profileError.code === "23505") {
-      const { data: existingProfile, error: fetchError } = await adminClient
-        .from("profiles")
-        .select("email, full_name, phone, approval_status, brand_id, user_id")
-        .eq("id", userId)
-        .single();
+    if (fetchError) {
+      logSafeAuthError("STORE_MEMBERSHIP_PROFILE_LOOKUP_FAILED", fetchError);
+      return { success: false, error: "Failed to load profile", details: fetchError.message };
+    }
 
-      if (!fetchError && existingProfile) {
+    const { error: profileError } = existingProfile
+      ? { error: null }
+      : await adminClient.from("profiles").insert({
+          id: userId,
+          // 023: 마스터 프로필도 user_id로 같은 auth 사용자를 가리킨다(브랜드 프로필과 동일 규칙).
+          user_id: userId,
+          email,
+          role,
+          full_name: name,
+          phone,
+          approval_status: "pending",
+        });
+
+    // 기존 profile이 있음 (또는 동시 요청으로 방금 생성됨)
+    if (existingProfile || profileError?.code === "23505") {
+      if (existingProfile) {
         const profileUpdates: Record<string, unknown> = {};
         if (existingProfile.user_id !== userId) profileUpdates.user_id = userId;
         if (email && existingProfile.email !== email) profileUpdates.email = email;
@@ -329,6 +341,12 @@ export interface StoreMembershipRequestInput {
 export interface StoreMembershipRequestResult {
   success: boolean;
   membershipId?: string;
+  /** true면 이번 요청으로 새 pending membership이 생성됨, false면 기존 membership을 그대로 반환함 */
+  created?: boolean;
+  /** 반환된 membership의 현재 상태 (pending | approved | rejected) */
+  membershipStatus?: string;
+  /** 클라이언트가 안내 문구를 고를 수 있는 안전한 코드 (내부 에러 내용은 담지 않는다) */
+  code?: "STORE_NOT_FOUND";
   error?: string;
   details?: string;
   status: number;
@@ -534,6 +552,7 @@ export async function submitStoreMembershipRequest(
       success: false,
       error: "선택한 매장을 찾을 수 없습니다.",
       details: `Store with name "${storeName}" not found. Staff must select an existing store.`,
+      code: "STORE_NOT_FOUND",
       status: 404,
     };
   }
@@ -623,7 +642,15 @@ export async function submitStoreMembershipRequest(
         status: existingMembership.status,
         franchiseId: finalMembershipFranchiseId,
       });
-      return { success: true, membershipId: existingMembership.id, status: 200 };
+      // 중복 row를 만들지 않고 기존 membership과 상태를 돌려준다.
+      // created/membershipStatus는 가입·매장 추가 화면이 "이미 신청함" 안내를 고를 때 쓴다.
+      return {
+        success: true,
+        membershipId: existingMembership.id,
+        created: false,
+        membershipStatus: existingMembership.status,
+        status: 200,
+      };
     }
 
     const { data: newMembership, error: createError } = await adminClient
@@ -671,7 +698,7 @@ export async function submitStoreMembershipRequest(
       console.error("Failed to generate notifications:", e)
     );
 
-    return { success: true, membershipId: newMembership.id, status: 200 };
+    return { success: true, membershipId: newMembership.id, created: true, membershipStatus: "pending", status: 200 };
   } catch (e) {
     logSafeAuthError("STORE_MEMBERSHIP_CREATE_EXCEPTION", e);
     return { success: false, error: "Failed to create membership", details: String(e), status: 500 };

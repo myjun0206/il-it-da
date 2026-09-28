@@ -41,6 +41,24 @@ export default function NotificationCenter({ className = "" }: NotificationCente
     }
   }, [navigationTarget]);
 
+  // 종 아이콘 badge: 패널을 열기 전에도 실제 읽지 않은 알림 수로 표시한다. (없으면 badge 없음)
+  useEffect(() => {
+    let isCancelled = false;
+    fetch("/api/notifications?limit=1")
+      .then(async (response) => {
+        const data = (await response.json()) as { success?: boolean; data?: { unreadCount?: number } };
+        if (!isCancelled && response.ok && data.success && typeof data.data?.unreadCount === "number") {
+          setUnreadCount(data.data.unreadCount);
+        }
+      })
+      .catch(() => {
+        // badge만 생략한다. 패널을 열면 다시 조회한다.
+      });
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
   // Fetch notifications when panel opens
   useEffect(() => {
     if (!isOpen) return;
@@ -85,6 +103,8 @@ export default function NotificationCenter({ className = "" }: NotificationCente
       } catch (e) {
         console.error("Failed to mark notification as read:", e);
       }
+      setNotifications((prev) => prev.map((n) => (n.id === notification.id ? { ...n, isRead: true } : n)));
+      setUnreadCount((count) => Math.max(0, count - 1));
     }
 
     // Navigate if targetUrl exists
@@ -157,7 +177,7 @@ export default function NotificationCenter({ className = "" }: NotificationCente
       {isOpen && (
         <div
           ref={panelRef}
-          className="absolute right-0 top-full mt-2 w-96 max-w-[calc(100vw-1rem)] bg-white border border-[var(--color-border)] rounded-lg shadow-lg z-50 max-h-96 flex flex-col"
+          className="fixed inset-x-2 top-16 mt-2 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:w-96 sm:max-w-[calc(100vw-1rem)] bg-white border border-[var(--color-border)] rounded-lg shadow-lg z-50 max-h-96 flex flex-col"
           role="dialog"
           aria-label="알림 목록"
         >

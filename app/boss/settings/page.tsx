@@ -1,17 +1,21 @@
 "use client";
 
-import React, { useLayoutEffect, useEffect, useState } from "react";
+import React, { useLayoutEffect, useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, CheckCircle2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
 import ThemeSelector from "@/components/common/ThemeSelector";
+import ProfileAvatar from "@/components/common/ProfileAvatar";
+import { uploadProfileAvatarClient, deleteProfileAvatarClient } from "@/lib/supabase/storage-profile-avatar";
 
 interface UserInfo {
   name: string;
   email: string;
   franchiseName: string | null;
+  avatarUrl: string | null;
+  userId: string;
 }
 
 interface NotificationPreferences {
@@ -103,7 +107,13 @@ export default function SettingsPage() {
   const [isReady, setIsReady] = useState(false);
   const [isLoadingStore, setIsLoadingStore] = useState(true);
   const [error, setError] = useState("");
-  const [userInfo, setUserInfo] = useState<UserInfo>({ name: "", email: "", franchiseName: null });
+  const [userInfo, setUserInfo] = useState<UserInfo>({
+    name: "",
+    email: "",
+    franchiseName: null,
+    avatarUrl: null,
+    userId: "",
+  });
   const [storeName, setStoreName] = useState("");
   const [notificationPrefs, setNotificationPrefs] = useState<NotificationPreferences>({
     staffJoinRequest: true,
@@ -111,11 +121,16 @@ export default function SettingsPage() {
     manualUpdates: true,
   });
   const [prefsFeedback, setPrefsFeedback] = useState<Feedback>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [isSavingName, setIsSavingName] = useState(false);
   const [nameFeedback, setNameFeedback] = useState<Feedback>(null);
+
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [avatarFeedback, setAvatarFeedback] = useState<Feedback>(null);
 
   // Authorization & Data Loading
   useLayoutEffect(() => {
@@ -138,9 +153,9 @@ export default function SettingsPage() {
         const user = data.session.user;
         const { data: profile } = await supabase
           .from("profiles")
-          .select("full_name, brand_id")
+          .select("full_name, brand_id, avatar_url")
           .eq("id", user.id)
-          .maybeSingle<{ full_name: string | null; brand_id: string | null }>();
+          .maybeSingle<{ full_name: string | null; brand_id: string | null; avatar_url: string | null }>();
 
         // 소속 프랜차이즈는 profiles.brand_id와 기존 franchises 목록 API로만 확인한다.
         let franchiseName: string | null = null;
@@ -156,6 +171,8 @@ export default function SettingsPage() {
           name: profile?.full_name || user.user_metadata?.name || "",
           email: user.email || "",
           franchiseName,
+          avatarUrl: profile?.avatar_url || null,
+          userId: user.id,
         });
 
         // 기존 구현: localStorage에서 알림 설정 로드
@@ -280,6 +297,81 @@ export default function SettingsPage() {
     }
   };
 
+  const handleAvatarFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setAvatarPreview(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleUploadAvatar = async () => {
+    if (!fileInputRef.current?.files?.[0]) return;
+    if (isUploadingAvatar) return;
+
+    const file = fileInputRef.current.files[0];
+    const mimeType = file.type;
+
+    setIsUploadingAvatar(true);
+    setAvatarFeedback(null);
+
+    try {
+      const result = await uploadProfileAvatarClient(file, mimeType);
+
+      if (result.success && result.avatarUrl) {
+        setUserInfo((prev) => ({ ...prev, avatarUrl: result.avatarUrl! }));
+        setAvatarPreview(null);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        setAvatarFeedback({ type: "success", message: "프로필 사진이 저장되었습니다." });
+        void createClient().auth.refreshSession();
+      } else {
+        setAvatarFeedback({
+          type: "error",
+          message: result.error || "프로필 사진 업로드에 실패했습니다.",
+        });
+      }
+    } catch (e) {
+      setAvatarFeedback({
+        type: "error",
+        message: e instanceof Error ? e.message : "프로필 사진 업로드 중 오류가 발생했습니다.",
+      });
+    } finally {
+      setIsUploadingAvatar(false);
+    }
+  };
+
+  const handleDeleteAvatar = async () => {
+    if (!userInfo.avatarUrl) return;
+    if (!window.confirm("프로필 사진을 삭제할까요?")) return;
+
+    setAvatarFeedback(null);
+
+    try {
+      const result = await deleteProfileAvatarClient();
+
+      if (result.success) {
+        setUserInfo((prev) => ({ ...prev, avatarUrl: null }));
+        setAvatarPreview(null);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        setAvatarFeedback({ type: "success", message: "프로필 사진이 삭제되었습니다." });
+        void createClient().auth.refreshSession();
+      } else {
+        setAvatarFeedback({
+          type: "error",
+          message: result.error || "프로필 사진 삭제에 실패했습니다.",
+        });
+      }
+    } catch (e) {
+      setAvatarFeedback({
+        type: "error",
+        message: e instanceof Error ? e.message : "프로필 사진 삭제 중 오류가 발생했습니다.",
+      });
+    }
+  };
+
   if (!isReady) {
     return null;
   }
@@ -328,6 +420,74 @@ export default function SettingsPage() {
               <p className="mb-5 text-sm text-[var(--color-text-secondary)]">서비스에서 사용하는 내 정보를 확인하고 관리합니다.</p>
 
               <div>
+                {/* 프로필 사진 */}
+                <div className={rowClass}>
+                  <span className={rowLabelClass}>프로필 사진</span>
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 flex-1">
+                    <ProfileAvatar
+                      name={userInfo.name}
+                      avatarUrl={avatarPreview || userInfo.avatarUrl}
+                      size="lg"
+                      className="w-12 h-12"
+                    />
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                      onChange={handleAvatarFileSelect}
+                      disabled={isUploadingAvatar}
+                      className="hidden"
+                      aria-label="프로필 사진 선택"
+                    />
+                    {avatarPreview ? (
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={handleUploadAvatar}
+                          disabled={isUploadingAvatar}
+                          className={primaryButtonClass}
+                        >
+                          {isUploadingAvatar ? "저장 중..." : "저장"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAvatarPreview(null);
+                            if (fileInputRef.current) fileInputRef.current.value = "";
+                          }}
+                          disabled={isUploadingAvatar}
+                          className={secondaryButtonClass}
+                        >
+                          취소
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={isUploadingAvatar}
+                          className={secondaryButtonClass}
+                        >
+                          사진 변경
+                        </button>
+                        {userInfo.avatarUrl && (
+                          <button
+                            type="button"
+                            onClick={handleDeleteAvatar}
+                            disabled={isUploadingAvatar}
+                            aria-label="프로필 사진 삭제"
+                            className="inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-lg text-sm font-medium text-red-700 transition-colors hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <Trash2 size={18} aria-hidden="true" />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <FeedbackMessage feedback={avatarFeedback} />
+
                 {isEditingName ? (
                   <form onSubmit={handleSaveName} className={rowClass}>
                     <label htmlFor="owner-name" className={rowLabelClass}>
