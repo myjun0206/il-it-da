@@ -321,12 +321,15 @@ export async function POST(request: Request): Promise<NextResponse<SignupRespons
     const profileRole = role === "boss" ? "owner" : role;
     const { error: profileError } = await supabase.from("profiles").insert({
       id: userId,
+      user_id: userId,
       email,
       full_name: fullName,
       role: profileRole,
       phone: getString(body.phone) || null,
       company_email: getString(body.companyEmail) || null,
-      brand_id: getString(body.brandId) || getString(body.selectedBrandId) || null,
+      brand_id: profileRole === "hq"
+        ? getString(body.brandId) || getString(body.selectedBrandId) || null
+        : null,
       approval_status: profileRole === "hq" ? "approved" : "pending",
       approved_at: profileRole === "hq" ? new Date().toISOString() : null,
     });

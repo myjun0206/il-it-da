@@ -1,8 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createNotification } from "@/lib/notifications";
-import { resolveFranchiseIdForStoreName } from "@/lib/supabase/resolve-store-franchise";
 import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
+import { resolveFranchiseIdForStoreName } from "@/lib/supabase/resolve-store-franchise";
+
+const DATABASE_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export interface SignupProfileInput {
   userId: string;
@@ -16,6 +18,228 @@ export interface SignupProfileResult {
   success: boolean;
   error?: string;
   details?: string;
+}
+
+export async function ensureBrandProfileForApprovedMembership(
+  adminClient: SupabaseClient,
+  userId: string,
+  storeId: string,
+): Promise<boolean> {
+  const { data: membership, error: membershipError } = await adminClient
+    .from("store_memberships")
+    .select("role, status, franchise_id")
+    .eq("user_id", userId)
+    .eq("store_id", storeId)
+    .eq("status", "approved")
+    .maybeSingle();
+
+  if (membershipError) {
+    console.error("[AUTH] APPROVED_MEMBERSHIP_BRAND_LOOKUP_FAILED", {
+      userId,
+      storeId,
+      message: membershipError.message,
+      code: membershipError.code,
+      details: membershipError.details,
+      hint: membershipError.hint,
+    });
+    logSafeAuthError("APPROVED_MEMBERSHIP_BRAND_LOOKUP_FAILED", membershipError);
+    return false;
+  }
+  if (!membership) {
+    console.error("[AUTH] APPROVED_MEMBERSHIP_NOT_FOUND", { userId, storeId });
+    return false;
+  }
+
+  const { data: store, error: storeError } = await adminClient
+    .from("stores")
+    .select("franchise_id")
+    .eq("id", storeId)
+    .maybeSingle();
+
+  if (storeError) {
+    console.error("[AUTH] APPROVED_STORE_BRAND_LOOKUP_FAILED", {
+      userId,
+      storeId,
+      message: storeError.message,
+      code: storeError.code,
+      details: storeError.details,
+      hint: storeError.hint,
+    });
+    logSafeAuthError("APPROVED_STORE_BRAND_LOOKUP_FAILED", storeError);
+    return false;
+  }
+  if (!store || !store.franchise_id) {
+    console.error("[AUTH] APPROVED_STORE_BRAND_NOT_FOUND", { userId, storeId });
+    return false;
+  }
+
+  if (membership.franchise_id && store.franchise_id !== membership.franchise_id) {
+    console.error("[AUTH] APPROVED_STORE_BRAND_MISMATCH", {
+      userId,
+      storeId,
+      membershipFranchiseId: membership.franchise_id,
+      storeFranchiseId: store.franchise_id,
+    });
+    return false;
+  }
+
+  const brandId = membership.franchise_id || store.franchise_id;
+  if (!membership.franchise_id) {
+    const { error: membershipBrandUpdateError } = await adminClient
+      .from("store_memberships")
+      .update({ franchise_id: brandId })
+      .eq("user_id", userId)
+      .eq("store_id", storeId)
+      .eq("status", "approved");
+
+    if (membershipBrandUpdateError) {
+      console.error("[AUTH] APPROVED_MEMBERSHIP_BRAND_BACKFILL_FAILED", {
+        userId,
+        storeId,
+        brandId,
+        message: membershipBrandUpdateError.message,
+        code: membershipBrandUpdateError.code,
+        details: membershipBrandUpdateError.details,
+        hint: membershipBrandUpdateError.hint,
+      });
+      logSafeAuthError("APPROVED_MEMBERSHIP_BRAND_BACKFILL_FAILED", membershipBrandUpdateError);
+      return false;
+    }
+  }
+
+  const { data: masterProfile, error: profileError } = await adminClient
+    .from("profiles")
+    .select("email, full_name, role, phone, company_email, approval_status, approved_at, approved_by, user_id")
+    .eq("id", userId)
+    .is("brand_id", null)
+    .maybeSingle();
+
+  if (profileError) {
+    console.error("[AUTH] STORE_MEMBERSHIP_MASTER_PROFILE_LOOKUP_FAILED", {
+      userId,
+      brandId,
+      message: profileError.message,
+      code: profileError.code,
+      details: profileError.details,
+      hint: profileError.hint,
+    });
+    logSafeAuthError("STORE_MEMBERSHIP_MASTER_PROFILE_LOOKUP_FAILED", profileError);
+    return false;
+  }
+
+  if (
+    !masterProfile ||
+    (masterProfile.role !== "owner" && masterProfile.role !== "staff") ||
+    (membership.role !== "owner" && membership.role !== "staff")
+  ) {
+    console.error("[AUTH] STORE_MEMBERSHIP_MASTER_PROFILE_INVALID", {
+      userId,
+      brandId,
+      hasMasterProfile: Boolean(masterProfile),
+      masterRole: masterProfile?.role,
+      membershipRole: membership.role,
+    });
+    return false;
+  }
+
+  const brandProfileFields = {
+    user_id: userId,
+    email: masterProfile.email,
+    full_name: masterProfile.full_name,
+    role: masterProfile.role,
+    phone: masterProfile.phone,
+    company_email: masterProfile.company_email,
+    brand_id: brandId,
+    approval_status: "approved",
+    approved_at: masterProfile.approved_at,
+    approved_by: masterProfile.approved_by,
+  };
+  const brandProfileValues = {
+    id: crypto.randomUUID(),
+    ...brandProfileFields,
+  };
+
+  const { data: existingBrandProfile, error: lookupError } = await adminClient
+    .from("profiles")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("brand_id", brandId)
+    .maybeSingle();
+
+  if (lookupError) {
+    console.error("[AUTH] STORE_MEMBERSHIP_BRAND_PROFILE_LOOKUP_FAILED", {
+      userId,
+      brandId,
+      message: lookupError.message,
+      code: lookupError.code,
+      details: lookupError.details,
+      hint: lookupError.hint,
+    });
+    logSafeAuthError("STORE_MEMBERSHIP_BRAND_PROFILE_LOOKUP_FAILED", lookupError);
+    return false;
+  }
+
+  const saveResult = existingBrandProfile
+    ? await adminClient.from("profiles").update(brandProfileFields).eq("id", existingBrandProfile.id)
+    : await adminClient.from("profiles").insert(brandProfileValues);
+
+  if (saveResult.error?.code === "23505" && !existingBrandProfile) {
+    const { data: concurrentBrandProfile, error: concurrentLookupError } = await adminClient
+      .from("profiles")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("brand_id", brandId)
+      .maybeSingle();
+
+    if (concurrentLookupError || !concurrentBrandProfile) {
+      console.error("[AUTH] STORE_MEMBERSHIP_BRAND_PROFILE_DUPLICATE_RECOVERY_FAILED", {
+        userId,
+        brandId,
+        message: concurrentLookupError?.message || saveResult.error.message,
+        code: concurrentLookupError?.code || saveResult.error.code,
+        details: concurrentLookupError?.details || saveResult.error.details,
+        hint: concurrentLookupError?.hint || saveResult.error.hint,
+      });
+      logSafeAuthError(
+        "STORE_MEMBERSHIP_BRAND_PROFILE_DUPLICATE_RECOVERY_FAILED",
+        concurrentLookupError || saveResult.error,
+      );
+      return false;
+    }
+
+    const concurrentUpdate = await adminClient
+      .from("profiles")
+      .update(brandProfileFields)
+      .eq("id", concurrentBrandProfile.id);
+
+    if (concurrentUpdate.error) {
+      console.error("[AUTH] STORE_MEMBERSHIP_BRAND_PROFILE_DUPLICATE_UPDATE_FAILED", {
+        userId,
+        brandId,
+        profileId: concurrentBrandProfile.id,
+        message: concurrentUpdate.error.message,
+        code: concurrentUpdate.error.code,
+        details: concurrentUpdate.error.details,
+        hint: concurrentUpdate.error.hint,
+      });
+      logSafeAuthError("STORE_MEMBERSHIP_BRAND_PROFILE_DUPLICATE_UPDATE_FAILED", concurrentUpdate.error);
+      return false;
+    }
+  } else if (saveResult.error) {
+    console.error("[AUTH] STORE_MEMBERSHIP_BRAND_PROFILE_SYNC_FAILED", {
+      userId,
+      brandId,
+      profileId: existingBrandProfile?.id || brandProfileValues.id,
+      message: saveResult.error.message,
+      code: saveResult.error.code,
+      details: saveResult.error.details,
+      hint: saveResult.error.hint,
+    });
+    logSafeAuthError("STORE_MEMBERSHIP_BRAND_PROFILE_SYNC_FAILED", saveResult.error);
+    return false;
+  }
+
+  return true;
 }
 
 /**
@@ -33,9 +257,10 @@ export async function upsertSignupProfile(
     // 기존 profile이 있으면 insert를 시도하지 않는다. (이미 가입한 직원의 추가 근무 매장 신청 등)
     // 예전에는 insert의 중복 키 에러(23505)로 기존 profile을 감지했는데, 실제 DB의 profiles에
     // NOT NULL 컬럼이 추가되면서 insert가 23505보다 먼저 not-null 에러(23502)로 실패해 기존 사용자도 막혔다.
+    // user_id까지 읽어 023의 복수 브랜드 프로필 계약(auth 사용자 역참조)을 아래에서 보완한다.
     const { data: existingProfile, error: fetchError } = await adminClient
       .from("profiles")
-      .select("email, full_name, phone, approval_status, brand_id")
+      .select("email, full_name, phone, approval_status, brand_id, user_id")
       .eq("id", userId)
       .maybeSingle();
 
@@ -48,6 +273,8 @@ export async function upsertSignupProfile(
       ? { error: null }
       : await adminClient.from("profiles").insert({
           id: userId,
+          // 023: 마스터 프로필도 user_id로 같은 auth 사용자를 가리킨다(브랜드 프로필과 동일 규칙).
+          user_id: userId,
           email,
           role,
           full_name: name,
@@ -59,6 +286,7 @@ export async function upsertSignupProfile(
     if (existingProfile || profileError?.code === "23505") {
       if (existingProfile) {
         const profileUpdates: Record<string, unknown> = {};
+        if (existingProfile.user_id !== userId) profileUpdates.user_id = userId;
         if (email && existingProfile.email !== email) profileUpdates.email = email;
         if (!existingProfile.full_name) profileUpdates.full_name = name;
         if (phone && !existingProfile.phone) profileUpdates.phone = phone;
@@ -143,6 +371,24 @@ export async function submitStoreMembershipRequest(
     };
   }
 
+  let resolvedStoreName = storeName?.trim() || null;
+  let storeFromId: { id: string; store_name: string; franchise_id: string | null } | null = null;
+  if (storeId && DATABASE_UUID_PATTERN.test(storeId)) {
+    const { data, error } = await adminClient
+      .from("stores")
+      .select("id, store_name, franchise_id")
+      .eq("id", storeId)
+      .maybeSingle<{ id: string; store_name: string; franchise_id: string | null }>();
+
+    if (error) {
+      return { success: false, error: "Failed to lookup store", details: error.message, status: 500 };
+    }
+    if (data) {
+      storeFromId = data;
+      resolvedStoreName = data.store_name;
+    }
+  }
+
   let requestedFranchiseId: string | null = null;
   if (franchiseId) {
     const { data: chosenFranchise, error: chosenFranchiseError } = await adminClient
@@ -155,8 +401,61 @@ export async function submitStoreMembershipRequest(
       return { success: false, error: "Invalid franchiseId", status: 400 };
     }
     requestedFranchiseId = chosenFranchise.id;
-  } else if (storeName) {
-    requestedFranchiseId = await resolveFranchiseIdForStoreName(adminClient, storeName);
+  } else if (storeFromId?.franchise_id) {
+    requestedFranchiseId = storeFromId.franchise_id;
+  } else if (resolvedStoreName) {
+    requestedFranchiseId = await resolveFranchiseIdForStoreName(adminClient, resolvedStoreName);
+    if (!requestedFranchiseId) {
+      return {
+        success: false,
+        error: "프랜차이즈를 자동으로 확인할 수 없습니다.",
+        details: "매장명을 확인하거나 프랜차이즈를 직접 선택해주세요.",
+        status: 400,
+      };
+    }
+  } else {
+    return {
+      success: false,
+      error: "storeName is required",
+      details: "매장명을 입력해주세요.",
+      status: 400,
+    };
+  }
+
+  if (storeFromId?.franchise_id && requestedFranchiseId !== storeFromId.franchise_id) {
+    return {
+      success: false,
+      error: "매장과 프랜차이즈 정보가 일치하지 않습니다.",
+      details: "선택한 매장의 브랜드를 다시 확인해주세요.",
+      status: 400,
+    };
+  }
+
+  if (storeFromId && !storeFromId.franchise_id && requestedFranchiseId) {
+    const { error: storeBrandUpdateError } = await adminClient
+      .from("stores")
+      .update({ franchise_id: requestedFranchiseId })
+      .eq("id", storeFromId.id);
+
+    if (storeBrandUpdateError) {
+      console.error("[AUTH] STORE_BRAND_BACKFILL_FAILED", {
+        userId,
+        storeId: storeFromId.id,
+        storeName: resolvedStoreName,
+        franchiseId: requestedFranchiseId,
+        message: storeBrandUpdateError.message,
+        code: storeBrandUpdateError.code,
+        details: storeBrandUpdateError.details,
+      });
+      logSafeAuthError("STORE_BRAND_BACKFILL_FAILED", storeBrandUpdateError);
+      return {
+        success: false,
+        error: "매장 브랜드 연결에 실패했습니다.",
+        details: storeBrandUpdateError.message,
+        status: 500,
+      };
+    }
+    storeFromId.franchise_id = requestedFranchiseId;
   }
 
   // stores row 생성/조회
@@ -165,8 +464,10 @@ export async function submitStoreMembershipRequest(
 
   let existingStoreQuery = adminClient
     .from("stores")
-    .select("id, franchise_id")
-    .eq("store_name", storeName);
+    .select("id, franchise_id");
+  existingStoreQuery = storeFromId
+    ? existingStoreQuery.eq("id", storeFromId.id)
+    : existingStoreQuery.eq("store_name", resolvedStoreName);
   existingStoreQuery = requestedFranchiseId
     ? existingStoreQuery.eq("franchise_id", requestedFranchiseId)
     : existingStoreQuery.is("franchise_id", null);
@@ -186,26 +487,13 @@ export async function submitStoreMembershipRequest(
   if (existingStore) {
     finalStoreId = existingStore.id;
     finalFranchiseId = existingStore.franchise_id;
-
-    if (!finalFranchiseId) {
-      const backfilledFranchiseId = await resolveFranchiseIdForStoreName(adminClient, storeName!);
-
-      if (backfilledFranchiseId) {
-        const { error: backfillError } = await adminClient
-          .from("stores")
-          .update({ franchise_id: backfilledFranchiseId })
-          .eq("id", existingStore.id);
-
-        if (!backfillError) {
-          finalFranchiseId = backfilledFranchiseId;
-        }
-      }
-    }
   } else if (role === "owner") {
     let doubleCheckStoreQuery = adminClient
       .from("stores")
-      .select("id, franchise_id")
-      .eq("store_name", storeName);
+      .select("id, franchise_id");
+    doubleCheckStoreQuery = storeFromId
+      ? doubleCheckStoreQuery.eq("id", storeFromId.id)
+      : doubleCheckStoreQuery.eq("store_name", resolvedStoreName);
     doubleCheckStoreQuery = requestedFranchiseId
       ? doubleCheckStoreQuery.eq("franchise_id", requestedFranchiseId)
       : doubleCheckStoreQuery.is("franchise_id", null);
@@ -216,7 +504,7 @@ export async function submitStoreMembershipRequest(
       const { data: newStore, error: insertError } = await adminClient
         .from("stores")
         .insert({
-          store_name: storeName,
+          store_name: resolvedStoreName,
           franchise_id: requestedFranchiseId,
         })
         .select("id, franchise_id")
@@ -227,8 +515,10 @@ export async function submitStoreMembershipRequest(
 
         let retryStoreQuery = adminClient
           .from("stores")
-          .select("id, franchise_id")
-          .eq("store_name", storeName);
+          .select("id, franchise_id");
+        retryStoreQuery = storeFromId
+          ? retryStoreQuery.eq("id", storeFromId.id)
+          : retryStoreQuery.eq("store_name", resolvedStoreName);
         retryStoreQuery = requestedFranchiseId
           ? retryStoreQuery.eq("franchise_id", requestedFranchiseId)
           : retryStoreQuery.is("franchise_id", null);
@@ -273,21 +563,20 @@ export async function submitStoreMembershipRequest(
 
   const finalMembershipFranchiseId = requestedFranchiseId ?? finalFranchiseId;
 
-  if (finalMembershipFranchiseId) {
-    await adminClient
-      .from("profiles")
-      .update({
-        brand_id: finalMembershipFranchiseId,
-        approval_status: currentApprovalStatus === "approved" ? "approved" : "pending",
-      })
-      .eq("id", userId);
+  if (!finalMembershipFranchiseId) {
+    return {
+      success: false,
+      error: "매장의 브랜드를 확인할 수 없습니다.",
+      details: "프랜차이즈 정보가 확인되는 매장을 선택해주세요.",
+      status: 400,
+    };
   }
 
   // store_memberships row 생성 (중복 확인)
   try {
     const { data: existingMembership, error: lookupError } = await adminClient
       .from("store_memberships")
-      .select("id, status")
+      .select("id, status, role, franchise_id")
       .eq("user_id", userId)
       .eq("store_id", finalStoreId)
       .single();
@@ -303,7 +592,58 @@ export async function submitStoreMembershipRequest(
     }
 
     if (existingMembership) {
+      if (existingMembership.role !== role) {
+        console.error("[AUTH] STORE_MEMBERSHIP_ROLE_MISMATCH", {
+          userId,
+          storeId: finalStoreId,
+          requestedRole: role,
+          existingRole: existingMembership.role,
+        });
+        return {
+          success: false,
+          error: "이미 다른 역할로 등록된 매장 멤버십이 있습니다.",
+          status: 409,
+        };
+      }
+
+      if (existingMembership.franchise_id !== finalMembershipFranchiseId) {
+        const { error: membershipBrandUpdateError } = await adminClient
+          .from("store_memberships")
+          .update({ franchise_id: finalMembershipFranchiseId })
+          .eq("id", existingMembership.id)
+          .eq("user_id", userId)
+          .eq("store_id", finalStoreId);
+
+        if (membershipBrandUpdateError) {
+          console.error("[AUTH] STORE_MEMBERSHIP_BRAND_SYNC_FAILED", {
+            userId,
+            storeId: finalStoreId,
+            membershipId: existingMembership.id,
+            franchiseId: finalMembershipFranchiseId,
+            message: membershipBrandUpdateError.message,
+            code: membershipBrandUpdateError.code,
+            details: membershipBrandUpdateError.details,
+          });
+          logSafeAuthError("STORE_MEMBERSHIP_BRAND_SYNC_FAILED", membershipBrandUpdateError);
+          return {
+            success: false,
+            error: "멤버십 브랜드 연결에 실패했습니다.",
+            details: membershipBrandUpdateError.message,
+            status: 500,
+          };
+        }
+      }
+
+      console.info("[AUTH] STORE_MEMBERSHIP_REUSED", {
+        userId,
+        storeId: finalStoreId,
+        membershipId: existingMembership.id,
+        role: existingMembership.role,
+        status: existingMembership.status,
+        franchiseId: finalMembershipFranchiseId,
+      });
       // 중복 row를 만들지 않고 기존 membership과 상태를 돌려준다.
+      // created/membershipStatus는 가입·매장 추가 화면이 "이미 신청함" 안내를 고를 때 쓴다.
       return {
         success: true,
         membershipId: existingMembership.id,
@@ -327,6 +667,15 @@ export async function submitStoreMembershipRequest(
       .single();
 
     if (createError) {
+      console.error("[AUTH] STORE_MEMBERSHIP_CREATE_FAILED", {
+        userId,
+        storeId: finalStoreId,
+        franchiseId: finalMembershipFranchiseId,
+        role,
+        message: createError.message,
+        code: createError.code,
+        details: createError.details,
+      });
       logSafeAuthError("STORE_MEMBERSHIP_CREATE_FAILED", createError);
       return {
         success: false,
@@ -336,7 +685,16 @@ export async function submitStoreMembershipRequest(
       };
     }
 
-    generateMembershipNotifications(userId, role, finalStoreId, storeName || "", userName).catch((e) =>
+    console.info("[AUTH] STORE_MEMBERSHIP_CREATED", {
+      userId,
+      storeId: finalStoreId,
+      membershipId: newMembership.id,
+      franchiseId: finalMembershipFranchiseId,
+      role,
+      status: "pending",
+    });
+
+    generateMembershipNotifications(userId, role, finalStoreId, resolvedStoreName || "", userName).catch((e) =>
       console.error("Failed to generate notifications:", e)
     );
 

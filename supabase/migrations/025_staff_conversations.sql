@@ -1,4 +1,4 @@
--- 022: Staff AI 대화 기록 (conversations / conversation_messages)
+-- 025: Staff AI 대화 기록 (conversations / conversation_messages)
 --
 -- 직원이 AI 챗봇과 나눈 대화를 매장(store) 단위로 저장한다.
 -- - 대화(conversation)는 생성 시점의 store_id에 고정되며 이후 바뀌지 않는다.

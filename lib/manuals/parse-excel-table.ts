@@ -18,7 +18,6 @@ import { splitTextIntoManualItems } from "@/lib/manuals/detect-manual-item";
 // 전처리 단계에서 "모든 행/열이 공통으로 갖는 고정 값"(회사명 열, 반복된 헤더 행, 빈 열 등)은
 // 실제 카테고리/타이틀 데이터가 아니므로 먼저 걸러내고 시작한다.
 
-const MAX_TABLE_GROUPS = 300;
 // 값이 1종류뿐인 열(또는 전치 후 행)에서, 그 값이 채워진 칸의 비율이 이 값 이상이면
 // "공통 고정값"(노이즈)로 간주한다.
 const NOISE_COLUMN_COVERAGE_THRESHOLD = 0.9;
@@ -354,9 +353,6 @@ function analyzeMatrixAsRecords(matrix: string[][], extraNoiseColumnIndexes: Set
     groupsByKey.set(key, { category: groupCategory, topic, items: [...items] });
     groupOrder.push(key);
 
-    if (groupOrder.length >= MAX_TABLE_GROUPS) {
-      break;
-    }
   }
 
   const groups = groupOrder.map((key) => groupsByKey.get(key)).filter((g): g is AnalyzedManualGroup => Boolean(g));
@@ -365,36 +361,54 @@ function analyzeMatrixAsRecords(matrix: string[][], extraNoiseColumnIndexes: Set
 }
 
 export function parseExcelTableGroups(rows: string[][]): AnalyzedManualGroup[] | null {
-  const normalized = rows.map((row) => row.map(normalizeCell));
-  const transposed = transposeMatrix(normalized);
+  // Excel Row 1 is always the header. Do not run any header detection or
+  // transpose fallback before this slice: every cell in the first row must be
+  // excluded from the persisted manual data.
+  const dataRows = rows
+    .slice(1)
+    .map((row) => row.map(normalizeCell))
+    .filter((row) => !isRowBlank(row));
+  const uniqueDataRows = dedupeExactDuplicateRows(dataRows);
 
-  // 1) "category/title/content"(또는 한글 동의어) 헤더 행을 먼저 찾아본다 - manuals 테이블을 그대로
-  //    내보낸 파일처럼 명시적 컬럼명이 있으면 이 매핑이 휴리스틱보다 훨씬 정확하다.
-  for (const matrix of [normalized, transposed]) {
-    const header = findHeaderRow(matrix);
-    if (header) {
-      const groups = buildGroupsFromHeader(matrix, header);
-      if (groups) {
-        return groups;
-      }
+  if (uniqueDataRows.length === 0) {
+    return null;
+  }
+
+  const groupOrder: string[] = [];
+  const groupsByKey = new Map<string, AnalyzedManualGroup>();
+  let lastCategory = "";
+
+  for (const row of uniqueDataRows) {
+    if (row[0]) {
+      lastCategory = row[0];
     }
+    const category = lastCategory || "미분류";
+    const topic = row[1] || "";
+    const content = row[2] || "";
+
+    if (!topic || !content) {
+      continue;
+    }
+
+    const items = splitTextIntoManualItems(content);
+    if (items.length === 0) {
+      continue;
+    }
+
+    const key = `${category}\u0000${topic}`;
+    const existing = groupsByKey.get(key);
+    if (existing) {
+      existing.items.push(...items);
+      continue;
+    }
+
+    groupsByKey.set(key, { category, topic, items });
+    groupOrder.push(key);
   }
 
-  // 2) 명시적 헤더를 찾지 못했으면 반복 패턴 기반 휴리스틱으로 세로형/가로형을 모두 시도한다.
-  //    brand_name/status/created_at 같은 시스템 컬럼명이 상단에 보이면(완전한 헤더로 인정되지 않았더라도)
-  //    카테고리/타이틀 후보에서 미리 제외한다.
-  const verticalSystemNoise = detectSystemColumnIndexes(normalized);
-  const horizontalSystemNoise = detectSystemColumnIndexes(transposed);
+  const groups = groupOrder
+    .map((key) => groupsByKey.get(key))
+    .filter((group): group is AnalyzedManualGroup => Boolean(group));
 
-  const vertical = analyzeMatrixAsRecords(normalized, verticalSystemNoise);
-  const horizontal = analyzeMatrixAsRecords(transposed, horizontalSystemNoise);
-
-  if (!vertical) {
-    return horizontal?.groups ?? null;
-  }
-  if (!horizontal) {
-    return vertical.groups;
-  }
-
-  return vertical.confidence >= horizontal.confidence ? vertical.groups : horizontal.groups;
+  return groups.length > 0 ? groups : null;
 }

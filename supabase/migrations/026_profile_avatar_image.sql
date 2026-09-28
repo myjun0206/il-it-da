@@ -1,4 +1,4 @@
--- 023: Profile avatar image support
+-- 026: Profile avatar image support
 --
 -- HQ/Owner/Staff이 Supabase Storage에 프로필 사진을 업로드할 수 있도록 지원.
 -- - avatar_url: Storage 내 프로필 사진 파일의 공개 URL 또는 부분 경로 저장

@@ -1,4 +1,4 @@
--- 024: Fix avatar_url constraint to allow full public URLs
+-- 027: Fix avatar_url constraint to allow full public URLs
 --
 -- 이전 constraint가 너무 엄격해서 Supabase Storage public URL을 거부함.
 -- (constraint가 ':' 문자를 허용하지 않음)

@@ -23,6 +23,10 @@ interface StoreApprovalState {
   requestedAt?: string;
 }
 
+function isDatabaseStoreId(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 // 타임스탬프를 한국식 날짜로 포맷
 function formatTimestamp(timestamp?: string): string {
   if (!timestamp) return "-";
@@ -394,7 +398,7 @@ export default function SignupApprovalPage() {
               name: profile.name,
               phone: profile.phone,
               pendingStores: pendingStores.map((item) => ({
-                storeId: item.store.id,
+                ...(isDatabaseStoreId(item.store.id) ? { storeId: item.store.id } : {}),
                 storeName: item.store.name,
               })),
             },
@@ -519,7 +523,7 @@ export default function SignupApprovalPage() {
             credentials: "include",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              storeId: approval.store.id,
+              ...(isDatabaseStoreId(approval.store.id) ? { storeId: approval.store.id } : {}),
               storeName: approval.store.name,
               role: role,
             }),

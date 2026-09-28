@@ -3,11 +3,12 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireHqUser } from "@/lib/supabase/hq-auth";
 import { createNotification } from "@/lib/notifications";
+import { ensureBrandProfileForApprovedMembership } from "@/lib/signup/store-membership-service";
 
 export const runtime = "nodejs";
 
 type ApprovalAction = "approve" | "reject";
-type ApprovalStatus = "pending" | "approved" | "rejected";
+type ApprovalStatus = "pending" | "requested" | "approved" | "rejected";
 
 type UpdateApprovalRequest = {
   membershipId?: unknown;
@@ -41,7 +42,11 @@ function isApprovalAction(value: unknown): value is ApprovalAction {
 }
 
 function isApprovalStatus(value: string | null): value is ApprovalStatus {
-  return value === "pending" || value === "approved" || value === "rejected";
+  return value === "pending" || value === "requested" || value === "approved" || value === "rejected";
+}
+
+function isPendingStatus(status: string): boolean {
+  return status === "pending" || status === "requested";
 }
 
 function unauthorizedResponse() {
@@ -69,7 +74,7 @@ async function syncProfileApprovalStatus(adminClient: ReturnType<typeof createAd
   }
 
   const hasApproved = (memberships ?? []).some((membership) => membership.status === "approved");
-  const hasPending = (memberships ?? []).some((membership) => membership.status === "pending");
+  const hasPending = (memberships ?? []).some((membership) => isPendingStatus(membership.status));
   const firstApproved = (memberships ?? []).find((membership) => membership.status === "approved");
   const approvalStatus = hasApproved ? "approved" : hasPending ? "pending" : "rejected";
 
@@ -102,13 +107,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const adminClient = createAdminClient();
   let membershipQuery = adminClient
     .from("store_memberships")
-    .select("id, user_id, store_id, role, status, requested_at, approved_at, approved_by, rejected_at, rejected_by")
-    // HQ는 점주(owner) 요청만 승인한다. 직원(staff) 요청은 해당 지점 점주가 승인한다.
+    .select("id, user_id, store_id, franchise_id, role, status, requested_at, approved_at, approved_by, rejected_at, rejected_by")
+    // HQ는 같은 franchise의 점주(owner) 요청만 조회한다.
     .eq("role", "owner")
     .eq("franchise_id", hqUser.franchiseId);
-
   if (isApprovalStatus(status)) {
-    membershipQuery = membershipQuery.eq("status", status);
+    membershipQuery = isPendingStatus(status)
+      ? membershipQuery.in("status", ["pending", "requested"])
+      : membershipQuery.eq("status", status);
   }
 
   const { data: memberships, error: membershipError } = await membershipQuery
@@ -124,10 +130,31 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const userIds = [...new Set(memberships.map((membership) => membership.user_id))];
   const storeIds = [...new Set(memberships.map((membership) => membership.store_id))];
+  const { data: stores, error: storeError } = await adminClient
+    .from("stores")
+    .select("id, store_name, franchise_id")
+    .in("id", storeIds);
+
+  if (storeError) {
+    return NextResponse.json({ success: false, error: "Failed to fetch approvals" }, { status: 500 });
+  }
+
+  const storesById = new Map((stores ?? []).map((store) => [store.id, store]));
+  const scopedMemberships = memberships.filter((membership) => {
+    const store = storesById.get(membership.store_id);
+    return membership.franchise_id === hqUser.franchiseId || store?.franchise_id === hqUser.franchiseId;
+  });
+
+  if (scopedMemberships.length === 0) {
+    return NextResponse.json({ success: true, data: [] });
+  }
+
+  const scopedUserIds = [...new Set(scopedMemberships.map((membership) => membership.user_id))];
+  const scopedStoreIds = [...new Set(scopedMemberships.map((membership) => membership.store_id))];
   const { data: ownerMemberships, error: ownerMembershipError } = await adminClient
     .from("store_memberships")
     .select("user_id, store_id")
-    .in("store_id", storeIds)
+    .in("store_id", scopedStoreIds)
     .eq("role", "owner")
     .eq("status", "approved");
 
@@ -136,24 +163,19 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   const ownerUserIds = [...new Set((ownerMemberships ?? []).map((membership) => membership.user_id))];
-  const profileUserIds = [...new Set([...userIds, ...ownerUserIds])];
+  const profileUserIds = [...new Set([...scopedUserIds, ...ownerUserIds])];
   const { data: profiles, error: profileError } = await adminClient
     .from("profiles")
     .select("id, full_name, email")
     .in("id", profileUserIds);
-  const { data: stores, error: storeError } = await adminClient
-    .from("stores")
-    .select("id, store_name")
-    .in("id", storeIds);
-
-  if (profileError || storeError) {
+  if (profileError) {
     return NextResponse.json({ success: false, error: "Failed to fetch approvals" }, { status: 500 });
   }
 
   const namesByUserId = new Map((profiles ?? []).map((profile) => [profile.id, profile.full_name]));
   const emailsByUserId = new Map((profiles ?? []).map((profile) => [profile.id, profile.email]));
   const namesByStoreId = new Map((stores ?? []).map((store) => [store.id, store.store_name]));
-  const data: ApprovalItem[] = memberships.map((membership) => ({
+  const data: ApprovalItem[] = scopedMemberships.map((membership) => ({
     membership: (() => {
       const existingOwners = (ownerMemberships ?? []).filter(
         (ownerMembership) =>
@@ -203,9 +225,8 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
   const adminClient = createAdminClient();
   const { data: membership, error: membershipError } = await adminClient
     .from("store_memberships")
-    .select("id, role, status, franchise_id")
+    .select("*")
     .eq("id", body.membershipId.trim())
-    .eq("franchise_id", hqUser.franchiseId)
     .maybeSingle();
 
   if (membershipError) {
@@ -218,11 +239,24 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
   if (membership.role !== "owner") {
     return forbiddenResponse();
   }
-  const allowedCurrentStatuses = body.action === "approve"
-    ? ["pending", "rejected"]
-    : ["pending", "approved"];
+  const { data: membershipStore, error: membershipStoreError } = await adminClient
+    .from("stores")
+    .select("franchise_id")
+    .eq("id", membership.store_id)
+    .maybeSingle<{ franchise_id: string | null }>();
 
-  if (!allowedCurrentStatuses.includes(membership.status)) {
+  if (membershipStoreError) {
+    return NextResponse.json({ success: false, error: "Failed to update membership" }, { status: 500 });
+  }
+  if (membership.franchise_id !== hqUser.franchiseId && membershipStore?.franchise_id !== hqUser.franchiseId) {
+    return forbiddenResponse();
+  }
+  const allowedCurrentStatuses = body.action === "approve"
+    ? ["pending", "requested", "rejected"]
+    : ["pending", "requested", "approved"];
+  const alreadyApproved = body.action === "approve" && membership.status === "approved";
+
+  if (!allowedCurrentStatuses.includes(membership.status) && !alreadyApproved) {
     return NextResponse.json(
       { success: false, error: "This membership cannot be updated with the requested action" },
       { status: 400 },
@@ -249,33 +283,49 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       };
 
   // status=pending 조건까지 포함해 동시 요청이 같은 membership을 두 번 전환하지 못하게 한다.
-  const { data: updated, error: updateError } = await adminClient
-    .from("store_memberships")
-    .update(update)
-    .eq("id", membership.id)
-    .eq("franchise_id", hqUser.franchiseId)
-    .in("status", allowedCurrentStatuses)
-    .select()
-    .maybeSingle();
+  let updated = membership;
+  if (!alreadyApproved) {
+    const { data: updatedMembership, error: updateError } = await adminClient
+      .from("store_memberships")
+      .update(update)
+      .eq("id", membership.id)
+      .in("status", allowedCurrentStatuses)
+      .select()
+      .maybeSingle();
 
-  if (updateError) {
-    console.error("Failed to update membership:", updateError);
-    return NextResponse.json(
-      { success: false, error: "Failed to update membership" },
-      { status: 500 },
-    );
-  }
+    if (updateError) {
+      console.error("Failed to update membership:", updateError);
+      return NextResponse.json(
+        { success: false, error: "Failed to update membership" },
+        { status: 500 },
+      );
+    }
 
-  if (!updated) {
-    return NextResponse.json(
-      { success: false, error: "This membership cannot be updated with the requested action" },
-      { status: 400 },
-    );
+    if (!updatedMembership) {
+      return NextResponse.json(
+        { success: false, error: "This membership cannot be updated with the requested action" },
+        { status: 400 },
+      );
+    }
+    updated = updatedMembership;
   }
 
   const action = body.action;
   try {
     await syncProfileApprovalStatus(adminClient, updated.user_id);
+    if (action === "approve") {
+      const brandProfileSynced = await ensureBrandProfileForApprovedMembership(
+        adminClient,
+        updated.user_id,
+        updated.store_id,
+      );
+      if (!brandProfileSynced) {
+        return NextResponse.json(
+          { success: false, error: "Failed to create brand profile" },
+          { status: 500 },
+        );
+      }
+    }
   } catch (profileUpdateError) {
     console.error("Failed to sync profile approval status:", profileUpdateError);
     return NextResponse.json(
@@ -290,14 +340,16 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     ? "축하합니다! 점주 가입 신청이 승인되었습니다."
     : "죄송합니다. 점주 가입 신청이 거절되었습니다.";
 
-  createNotification({
-    recipientUserId: updated.user_id,
-    type: "approval_decision",
-    title,
-    message,
-    targetUrl: action === "approve" ? "/boss" : undefined,
-    relatedId: updated.id,
-  }).catch((e) => console.error("Failed to create approval notification:", e));
+  if (!alreadyApproved) {
+    createNotification({
+      recipientUserId: updated.user_id,
+      type: "approval_decision",
+      title,
+      message,
+      targetUrl: action === "approve" ? "/boss" : undefined,
+      relatedId: updated.id,
+    }).catch((e) => console.error("Failed to create approval notification:", e));
+  }
 
   return NextResponse.json({
     success: true,
