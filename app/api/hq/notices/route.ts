@@ -171,7 +171,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (insertError) {
       if (isMissingTableError(insertError)) {
         return NextResponse.json(
-          { error: "공지 저장소가 아직 준비되지 않았습니다. 관리자에게 DB 설정(020_hq_notices)을 요청해주세요." },
+          { error: "공지 저장소가 아직 준비되지 않았습니다. 관리자에게 DB 설정(021_hq_notices)을 요청해주세요." },
           { status: 503 },
         );
       }
