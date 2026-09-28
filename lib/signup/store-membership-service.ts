@@ -413,6 +413,33 @@ export async function submitStoreMembershipRequest(
     };
   }
 
+  if (storeFromId && !storeFromId.franchise_id && requestedFranchiseId) {
+    const { error: storeBrandUpdateError } = await adminClient
+      .from("stores")
+      .update({ franchise_id: requestedFranchiseId })
+      .eq("id", storeFromId.id);
+
+    if (storeBrandUpdateError) {
+      console.error("[AUTH] STORE_BRAND_BACKFILL_FAILED", {
+        userId,
+        storeId: storeFromId.id,
+        storeName: resolvedStoreName,
+        franchiseId: requestedFranchiseId,
+        message: storeBrandUpdateError.message,
+        code: storeBrandUpdateError.code,
+        details: storeBrandUpdateError.details,
+      });
+      logSafeAuthError("STORE_BRAND_BACKFILL_FAILED", storeBrandUpdateError);
+      return {
+        success: false,
+        error: "매장 브랜드 연결에 실패했습니다.",
+        details: storeBrandUpdateError.message,
+        status: 500,
+      };
+    }
+    storeFromId.franchise_id = requestedFranchiseId;
+  }
+
   // stores row 생성/조회
   let finalStoreId: string | null = null;
   let finalFranchiseId: string | null = null;
@@ -530,7 +557,7 @@ export async function submitStoreMembershipRequest(
   try {
     const { data: existingMembership, error: lookupError } = await adminClient
       .from("store_memberships")
-      .select("id, status")
+      .select("id, status, role, franchise_id")
       .eq("user_id", userId)
       .eq("store_id", finalStoreId)
       .single();
@@ -546,6 +573,56 @@ export async function submitStoreMembershipRequest(
     }
 
     if (existingMembership) {
+      if (existingMembership.role !== role) {
+        console.error("[AUTH] STORE_MEMBERSHIP_ROLE_MISMATCH", {
+          userId,
+          storeId: finalStoreId,
+          requestedRole: role,
+          existingRole: existingMembership.role,
+        });
+        return {
+          success: false,
+          error: "이미 다른 역할로 등록된 매장 멤버십이 있습니다.",
+          status: 409,
+        };
+      }
+
+      if (existingMembership.franchise_id !== finalMembershipFranchiseId) {
+        const { error: membershipBrandUpdateError } = await adminClient
+          .from("store_memberships")
+          .update({ franchise_id: finalMembershipFranchiseId })
+          .eq("id", existingMembership.id)
+          .eq("user_id", userId)
+          .eq("store_id", finalStoreId);
+
+        if (membershipBrandUpdateError) {
+          console.error("[AUTH] STORE_MEMBERSHIP_BRAND_SYNC_FAILED", {
+            userId,
+            storeId: finalStoreId,
+            membershipId: existingMembership.id,
+            franchiseId: finalMembershipFranchiseId,
+            message: membershipBrandUpdateError.message,
+            code: membershipBrandUpdateError.code,
+            details: membershipBrandUpdateError.details,
+          });
+          logSafeAuthError("STORE_MEMBERSHIP_BRAND_SYNC_FAILED", membershipBrandUpdateError);
+          return {
+            success: false,
+            error: "멤버십 브랜드 연결에 실패했습니다.",
+            details: membershipBrandUpdateError.message,
+            status: 500,
+          };
+        }
+      }
+
+      console.info("[AUTH] STORE_MEMBERSHIP_REUSED", {
+        userId,
+        storeId: finalStoreId,
+        membershipId: existingMembership.id,
+        role: existingMembership.role,
+        status: existingMembership.status,
+        franchiseId: finalMembershipFranchiseId,
+      });
       return { success: true, membershipId: existingMembership.id, status: 200 };
     }
 
@@ -563,6 +640,15 @@ export async function submitStoreMembershipRequest(
       .single();
 
     if (createError) {
+      console.error("[AUTH] STORE_MEMBERSHIP_CREATE_FAILED", {
+        userId,
+        storeId: finalStoreId,
+        franchiseId: finalMembershipFranchiseId,
+        role,
+        message: createError.message,
+        code: createError.code,
+        details: createError.details,
+      });
       logSafeAuthError("STORE_MEMBERSHIP_CREATE_FAILED", createError);
       return {
         success: false,
@@ -571,6 +657,15 @@ export async function submitStoreMembershipRequest(
         status: 500,
       };
     }
+
+    console.info("[AUTH] STORE_MEMBERSHIP_CREATED", {
+      userId,
+      storeId: finalStoreId,
+      membershipId: newMembership.id,
+      franchiseId: finalMembershipFranchiseId,
+      role,
+      status: "pending",
+    });
 
     generateMembershipNotifications(userId, role, finalStoreId, resolvedStoreName || "", userName).catch((e) =>
       console.error("Failed to generate notifications:", e)
