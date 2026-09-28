@@ -90,7 +90,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<NoticesRes
     ]);
 
     if (noticeError) {
-      // migration 020(notices 테이블)이 아직 적용되지 않은 환경에서는 공지가 없는 것으로 본다.
+      // migration 021(notices 테이블)이 아직 적용되지 않은 환경에서는 공지가 없는 것으로 본다.
       if (noticeError.code === "42P01" || noticeError.code === "PGRST205") {
         return NextResponse.json({ success: true, data: { notices: [], summary: { total: 0, important: 0 } } });
       }

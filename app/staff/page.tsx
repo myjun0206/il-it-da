@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, Bot, CheckCircle2, ChevronRight, Clock3, Info, Paperclip, Send, Store, UserRound } from "lucide-react";
 
@@ -74,17 +74,26 @@ const [selectedStore, setSelectedStore] = useState<StaffStore | null>(null);
 const [isStoresLoading, setIsStoresLoading] = useState(true);
 const [storesError, setStoresError] = useState("");
 const [storesReloadToken, setStoresReloadToken] = useState(0);
+// 목록을 다시 불러오는 경로(재시도 등)에서는 effect 클로저의 selectedStore가 낡아 있으므로
+// 마지막으로 대화를 연 매장 id를 ref로 따로 들고 비교한다.
+const lastConversationStoreIdRef = useRef<string | null>(null);
+
+// 선택 매장이 실제로 바뀔 때만 이전 매장의 대화/입력/오류를 비운다.
+function resetConversationOnStoreChange(nextStoreId: string | null) {
+  if (lastConversationStoreIdRef.current === nextStoreId) return;
+
+  lastConversationStoreIdRef.current = nextStoreId;
+  setMessages(INITIAL_MESSAGES);
+  setInput("");
+  setErrorMessage("");
+}
 
 function selectStore(storeId: string) {
   if (isLoading || isStoresLoading) return;
 
   const store = stores.find((candidate) => candidate.id === storeId) ?? null;
 
-  if (selectedStore?.id !== store?.id) {
-    setMessages(INITIAL_MESSAGES);
-    setInput("");
-    setErrorMessage("");
-  }
+  resetConversationOnStoreChange(store?.id ?? null);
 
   setSelectedStore(store);
   setStoreName(store?.name ?? "매장");
@@ -118,20 +127,17 @@ function selectStore(storeId: string) {
         if (controller.signal.aborted) return;
 
         const availableStores = payload.stores;
+        setStores(availableStores);
         const storedStoreId = sessionStorage.getItem(SELECTED_STORE_STORAGE_KEY);
         const restoredStore =
           availableStores.find((store) => store.id === storedStoreId) ?? null;
+        // 매장이 하나뿐이면 고를 것이 없으므로 자동 선택하고, 여러 개면 직원이 직접 고르게 둔다.
+        const nextStore = restoredStore ?? (availableStores.length === 1 ? availableStores[0] : null);
 
-        if (restoredStore) {
-          setSelectedStore(restoredStore);
-          setStoreName(restoredStore.name);
-        } else if (availableStores.length === 1) {
-          setSelectedStore(availableStores[0]);
-          setStoreName(availableStores[0].name);
-        } else {
-          setSelectedStore(null);
-          setStoreName("매장");
-        }
+        resetConversationOnStoreChange(nextStore?.id ?? null);
+        setSelectedStore(nextStore);
+        setStoreName(nextStore?.name ?? "매장");
+
         if (!restoredStore && storedStoreId) {
           sessionStorage.removeItem(SELECTED_STORE_STORAGE_KEY);
         }
@@ -326,9 +332,11 @@ function selectStore(storeId: string) {
 <option value="">
   {isStoresLoading
     ? "승인된 매장 정보를 불러오는 중..."
-    : stores.length > 0
-      ? "매장을 선택해 주세요"
-      : "승인된 근무 매장이 없습니다"}
+    : storesError
+      ? "매장 정보를 불러오지 못했습니다"
+      : stores.length > 0
+        ? "매장을 선택해 주세요"
+        : "승인된 근무 매장이 없습니다"}
 </option>
 
 {stores.map((store) => (

@@ -40,7 +40,9 @@ type ManualRow = Record<string, unknown> & { id: string; upload_batch_id: string
  * 020의 제약(idempotency_key unique, HQ/store별 partial unique content_hash)과 manuals insert를
  * 함께 흉내내어, 라우트가 쓰는 저장 진입점을 실제로 실행한다. 실제 Supabase/OpenAI는 쓰지 않는다.
  */
-function fakeClient(options: { seedBatches?: BatchRow[]; failChildInsert?: boolean } = {}) {
+function fakeClient(
+  options: { seedBatches?: BatchRow[]; failChildInsert?: boolean; throwOnManualInsert?: Error } = {},
+) {
   const batches: BatchRow[] = (options.seedBatches ?? []).map((row) => ({ ...row }));
   const manuals: ManualRow[] = [];
   let sequence = 0;
@@ -93,6 +95,10 @@ function fakeClient(options: { seedBatches?: BatchRow[]; failChildInsert?: boole
             return query;
           },
           insert(payload: Record<string, unknown> | Record<string, unknown>[]) {
+            // supabase-js는 네트워크 실패 시 결과 객체 대신 예외를 던진다.
+            if (options.throwOnManualInsert) {
+              throw options.throwOnManualInsert;
+            }
             const isParent = !Array.isArray(payload);
             if (!isParent && options.failChildInsert) {
               return {
@@ -380,6 +386,98 @@ describe("saveManualGroupsWithBatchGuard (실제 함수 실행)", () => {
       assert.equal(message.includes(leak), false, `leaks ${leak}`);
     }
     assert.match(message, /[가-힣]/);
+  });
+
+  test("예상하지 못한 예외가 나도 그 message를 그대로 응답에 넣지 않는다", async () => {
+    const raw = new Error(
+      'connect ECONNREFUSED db.example.supabase.co:5432 apikey=sk-live-secret insert into "manuals"',
+    );
+    const { client } = fakeClient({ throwOnManualInsert: raw });
+    const result = await saveManualGroupsWithBatchGuard(client, { auth: HQ_AUTH, groups: GROUPS, scope: HQ_SCOPE });
+
+    assert.equal(result.kind, "save_failed");
+    const message = result.kind === "save_failed" ? result.error : "";
+    assert.equal(message, "매뉴얼 저장 중 오류가 발생했습니다.");
+    for (const leak of ["ECONNREFUSED", "supabase.co", "apikey", "sk-live", "insert into", "5432"]) {
+      assert.equal(message.includes(leak), false, `leaks ${leak}`);
+    }
+  });
+
+  test("예상하지 못한 예외에도 batch는 failed로 기록돼 중복 방지가 유지된다", async () => {
+    const { client, batches } = fakeClient({ throwOnManualInsert: new Error("fetch failed") });
+    await saveManualGroupsWithBatchGuard(client, { auth: HQ_AUTH, groups: GROUPS, scope: HQ_SCOPE });
+
+    assert.equal(batches[0].status, "failed");
+  });
+});
+
+// 점주·본사 매뉴얼 라우트의 500 경로는 Next 런타임 밖에서 실행할 수 없어 소스 계약으로 고정한다.
+// 실제 sanitize 동작은 위의 saveManualGroupsWithBatchGuard 실행 테스트가 검증한다.
+describe("매뉴얼 라우트 오류 응답에 원본 예외 message를 담지 않는다", () => {
+  const ERROR_RESPONSE_ROUTES = [
+    "app/api/manuals/[id]/items/route.ts",
+    "app/api/store-manuals/route.ts",
+    "app/api/store-manuals/[id]/route.ts",
+    "app/api/store-manuals/[id]/items/route.ts",
+    "app/api/store-manuals/batch-create/route.ts",
+  ];
+
+  test("catch 블록이 e.message를 응답 error 필드로 돌려주지 않는다", () => {
+    for (const relative of ERROR_RESPONSE_ROUTES) {
+      const source = readSource(relative);
+      assert.equal(
+        /\{ error: \w+ instanceof Error \? \w+\.message/.test(source),
+        false,
+        `${relative} returns a raw error message`,
+      );
+    }
+  });
+
+  test("예상하지 못한 서버 오류는 고정된 한국어 문구와 500으로 응답한다", () => {
+    for (const [relative, message] of [
+      ["app/api/manuals/[id]/items/route.ts", "세부 내용 추가 중 오류가 발생했습니다."],
+      ["app/api/store-manuals/[id]/items/route.ts", "세부 내용 추가 중 오류가 발생했습니다."],
+      ["app/api/store-manuals/route.ts", "지점 매뉴얼 저장 중 오류가 발생했습니다."],
+      ["app/api/store-manuals/batch-create/route.ts", "매뉴얼 일괄 등록 중 오류가 발생했습니다."],
+      ["app/api/store-manuals/[id]/route.ts", "서버 오류가 발생했습니다."],
+    ] as const) {
+      const source = readSource(relative);
+      assert.match(
+        source,
+        new RegExp(`\\{ error: "${message}" \\},\\s*\\n\\s*\\{ status: 500 \\}`),
+        `${relative} lost its fixed 500 message`,
+      );
+    }
+  });
+
+  test("의도적으로 정의된 4xx 안내 문구와 상태 코드는 그대로 남아 있다", () => {
+    const storeManuals = readSource("app/api/store-manuals/route.ts");
+    assert.match(storeManuals, /\{ error: "로그인이 필요합니다\." \}, \{ status: 401 \}/);
+    assert.match(storeManuals, /\{ error: "이 지점에 대한 접근 권한이 없습니다\." \}, \{ status: 403 \}/);
+    assert.match(storeManuals, /\{ error: "지점 ID가 필요합니다\." \}, \{ status: 400 \}/);
+    assert.match(storeManuals, /\{ error: "카테고리를 선택해주세요\." \}, \{ status: 400 \}/);
+
+    const detail = readSource("app/api/store-manuals/[id]/route.ts");
+    assert.match(detail, /\{ error: "매뉴얼을 찾을 수 없습니다\." \}, \{ status: 404 \}/);
+    assert.match(detail, /\{ error: "수정할 내용이 없습니다\." \}, \{ status: 400 \}/);
+
+    const items = readSource("app/api/store-manuals/[id]/items/route.ts");
+    assert.match(items, /\{ error: "추가할 내용을 입력해주세요\." \}, \{ status: 400 \}/);
+    assert.match(items, /\{ error: "매뉴얼 주제를 찾을 수 없습니다\." \}, \{ status: 404 \}/);
+  });
+
+  test("중복 차단 응답은 guard가 정한 상태 코드와 문구를 그대로 쓴다", () => {
+    for (const relative of ["app/api/store-manuals/route.ts", "app/api/store-manuals/batch-create/route.ts"]) {
+      const source = readSource(relative);
+      assert.match(source, /\{ error: result\.error \}, \{ status: result\.status \}/);
+    }
+  });
+
+  test("guard는 실패 응답에 고정 문구만 넣고 원본 예외는 name만 로그로 남긴다", () => {
+    const guard = readSource("lib/manuals/save-manuals-with-batch.ts");
+    assert.equal(/error: e instanceof Error \? e\.message/.test(guard), false);
+    assert.match(guard, /kind: "save_failed", error: "매뉴얼 저장 중 오류가 발생했습니다\." \}/);
+    assert.match(guard, /save failed:", \{ name: e instanceof Error \? e\.name : "UnknownError" \}/);
   });
 });
 

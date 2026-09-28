@@ -25,7 +25,7 @@ type CreateNoticeBody = {
   content?: unknown;
 };
 
-// migration 020이 아직 적용되지 않아 notices 테이블이 없는 경우
+// migration 021이 아직 적용되지 않아 notices 테이블이 없는 경우
 function isMissingTableError(error: { code?: string } | null): boolean {
   return error?.code === "42P01" || error?.code === "PGRST205";
 }

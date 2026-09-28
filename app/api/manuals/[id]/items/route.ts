@@ -90,8 +90,9 @@ export async function POST(
     const manuals = await addItemsToManualGroup(supabase, parent as ManualRecord, items);
     return NextResponse.json({ manuals }, { status: 201 });
   } catch (e) {
+    console.error("POST /api/manuals/[id]/items error:", { name: e instanceof Error ? e.name : "UnknownError" });
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "세부 내용 추가 중 오류가 발생했습니다." },
+      { error: "세부 내용 추가 중 오류가 발생했습니다." },
       { status: 500 },
     );
   }

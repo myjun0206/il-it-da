@@ -125,7 +125,7 @@ export async function PATCH(
   } catch (e) {
     console.error("PATCH /api/store-manuals/[id] error:", e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "서버 오류가 발생했습니다." },
+      { error: "서버 오류가 발생했습니다." },
       { status: 500 },
     );
   }
@@ -196,7 +196,7 @@ export async function DELETE(
   } catch (e) {
     console.error("DELETE /api/store-manuals/[id] error:", e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "서버 오류가 발생했습니다." },
+      { error: "서버 오류가 발생했습니다." },
       { status: 500 },
     );
   }
