@@ -3,7 +3,7 @@
 import React, { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowRight, ChevronRight, CircleAlert, CircleCheck, Search, Store } from "lucide-react";
+import { ArrowRight, ChevronRight, CircleAlert, CircleCheck, Loader2, Search, Store, Users, X } from "lucide-react";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
 import BackToHomeLink from "@/components/hq/BackToHomeLink";
@@ -38,6 +38,17 @@ function OwnerStatusBadge({ hasOwner }: { hasOwner: boolean }) {
   );
 }
 
+interface StoreMember {
+  id: string;
+  userId: string;
+  role: "owner" | "staff";
+  status: string;
+  requestedAt: string;
+  approvedAt: string | null;
+  name: string;
+  email: string | null;
+}
+
 // 홈 "점주 미등록 지점" 카드에서 진입하는 업무 화면 모드. 지점 현황의 "점주 미등록" 필터와 같은 기준이다.
 const NO_OWNER_VIEW = "no-owner";
 
@@ -59,6 +70,10 @@ function HqStoresContent() {
   const [ownerFilter, setOwnerFilter] = useState<OwnerFilter>("all");
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [selectedStore, setSelectedStore] = useState<HqStoreSummary | null>(null);
+  const [storeMembers, setStoreMembers] = useState<StoreMember[]>([]);
+  const [isMembersLoading, setIsMembersLoading] = useState(false);
+  const [membersError, setMembersError] = useState("");
 
   useEffect(() => {
     const loadPage = async () => {
@@ -96,6 +111,26 @@ function HqStoresContent() {
       await supabase.auth.signOut();
     } finally {
       router.push("/");
+    }
+  };
+
+  const handleOpenMembers = async (store: HqStoreSummary) => {
+    setSelectedStore(store);
+    setStoreMembers([]);
+    setMembersError("");
+    setIsMembersLoading(true);
+
+    try {
+      const response = await fetch(`/api/hq/stores/${encodeURIComponent(store.id)}/members`);
+      const data = (await response.json()) as { members?: StoreMember[]; error?: string };
+      if (!response.ok) {
+        throw new Error(data.error || "지점 소속 사용자를 불러오지 못했습니다.");
+      }
+      setStoreMembers(data.members ?? []);
+    } catch (error) {
+      setMembersError(error instanceof Error ? error.message : "지점 소속 사용자를 불러오지 못했습니다.");
+    } finally {
+      setIsMembersLoading(false);
     }
   };
 
@@ -293,13 +328,23 @@ function HqStoresContent() {
                                   </td>
                                   <td className="px-6 py-4 text-base text-[var(--color-text-secondary)]">{formatDate(store.createdAt)}</td>
                                   <td className="px-6 py-4 text-center">
-                                    <Link
-                                      href={`/hq/stores/${store.id}`}
-                                      aria-label={`${store.name} 상세 보기`}
-                                      className="inline-flex min-h-[44px] items-center gap-1 rounded-lg px-3 text-sm font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
-                                    >
-                                      상세 보기 <ChevronRight size={16} aria-hidden="true" />
-                                    </Link>
+                                    <div className="inline-flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleOpenMembers(store)}
+                                        aria-label={`${store.name} 소속 사용자 보기`}
+                                        className="inline-flex min-h-[44px] items-center gap-1 rounded-lg px-3 text-sm font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-default)] hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                                      >
+                                        <Users size={16} aria-hidden="true" /> 소속 사용자
+                                      </button>
+                                      <Link
+                                        href={`/hq/stores/${store.id}`}
+                                        aria-label={`${store.name} 상세 보기`}
+                                        className="inline-flex min-h-[44px] items-center gap-1 rounded-lg px-3 text-sm font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                                      >
+                                        상세 보기 <ChevronRight size={16} aria-hidden="true" />
+                                      </Link>
+                                    </div>
                                   </td>
                                 </tr>
                               ))}
@@ -341,6 +386,15 @@ function HqStoresContent() {
                                 </div>
                               </dl>
                             </Link>
+                            {/* Link 안에 버튼을 중첩하지 않도록 형제 요소로 둔다. */}
+                            <button
+                              type="button"
+                              onClick={() => void handleOpenMembers(store)}
+                              aria-label={`${store.name} 소속 사용자 보기`}
+                              className="mt-2 inline-flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-white px-3 text-sm font-medium text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                            >
+                              <Users size={16} aria-hidden="true" /> 소속 사용자 보기
+                            </button>
                           </li>
                         ))}
                       </ul>
@@ -352,6 +406,76 @@ function HqStoresContent() {
           )}
         </main>
       </div>
+
+      {selectedStore && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="store-members-dialog-title"
+          onClick={() => setSelectedStore(null)}
+        >
+          <div
+            className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-6 flex items-start justify-between gap-4">
+              <div>
+                <p className="mb-1 text-sm text-[var(--color-text-secondary)]">지점 소속 사용자</p>
+                <h2 id="store-members-dialog-title" className="text-xl font-bold text-[var(--color-text-primary)]">
+                  {selectedStore.name}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedStore(null)}
+                aria-label="지점 소속 사용자 모달 닫기"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-default)]"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {isMembersLoading ? (
+              <div className="flex items-center justify-center gap-2 py-12 text-sm text-[var(--color-text-secondary)]">
+                <Loader2 size={18} className="animate-spin" /> 소속 사용자를 불러오는 중...
+              </div>
+            ) : membersError ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{membersError}</div>
+            ) : (
+              <div className="grid gap-6 md:grid-cols-2">
+                {(["owner", "staff"] as const).map((role) => {
+                  const members = storeMembers.filter((member) => member.role === role);
+                  return (
+                    <section key={role}>
+                      <h3 className="mb-3 text-base font-bold text-[var(--color-text-primary)]">
+                        {role === "owner" ? "지점 소속 사장" : "지점 소속 알바"}
+                        <span className="ml-2 text-sm font-medium text-[var(--color-text-secondary)]">{members.length}명</span>
+                      </h3>
+                      {members.length === 0 ? (
+                        <div className="rounded-lg border border-dashed border-[var(--color-border)] p-5 text-center text-sm text-[var(--color-text-secondary)]">
+                          {role === "owner" ? "등록된 사장이 없습니다." : "등록된 알바가 없습니다."}
+                        </div>
+                      ) : (
+                        <ul className="space-y-2">
+                          {members.map((member) => (
+                            <li key={member.id} className="rounded-lg border border-[var(--color-border)] p-3">
+                              <p className="font-semibold text-[var(--color-text-primary)]">{member.name}</p>
+                              <p className="mt-1 break-all text-sm text-[var(--color-text-secondary)]">
+                                {member.email || "이메일 미등록"}
+                              </p>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </section>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

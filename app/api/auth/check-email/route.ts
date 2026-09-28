@@ -57,6 +57,8 @@ export async function POST(request: Request): Promise<NextResponse<CheckEmailRes
       .from("profiles")
       .select("id")
       .eq("email", email)
+      .is("brand_id", null)
+      .limit(1)
       .maybeSingle();
 
     if (profileError) {

@@ -6,6 +6,7 @@ export interface Store {
   id: string;
   brandId: string;
   brandName: string;
+  franchiseId?: string;
   name: string;
   address: string;
   latitude?: number;

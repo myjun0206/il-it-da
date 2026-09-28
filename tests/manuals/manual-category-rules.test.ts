@@ -24,36 +24,37 @@ function readMCoffeeTaxonomy(): {
 }
 
 describe("classifyManualGroups", () => {
-  test("priority 1: an exact title match wins even when the raw category disagrees", () => {
+  test("preserves the raw category instead of remapping it to a fixed taxonomy", () => {
     const [result] = classifyManualGroups([group("아무 카테고리", "오픈 운영")]);
-    assert.equal(result.topCategoryKey, "opening_closing");
-    assert.equal(result.classification, "exact_title");
+    assert.equal(result.topCategoryKey, "category:아무 카테고리");
+    assert.equal(result.topCategoryLabel, "아무 카테고리");
+    assert.equal(result.classification, "dynamic_category");
   });
 
-  test("priority 2: an existing (coarse) category maps onto a top category when no exact title matches", () => {
+  test("preserves an existing category name verbatim", () => {
     const [result] = classifyManualGroups([group("위생·안전", "처음 보는 제목")]);
-    assert.equal(result.topCategoryKey, "hygiene_safety_emergency");
-    assert.equal(result.classification, "existing_category");
+    assert.equal(result.topCategoryKey, "category:위생·안전");
+    assert.equal(result.classification, "dynamic_category");
   });
 
-  test("'매장운영' existing category ties-break by exact title: 오픈/마감 운영 -> opening_closing, otherwise -> store_operations_staff", () => {
+  test("same category groups titles without title-based remapping", () => {
     const [opening] = classifyManualGroups([group("매장운영", "오픈 운영")]);
     const [closing] = classifyManualGroups([group("매장운영", "마감 운영")]);
     const [other] = classifyManualGroups([group("매장운영", "매장 전화 응대")]);
 
-    assert.equal(opening.topCategoryKey, "opening_closing");
-    assert.equal(closing.topCategoryKey, "opening_closing");
-    assert.equal(other.topCategoryKey, "store_operations_staff");
+    assert.equal(opening.topCategoryKey, "category:매장운영");
+    assert.equal(closing.topCategoryKey, "category:매장운영");
+    assert.equal(other.topCategoryKey, "category:매장운영");
   });
 
-  test("priority 3: a limited keyword rule matches when neither title nor category matched", () => {
+  test("does not replace a new category based on title keywords", () => {
     const [result] = classifyManualGroups([group("새 분류", "냉장고 재고 확인 절차")]);
-    assert.equal(result.topCategoryKey, "inventory_ordering_equipment");
-    assert.equal(result.classification, "keyword");
+    assert.equal(result.topCategoryKey, "category:새 분류");
+    assert.equal(result.classification, "dynamic_category");
   });
 
   test("falls back to UNCLASSIFIED when no rule matches at all", () => {
-    const [result] = classifyManualGroups([group("완전히 새로운 카테고리", "완전히 새로운 제목")]);
+    const [result] = classifyManualGroups([group("", "완전히 새로운 제목")]);
     assert.equal(isUnclassified(result), true);
     assert.equal(result.classification, "unclassified");
     // The UI-facing label must never be the literal developer term "UNCLASSIFIED".
@@ -87,30 +88,15 @@ describe("classifyManualGroups", () => {
     assert.deepEqual(result.items, ["원본 내용 1", "원본 내용 2"]);
   });
 
-  test("the M Coffee common-manual taxonomy's 19 titles are each classified exactly once, with no omission and no duplication", () => {
+  test("different source categories remain distinct regardless of title", () => {
     const taxonomy = readMCoffeeTaxonomy();
-    const expectedByTitle = new Map<string, string>();
-    for (const category of taxonomy.categories) {
-      for (const title of category.manualTitles) {
-        expectedByTitle.set(title, category.key);
-      }
-    }
-
-    const inputs = [...expectedByTitle.keys()].map((title) => group("본사 공통", title));
+    const inputs = taxonomy.categories.map((category) => group(category.label, category.manualTitles[0]));
     const classified = classifyManualGroups(inputs);
 
-    assert.equal(classified.length, 19);
-    const seenTitles = new Set<string>();
+    assert.equal(classified.length, taxonomy.categories.length);
     for (const result of classified) {
-      assert.equal(seenTitles.has(result.topic), false, `duplicate classification for "${result.topic}"`);
-      seenTitles.add(result.topic);
-      assert.equal(
-        result.topCategoryKey,
-        expectedByTitle.get(result.topic),
-        `"${result.topic}" should classify as "${expectedByTitle.get(result.topic)}"`,
-      );
+      assert.equal(result.topCategoryKey, `category:${result.category}`);
       assert.notEqual(result.classification, "unclassified");
     }
-    assert.equal(seenTitles.size, 19);
   });
 });

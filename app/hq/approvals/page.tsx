@@ -14,7 +14,7 @@ interface Membership {
   user_id: string;
   store_id: string;
   role: "owner" | "staff";
-  status: "pending" | "approved" | "rejected";
+  status: "pending" | "requested" | "approved" | "rejected";
   requested_at: string;
   approved_at: string | null;
   approved_by: string | null;
@@ -31,6 +31,10 @@ interface ApprovalItem {
 }
 
 type FilterStatus = "pending" | "approved" | "rejected" | "all";
+
+function isPendingStatus(status: Membership["status"]): boolean {
+  return status === "pending" || status === "requested";
+}
 
 export default function HQApprovalsPage() {
   const router = useRouter();
@@ -207,6 +211,8 @@ export default function HQApprovalsPage() {
       return;
     }
 
+    const membershipId = confirmDialog.membershipId;
+    const action = confirmDialog.action;
     setIsProcessing(true);
     try {
       const response = await fetch("/api/hq/approvals", {
@@ -216,32 +222,27 @@ export default function HQApprovalsPage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          membershipId: confirmDialog.membershipId,
-          action: confirmDialog.action,
+          membershipId,
+          action,
         }),
       });
 
       const result = await response.json();
 
       if (result.success) {
-        // Refresh the complete approvals list (allApprovals only)
-        setIsLoading(true);
-        try {
-          const refreshResponse = await fetch(`/api/hq/approvals`, { credentials: "include" });
-          const refreshResult = await refreshResponse.json();
-
-          if (refreshResult.success && Array.isArray(refreshResult.data)) {
-            // Update all approvals only (no filtering here)
-            setAllApprovals(refreshResult.data);
-          }
-        } finally {
-          setIsLoading(false);
-        }
+        // Update only the membership that was approved/rejected.
+        setAllApprovals((currentApprovals) =>
+          currentApprovals.map((item) =>
+            item.membership.id === membershipId && result.data
+              ? { ...item, membership: { ...item.membership, ...result.data } }
+              : item,
+          ),
+        );
 
         // Close dialog
         setConfirmDialog({ open: false });
       } else {
-        alert(`Failed to ${confirmDialog.action === "approve" ? "approve" : "reject"}: ${result.error}`);
+        alert(`Failed to ${action === "approve" ? "approve" : "reject"}: ${result.error}`);
       }
     } catch (e) {
       console.error("Action error:", e);
@@ -269,6 +270,7 @@ export default function HQApprovalsPage() {
   const getStatusLabel = (status: string): string => {
     switch (status) {
       case "pending":
+      case "requested":
         return "승인 대기";
       case "approved":
         return "승인 완료";
@@ -281,6 +283,9 @@ export default function HQApprovalsPage() {
 
   const getStatusBadge = (status: string) => {
     switch (status) {
+      case "pending":
+      case "requested":
+        return { className: "bg-amber-50 text-amber-800", Icon: Clock };
       case "approved":
         return { className: "bg-[var(--color-primary-light)]/40 text-[var(--color-primary)]", Icon: CircleCheck };
       case "rejected":
@@ -295,7 +300,7 @@ export default function HQApprovalsPage() {
   }
 
   // 통계는 항상 전체 데이터 기반 (필터와 무관)
-  const pendingCount = allApprovals.filter((item) => item.membership.status === "pending").length;
+  const pendingCount = allApprovals.filter((item) => isPendingStatus(item.membership.status)).length;
   const approvedCount = allApprovals.filter((item) => item.membership.status === "approved").length;
   const rejectedCount = allApprovals.filter((item) => item.membership.status === "rejected").length;
 
@@ -303,9 +308,11 @@ export default function HQApprovalsPage() {
   const filteredApprovals =
     filterStatus === "all"
       ? allApprovals
-      : allApprovals.filter(
-          (item: ApprovalItem) => item.membership.status === filterStatus
-        );
+          : allApprovals.filter((item: ApprovalItem) =>
+              filterStatus === "pending"
+                ? isPendingStatus(item.membership.status)
+                : item.membership.status === filterStatus,
+            );
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-default)]">
@@ -445,7 +452,7 @@ export default function HQApprovalsPage() {
                             </span>
                           </td>
                           <td className="px-6 py-4 text-right">
-                            {membership.status === "pending" ? (
+                            {isPendingStatus(membership.status) ? (
                               <div className="flex gap-2 justify-end">
                                 <button
                                   type="button"

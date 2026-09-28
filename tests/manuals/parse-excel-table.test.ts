@@ -54,24 +54,15 @@ describe("parseExcelTableGroups (runtime fixture tests)", () => {
     ]);
   });
 
-  test("horizontal/transposed structure normalizes to the exact same result as its vertical equivalent", () => {
-    const vertical = [
-      ["오픈마감", "오픈 체크", "문 연다"],
-      ["오픈마감", "마감 체크", "문 잠근다"],
-      ["안전", "화재 대응", "소화기 확인"],
-    ];
-    // Same data, but category/title are laid out along rows instead of down columns.
-    const transposed = [
-      ["오픈마감", "오픈마감", "안전"],
-      ["오픈 체크", "마감 체크", "화재 대응"],
-      ["문 연다", "문 잠근다", "소화기 확인"],
-    ];
+  test("only columns A, B, and C are mapped after the first row", () => {
+    const groups = parseExcelTableGroups([
+      ["이 행은 저장되면 안 됨", "헤더", "무시", "무시"],
+      ["오픈마감", "오픈 체크", "문 연다", "추가 열은 무시"],
+    ]);
 
-    const verticalResult = parseExcelTableGroups(vertical);
-    const transposedResult = parseExcelTableGroups(transposed);
-
-    assert.ok(verticalResult);
-    assert.deepEqual(transposedResult, verticalResult);
+    assert.deepEqual(groups, [
+      { category: "오픈마감", topic: "오픈 체크", items: ["문 연다"] },
+    ]);
   });
 
   test("numeric cells (as real JS numbers, like xlsx's sheet_to_json produces) are normalized to plain strings without error", () => {
@@ -102,7 +93,7 @@ describe("parseExcelTableGroups (runtime fixture tests)", () => {
     ]);
   });
 
-  test("a column whose value is identical on every row (noise) is never chosen as category/title/content", () => {
+  test("columns after C are ignored and A/B/C remain fixed even when values repeat", () => {
     const groups = parseExcelTableGroups([
       ["같은값", "오픈마감", "오픈 체크", "문 연다"],
       ["같은값", "오픈마감", "마감 체크", "문 잠근다"],
@@ -110,15 +101,13 @@ describe("parseExcelTableGroups (runtime fixture tests)", () => {
     ]);
 
     assert.deepEqual(groups, [
-      { category: "오픈마감", topic: "오픈 체크", items: ["문 연다"] },
-      { category: "오픈마감", topic: "마감 체크", items: ["문 잠근다"] },
-      { category: "안전", topic: "화재 대응", items: ["소화기 확인"] },
+      { category: "같은값", topic: "오픈마감", items: ["마감 체크"] },
+      { category: "같은값", topic: "안전", items: ["화재 대응"] },
     ]);
 
     for (const group of groups ?? []) {
-      assert.notEqual(group.category, "같은값");
-      assert.notEqual(group.topic, "같은값");
-      assert.ok(!group.items.includes("같은값"));
+      assert.ok(!group.items.includes("문 연다"));
+      assert.ok(!group.items.includes("문 잠근다"));
     }
   });
 
@@ -206,7 +195,7 @@ describe("app/api/manuals/upload/route.ts (Excel wiring contract)", () => {
   const extractorSource = readSource("lib/manuals/extract-manual-groups.ts");
 
   test("routes .xlsx/.xls/.csv through parseExcelTableGroups first, falling back to parseManualText only when it returns null", () => {
-    assert.match(extractorSource, /return parseExcelTableGroups\(rows\) \?\? parseManualText\(rowsToFlatText\(rows\)\)/);
+    assert.match(extractorSource, /const dataRows = rows\.slice\(1\);\s*return parseExcelTableGroups\(rows\) \?\? parseManualText\(rowsToFlatText\(dataRows\)\)/);
   });
 
   test("still supports the existing .txt/.md/.docx contract unchanged (parseManualText, not the table parser)", () => {

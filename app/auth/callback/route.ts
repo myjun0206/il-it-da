@@ -57,7 +57,12 @@ function parsePendingStores(raw: unknown): PendingStoreEntry[] {
     if (!Array.isArray(parsed)) return [];
     return parsed.filter(
       (entry): entry is PendingStoreEntry =>
-        !!entry && typeof entry === "object" && typeof entry.storeName === "string" && entry.storeName.length > 0
+        !!entry &&
+        typeof entry === "object" &&
+        typeof entry.storeName === "string" &&
+        entry.storeName.length > 0 &&
+        (entry.storeId === undefined || typeof entry.storeId === "string") &&
+        (entry.franchiseId === undefined || typeof entry.franchiseId === "string")
     );
   } catch {
     return [];

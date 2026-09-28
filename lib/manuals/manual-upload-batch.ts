@@ -38,7 +38,7 @@ export type ClaimBatchResult =
   /** 같은 key의 요청이 아직 처리 중이다. */
   | { kind: "processing" }
   /** 같은 범위에 같은 내용이 이미 등록(또는 등록 중)이다. */
-  | { kind: "duplicate_content" }
+  | { kind: "duplicate_content"; batchId?: string }
   /** 이전 시도가 일부만 저장하고 실패했다. 자동 삭제/재삽입하지 않고 사람이 확인해야 한다. */
   | { kind: "needs_recovery" }
   /** key가 다른 사용자/범위의 것이거나, 같은 key로 다른 내용을 보냈다. */
@@ -64,6 +64,12 @@ function scopeMatches(row: ManualUploadBatchRow, scope: BatchScope): boolean {
   if (row.requested_by !== scope.requestedBy) return false;
   if (scope.scopeType === "store") return row.store_id === scope.storeId;
   return row.franchise_id === scope.franchiseId;
+}
+
+function contentScopeMatches(row: ManualUploadBatchRow, scope: BatchScope): boolean {
+  if (row.scope_type !== scope.scopeType) return false;
+  if (scope.scopeType === "store") return row.store_id === scope.storeId;
+  return (row.franchise_id ?? null) === (scope.franchiseId ?? null);
 }
 
 /** 같은 key로 이미 만들어진 batch가 어떤 상태인지 해석한다. */
@@ -162,6 +168,24 @@ export async function claimManualUploadBatch(
   const conflict = violatedIndex(insertError);
 
   if (conflict.includes(HQ_HASH_INDEX) || conflict.includes(STORE_HASH_INDEX)) {
+    const { data: completedBatches, error: completedLookupError } = await client
+      .from("manual_upload_batches")
+      .select(BATCH_COLUMNS)
+      .eq("content_hash", contentHash)
+      .eq("scope_type", scope.scopeType)
+      .eq("status", "completed");
+
+    if (completedLookupError) {
+      throw new Error("MANUAL_UPLOAD_BATCH_DUPLICATE_LOOKUP_FAILED");
+    }
+
+    const completedBatch = (completedBatches as ManualUploadBatchRow[] | null)?.find((row) =>
+      contentScopeMatches(row, scope),
+    );
+    if (completedBatch) {
+      return { kind: "already_completed", batchId: completedBatch.id };
+    }
+
     return { kind: "duplicate_content" };
   }
 
