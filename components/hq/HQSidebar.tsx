@@ -63,14 +63,14 @@ export default function HQSidebar({
       href: "/hq/stores",
       submenu: [
         { id: "store-status", label: "지점 현황", href: "/hq/stores" },
-        { id: "store-request", label: "문의 · 요청" },
+        { id: "store-request", label: "문의 · 요청", href: "/hq/stores/requests" },
       ],
     },
     { id: "notice", label: "소통", icon: Megaphone, href: "/hq/communication" },
   ];
 
   const bottomMenuItems: HQSidebarMenuItem[] = [
-    { id: "settings", label: "설정", icon: Settings },
+    { id: "settings", label: "설정", icon: Settings, href: "/hq/settings" },
   ];
 
   return (
@@ -163,15 +163,25 @@ export default function HQSidebar({
 
         {/* Bottom Menu */}
         <div className="py-3 px-3">
-          {bottomMenuItems.map((item) => (
-            <button
-              key={item.id}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
-            >
-              <item.icon size={20} />
-              <span>{item.label}</span>
-            </button>
-          ))}
+          {bottomMenuItems.map((item) => {
+            const bottomClass = `w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium transition-colors ${
+              activeMenu === item.id
+                ? "bg-[var(--color-primary-light)]/30 text-[var(--color-primary)]"
+                : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+            }`;
+
+            return item.href ? (
+              <Link key={item.id} href={item.href} className={bottomClass}>
+                <item.icon size={20} />
+                <span>{item.label}</span>
+              </Link>
+            ) : (
+              <button key={item.id} className={bottomClass}>
+                <item.icon size={20} />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
           
           {/* Divider between actions */}
           <div className="border-t border-[var(--color-border)] my-1" />

@@ -2,15 +2,19 @@
 
 import React from "react";
 import NotificationCenter from "@/components/common/NotificationCenter";
+import ProfileMenu from "@/components/common/ProfileMenu";
 
 interface OwnerHeaderProps {
   userName: string;
   storeName: string;
+  /** 각 Owner 페이지가 사이드바에 넘기는 기존 로그아웃 핸들러를 그대로 재사용한다. */
+  onLogout: () => void;
 }
 
 export default function OwnerHeader({
   userName,
   storeName,
+  onLogout,
 }: OwnerHeaderProps) {
   return (
     <header className="sticky top-0 z-50 bg-white border-b border-[var(--color-border)] h-16 shrink-0">
@@ -21,21 +25,13 @@ export default function OwnerHeader({
           <NotificationCenter />
 
           {/* Profile */}
-          <div className="flex items-center gap-3 pl-6 border-l border-[var(--color-border)]">
-            <div className="text-right">
-              <p className="text-sm font-semibold text-[var(--color-text-primary)]">
-                {userName}
-              </p>
-              <p className="text-xs text-[var(--color-text-secondary)]">
-                {storeName} · 점주
-              </p>
-            </div>
-            <div className="w-8 h-8 rounded-full bg-[var(--color-primary-light)] flex items-center justify-center">
-              <span className="text-xs font-bold text-[var(--color-primary)]">
-                {userName.charAt(0)}
-              </span>
-            </div>
-          </div>
+          <ProfileMenu
+            userName={userName}
+            subtitle={storeName ? `${storeName} · 점주` : "점주"}
+            roleLabel="점주"
+            settingsHref="/boss/settings"
+            onLogout={onLogout}
+          />
         </div>
       </div>
     </header>

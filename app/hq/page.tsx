@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useLayoutEffect, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   UserCheck,
@@ -19,18 +20,23 @@ const pendingTasksConfig = [
     title: "승인 대기",
     description: "새로운 점주 또는 지점 승인 요청",
     icon: UserCheck,
+    href: "/hq/approvals",
   },
   {
     id: 2,
     title: "미처리 문의 · 요청",
     description: "아직 처리되지 않은 지점 요청",
     icon: MessageSquare,
+    // 문의·요청 페이지의 "미처리" 업무 화면. 문의 테이블이 아직 없어 0건으로 표시된다.
+    href: "/hq/stores/requests?view=unresolved",
   },
   {
     id: 3,
-    title: "조치 필요 지점",
-    description: "운영 상태 확인이 필요한 지점",
+    // "조치 필요" 판별 기준이 DB/API에 없어, 실제로 판별 가능한 "점주 미등록" 기준을 쓴다.
+    title: "점주 미등록 지점",
+    description: "담당 점주가 등록되지 않은 지점",
     icon: Store,
+    href: "/hq/stores?view=no-owner",
   },
 ];
 
@@ -40,6 +46,11 @@ export default function HQPage() {
   const [franchiseName, setFranchiseName] = useState("메가MGC커피");
   const [isReady, setIsReady] = useState(false);
   const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0);
+  const [storesWithoutOwnerCount, setStoresWithoutOwnerCount] = useState(0);
+  const [storesWithOwnerCount, setStoresWithOwnerCount] = useState(0);
+  const [ownerCount, setOwnerCount] = useState(0);
+  const [commonManualCount, setCommonManualCount] = useState(0);
+  const [storesWithManualsCount, setStoresWithManualsCount] = useState(0);
   const [totalStores, setTotalStores] = useState(0);
 
   useLayoutEffect(() => {
@@ -114,8 +125,6 @@ export default function HQPage() {
     // Fetch pending approvals count and total stores
     const fetchDashboardData = async () => {
       try {
-        const supabase = createClient();
-
         // Fetch pending approvals
         const response = await fetch("/api/hq/approvals?status=pending", { credentials: "include" });
         const result = await response.json();
@@ -123,10 +132,29 @@ export default function HQPage() {
           setPendingApprovalsCount(result.data.length);
         }
 
-        // Fetch total stores
-        const { data: stores } = await supabase.from("stores").select("id");
-        if (stores) {
+        // 지점 수치: 지점 현황·매뉴얼 관리와 같은 franchise 범위 API(/api/hq/stores)로 계산한다.
+        const storesResponse = await fetch("/api/hq/stores", { credentials: "include" });
+        if (storesResponse.ok) {
+          const storesResult = (await storesResponse.json()) as {
+            stores?: { ownerNames: string[]; manualCount: number }[];
+          };
+          const stores = storesResult.stores ?? [];
           setTotalStores(stores.length);
+          setStoresWithOwnerCount(stores.filter((store) => store.ownerNames.length > 0).length);
+          setStoresWithoutOwnerCount(stores.filter((store) => store.ownerNames.length === 0).length);
+          setOwnerCount(stores.reduce((sum, store) => sum + store.ownerNames.length, 0));
+          setStoresWithManualsCount(stores.filter((store) => store.manualCount > 0).length);
+        }
+
+        // 공통 매뉴얼: 매뉴얼 관리 Overview와 같은 /api/manuals 기준(store_id 없는 매뉴얼).
+        const manualsResponse = await fetch("/api/manuals", { credentials: "include" });
+        if (manualsResponse.ok) {
+          const manualsResult = (await manualsResponse.json()) as {
+            manuals?: { store_id: string | null; scope_type?: string | null }[];
+          };
+          setCommonManualCount(
+            (manualsResult.manuals ?? []).filter((manual) => manual.scope_type === "hq" || !manual.store_id).length,
+          );
         }
       } catch (e) {
         console.error("Failed to fetch dashboard data:", e);
@@ -164,7 +192,7 @@ export default function HQPage() {
       />
       <div className="lg:ml-[240px]">
         {/* Header */}
-        <HQHeader userName={userName} franchiseName={franchiseName} />
+        <HQHeader userName={userName} franchiseName={franchiseName} onLogout={handleLogout} />
 
         {/* Content */}
         <main className="p-6 lg:p-8 max-w-7xl mx-auto">
@@ -192,22 +220,17 @@ export default function HQPage() {
                 } else if (task.id === 2) {
                   count = 0; // inquiries 테이블 없음
                 } else if (task.id === 3) {
-                  count = 0; // 정의 없음
+                  count = storesWithoutOwnerCount;
                 }
                 return (
-                  <div
+                  <Link
                     key={task.id}
-                    onClick={() => {
-                      if (task.id === 1) {
-                        router.push("/hq/approvals");
-                      }
-                    }}
-                    className={`bg-white border border-[var(--color-border)] rounded-lg p-5 hover:border-[var(--color-primary)] hover:bg-[var(--color-bg-surface)] transition-all ${
-                      task.id === 1 ? "cursor-pointer" : ""
-                    }`}
+                    href={task.href}
+                    className="block cursor-pointer bg-white border border-[var(--color-border)] rounded-lg p-5 hover:border-[var(--color-primary)] hover:bg-[var(--color-bg-surface)] transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2"
                   >
                     <Icon
                       size={24}
+                      aria-hidden="true"
                       className="text-[var(--color-primary)] mb-4"
                     />
                     <p className="text-base font-semibold text-[var(--color-text-primary)] mb-3">
@@ -222,7 +245,7 @@ export default function HQPage() {
                     <p className="text-sm text-[var(--color-text-secondary)]">
                       {task.description}
                     </p>
-                  </div>
+                  </Link>
                 );
               })}
             </div>
@@ -234,44 +257,28 @@ export default function HQPage() {
               <h2 className="text-base font-bold text-[var(--color-text-primary)]">
                 지점 운영 현황
               </h2>
-              <button className="text-sm font-medium text-[var(--color-primary)] hover:text-[var(--color-primary-light)] hover:underline flex items-center gap-2 px-2 py-2 rounded transition-colors" style={{minHeight: '44px'}}>
-                전체 지점 보기 <ChevronRight size={16} />
-              </button>
+              <Link href="/hq/stores" className="text-sm font-medium text-[var(--color-primary)] hover:underline flex items-center gap-2 px-2 rounded transition-colors min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]">
+                전체 지점 보기 <ChevronRight size={16} aria-hidden="true" />
+              </Link>
             </div>
             <div className="bg-white border border-[var(--color-border)] rounded-lg p-6">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-0">
-                <div className="flex flex-col items-center justify-center py-6 border-r border-[var(--color-border)]">
-                  <p className="text-3xl font-bold text-[var(--color-text-primary)] mb-2">
-                    {totalStores}
-                  </p>
-                  <p className="text-sm text-[var(--color-text-secondary)] text-center">
-                    전체 지점
-                  </p>
-                </div>
-                <div className="flex flex-col items-center justify-center py-6 border-r border-[var(--color-border)]">
-                  <p className="text-3xl font-bold text-[var(--color-text-primary)] mb-2">
-                    {totalStores}
-                  </p>
-                  <p className="text-sm text-[var(--color-text-secondary)] text-center">
-                    운영 중
-                  </p>
-                </div>
-                <div className="flex flex-col items-center justify-center py-6 border-r border-[var(--color-border)]">
-                  <p className="text-3xl font-bold text-[var(--color-text-primary)] mb-2">
-                    0
-                  </p>
-                  <p className="text-sm text-[var(--color-text-secondary)] text-center">
-                    오픈 준비
-                  </p>
-                </div>
-                <div className="flex flex-col items-center justify-center py-6">
-                  <p className="text-3xl font-bold text-[var(--color-text-primary)] mb-2">
-                    0
-                  </p>
-                  <p className="text-sm text-[var(--color-text-secondary)] text-center">
-                    확인 필요
-                  </p>
-                </div>
+                {[
+                  { label: "전체 지점", value: totalStores },
+                  { label: "점주 등록 지점", value: storesWithOwnerCount },
+                  { label: "점주 미등록 지점", value: storesWithoutOwnerCount },
+                  { label: "등록된 점주", value: ownerCount },
+                ].map((stat, index) => (
+                  <div
+                    key={stat.label}
+                    className={`flex flex-col items-center justify-center py-6 ${
+                      index < 3 ? "md:border-r md:border-[var(--color-border)]" : ""
+                    } ${index % 2 === 0 ? "border-r border-[var(--color-border)]" : ""}`}
+                  >
+                    <p className="text-3xl font-bold text-[var(--color-text-primary)] mb-2">{stat.value}</p>
+                    <p className="text-sm text-[var(--color-text-secondary)] text-center">{stat.label}</p>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
@@ -284,9 +291,9 @@ export default function HQPage() {
                 <h2 className="text-base font-bold text-[var(--color-text-primary)]">
                   최근 지점 문의 · 요청
                 </h2>
-                <button className="text-sm font-medium text-[var(--color-primary)] hover:text-[var(--color-primary-light)] hover:underline flex items-center gap-2 px-2 py-2 rounded transition-colors" style={{minHeight: '44px'}}>
-                  전체 요청 보기 <ChevronRight size={16} />
-                </button>
+                <Link href="/hq/stores/requests" className="text-sm font-medium text-[var(--color-primary)] hover:underline flex items-center gap-2 px-2 rounded transition-colors min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]">
+                  전체 요청 보기 <ChevronRight size={16} aria-hidden="true" />
+                </Link>
               </div>
               <div className="bg-white border border-[var(--color-border)] rounded-lg overflow-hidden flex-1">
                 <div className="overflow-x-auto">
@@ -325,9 +332,9 @@ export default function HQPage() {
                 <h2 className="text-base font-bold text-[var(--color-text-primary)]">
                   매뉴얼 현황
                 </h2>
-                <button className="text-sm font-medium text-[var(--color-primary)] hover:text-[var(--color-primary-light)] hover:underline flex items-center gap-2 px-2 py-2 rounded transition-colors" style={{minHeight: '44px'}}>
-                  매뉴얼 관리 <ChevronRight size={16} />
-                </button>
+                <Link href="/hq/manuals" className="text-sm font-medium text-[var(--color-primary)] hover:underline flex items-center gap-2 px-2 rounded transition-colors min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]">
+                  매뉴얼 관리 <ChevronRight size={16} aria-hidden="true" />
+                </Link>
               </div>
               <div className="bg-white border border-[var(--color-border)] rounded-lg p-6 space-y-3 flex-1">
                 <div>
@@ -335,7 +342,7 @@ export default function HQPage() {
                     공통 매뉴얼
                   </p>
                   <p className="text-2xl font-bold text-[var(--color-text-primary)]">
-                    0
+                    {commonManualCount}
                     <span className="text-sm font-normal text-[var(--color-text-secondary)] ml-1">
                       개
                     </span>
@@ -347,7 +354,7 @@ export default function HQPage() {
                     지점별 매뉴얼
                   </p>
                   <p className="text-base text-[var(--color-text-primary)] font-medium">
-                    0
+                    {storesWithManualsCount}
                     <span className="text-sm font-normal text-[var(--color-text-secondary)]"> 개 지점에서 사용 중</span>
                   </p>
                 </div>

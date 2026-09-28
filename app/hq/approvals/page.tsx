@@ -2,11 +2,12 @@
 
 import React, { useLayoutEffect, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, X } from "lucide-react";
+import { Check, CircleCheck, CircleX, Clock, UserCheck, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
+import BackToHomeLink from "@/components/hq/BackToHomeLink";
 
 interface Membership {
   id: string;
@@ -278,16 +279,14 @@ export default function HQApprovalsPage() {
     }
   };
 
-  const getStatusColor = (status: string) => {
+  const getStatusBadge = (status: string) => {
     switch (status) {
-      case "pending":
-        return "bg-yellow-100 text-yellow-700";
       case "approved":
-        return "bg-green-100 text-green-700";
+        return { className: "bg-[var(--color-primary-light)]/40 text-[var(--color-primary)]", Icon: CircleCheck };
       case "rejected":
-        return "bg-red-100 text-red-700";
+        return { className: "bg-red-50 text-red-700", Icon: CircleX };
       default:
-        return "bg-gray-100 text-gray-700";
+        return { className: "bg-amber-50 text-amber-800", Icon: Clock };
     }
   };
 
@@ -321,172 +320,127 @@ export default function HQApprovalsPage() {
       {/* Main Content */}
       <div className="lg:ml-[240px]">
         {/* Header */}
-        <HQHeader userName={userName} franchiseName={franchiseName} />
+        <HQHeader userName={userName} franchiseName={franchiseName} onLogout={handleLogout} />
 
         {/* Content */}
         <main className="p-6 lg:p-8 max-w-7xl mx-auto">
           {/* Heading Section */}
+          <BackToHomeLink />
           <div className="mb-8">
-            <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
-              승인 관리
-            </h1>
+            <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">승인 관리</h1>
             <p className="text-base text-[var(--color-text-secondary)]">
-              점주의 가입 요청을 확인하고 승인할 수 있습니다.
+              본사에서 점주의 가입 및 지점 소속 요청을 검토하고 승인합니다.
             </p>
           </div>
 
-          {/* Filters */}
-          <div className="mb-8 space-y-4">
-            {/* Status Filter */}
-            <div>
-              <h3 className="text-sm font-semibold text-[var(--color-text-primary)] mb-3">
-                상태
-              </h3>
-              <div className="flex gap-2 flex-wrap">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setFilterStatus("all");
-                  }}
-                  className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                    filterStatus === "all"
-                      ? "bg-[var(--color-primary)] text-white"
-                      : "border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]"
-                  }`}
-                >
-                  전체
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setFilterStatus("pending");
-                  }}
-                  className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                    filterStatus === "pending"
-                      ? "bg-[var(--color-primary)] text-white"
-                      : "border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]"
-                  }`}
-                >
-                  승인 대기
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setFilterStatus("approved");
-                  }}
-                  className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                    filterStatus === "approved"
-                      ? "bg-[var(--color-primary)] text-white"
-                      : "border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]"
-                  }`}
-                >
-                  승인 완료
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setFilterStatus("rejected");
-                  }}
-                  className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                    filterStatus === "rejected"
-                      ? "bg-[var(--color-primary)] text-white"
-                      : "border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]"
-                  }`}
-                >
-                  승인 거절
-                </button>
+          {/* Stats Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+            {[
+              { label: "승인 대기", value: pendingCount },
+              { label: "승인 완료", value: approvedCount },
+              { label: "승인 거절", value: rejectedCount },
+            ].map((card) => (
+              <div key={card.label} className="bg-white border border-[var(--color-border)] rounded-xl p-6 shadow-sm">
+                <p className="text-sm font-medium text-[var(--color-text-secondary)] mb-1">{card.label}</p>
+                <p className="text-2xl font-bold text-[var(--color-text-primary)]">{card.value}건</p>
               </div>
-            </div>
+            ))}
           </div>
 
-          {/* Stats */}
-          <div className="mb-8 grid grid-cols-3 gap-4 pointer-events-none">
-            <div className="bg-white border border-[var(--color-border)] rounded-lg p-4">
-              <p className="text-sm text-[var(--color-text-secondary)] mb-1">승인 대기</p>
-              <p className="text-2xl font-bold text-yellow-600">{pendingCount}</p>
-            </div>
-            <div className="bg-white border border-[var(--color-border)] rounded-lg p-4">
-              <p className="text-sm text-[var(--color-text-secondary)] mb-1">승인 완료</p>
-              <p className="text-2xl font-bold text-green-600">{approvedCount}</p>
-            </div>
-            <div className="bg-white border border-[var(--color-border)] rounded-lg p-4">
-              <p className="text-sm text-[var(--color-text-secondary)] mb-1">승인 거절</p>
-              <p className="text-2xl font-bold text-red-600">{rejectedCount}</p>
-            </div>
+          {/* Status Filter */}
+          <div role="group" aria-label="승인 상태 필터" className="mb-6 flex flex-wrap gap-2">
+            {(
+              [
+                { value: "pending", label: "승인 대기" },
+                { value: "approved", label: "승인 완료" },
+                { value: "rejected", label: "승인 거절" },
+                { value: "all", label: "전체" },
+              ] as { value: FilterStatus; label: string }[]
+            ).map((option) => {
+              const isSelected = filterStatus === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={isSelected}
+                  onClick={() => setFilterStatus(option.value)}
+                  className={`min-h-[44px] rounded-lg border-2 px-4 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 ${
+                    isSelected
+                      ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/30 text-[var(--color-primary)]"
+                      : "border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
           </div>
 
           {/* Approvals List */}
-          <div className="bg-white border border-[var(--color-border)] rounded-lg overflow-hidden">
-            {isLoading ? (
-              <div className="p-8 text-center">
-                <p className="text-[var(--color-text-secondary)]">승인 요청을 불러오는 중입니다...</p>
-              </div>
-            ) : filteredApprovals.length === 0 ? (
-              <div className="p-8 text-center">
-                <p className="text-[var(--color-text-secondary)]">
-                  {filterStatus === "pending" ? "대기 중인 승인 요청이 없습니다." : "해당하는 승인 요청이 없습니다."}
+          {isLoading ? (
+            <div className="bg-white border border-[var(--color-border)] rounded-xl p-8 shadow-sm text-center">
+              <p className="text-base text-[var(--color-text-secondary)]" role="status">
+                승인 요청을 불러오는 중입니다...
+              </p>
+            </div>
+          ) : filteredApprovals.length === 0 ? (
+            filterStatus === "pending" ? (
+              <div className="bg-white border border-[var(--color-border)] rounded-xl p-12 text-center shadow-sm">
+                <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-4">
+                  <UserCheck size={32} className="text-amber-600" aria-hidden="true" />
+                </div>
+                <p className="text-base text-[var(--color-text-secondary)] mb-2">대기 중인 승인 요청이 없습니다.</p>
+                <p className="text-sm text-[var(--color-text-tertiary)]">
+                  새로운 점주 승인 요청이 접수되면 이곳에서 확인할 수 있습니다.
                 </p>
               </div>
             ) : (
+              <div className="bg-white border border-[var(--color-border)] rounded-xl p-12 text-center shadow-sm">
+                <p className="text-base text-[var(--color-text-secondary)]">해당하는 승인 요청이 없습니다.</p>
+              </div>
+            )
+          ) : (
+            <div className="bg-white border border-[var(--color-border)] rounded-xl shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-[var(--color-border)] bg-[var(--color-bg-surface)]">
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-[var(--color-text-primary)]">
-                        신청자
-                      </th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-[var(--color-text-primary)]">
-                        매장명
-                      </th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-[var(--color-text-primary)]">
-                        신청 일시
-                      </th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-[var(--color-text-primary)]">
-                        상태
-                      </th>
-                      <th className="px-6 py-3 text-right text-sm font-semibold text-[var(--color-text-primary)]">
-                        관리
-                      </th>
+                  <caption className="sr-only">점주 승인 요청 목록</caption>
+                  <thead className="bg-[var(--color-bg-default)] border-b border-[var(--color-border)]">
+                    <tr>
+                      <th scope="col" className="px-6 py-4 text-left text-sm font-bold text-[var(--color-text-primary)]">신청자</th>
+                      <th scope="col" className="px-6 py-4 text-left text-sm font-bold text-[var(--color-text-primary)]">지점명</th>
+                      <th scope="col" className="px-6 py-4 text-left text-sm font-bold text-[var(--color-text-primary)]">신청일</th>
+                      <th scope="col" className="px-6 py-4 text-left text-sm font-bold text-[var(--color-text-primary)]">상태</th>
+                      <th scope="col" className="px-6 py-4 text-right text-sm font-bold text-[var(--color-text-primary)]">관리</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredApprovals.map((item, index) => {
                       const membership = item.membership;
+                      const badge = getStatusBadge(membership.status);
+                      const applicantName = membership.user_name || "이름 미등록";
+                      const storeName = membership.store_name || "지점 정보 없음";
                       return (
                         <tr
                           key={membership.id || index}
-                          className="border-b border-[var(--color-border)] hover:bg-[var(--color-bg-surface)] transition-colors last:border-b-0"
+                          className="border-t border-[var(--color-border)] hover:bg-[var(--color-bg-default)] transition-colors"
                         >
-                          <td className="px-6 py-4 text-sm text-[var(--color-text-primary)] font-medium">
-                            {membership.user_name || "Unknown"}
-                          </td>
-                          <td className="px-6 py-4 text-sm text-[var(--color-text-primary)]">
+                          <td className="px-6 py-4 text-base font-medium text-[var(--color-text-primary)]">{applicantName}</td>
+                          <td className="px-6 py-4 text-base text-[var(--color-text-primary)]">
                             <div className="space-y-2">
-                              <p>{membership.store_name || "Unknown"}</p>
+                              <p>{storeName}</p>
                               {membership.has_owner_conflict && (
-                                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
-                                  ⚠️ 이미 다른 점장(Owner)이 등록된 점포입니다.
-                                </div>
+                                <p className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700">
+                                  ⚠️ 이미 다른 점주가 등록된 지점입니다.
+                                </p>
                               )}
                             </div>
                           </td>
-                          <td className="px-6 py-4 text-sm text-[var(--color-text-secondary)]">
+                          <td className="px-6 py-4 text-base text-[var(--color-text-secondary)]">
                             {formatTimestamp(membership.requested_at)}
                           </td>
                           <td className="px-6 py-4">
-                            <span
-                              className={`px-3 py-1 rounded text-sm font-medium inline-block ${getStatusColor(
-                                membership.status
-                              )}`}
-                            >
+                            <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium ${badge.className}`}>
+                              <badge.Icon size={16} aria-hidden="true" />
                               {getStatusLabel(membership.status)}
                             </span>
                           </td>
@@ -494,40 +448,37 @@ export default function HQApprovalsPage() {
                             {membership.status === "pending" ? (
                               <div className="flex gap-2 justify-end">
                                 <button
+                                  type="button"
                                   onClick={() =>
                                     handleApprove(
                                       membership.id,
-                                      membership.store_name || "Unknown",
-                                      membership.user_name || "Unknown",
+                                      storeName,
+                                      applicantName,
                                       membership.role || "owner",
                                       membership.has_owner_conflict,
                                       membership.existing_owner_names,
                                     )
                                   }
-                                  className="px-3 py-1.5 bg-green-100 text-green-700 rounded hover:bg-green-200 transition-colors font-medium text-sm flex items-center gap-1"
-                                  title="승인"
+                                  aria-label={`${applicantName} 승인`}
+                                  className="inline-flex min-h-[44px] items-center gap-1 rounded-lg bg-[var(--color-primary)] px-4 text-sm font-medium text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2"
                                 >
-                                  <Check size={16} />
+                                  <Check size={16} aria-hidden="true" />
                                   승인
                                 </button>
                                 <button
+                                  type="button"
                                   onClick={() =>
-                                    handleReject(
-                                      membership.id,
-                                      membership.store_name || "Unknown",
-                                      membership.user_name || "Unknown",
-                                      membership.role || "owner"
-                                    )
+                                    handleReject(membership.id, storeName, applicantName, membership.role || "owner")
                                   }
-                                  className="px-3 py-1.5 bg-red-100 text-red-700 rounded hover:bg-red-200 transition-colors font-medium text-sm flex items-center gap-1"
-                                  title="거절"
+                                  aria-label={`${applicantName} 거절`}
+                                  className="inline-flex min-h-[44px] items-center gap-1 rounded-lg border-2 border-red-200 bg-white px-4 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2"
                                 >
-                                  <X size={16} />
+                                  <X size={16} aria-hidden="true" />
                                   거절
                                 </button>
                               </div>
                             ) : (
-                              <span className="text-xs text-[var(--color-text-secondary)]">-</span>
+                              <span className="text-sm text-[var(--color-text-secondary)]">-</span>
                             )}
                           </td>
                         </tr>
@@ -536,8 +487,8 @@ export default function HQApprovalsPage() {
                   </tbody>
                 </table>
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </main>
       </div>
 

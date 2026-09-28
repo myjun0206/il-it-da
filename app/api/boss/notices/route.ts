@@ -68,14 +68,53 @@ export async function GET(request: NextRequest): Promise<NextResponse<NoticesRes
       );
     }
 
-    // 4. Return empty notices (notices table does not exist yet)
-    // In production: Query from notices table filtered by store/franchise
+    // 4. 이 매장이 속한 프랜차이즈의 본사 공지 중 "전체 지점" 또는 "이 매장" 대상만 조회한다.
+    const { data: store } = await adminClient
+      .from("stores")
+      .select("franchise_id")
+      .eq("id", storeId)
+      .maybeSingle<{ franchise_id: string | null }>();
+
+    if (!store?.franchise_id) {
+      return NextResponse.json({ success: true, data: { notices: [], summary: { total: 0, important: 0 } } });
+    }
+
+    const [{ data: noticeRows, error: noticeError }, { data: franchise }] = await Promise.all([
+      adminClient
+        .from("notices")
+        .select("id, title, content, created_at, updated_at")
+        .eq("franchise_id", store.franchise_id)
+        .or(`target_type.eq.all,target_store_id.eq.${storeId}`)
+        .order("created_at", { ascending: false }),
+      adminClient.from("franchises").select("name").eq("id", store.franchise_id).maybeSingle<{ name: string }>(),
+    ]);
+
+    if (noticeError) {
+      // migration 020(notices 테이블)이 아직 적용되지 않은 환경에서는 공지가 없는 것으로 본다.
+      if (noticeError.code === "42P01" || noticeError.code === "PGRST205") {
+        return NextResponse.json({ success: true, data: { notices: [], summary: { total: 0, important: 0 } } });
+      }
+      throw noticeError;
+    }
+
+    // notices 테이블에는 분류/중요 표시 컬럼이 없어 "기타"·일반 공지로 표시한다.
+    const notices: NoticeItem[] = (noticeRows ?? []).map((row) => ({
+      id: row.id,
+      title: row.title,
+      content: row.content,
+      category: "기타",
+      isImportant: false,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at ?? row.created_at,
+      franchiseName: franchise?.name ?? "",
+    }));
+
     return NextResponse.json({
       success: true,
       data: {
-        notices: [],
+        notices,
         summary: {
-          total: 0,
+          total: notices.length,
           important: 0,
         },
       },

@@ -6,6 +6,7 @@ import { Search, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
+import { resolveOwnerCurrentStore } from "@/lib/owner/current-store";
 import { Input } from "@/components/common/Input";
 import { Button } from "@/components/common/Button";
 
@@ -106,53 +107,28 @@ export default function NoticesPage() {
         const supabase = createClient();
         const { data } = await supabase.auth.getSession();
 
-        if (!data.session?.user) return;
+        if (!data.session?.user) {
+          setIsLoading(false);
+          return;
+        }
 
         const name = data.session.user.user_metadata?.name || "점주";
         setUserName(name);
 
-        // sessionStorage에서 선택된 매장 정보
-        const storedStoreId = sessionStorage.getItem("selectedStoreId") || "";
-        const storedStoreName = sessionStorage.getItem("selectedStoreName") || "";
-
-        // 서버 검증
-        try {
-          const response = await fetch("/api/signup/store-membership");
-          const result = (await response.json()) as {
-            success?: boolean;
-            data?: Array<{ storeId: string; storeName: string; status: string; role: string }>;
-          };
-
-          if (response.ok && result.data) {
-            const approvedStores = result.data.filter(
-              (m) => m.status === "approved" && m.role === "owner",
-            );
-
-            if (approvedStores.length === 0) {
-              setError("승인된 매장이 없습니다.");
-              setIsLoading(false);
-              return;
-            }
-
-            let storeId = storedStoreId;
-            let storeName = storedStoreName;
-
-            if (!storeId || !approvedStores.some((s) => s.storeId === storeId)) {
-              storeId = approvedStores[0]?.storeId || "";
-              storeName = approvedStores[0]?.storeName || "";
-              sessionStorage.setItem("selectedStoreId", storeId);
-              sessionStorage.setItem("selectedStoreName", storeName);
-            }
-
-            setSelectedStoreId(storeId);
-            setStoreName(storeName);
-          }
-        } catch (e) {
-          console.error("Failed to fetch store membership:", e);
+        // 점주 공통 현재 매장 결정 (approved owner membership → store)
+        const resolution = await resolveOwnerCurrentStore();
+        if (resolution.status === "error") {
           setError("매장 정보를 불러올 수 없습니다.");
           setIsLoading(false);
           return;
         }
+        if (!resolution.current) {
+          setError("승인된 매장이 없습니다.");
+          setIsLoading(false);
+          return;
+        }
+        setSelectedStoreId(resolution.current.storeId);
+        setStoreName(resolution.current.storeName);
       } catch (e) {
         console.error("Failed to load user info:", e);
         setIsLoading(false);
@@ -240,7 +216,7 @@ export default function NoticesPage() {
       <div className="min-h-screen bg-[var(--color-bg-default)] flex">
         <OwnerSidebar activeMenu="notice" onLogout={handleLogout} />
         <div className="flex-1 ml-0 lg:ml-[240px] flex flex-col">
-          <OwnerHeader userName={userName} storeName={storeName} />
+          <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
           <main className="flex-1 p-8">
             <div className="text-center">로딩 중...</div>
           </main>
@@ -254,7 +230,7 @@ export default function NoticesPage() {
       <OwnerSidebar activeMenu="notice" onLogout={handleLogout} />
 
       <div className="flex-1 ml-0 lg:ml-[240px] flex flex-col">
-        <OwnerHeader userName={userName} storeName={storeName} />
+        <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
 
         {/* Main Content */}
         <main className="flex-1 overflow-y-auto">

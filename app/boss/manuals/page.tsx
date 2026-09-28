@@ -229,7 +229,7 @@ export default function OwnerManualsPage() {
       <OwnerSidebar activeMenu="manual-common" onLogout={handleLogout} />
 
       <div className="lg:ml-[240px]">
-        <OwnerHeader userName={userName} storeName={storeName} />
+        <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
 
         <main className="p-6 lg:p-8 max-w-7xl mx-auto">
           <div className="mb-6">

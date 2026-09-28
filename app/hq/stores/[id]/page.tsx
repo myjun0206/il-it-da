@@ -2,19 +2,17 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, FileText, Pencil, Store } from "lucide-react";
+import { ArrowLeft, CalendarDays, FileText, Pencil, Store, UserRound, Users } from "lucide-react";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
 import { createClient } from "@/lib/supabase/client";
 import { useParams, useRouter } from "next/navigation";
+import type { HqStoreSummary } from "@/lib/types/store";
 
-interface StoreInfo {
-  id: string;
-  name: string;
-}
-
-interface StoreManualItem {
-  store_id: string | null;
+function formatDate(value: string | null): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleDateString("ko-KR");
 }
 
 export default function HqStoreDetailPage() {
@@ -22,8 +20,7 @@ export default function HqStoreDetailPage() {
   const router = useRouter();
   const [userName, setUserName] = useState("본사 관리자");
   const [franchiseName, setFranchiseName] = useState("메가MGC커피");
-  const [store, setStore] = useState<StoreInfo | null>(null);
-  const [manualCount, setManualCount] = useState(0);
+  const [store, setStore] = useState<HqStoreSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -39,15 +36,11 @@ export default function HqStoreDetailPage() {
           if (firstName) setFranchiseName(firstName);
         }
 
-        const [storesResponse, manualsResponse] = await Promise.all([
-          fetch("/api/stores"),
-          fetch("/api/manuals"),
-        ]);
-        const storesData = (await storesResponse.json()) as { stores?: StoreInfo[]; error?: string };
-        const manualsData = (await manualsResponse.json()) as { manuals?: StoreManualItem[]; error?: string };
+        // /api/hq/stores는 서버에서 현재 HQ의 franchise 지점만 돌려주므로 다른 브랜드 ID로는 조회되지 않는다.
+        const storesResponse = await fetch("/api/hq/stores");
+        const storesData = (await storesResponse.json()) as { stores?: HqStoreSummary[]; error?: string };
 
         if (!storesResponse.ok) throw new Error(storesData.error || "지점 정보를 불러오지 못했습니다.");
-        if (!manualsResponse.ok) throw new Error(manualsData.error || "매뉴얼 정보를 불러오지 못했습니다.");
 
         const selectedStore = storesData.stores?.find((item) => item.id === params.id) ?? null;
         if (!selectedStore) {
@@ -56,9 +49,6 @@ export default function HqStoreDetailPage() {
         }
 
         setStore(selectedStore);
-        setManualCount(
-          (manualsData.manuals ?? []).filter((manual) => manual.store_id === params.id).length,
-        );
       } catch (error) {
         console.error("Failed to load HQ store:", error);
         setErrorMessage(error instanceof Error ? error.message : "지점 정보를 불러오지 못했습니다.");
@@ -88,7 +78,7 @@ export default function HqStoreDetailPage() {
         activeMenu="store-status"
       />
       <div className="lg:ml-[240px]">
-        <HQHeader userName={userName} franchiseName={franchiseName} />
+        <HQHeader userName={userName} franchiseName={franchiseName} onLogout={handleLogout} />
         <main className="mx-auto max-w-5xl p-6 lg:p-8">
           <Link
             href="/hq/stores"
@@ -123,19 +113,29 @@ export default function HqStoreDetailPage() {
                 </Link>
               </div>
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div className="rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-bg-surface)] p-6 shadow-md">
-                  <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--color-primary-light)] text-[var(--color-primary)]">
-                    <FileText size={19} />
+              <dl className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                {[
+                  {
+                    label: "점주",
+                    value: store.ownerNames.length > 0 ? store.ownerNames.join(", ") : "미지정",
+                    icon: UserRound,
+                  },
+                  { label: "등록된 직원", value: `${store.staffCount}명`, icon: Users },
+                  { label: "지점 전용 매뉴얼", value: `${store.manualCount}개`, icon: FileText },
+                  { label: "등록일", value: formatDate(store.createdAt), icon: CalendarDays },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    className="rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-bg-surface)] p-6 shadow-md"
+                  >
+                    <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--color-primary-light)] text-[var(--color-primary)]">
+                      <item.icon size={19} aria-hidden="true" />
+                    </div>
+                    <dt className="text-sm text-[var(--color-text-secondary)]">{item.label}</dt>
+                    <dd className="mt-1 text-2xl font-bold text-[var(--color-text-primary)]">{item.value}</dd>
                   </div>
-                  <p className="text-sm text-[var(--color-text-secondary)]">지점 전용 매뉴얼</p>
-                  <p className="mt-1 text-3xl font-bold text-[var(--color-text-primary)]">{manualCount}개</p>
-                </div>
-                <div className="rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-bg-surface)] p-6 shadow-md">
-                  <p className="mb-2 text-sm text-[var(--color-text-secondary)]">지점 고유 ID</p>
-                  <p className="break-all text-sm font-medium text-[var(--color-text-primary)]">{store.id}</p>
-                </div>
-              </div>
+                ))}
+              </dl>
             </>
           ) : null}
         </main>
