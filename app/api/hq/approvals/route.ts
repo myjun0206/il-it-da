@@ -108,8 +108,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   let membershipQuery = adminClient
     .from("store_memberships")
     .select("id, user_id, store_id, franchise_id, role, status, requested_at, approved_at, approved_by, rejected_at, rejected_by")
-    .in("role", ["owner", "staff"]);
-
+    // HQ는 같은 franchise의 점주(owner) 요청만 조회한다.
+    .eq("role", "owner")
+    .eq("franchise_id", hqUser.franchiseId);
   if (isApprovalStatus(status)) {
     membershipQuery = isPendingStatus(status)
       ? membershipQuery.in("status", ["pending", "requested"])
@@ -234,7 +235,8 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
   if (!membership) {
     return NextResponse.json({ success: false, error: "Membership not found" }, { status: 404 });
   }
-  if (membership.role !== "owner" && membership.role !== "staff") {
+  // 직원(staff) 승인은 점주 권한이므로 HQ에서 처리하지 않는다.
+  if (membership.role !== "owner") {
     return forbiddenResponse();
   }
   const { data: membershipStore, error: membershipStoreError } = await adminClient

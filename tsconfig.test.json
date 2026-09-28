@@ -45,6 +45,12 @@
     "tests/manuals/manual-upload-idempotency-api.test.ts",
     "tests/manuals/manual-save-entrypoint.test.ts",
     "tests/manuals/hq-manual-upload-flow.test.ts",
+    "tests/manuals/manual-search-readiness.test.ts",
+    "tests/manuals/manual-readiness-api.test.ts",
+    "tests/notices/notice-scope.test.ts",
+    "tests/notifications/escalate-question-log.test.ts",
+    "tests/owner/pending-questions.test.ts",
+    "tests/owner/repeated-questions.test.ts",
     "lib/rag/answer-prompt.ts",
     "lib/rag/chunk-manual.ts",
     "lib/rag/search-query.ts",
@@ -76,7 +82,12 @@
     "lib/manuals/manual-content-fingerprint.ts",
     "lib/manuals/manual-upload-batch.ts",
     "lib/manuals/manual-upload-batch-messages.ts",
-    "lib/manuals/save-manuals-with-batch.ts"
+    "lib/manuals/save-manuals-with-batch.ts",
+    "lib/manuals/manual-search-readiness.ts",
+    "lib/manuals/manual-reindex-guard.ts",
+    "lib/notifications/escalate-question-log.ts",
+    "lib/owner/pending-questions.ts",
+    "lib/owner/repeated-questions.ts"
   ],
   "exclude": ["node_modules"]
 }

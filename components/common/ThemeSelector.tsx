@@ -14,54 +14,33 @@ export default function ThemeSelector() {
   ];
 
   return (
-    <div className="space-y-4">
-      <div>
-        <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-4">
-          화면 테마
-        </label>
-        <p className="text-sm text-[var(--color-text-secondary)] mb-4">
-          일잇다 화면에 적용할 테마를 선택하세요.
-        </p>
-      </div>
+    <div role="radiogroup" aria-label="화면 테마" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      {options.map((option) => {
+        const Icon = option.icon;
+        const isSelected = theme === option.value;
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {options.map((option) => {
-          const Icon = option.icon;
-          const isSelected = theme === option.value;
-
-          return (
-            <button
-              key={option.value}
-              onClick={() => setTheme(option.value)}
-              className={`p-4 rounded-lg border-2 transition-all ${
-                isSelected
-                  ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/30"
-                  : "border-[var(--color-border)] hover:border-[var(--color-primary)]/50 bg-[var(--color-bg-surface)]"
-              }`}
-            >
-              <div className="flex flex-col items-center gap-3">
-                <Icon
-                  size={32}
-                  className={
-                    isSelected
-                      ? "text-[var(--color-primary)]"
-                      : "text-[var(--color-text-secondary)]"
-                  }
-                />
-                <span
-                  className={`text-sm font-medium ${
-                    isSelected
-                      ? "text-[var(--color-primary)]"
-                      : "text-[var(--color-text-primary)]"
-                  }`}
-                >
-                  {option.label}
-                </span>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={isSelected}
+            onClick={() => setTheme(option.value)}
+            className={`flex min-h-[48px] items-center justify-center gap-2 rounded-lg border-2 px-4 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 ${
+              isSelected
+                ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/30 text-[var(--color-primary)]"
+                : "border-[var(--color-border)] bg-[var(--color-bg-surface)] text-[var(--color-text-primary)] hover:border-[var(--color-primary)]/50"
+            }`}
+          >
+            <Icon
+              size={18}
+              aria-hidden="true"
+              className={isSelected ? "text-[var(--color-primary)]" : "text-[var(--color-text-secondary)]"}
+            />
+            {option.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

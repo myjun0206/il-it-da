@@ -7,6 +7,7 @@ import { Button } from "@/components/common/Button";
 import { ManualPreviewEditor, type ManualEditState } from "@/components/manuals/ManualPreviewEditor";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
+import { resolveOwnerCurrentStore } from "@/lib/owner/current-store";
 import { createClient } from "@/lib/supabase/client";
 import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import { MAX_UPLOAD_FILE_SIZE_BYTES, isFileSizeWithinLimit } from "@/lib/manuals/upload-limits";
@@ -77,29 +78,21 @@ export default function StoreManualUploadPage() {
         const name = profile.user.user_metadata?.name || "점주";
         setUserName(name);
 
-        const storedStoreId = sessionStorage.getItem("selectedStoreId") || "";
-        const storedStoreName = sessionStorage.getItem("selectedStoreName") || "";
-
-        const response = await fetch("/api/signup/store-membership", { credentials: "include" });
-        const result = (await response.json()) as {
-          data?: Array<{ storeId: string; storeName: string; status: string; role: string }>;
-        };
-        const approvedStores = (result.data ?? []).filter((m) => m.status === "approved" && m.role === "owner");
-
-        if (approvedStores.length === 0) {
+        // 점주 공통 현재 매장 결정 (approved owner membership → store)
+        const resolution = await resolveOwnerCurrentStore();
+        if (resolution.status === "error") {
+          setError("지점 정보를 불러올 수 없습니다.");
+          setIsReady(true);
+          return;
+        }
+        if (!resolution.current) {
           setError("승인된 지점이 없습니다.");
           setIsReady(true);
           return;
         }
 
-        const matched = approvedStores.find((s) => s.storeId === storedStoreId);
-        if (matched) {
-          setStoreId(matched.storeId);
-          setStoreName(storedStoreName || matched.storeName);
-        } else {
-          setStoreId(approvedStores[0].storeId);
-          setStoreName(approvedStores[0].storeName);
-        }
+        setStoreId(resolution.current.storeId);
+        setStoreName(resolution.current.storeName);
 
         setIsReady(true);
       } catch (e) {
@@ -302,7 +295,7 @@ export default function StoreManualUploadPage() {
         throw new Error(data.error || "매뉴얼 저장 중 오류가 발생했습니다.");
       }
 
-      setUploadNotice(`세부 매뉴얼 ${includedCount}개를 저장했어요.`);
+      setUploadNotice(`세부 매뉴얼 ${includedCount}개를 저장했어요. 검색 준비 상태를 확인해 주세요.`);
       isLeavingRef.current = true;
       router.replace("/boss/store-manuals");
     } catch (e) {
@@ -337,7 +330,7 @@ export default function StoreManualUploadPage() {
       <OwnerSidebar activeMenu="manual-store" onLogout={handleLogout} />
 
       <div className="lg:ml-[240px]">
-        <OwnerHeader userName={userName} storeName={storeName} />
+        <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
 
         <main className="p-6 lg:p-8 max-w-4xl mx-auto">
           <button

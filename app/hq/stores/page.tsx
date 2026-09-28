@@ -1,25 +1,41 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { Building2, Loader2, Search, Store, Users, X } from "lucide-react";
+import React, { Suspense, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ArrowRight, ChevronRight, CircleAlert, CircleCheck, Loader2, Search, Store, Users, X } from "lucide-react";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
+import BackToHomeLink from "@/components/hq/BackToHomeLink";
 import { createClient } from "@/lib/supabase/client";
+import type { HqStoreSummary } from "@/lib/types/store";
 
-interface StoreInfo {
-  id: string;
-  name: string;
-  manualCount: number;
+type OwnerFilter = "all" | "registered" | "unregistered";
+
+const FILTER_OPTIONS: { value: OwnerFilter; label: string }[] = [
+  { value: "all", label: "전체" },
+  { value: "registered", label: "점주 등록" },
+  { value: "unregistered", label: "점주 미등록" },
+];
+
+function formatDate(value: string | null): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleDateString("ko-KR");
 }
 
-interface StoreListItem {
-  id: string;
-  name: string;
-}
-
-interface StoreManualItem {
-  store_id: string | null;
+function OwnerStatusBadge({ hasOwner }: { hasOwner: boolean }) {
+  return hasOwner ? (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-primary-light)]/40 px-3 py-1 text-sm font-medium text-[var(--color-primary)]">
+      <CircleCheck size={16} aria-hidden="true" />
+      점주 등록
+    </span>
+  ) : (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-sm font-medium text-amber-800">
+      <CircleAlert size={16} aria-hidden="true" />
+      점주 미등록
+    </span>
+  );
 }
 
 interface StoreMember {
@@ -33,23 +49,28 @@ interface StoreMember {
   email: string | null;
 }
 
-async function readJson<T>(response: Response, fallbackMessage: string): Promise<T> {
-  const data = (await response.json()) as T & { error?: string };
-  if (!response.ok) {
-    throw new Error(data.error || fallbackMessage);
-  }
-  return data;
-}
+// 홈 "점주 미등록 지점" 카드에서 진입하는 업무 화면 모드. 지점 현황의 "점주 미등록" 필터와 같은 기준이다.
+const NO_OWNER_VIEW = "no-owner";
 
 export default function HqStoresPage() {
+  return (
+    <Suspense fallback={null}>
+      <HqStoresContent />
+    </Suspense>
+  );
+}
+
+function HqStoresContent() {
   const router = useRouter();
+  const isNoOwnerView = useSearchParams().get("view") === NO_OWNER_VIEW;
   const [userName, setUserName] = useState("본사 관리자");
   const [franchiseName, setFranchiseName] = useState("메가MGC커피");
-  const [stores, setStores] = useState<StoreInfo[]>([]);
+  const [stores, setStores] = useState<HqStoreSummary[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [ownerFilter, setOwnerFilter] = useState<OwnerFilter>("all");
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
-  const [selectedStore, setSelectedStore] = useState<StoreInfo | null>(null);
+  const [selectedStore, setSelectedStore] = useState<HqStoreSummary | null>(null);
   const [storeMembers, setStoreMembers] = useState<StoreMember[]>([]);
   const [isMembersLoading, setIsMembersLoading] = useState(false);
   const [membersError, setMembersError] = useState("");
@@ -66,32 +87,13 @@ export default function HqStoresPage() {
           if (firstName) setFranchiseName(firstName);
         }
 
-        const [storesResponse, manualsResponse] = await Promise.all([
-          fetch("/api/stores"),
-          fetch("/api/manuals"),
-        ]);
-        const storesData = await readJson<{ stores?: StoreListItem[] }>(
-          storesResponse,
-          "지점 목록을 불러오지 못했습니다.",
-        );
-        const manualsData = await readJson<{ manuals?: StoreManualItem[] }>(
-          manualsResponse,
-          "매뉴얼 목록을 불러오지 못했습니다.",
-        );
-
-        const manualCounts = new Map<string, number>();
-        for (const manual of manualsData.manuals ?? []) {
-          if (manual.store_id) {
-            manualCounts.set(manual.store_id, (manualCounts.get(manual.store_id) ?? 0) + 1);
-          }
+        const response = await fetch("/api/hq/stores");
+        const result = (await response.json()) as { stores?: HqStoreSummary[]; error?: string };
+        if (!response.ok) {
+          throw new Error(result.error || "지점 목록을 불러오지 못했습니다.");
         }
 
-        setStores(
-          (storesData.stores ?? []).map((store) => ({
-            ...store,
-            manualCount: manualCounts.get(store.id) ?? 0,
-          })),
-        );
+        setStores(result.stores ?? []);
       } catch (error) {
         console.error("Failed to load HQ stores:", error);
         setErrorMessage(error instanceof Error ? error.message : "지점 목록을 불러오지 못했습니다.");
@@ -112,7 +114,7 @@ export default function HqStoresPage() {
     }
   };
 
-  const handleOpenMembers = async (store: StoreInfo) => {
+  const handleOpenMembers = async (store: HqStoreSummary) => {
     setSelectedStore(store);
     setStoreMembers([]);
     setMembersError("");
@@ -132,9 +134,33 @@ export default function HqStoresPage() {
     }
   };
 
-  const filteredStores = stores.filter((store) =>
-    store.name.toLowerCase().includes(searchQuery.trim().toLowerCase()),
+  const stats = useMemo(
+    () => ({
+      totalStores: stores.length,
+      storesWithOwner: stores.filter((store) => store.ownerNames.length > 0).length,
+      totalOwners: stores.reduce((sum, store) => sum + store.ownerNames.length, 0),
+    }),
+    [stores],
   );
+
+  const filteredStores = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (isNoOwnerView) {
+      return stores.filter((store) => store.ownerNames.length === 0);
+    }
+    return stores.filter((store) => {
+      if (query && !store.name.toLowerCase().includes(query)) return false;
+      if (ownerFilter === "registered") return store.ownerNames.length > 0;
+      if (ownerFilter === "unregistered") return store.ownerNames.length === 0;
+      return true;
+    });
+  }, [stores, searchQuery, ownerFilter, isNoOwnerView]);
+
+  const statCards = [
+    { label: "전체 지점", value: `${stats.totalStores}개` },
+    { label: "점주 등록 지점", value: `${stats.storesWithOwner}개` },
+    { label: "등록된 점주", value: `${stats.totalOwners}명` },
+  ];
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-default)]">
@@ -142,90 +168,241 @@ export default function HqStoresPage() {
         userName={userName}
         franchiseName={franchiseName}
         onLogout={handleLogout}
-        activeMenu="store-status"
+        activeMenu={isNoOwnerView ? "home" : "store-status"}
       />
 
       <div className="lg:ml-[240px]">
-        <HQHeader userName={userName} franchiseName={franchiseName} />
+        <HQHeader userName={userName} franchiseName={franchiseName} onLogout={handleLogout} />
 
-        <main className="mx-auto max-w-7xl p-6 lg:p-8">
-          <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <h1 className="mb-2 text-2xl font-bold text-[var(--color-text-primary)]">지점 관리</h1>
+        <main className="p-6 lg:p-8 max-w-7xl mx-auto">
+          {isNoOwnerView ? (
+            <>
+              <BackToHomeLink />
+              <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">점주 미등록 지점</h1>
+                  <p className="text-base text-[var(--color-text-secondary)]">
+                    담당 점주가 등록되지 않은 지점을 확인합니다.
+                  </p>
+                </div>
+                <Link
+                  href="/hq/stores"
+                  className="inline-flex min-h-[44px] items-center gap-1 self-start rounded-lg px-2 text-sm font-medium text-[var(--color-primary)] hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] sm:self-auto"
+                >
+                  전체 지점 보기 <ArrowRight size={16} aria-hidden="true" />
+                </Link>
+              </div>
+            </>
+          ) : (
+            <div className="mb-8">
+              <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">지점 관리</h1>
               <p className="text-base text-[var(--color-text-secondary)]">
-                등록된 지점과 지점별 매뉴얼 현황을 확인하세요.
+                등록된 지점과 점주 현황을 확인하고 관리할 수 있습니다.
               </p>
             </div>
-            <div className="relative w-full lg:w-80">
-              <Search size={17} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]" />
-              <input
-                type="search"
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="지점명 검색"
-                aria-label="지점명 검색"
-                className="w-full rounded-lg border-2 border-[var(--color-border)] bg-white py-2.5 pl-10 pr-3 text-sm text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
-              />
-            </div>
-          </div>
+          )}
 
           {isLoading ? (
-            <div className="rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-bg-surface)] p-12 text-center shadow-md">
-              <p className="text-sm text-[var(--color-text-secondary)]">지점 목록을 불러오는 중...</p>
-            </div>
-          ) : errorMessage ? (
-            <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">{errorMessage}</div>
-          ) : filteredStores.length === 0 ? (
-            <div className="rounded-xl border-2 border-dashed border-[var(--color-border)] bg-[var(--color-bg-surface)] p-12 text-center shadow-sm">
-              <Store size={32} className="mx-auto mb-4 text-[var(--color-text-tertiary)]" />
-              <p className="text-base font-medium text-[var(--color-text-secondary)]">
-                {stores.length === 0 ? "등록된 지점이 없습니다." : "검색 결과가 없습니다."}
+            <div className="bg-white border border-[var(--color-border)] rounded-xl p-8 shadow-sm text-center">
+              <p className="text-base text-[var(--color-text-secondary)]" role="status">
+                지점 목록을 불러오는 중...
               </p>
             </div>
+          ) : errorMessage ? (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-base text-red-700" role="alert">
+              {errorMessage}
+            </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {filteredStores.map((store, index) => (
-                <article
-                  key={store.id}
-                  role="link"
-                  tabIndex={0}
-                  onClick={() => router.push(`/hq/stores/${store.id}`)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      router.push(`/hq/stores/${store.id}`);
-                    }
-                  }}
-                  className="relative cursor-pointer rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-bg-surface)] p-6 text-left shadow-md transition-all hover:-translate-y-0.5 hover:border-[var(--color-primary)] hover:bg-white hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:ring-offset-2"
-                >
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void handleOpenMembers(store);
-                    }}
-                    className="absolute right-4 top-4 z-10 inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] shadow-sm transition-colors hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
-                    aria-label={`${store.name} 소속 직원 확인`}
-                    title={`${store.name} 소속 직원 확인`}
-                  >
-                    <Users size={15} />
-                  </button>
-                  <div className="relative">
-                    <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--color-primary-light)] text-sm font-bold text-[var(--color-primary)]">
-                      {index + 1}
+            <>
+              {/* Stats Cards */}
+              <div className={`grid grid-cols-1 md:grid-cols-3 gap-4 mb-8 ${isNoOwnerView ? "hidden" : ""}`}>
+                {statCards.map((card) => (
+                  <div key={card.label} className="bg-white border border-[var(--color-border)] rounded-xl p-6 shadow-sm">
+                    <p className="text-sm font-medium text-[var(--color-text-secondary)] mb-1">{card.label}</p>
+                    <p className="text-2xl font-bold text-[var(--color-text-primary)]">{card.value}</p>
+                  </div>
+                ))}
+              </div>
+
+              {isNoOwnerView && filteredStores.length === 0 ? (
+                <div className="bg-white border border-[var(--color-border)] rounded-xl p-12 text-center shadow-sm">
+                  <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-4">
+                    <Store size={32} className="text-amber-600" aria-hidden="true" />
+                  </div>
+                  <p className="text-base text-[var(--color-text-secondary)] mb-2">점주가 미등록된 지점이 없습니다.</p>
+                  <p className="text-sm text-[var(--color-text-tertiary)]">
+                    현재 모든 지점에 담당 점주가 등록되어 있습니다.
+                  </p>
+                </div>
+              ) : stores.length === 0 ? (
+                <div className="bg-white border border-[var(--color-border)] rounded-xl p-12 text-center shadow-sm">
+                  <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-4">
+                    <Store size={32} className="text-amber-600" aria-hidden="true" />
+                  </div>
+                  <p className="text-base text-[var(--color-text-secondary)] mb-2">아직 등록된 지점이 없습니다.</p>
+                  <p className="text-sm text-[var(--color-text-tertiary)]">
+                    점주의 가입 및 지점 등록이 완료되면 이곳에서 지점을 확인할 수 있습니다.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  {/* Toolbar */}
+                  <div className={`mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between ${isNoOwnerView ? "hidden" : ""}`}>
+                    <div className="relative w-full md:max-w-sm">
+                      <Search
+                        size={18}
+                        aria-hidden="true"
+                        className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]"
+                      />
+                      <input
+                        type="search"
+                        value={searchQuery}
+                        onChange={(event) => setSearchQuery(event.target.value)}
+                        placeholder="지점명으로 검색"
+                        aria-label="지점명으로 검색"
+                        className="min-h-[44px] w-full rounded-lg border-2 border-[var(--color-border)] bg-white py-2.5 pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/30"
+                      />
                     </div>
-                    <div className="mb-4 flex items-center gap-2">
-                      <Building2 size={18} className="text-[var(--color-primary)]" />
-                      <h2 className="text-lg font-bold text-[var(--color-text-primary)]">{store.name}</h2>
-                    </div>
-                    <div className="flex items-center justify-between border-t border-[var(--color-border)] pt-4 text-sm text-[var(--color-text-secondary)]">
-                        <span>지점 전용 매뉴얼</span>
-                        <strong className="text-[var(--color-text-primary)]">{store.manualCount}개</strong>
+
+                    <div role="group" aria-label="점주 등록 상태 필터" className="flex gap-2">
+                      {FILTER_OPTIONS.map((option) => {
+                        const isSelected = ownerFilter === option.value;
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            aria-pressed={isSelected}
+                            onClick={() => setOwnerFilter(option.value)}
+                            className={`min-h-[44px] rounded-lg border-2 px-4 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 ${
+                              isSelected
+                                ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/30 text-[var(--color-primary)]"
+                                : "border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                            }`}
+                          >
+                            {option.label}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
-                </article>
-              ))}
-            </div>
+
+                  {filteredStores.length === 0 ? (
+                    <div className="bg-white border border-[var(--color-border)] rounded-xl p-12 text-center shadow-sm">
+                      <Search size={28} className="mx-auto mb-3 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+                      <p className="text-base text-[var(--color-text-secondary)]">조건에 맞는 지점이 없습니다.</p>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Desktop Table */}
+                      <div className="hidden md:block bg-white border border-[var(--color-border)] rounded-xl shadow-sm overflow-hidden">
+                        <div className="overflow-x-auto">
+                          <table className="w-full">
+                            <caption className="sr-only">지점 목록</caption>
+                            <thead className="bg-[var(--color-bg-default)] border-b border-[var(--color-border)]">
+                              <tr>
+                                <th scope="col" className="px-6 py-4 text-left text-sm font-bold text-[var(--color-text-primary)]">지점명</th>
+                                <th scope="col" className="px-6 py-4 text-left text-sm font-bold text-[var(--color-text-primary)]">점주</th>
+                                <th scope="col" className="px-6 py-4 text-right text-sm font-bold text-[var(--color-text-primary)]">직원</th>
+                                <th scope="col" className="px-6 py-4 text-left text-sm font-bold text-[var(--color-text-primary)]">상태</th>
+                                <th scope="col" className="px-6 py-4 text-left text-sm font-bold text-[var(--color-text-primary)]">등록일</th>
+                                <th scope="col" className="px-6 py-4 text-center text-sm font-bold text-[var(--color-text-primary)]">관리</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {filteredStores.map((store) => (
+                                <tr
+                                  key={store.id}
+                                  className="border-t border-[var(--color-border)] hover:bg-[var(--color-bg-default)] transition-colors"
+                                >
+                                  <td className="px-6 py-4 text-base font-medium text-[var(--color-text-primary)]">{store.name}</td>
+                                  <td className="px-6 py-4 text-base text-[var(--color-text-primary)]">
+                                    {store.ownerNames.length > 0 ? (
+                                      store.ownerNames.join(", ")
+                                    ) : (
+                                      <span className="text-[var(--color-text-secondary)]">미지정</span>
+                                    )}
+                                  </td>
+                                  <td className="px-6 py-4 text-base text-right text-[var(--color-text-secondary)]">{store.staffCount}명</td>
+                                  <td className="px-6 py-4">
+                                    <OwnerStatusBadge hasOwner={store.ownerNames.length > 0} />
+                                  </td>
+                                  <td className="px-6 py-4 text-base text-[var(--color-text-secondary)]">{formatDate(store.createdAt)}</td>
+                                  <td className="px-6 py-4 text-center">
+                                    <div className="inline-flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleOpenMembers(store)}
+                                        aria-label={`${store.name} 소속 사용자 보기`}
+                                        className="inline-flex min-h-[44px] items-center gap-1 rounded-lg px-3 text-sm font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-default)] hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                                      >
+                                        <Users size={16} aria-hidden="true" /> 소속 사용자
+                                      </button>
+                                      <Link
+                                        href={`/hq/stores/${store.id}`}
+                                        aria-label={`${store.name} 상세 보기`}
+                                        className="inline-flex min-h-[44px] items-center gap-1 rounded-lg px-3 text-sm font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                                      >
+                                        상세 보기 <ChevronRight size={16} aria-hidden="true" />
+                                      </Link>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      {/* Mobile Cards */}
+                      <ul className="md:hidden space-y-3" aria-label="지점 목록">
+                        {filteredStores.map((store) => (
+                          <li key={store.id}>
+                            <Link
+                              href={`/hq/stores/${store.id}`}
+                              aria-label={`${store.name} 상세 보기`}
+                              className="block bg-white border border-[var(--color-border)] rounded-xl p-5 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                            >
+                              <div className="mb-3 flex items-start justify-between gap-3">
+                                <p className="text-base font-bold text-[var(--color-text-primary)]">{store.name}</p>
+                                <ChevronRight size={20} className="mt-0.5 shrink-0 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+                              </div>
+                              <div className="mb-3">
+                                <OwnerStatusBadge hasOwner={store.ownerNames.length > 0} />
+                              </div>
+                              <dl className="grid grid-cols-3 gap-2 text-sm">
+                                <div>
+                                  <dt className="text-[var(--color-text-secondary)]">점주</dt>
+                                  <dd className="font-medium text-[var(--color-text-primary)]">
+                                    {store.ownerNames.length > 0 ? store.ownerNames.join(", ") : "미지정"}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt className="text-[var(--color-text-secondary)]">직원</dt>
+                                  <dd className="font-medium text-[var(--color-text-primary)]">{store.staffCount}명</dd>
+                                </div>
+                                <div>
+                                  <dt className="text-[var(--color-text-secondary)]">등록일</dt>
+                                  <dd className="font-medium text-[var(--color-text-primary)]">{formatDate(store.createdAt)}</dd>
+                                </div>
+                              </dl>
+                            </Link>
+                            {/* Link 안에 버튼을 중첩하지 않도록 형제 요소로 둔다. */}
+                            <button
+                              type="button"
+                              onClick={() => void handleOpenMembers(store)}
+                              aria-label={`${store.name} 소속 사용자 보기`}
+                              className="mt-2 inline-flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-white px-3 text-sm font-medium text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                            >
+                              <Users size={16} aria-hidden="true" /> 소속 사용자 보기
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </>
+              )}
+            </>
           )}
         </main>
       </div>

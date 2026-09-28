@@ -3,7 +3,6 @@
 import React, { useEffect, useLayoutEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BookOpen, Store, ArrowRight, UploadCloud, CheckCircle2, X } from "lucide-react";
-import { Button } from "@/components/common/Button";
 import { createClient } from "@/lib/supabase/client";
 import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import HQSidebar from "@/components/hq/HQSidebar";
@@ -15,6 +14,7 @@ interface ManualSummary {
   totalManuals: number;
   commonManuals: number;
   storeManuals: number;
+  storesWithManuals: number;
 }
 
 type ManualSummaryItem = Pick<ManualRecord, "store_id"> & {
@@ -33,6 +33,7 @@ export default function ManualOverviewPage() {
     totalManuals: 0,
     commonManuals: 0,
     storeManuals: 0,
+    storesWithManuals: 0,
   });
   const [isLoadingSummary, setIsLoadingSummary] = useState(true);
   // 온보딩 화면에서 업로드/승인 후 넘어온 경우, 등록 결과를 한 번만 보여준다.
@@ -101,22 +102,25 @@ export default function ManualOverviewPage() {
       try {
         setIsLoadingSummary(true);
 
-        // Fetch all manuals
-        const response = await fetch("/api/manuals");
-        const data = (await response.json()) as { manuals?: ManualSummaryItem[]; error?: string };
+        // 공통 매뉴얼은 /api/manuals, 지점 매뉴얼은 franchise 범위의 /api/hq/stores 기준으로 센다.
+        // (/api/manuals는 HQ에게 공통 매뉴얼(store_id = null)만 돌려준다.) HQ 홈도 같은 기준을 쓴다.
+        const [manualsResponse, storesResponse] = await Promise.all([
+          fetch("/api/manuals"),
+          fetch("/api/hq/stores"),
+        ]);
+        const data = (await manualsResponse.json()) as { manuals?: ManualSummaryItem[]; error?: string };
+        const storesData = (await storesResponse.json()) as { stores?: { manualCount: number }[] };
 
-        if (response.ok && data.manuals) {
-          const manuals = data.manuals;
-
-          // Count by scope_type
-          const commonManuals = manuals.filter((m) => m.scope_type === "hq" || !m.store_id).length;
-          const storeManuals = manuals.filter((m) => m.store_id).length;
-          const totalManuals = manuals.length;
+        if (manualsResponse.ok && data.manuals) {
+          const commonManuals = data.manuals.filter((m) => m.scope_type === "hq" || !m.store_id).length;
+          const stores = storesResponse.ok ? storesData.stores ?? [] : [];
+          const storeManuals = stores.reduce((sum, store) => sum + store.manualCount, 0);
 
           setSummary({
-            totalManuals,
+            totalManuals: commonManuals + storeManuals,
             commonManuals,
             storeManuals,
+            storesWithManuals: stores.filter((store) => store.manualCount > 0).length,
           });
         }
       } catch (e) {
@@ -154,7 +158,7 @@ export default function ManualOverviewPage() {
       />
 
       <div className="lg:ml-[240px]">
-        <HQHeader userName={userName} franchiseName={franchiseName} />
+        <HQHeader userName={userName} franchiseName={franchiseName} onLogout={handleLogout} />
 
         <main className="p-6 lg:p-8 max-w-7xl mx-auto">
           {/* Header */}
@@ -164,13 +168,14 @@ export default function ManualOverviewPage() {
                 매뉴얼 관리
               </h1>
               <p className="text-base text-[var(--color-text-secondary)]">
-                {franchiseName}의 공통 매뉴얼과 지점 매뉴얼을 한곳에서 확인하세요.
+                본사와 각 지점의 매뉴얼 현황을 확인하고 관리합니다.
               </p>
             </div>
-            <Link href="/hq/manuals/onboarding?from=manuals" className="shrink-0">
-              <Button variant="primary">
-                <UploadCloud size={16} className="mr-2" /> 파일로 매뉴얼 추가
-              </Button>
+            <Link
+              href="/hq/manuals/onboarding?from=manuals"
+              className="inline-flex min-h-[44px] shrink-0 items-center justify-center self-start rounded-md bg-[var(--color-primary)] px-4 text-base font-semibold text-white transition-colors hover:bg-[var(--color-primary-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 sm:self-auto"
+            >
+              <UploadCloud size={16} className="mr-2" aria-hidden="true" /> 파일로 매뉴얼 추가
             </Link>
           </div>
 
@@ -260,101 +265,56 @@ export default function ManualOverviewPage() {
             </div>
           </div>
 
-          {/* Common Manuals Section */}
-          <div className="mb-8">
-            <div className="mb-4">
-              <h2 className="text-lg font-bold text-[var(--color-text-primary)] mb-1">
-                공통 매뉴얼
-              </h2>
-              <p className="text-sm text-[var(--color-text-secondary)]">
-                모든 지점에서 공통으로 사용하는 본사 매뉴얼입니다.
-              </p>
-            </div>
-
-            <div className="bg-white border border-[var(--color-border)] rounded-xl p-8 shadow-sm text-center">
-              {isLoadingSummary ? (
-                <p className="text-sm text-[var(--color-text-secondary)]">로드 중...</p>
-              ) : summary.commonManuals === 0 ? (
-                <div className="py-6">
-                  <div className="w-16 h-16 rounded-full bg-[var(--color-primary-light)] flex items-center justify-center mx-auto mb-4">
-                    <BookOpen size={32} className="text-[var(--color-primary)]" />
-                  </div>
-                  <p className="text-base text-[var(--color-text-secondary)] mb-6">
-                    아직 등록된 공통 매뉴얼이 없습니다.
-                  </p>
-                  <Link href="/hq/manuals/common">
-                    <Button variant="primary" className="mx-auto">
-                      공통 매뉴얼 관리 <ArrowRight size={16} className="ml-2" />
-                    </Button>
-                  </Link>
-                </div>
-              ) : (
-                <div className="py-6">
-                  <div className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-primary-light)]">
-                    <BookOpen size={20} className="text-[var(--color-primary)]" />
-                    <span className="font-medium text-[var(--color-primary)]">
-                      {summary.commonManuals}개 매뉴얼 등록됨
+          {/* Manual management navigation cards */}
+          <section aria-labelledby="manual-management-heading">
+            <h2 id="manual-management-heading" className="mb-4 text-lg font-bold text-[var(--color-text-primary)]">
+              매뉴얼 관리
+            </h2>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              {[
+                {
+                  href: "/hq/manuals/common",
+                  title: "공통 매뉴얼",
+                  description: "모든 지점에서 공통으로 사용하는 본사 매뉴얼입니다.",
+                  count: summary.commonManuals,
+                  action: "공통 매뉴얼 관리",
+                  Icon: BookOpen,
+                  iconClassName: "bg-[var(--color-primary-light)] text-[var(--color-primary)]",
+                },
+                {
+                  href: "/hq/manuals/stores",
+                  title: "지점 매뉴얼",
+                  description: "각 지점에서 등록한 매뉴얼을 확인할 수 있습니다.",
+                  count: summary.storeManuals,
+                  action: "지점 매뉴얼 보기",
+                  Icon: Store,
+                  iconClassName: "bg-amber-100 text-amber-600",
+                },
+              ].map((card) => (
+                <Link
+                  key={card.href}
+                  href={card.href}
+                  className="group flex h-full flex-col rounded-xl border border-[var(--color-border)] bg-white p-6 shadow-sm transition-colors hover:border-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2"
+                >
+                  <div className="mb-3 flex items-center gap-3">
+                    <span className={`flex h-10 w-10 items-center justify-center rounded-lg ${card.iconClassName}`}>
+                      <card.Icon size={20} aria-hidden="true" />
                     </span>
+                    <h3 className="text-lg font-bold text-[var(--color-text-primary)]">{card.title}</h3>
                   </div>
-                  <div className="mt-6">
-                    <Link href="/hq/manuals/common">
-                      <Button variant="outline">
-                        공통 매뉴얼 관리 <ArrowRight size={16} className="ml-2" />
-                      </Button>
-                    </Link>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Store Manuals Section */}
-          <div>
-            <div className="mb-4">
-              <h2 className="text-lg font-bold text-[var(--color-text-primary)] mb-1">
-                지점 매뉴얼
-              </h2>
-              <p className="text-sm text-[var(--color-text-secondary)]">
-                각 지점에서 등록한 매뉴얼을 확인할 수 있습니다.
-              </p>
-            </div>
-
-            <div className="bg-white border border-[var(--color-border)] rounded-xl p-8 shadow-sm text-center">
-              {isLoadingSummary ? (
-                <p className="text-sm text-[var(--color-text-secondary)]">로드 중...</p>
-              ) : summary.storeManuals === 0 ? (
-                <div className="py-6">
-                  <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-4">
-                    <Store size={32} className="text-amber-600" />
-                  </div>
-                  <p className="text-base text-[var(--color-text-secondary)] mb-6">
-                    아직 등록된 지점 매뉴얼이 없습니다.
+                  <p className="mb-6 text-sm text-[var(--color-text-secondary)]">{card.description}</p>
+                  <p className="text-xl font-bold text-[var(--color-text-primary)]">
+                    {isLoadingSummary ? "-" : `${card.count}개`}
                   </p>
-                  <Link href="/hq/manuals/stores">
-                    <Button variant="primary" className="mx-auto">
-                      지점 매뉴얼 보기 <ArrowRight size={16} className="ml-2" />
-                    </Button>
-                  </Link>
-                </div>
-              ) : (
-                <div className="py-6">
-                  <div className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-100">
-                    <Store size={20} className="text-amber-600" />
-                    <span className="font-medium text-amber-600">
-                      {summary.storeManuals}개 매뉴얼 등록됨
-                    </span>
-                  </div>
-                  <div className="mt-6">
-                    <Link href="/hq/manuals/stores">
-                      <Button variant="outline">
-                        지점 매뉴얼 보기 <ArrowRight size={16} className="ml-2" />
-                      </Button>
-                    </Link>
-                  </div>
-                </div>
-              )}
+                  <p className="mb-6 text-sm text-[var(--color-text-secondary)]">등록된 매뉴얼</p>
+                  <span className="mt-auto inline-flex items-center gap-1 border-t border-[var(--color-border)] pt-4 text-sm font-semibold text-[var(--color-primary)]">
+                    {card.action}
+                    <ArrowRight size={16} aria-hidden="true" className="transition-transform group-hover:translate-x-0.5" />
+                  </span>
+                </Link>
+              ))}
             </div>
-          </div>
+          </section>
         </main>
       </div>
     </div>

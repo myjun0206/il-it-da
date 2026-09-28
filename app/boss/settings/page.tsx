@@ -2,23 +2,16 @@
 
 import React, { useLayoutEffect, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, Check } from "lucide-react";
+import { AlertCircle, CheckCircle2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
-import { Button } from "@/components/common/Button";
 import ThemeSelector from "@/components/common/ThemeSelector";
 
 interface UserInfo {
   name: string;
   email: string;
-  role: string;
-}
-
-interface StoreInfo {
-  brand: string;
-  storeName: string;
-  address?: string;
+  franchiseName: string | null;
 }
 
 interface NotificationPreferences {
@@ -32,27 +25,72 @@ interface StoreMembership {
   storeName: string;
   status: string;
   role: string;
-  address?: string;
+}
+
+type Feedback = { type: "success" | "error"; message: string } | null;
+
+const NAME_MAX_LENGTH = 50;
+// 기존 구현과 같은 키: 알림 설정은 이 기기(브라우저)에만 저장된다.
+const NOTIFICATION_PREFS_KEY = "notificationPreferences";
+
+const NOTIFICATION_OPTIONS: { key: keyof NotificationPreferences; label: string; description: string }[] = [
+  { key: "staffJoinRequest", label: "직원 가입 승인 요청", description: "새로운 직원의 매장 가입 요청 알림" },
+  { key: "hqNotices", label: "본사 공지사항", description: "새로운 본사 공지를 알려드립니다." },
+  { key: "manualUpdates", label: "매뉴얼 관련 알림", description: "공통 매뉴얼 변경사항을 알려드립니다." },
+];
+
+const cardClass = "bg-white border border-[var(--color-border)] rounded-xl p-6 mb-6 shadow-sm";
+const rowClass =
+  "flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:gap-6 border-t border-[var(--color-border)] first:border-t-0 first:pt-0 last:pb-0";
+// 이름 행 아래에 이어지는 조회 전용 행: 항상 위쪽 구분선을 둔다.
+const followingRowClass =
+  "flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:gap-6 border-t border-[var(--color-border)] last:pb-0";
+const rowLabelClass = "w-40 shrink-0 text-sm font-medium text-[var(--color-text-secondary)]";
+const inputClass =
+  "h-11 w-full rounded-lg border-2 border-[var(--color-border)] bg-white px-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/30";
+const secondaryButtonClass =
+  "inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-lg border-2 border-[var(--color-border)] bg-white px-4 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-bg-default)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60";
+const primaryButtonClass =
+  "inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary)] px-4 text-sm font-medium text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60";
+
+function FeedbackMessage({ feedback }: { feedback: Feedback }) {
+  if (!feedback) return null;
+  const isSuccess = feedback.type === "success";
+  const Icon = isSuccess ? CheckCircle2 : AlertCircle;
+  return (
+    <p
+      role={isSuccess ? "status" : "alert"}
+      className={`mt-3 flex items-center gap-2 text-sm ${isSuccess ? "text-[var(--color-primary)]" : "text-red-700"}`}
+    >
+      <Icon size={16} aria-hidden="true" />
+      {feedback.message}
+    </p>
+  );
 }
 
 // 토글 스위치 컴포넌트
 function Toggle({
   checked,
   onChange,
+  label,
 }: {
   checked: boolean;
   onChange: (value: boolean) => void;
+  label: string;
 }) {
   return (
     <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+      className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 ${
         checked ? "bg-[var(--color-primary)]" : "bg-[var(--color-border)]"
       }`}
-      aria-label="Toggle notification"
     >
       <span
-        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+        className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform ${
           checked ? "translate-x-6" : "translate-x-1"
         }`}
       />
@@ -63,25 +101,21 @@ function Toggle({
 export default function SettingsPage() {
   const router = useRouter();
   const [isReady, setIsReady] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingStore, setIsLoadingStore] = useState(true);
   const [error, setError] = useState("");
-  const [userInfo, setUserInfo] = useState<UserInfo>({
-    name: "",
-    email: "",
-    role: "점주",
+  const [userInfo, setUserInfo] = useState<UserInfo>({ name: "", email: "", franchiseName: null });
+  const [storeName, setStoreName] = useState("");
+  const [notificationPrefs, setNotificationPrefs] = useState<NotificationPreferences>({
+    staffJoinRequest: true,
+    hqNotices: true,
+    manualUpdates: true,
   });
-  const [storeInfo, setStoreInfo] = useState<StoreInfo>({
-    brand: "",
-    storeName: "",
-    address: "",
-  });
-  const [notificationPrefs, setNotificationPrefs] =
-    useState<NotificationPreferences>({
-      staffJoinRequest: true,
-      hqNotices: true,
-      manualUpdates: true,
-    });
-  const [savedMessage, setSavedMessage] = useState("");
+  const [prefsFeedback, setPrefsFeedback] = useState<Feedback>(null);
+
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [isSavingName, setIsSavingName] = useState(false);
+  const [nameFeedback, setNameFeedback] = useState<Feedback>(null);
 
   // Authorization & Data Loading
   useLayoutEffect(() => {
@@ -101,18 +135,31 @@ export default function SettingsPage() {
           return;
         }
 
-        // 사용자 정보 설정
-        const name = data.session.user.user_metadata?.name || "점주";
-        const email = data.session.user.email || "";
+        const user = data.session.user;
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("full_name, brand_id")
+          .eq("id", user.id)
+          .maybeSingle<{ full_name: string | null; brand_id: string | null }>();
+
+        // 소속 프랜차이즈는 profiles.brand_id와 기존 franchises 목록 API로만 확인한다.
+        let franchiseName: string | null = null;
+        if (profile?.brand_id) {
+          const response = await fetch("/api/franchises");
+          if (response.ok) {
+            const result = (await response.json()) as { franchises?: { id: string; name: string }[] };
+            franchiseName = result.franchises?.find((item) => item.id === profile.brand_id)?.name ?? null;
+          }
+        }
 
         setUserInfo({
-          name,
-          email,
-          role: "점주",
+          name: profile?.full_name || user.user_metadata?.name || "",
+          email: user.email || "",
+          franchiseName,
         });
 
-        // localStorage에서 알림 설정 로드
-        const savedPrefs = localStorage.getItem("notificationPreferences");
+        // 기존 구현: localStorage에서 알림 설정 로드
+        const savedPrefs = localStorage.getItem(NOTIFICATION_PREFS_KEY);
         if (savedPrefs) {
           try {
             setNotificationPrefs(JSON.parse(savedPrefs));
@@ -131,44 +178,32 @@ export default function SettingsPage() {
     checkAuthAndInit();
   }, [router]);
 
-  // 매장 정보 로드
+  // 현재 매장 로드 (기존 구현과 같은 API/선택 매장 규칙)
   useEffect(() => {
     const loadStoreInfo = async () => {
       if (!isReady) return;
 
       try {
-        setIsLoading(true);
+        setIsLoadingStore(true);
         const response = await fetch("/api/signup/store-membership");
         const result = await response.json();
 
         if (response.ok && result.success && Array.isArray(result.data)) {
-          // 현재 선택된 매장 또는 첫 번째 approved 매장
           const storedStoreId = sessionStorage.getItem("selectedStoreId");
-
           const approved = (result.data as StoreMembership[]).filter(
-            (m: StoreMembership) => m.status === "approved" && m.role === "owner"
+            (m) => m.status === "approved" && m.role === "owner"
           );
 
           if (approved.length > 0) {
-            const selectedStore = approved.find(
-              (s: StoreMembership) => s.storeId === storedStoreId
-            ) || approved[0];
-
-            // 브랜드명 추출 (store_name에서 점 이름 제거)
-            const brandName = selectedStore.storeName.split(" ")[0] || "";
-
-            setStoreInfo({
-              brand: brandName,
-              storeName: selectedStore.storeName,
-              address: selectedStore.address || "주소 정보 없음",
-            });
+            const selectedStore = approved.find((s) => s.storeId === storedStoreId) || approved[0];
+            setStoreName(selectedStore.storeName);
           }
         }
       } catch (e) {
         console.error("Failed to load store info:", e);
         setError("매장 정보를 불러올 수 없습니다.");
       } finally {
-        setIsLoading(false);
+        setIsLoadingStore(false);
       }
     };
 
@@ -187,23 +222,74 @@ export default function SettingsPage() {
     }
   };
 
-  // 알림 설정 저장
+  // 알림 설정 저장 (기존 구현: 이 기기의 localStorage)
   const handleNotificationChange = (key: keyof NotificationPreferences) => {
     const updated = {
       ...notificationPrefs,
       [key]: !notificationPrefs[key],
     };
     setNotificationPrefs(updated);
-    localStorage.setItem("notificationPreferences", JSON.stringify(updated));
+    try {
+      localStorage.setItem(NOTIFICATION_PREFS_KEY, JSON.stringify(updated));
+      setPrefsFeedback({ type: "success", message: "이 기기에 저장되었습니다." });
+    } catch {
+      setPrefsFeedback({ type: "error", message: "이 브라우저에서는 알림 설정을 저장할 수 없습니다." });
+    }
+    setTimeout(() => setPrefsFeedback(null), 2000);
+  };
 
-    // 임시 저장 메시지 표시
-    setSavedMessage("저장되었습니다.");
-    setTimeout(() => setSavedMessage(""), 2000);
+  const startEditName = () => {
+    setNameDraft(userInfo.name);
+    setNameFeedback(null);
+    setIsEditingName(true);
+  };
+
+  const handleSaveName = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (isSavingName) return;
+
+    const name = nameDraft.trim();
+    if (!name) {
+      setNameFeedback({ type: "error", message: "이름을 입력해주세요." });
+      return;
+    }
+
+    setIsSavingName(true);
+    setNameFeedback(null);
+    try {
+      const response = await fetch("/api/boss/profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const result = (await response.json()) as { name?: string; error?: string };
+      if (!response.ok || !result.name) {
+        throw new Error(result.error || "이름을 저장하지 못했습니다.");
+      }
+
+      const savedName = result.name;
+      setUserInfo((current) => ({ ...current, name: savedName }));
+      setIsEditingName(false);
+      setNameFeedback({ type: "success", message: "이름이 변경되었습니다." });
+      // 헤더가 읽는 세션의 user_metadata도 새 이름으로 갱신한다.
+      void createClient().auth.refreshSession();
+    } catch (e) {
+      setNameFeedback({ type: "error", message: e instanceof Error ? e.message : "이름을 저장하지 못했습니다." });
+    } finally {
+      setIsSavingName(false);
+    }
   };
 
   if (!isReady) {
     return null;
   }
+
+  const readOnlyRows = [
+    { label: "이메일", value: userInfo.email || "등록된 이메일 없음" },
+    { label: "소속 프랜차이즈", value: userInfo.franchiseName || "연결된 프랜차이즈 정보 없음" },
+    { label: "현재 매장", value: isLoadingStore ? "불러오는 중..." : storeName || "승인된 매장 없음" },
+    { label: "역할", value: "점주" },
+  ];
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-default)] flex">
@@ -213,226 +299,156 @@ export default function SettingsPage() {
       {/* Main Content */}
       <div className="flex-1 flex flex-col lg:ml-[240px]">
         {/* Header */}
-        <OwnerHeader userName={userInfo.name} storeName={storeInfo.storeName} />
+        <OwnerHeader userName={userInfo.name} storeName={storeName} onLogout={handleLogout} />
 
         {/* Page Content */}
         <main className="flex-1 overflow-y-auto">
-          <div className="p-6 lg:p-8 max-w-4xl mx-auto">
+          <div className="p-6 lg:p-8 max-w-7xl mx-auto">
             {/* 페이지 제목 */}
             <div className="mb-8">
-              <h1 className="text-3xl lg:text-4xl font-bold text-[var(--color-text-primary)] mb-2">
-                환경설정
-              </h1>
+              <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">환경설정</h1>
               <p className="text-base text-[var(--color-text-secondary)]">
-                계정과 매장 이용 환경을 관리하세요.
+                계정 정보와 서비스 이용 설정을 관리할 수 있습니다.
               </p>
             </div>
 
             {/* 에러 메시지 */}
             {error && (
-              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
-                <AlertCircle size={20} className="text-red-600 flex-shrink-0 mt-0.5" />
+              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3" role="alert">
+                <AlertCircle size={20} className="text-red-600 flex-shrink-0 mt-0.5" aria-hidden="true" />
                 <p className="text-sm text-red-700">{error}</p>
               </div>
             )}
 
-            {/* 내 정보 카드 */}
-            <div className="bg-white border border-[var(--color-border)] rounded-lg p-6 mb-6">
-              <h2 className="text-xl font-bold text-[var(--color-text-primary)] mb-6">
-                내 정보
+            {/* 1. 계정 정보 */}
+            <section aria-labelledby="account-heading" className={cardClass}>
+              <h2 id="account-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-1">
+                계정 정보
               </h2>
+              <p className="mb-5 text-sm text-[var(--color-text-secondary)]">서비스에서 사용하는 내 정보를 확인하고 관리합니다.</p>
 
-              <div className="space-y-5">
-                <div>
-                  <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
-                    이름
-                  </label>
-                  <p className="text-base text-[var(--color-text-primary)] font-medium">
-                    {userInfo.name}
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
-                    이메일
-                  </label>
-                  <p className="text-base text-[var(--color-text-primary)]">
-                    {userInfo.email}
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
-                    역할
-                  </label>
-                  <p className="text-base text-[var(--color-text-primary)]">
-                    {userInfo.role}
-                  </p>
-                </div>
-              </div>
-
-              <p className="text-xs text-[var(--color-text-secondary)] mt-6 pt-6 border-t border-[var(--color-border)]">
-                이메일과 역할은 변경할 수 없습니다. 계정 정보 변경이 필요한 경우 고객
-                지원팀에 문의해주세요.
-              </p>
-            </div>
-
-            {/* 매장 정보 카드 */}
-            <div className="bg-white border border-[var(--color-border)] rounded-lg p-6 mb-6">
-              <h2 className="text-xl font-bold text-[var(--color-text-primary)] mb-6">
-                매장 정보
-              </h2>
-
-              {isLoading ? (
-                <div className="text-center py-8 text-[var(--color-text-secondary)]">
-                  로딩 중...
-                </div>
-              ) : (
-                <div className="space-y-5">
-                  <div>
-                    <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
-                      브랜드
+              <div>
+                {isEditingName ? (
+                  <form onSubmit={handleSaveName} className={rowClass}>
+                    <label htmlFor="owner-name" className={rowLabelClass}>
+                      이름
                     </label>
-                    <p className="text-base text-[var(--color-text-primary)] font-medium">
-                      {storeInfo.brand}
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
-                      현재 매장
-                    </label>
-                    <p className="text-base text-[var(--color-text-primary)] font-medium">
-                      {storeInfo.storeName}
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
-                      매장 주소
-                    </label>
-                    <p className="text-base text-[var(--color-text-primary)]">
-                      {storeInfo.address}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              <p className="text-xs text-[var(--color-text-secondary)] mt-6 pt-6 border-t border-[var(--color-border)]">
-                매장 정보는 변경할 수 없습니다. 새로운 매장 추가가 필요한 경우 가입
-                페이지에서 신청해주세요.
-              </p>
-            </div>
-
-            {/* 알림 설정 카드 */}
-            <div className="bg-white border border-[var(--color-border)] rounded-lg p-6 mb-6">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-xl font-bold text-[var(--color-text-primary)]">
-                  알림 설정
-                </h2>
-                {savedMessage && (
-                  <div className="flex items-center gap-2 text-xs text-[var(--color-primary)]">
-                    <Check size={14} />
-                    {savedMessage}
+                    <input
+                      id="owner-name"
+                      type="text"
+                      value={nameDraft}
+                      maxLength={NAME_MAX_LENGTH}
+                      onChange={(event) => setNameDraft(event.target.value)}
+                      autoFocus
+                      className={`${inputClass} sm:max-w-sm`}
+                    />
+                    <div className="flex gap-2 sm:ml-auto">
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingName(false)}
+                        disabled={isSavingName}
+                        className={secondaryButtonClass}
+                      >
+                        취소
+                      </button>
+                      <button type="submit" disabled={isSavingName} className={primaryButtonClass}>
+                        {isSavingName ? "저장 중..." : "변경사항 저장"}
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className={rowClass}>
+                    <span className={rowLabelClass}>이름</span>
+                    <span className="text-base font-medium text-[var(--color-text-primary)] break-all">
+                      {userInfo.name || "등록된 이름 없음"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={startEditName}
+                      aria-label="이름 수정"
+                      className={`${secondaryButtonClass} sm:ml-auto self-start sm:self-auto`}
+                    >
+                      수정
+                    </button>
                   </div>
                 )}
+                <dl>
+                  {readOnlyRows.map((row) => (
+                    <div key={row.label} className={followingRowClass}>
+                      <dt className={rowLabelClass}>{row.label}</dt>
+                      <dd className="text-base font-medium text-[var(--color-text-primary)] break-all">{row.value}</dd>
+                      <dd className="text-sm text-[var(--color-text-tertiary)] sm:ml-auto">변경 불가</dd>
+                    </div>
+                  ))}
+                </dl>
               </div>
+              <FeedbackMessage feedback={nameFeedback} />
 
-              <div className="space-y-4">
-                {/* 직원 가입 요청 */}
-                <div className="flex items-start justify-between p-4 rounded-lg bg-[var(--color-bg-surface)] hover:bg-[var(--color-bg-default)] transition-colors">
-                  <div className="flex-1 pr-4">
-                    <p className="text-base font-medium text-[var(--color-text-primary)]">
-                      직원 가입 요청
-                    </p>
-                    <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-                      새로운 직원의 매장 가입 요청 알림
-                    </p>
-                  </div>
-                  <div className="flex-shrink-0">
-                    <Toggle
-                      checked={notificationPrefs.staffJoinRequest}
-                      onChange={() => handleNotificationChange("staffJoinRequest")}
-                    />
-                  </div>
-                </div>
-
-                {/* 본사 공지사항 */}
-                <div className="flex items-start justify-between p-4 rounded-lg bg-[var(--color-bg-surface)] hover:bg-[var(--color-bg-default)] transition-colors">
-                  <div className="flex-1 pr-4">
-                    <p className="text-base font-medium text-[var(--color-text-primary)]">
-                      본사 공지사항
-                    </p>
-                    <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-                      새로운 본사 공지를 알려드립니다.
-                    </p>
-                  </div>
-                  <div className="flex-shrink-0">
-                    <Toggle
-                      checked={notificationPrefs.hqNotices}
-                      onChange={() => handleNotificationChange("hqNotices")}
-                    />
-                  </div>
-                </div>
-
-                {/* 공통 매뉴얼 업데이트 */}
-                <div className="flex items-start justify-between p-4 rounded-lg bg-[var(--color-bg-surface)] hover:bg-[var(--color-bg-default)] transition-colors">
-                  <div className="flex-1 pr-4">
-                    <p className="text-base font-medium text-[var(--color-text-primary)]">
-                      공통 매뉴얼 업데이트
-                    </p>
-                    <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-                      공통 매뉴얼 변경사항을 알려드립니다.
-                    </p>
-                  </div>
-                  <div className="flex-shrink-0">
-                    <Toggle
-                      checked={notificationPrefs.manualUpdates}
-                      onChange={() => handleNotificationChange("manualUpdates")}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <p className="text-xs text-[var(--color-text-secondary)] mt-6 pt-6 border-t border-[var(--color-border)]">
-                알림 설정은 이 기기에만 적용됩니다. 다른 기기에서는 별도로 설정할
-                수 있습니다.
+              <p className="text-sm text-[var(--color-text-secondary)] mt-5 pt-5 border-t border-[var(--color-border)]">
+                이메일, 소속 프랜차이즈, 매장 및 역할 변경이 필요한 경우 본사에 문의해주세요.
               </p>
-            </div>
+            </section>
 
-            {/* 화면 설정 카드 */}
-            <div className="bg-white border border-[var(--color-border)] rounded-lg p-6 mb-6">
-              <h2 className="text-xl font-bold text-[var(--color-text-primary)] mb-6">
+            {/* 2. 알림 설정 */}
+            <section aria-labelledby="notification-heading" className={cardClass}>
+              <h2 id="notification-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-1">
+                알림 설정
+              </h2>
+              <p className="mb-5 text-sm text-[var(--color-text-secondary)]">받고 싶은 알림을 선택합니다.</p>
+
+              <div>
+                {NOTIFICATION_OPTIONS.map((option) => (
+                  <div key={option.key} className={`${rowClass} sm:justify-between`}>
+                    <div className="min-w-0">
+                      <p className="text-base font-medium text-[var(--color-text-primary)]">{option.label}</p>
+                      <p className="mt-0.5 text-sm text-[var(--color-text-secondary)]">{option.description}</p>
+                    </div>
+                    <Toggle
+                      checked={notificationPrefs[option.key]}
+                      onChange={() => handleNotificationChange(option.key)}
+                      label={option.label}
+                    />
+                  </div>
+                ))}
+              </div>
+              <FeedbackMessage feedback={prefsFeedback} />
+
+              <p className="text-sm text-[var(--color-text-secondary)] mt-5 pt-5 border-t border-[var(--color-border)]">
+                알림 설정은 이 기기(브라우저)에만 저장되며, 계정 단위 알림 수신 설정에는 아직 반영되지 않습니다.
+              </p>
+            </section>
+
+            {/* 3. 화면 설정 */}
+            <section aria-labelledby="display-heading" className={cardClass}>
+              <h2 id="display-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-1">
                 화면 설정
               </h2>
-              <p className="text-sm text-[var(--color-text-secondary)] mb-6">
-                일잇다 화면의 테마를 설정합니다.
+              <p className="mb-5 text-sm text-[var(--color-text-secondary)]">
+                일잇다 화면의 테마를 설정합니다. 시스템 설정은 기기의 라이트/다크 설정을 따릅니다.
               </p>
               <ThemeSelector />
-            </div>
+            </section>
 
-            {/* 보안 카드 */}
-            <div className="bg-white border border-[var(--color-border)] rounded-lg p-6 mb-6">
-              <div className="flex items-start gap-4">
-                <div className="flex-1">
-                  <h2 className="text-xl font-bold text-[var(--color-text-primary)] mb-2">
-                    보안
-                  </h2>
-                  <p className="text-sm text-[var(--color-text-secondary)] mb-6">
-                    현재 기기에서 일잇다 계정에서 로그아웃합니다.
-                  </p>
-                  <Button
-                    onClick={handleLogout}
-                    className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200"
-                  >
-                    로그아웃
-                  </Button>
-                </div>
+            {/* 4. 보안 */}
+            <section aria-labelledby="security-heading" className={cardClass}>
+              <h2 id="security-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-1">
+                보안
+              </h2>
+              <p className="mb-5 text-sm text-[var(--color-text-secondary)]">현재 로그인된 계정과 세션을 관리합니다.</p>
+              <div className={rowClass}>
+                <span className={rowLabelClass}>로그인 계정</span>
+                <span className="text-base font-medium text-[var(--color-text-primary)] break-all">
+                  {userInfo.email || "등록된 이메일 없음"}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="inline-flex min-h-[44px] shrink-0 items-center justify-center self-start rounded-lg border-2 border-red-200 bg-transparent px-4 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 sm:ml-auto sm:self-auto"
+                >
+                  로그아웃
+                </button>
               </div>
-            </div>
-
-            {/* 하단 여백 */}
-            <div className="h-12" />
+            </section>
           </div>
         </main>
       </div>

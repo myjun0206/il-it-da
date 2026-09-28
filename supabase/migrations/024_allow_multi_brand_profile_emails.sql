@@ -1,9 +1,9 @@
--- 022: Allow one auth email to be represented by multiple brand profiles.
+-- 024: Allow one auth email to be represented by multiple brand profiles.
 --
 -- Brand-scoped profile rows intentionally copy the master profile email. The
 -- old global lower(email) uniqueness rule therefore conflicts with the
 -- multi-brand profile model. Email uniqueness belongs to auth.users; profile
--- identity is enforced by the user_id/brand_id indexes from migration 021.
+-- identity is enforced by the user_id/brand_id indexes from migration 023.
 
 begin;
 
