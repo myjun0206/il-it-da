@@ -62,9 +62,10 @@ describe("app/hq/manuals/onboarding/page.tsx (preview screen usability contract)
   const source = readSource("app/hq/manuals/onboarding/page.tsx");
 
   test("shows the three required plain-language summary lines after a successful preview", () => {
+    assert.match(source, /파일 내용을 정리했어요\. 저장하기 전에 확인해 주세요\./);
     assert.match(source, /세부 매뉴얼 \{preview\.totalDetailManualCount\}개를 찾았습니다\./);
     assert.match(source, /\{preview\.topCategoryCount\}개의 항목으로 정리했습니다\./);
-    assert.match(source, /내용을 확인한 후 저장해 주세요\./);
+    assert.match(source, /제목이나 분류가 다르면 여기서 바꿀 수 있어요\./);
   });
 
   test("reuses the shared ManualPreviewEditor component instead of duplicating the editing UI", () => {
@@ -80,7 +81,7 @@ describe("app/hq/manuals/onboarding/page.tsx (preview screen usability contract)
 
   test("handleSave has an in-flight guard (isSubmittingRef) in addition to the isSaving disabled state", () => {
     assert.match(source, /isSubmittingRef\.current/);
-    assert.match(source, /if \(!preview \|\| isSubmittingRef\.current\) return;/);
+    assert.match(source, /if \(!preview \|\| !idempotencyKey \|\| isSubmittingRef\.current\) return;/);
   });
 
   test("save success/failure feedback uses plain Korean sentences, and errors are announced (role=alert)", () => {

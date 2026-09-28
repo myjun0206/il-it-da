@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireHqUser } from "@/lib/supabase/hq-auth";
-import { saveManualGroupsWithChunks } from "@/lib/rag/save-manual-sections";
+import { saveManualGroupsWithBatchGuard } from "@/lib/manuals/save-manuals-with-batch";
 import type { AnalyzedManualGroup } from "@/lib/manuals/analyze-manual-with-ai";
 import {
   extractManualGroups,
@@ -20,8 +20,20 @@ type UploadManualsResponse = {
   error?: string;
 };
 
-// 파일 하나 안에 여러 카테고리/타이틀/세부 매뉴얼이 섞여 있을 수 있으므로,
-// 파일명을 카테고리로 강제하지 않고 extractManualGroups(표 구조 또는 텍스트 패턴 인식, 100% 로컬 규칙 기반)로 분석한다.
+/**
+ * Deprecated: HQ 공식 파일 업로드 경로는 /api/manuals/preview -> 사용자 검토 ->
+ * /api/manuals/preview/confirm이다. 이 라우트는 저장 전 확인 단계 없이 바로 저장한다.
+ *
+ * 앱 화면에서는 더 이상 호출하지 않지만, 외부/기존 호출자를 위해 호환 목적으로 남겨둔다.
+ * 중복 방지는 preview/confirm과 동일한 saveManualGroupsWithBatchGuard로 보호된다.
+ *
+ * 제거 조건: (1) 020 마이그레이션이 운영에 적용되고, (2) 한 번의 릴리스 주기 동안 이 경로로
+ * 들어오는 요청이 없음을 확인하고, (3) 팀 합의로 외부 호출 계약이 없음을 확정한 뒤 삭제한다.
+ *
+ * 파일 하나 안에 여러 카테고리/타이틀/세부 매뉴얼이 섞여 있을 수 있으므로,
+ * 파일명을 카테고리로 강제하지 않고 extractManualGroups(표 구조 또는 텍스트 패턴 인식,
+ * 100% 로컬 규칙 기반)로 분석한다.
+ */
 export async function POST(request: Request): Promise<NextResponse<UploadManualsResponse>> {
   const hqUser = await requireHqUser();
 
@@ -92,15 +104,19 @@ export async function POST(request: Request): Promise<NextResponse<UploadManuals
   }
 
   const supabase = createAdminClient();
+  const result = await saveManualGroupsWithBatchGuard(supabase, {
+    auth: hqUser,
+    groups,
+    scope: { scopeType: "hq", franchiseId: hqUser.franchiseId, storeId: null },
+  });
 
-  try {
-    const manuals = await saveManualGroupsWithChunks(supabase, hqUser, groups);
-    return NextResponse.json({ manuals }, { status: 201 });
-  } catch (e) {
-    console.error("[MANUALS_UPLOAD] save failed:", e);
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "매뉴얼 저장 중 오류가 발생했습니다." },
-      { status: 500 },
-    );
+  if (result.kind === "blocked") {
+    return NextResponse.json({ error: result.error }, { status: result.status });
   }
+
+  if (result.kind === "save_failed") {
+    return NextResponse.json({ error: result.error }, { status: 500 });
+  }
+
+  return NextResponse.json({ manuals: result.manuals }, { status: result.kind === "saved" ? 201 : 200 });
 }

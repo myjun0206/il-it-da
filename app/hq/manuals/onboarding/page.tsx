@@ -19,7 +19,7 @@ const MAX_UPLOAD_MB = Math.round(MAX_UPLOAD_FILE_SIZE_BYTES / (1024 * 1024));
 // 매뉴얼 관리 화면(app/hq/manuals/page.tsx)과 같은 키를 사용한다.
 const MANUAL_UPLOAD_NOTICE_KEY = "ilitda:manual-upload-notice";
 
-const STEPS = ["파일 올리기", "내용 확인", "승인"] as const;
+const STEPS = ["파일 선택", "내용 확인", "저장 완료"] as const;
 
 function setUploadNotice(message: string) {
   try {
@@ -45,6 +45,7 @@ export default function ManualOnboardingPage() {
   const [categoryLabels, setCategoryLabels] = useState<Record<string, string>>({});
   const [manualEdits, setManualEdits] = useState<Record<string, ManualEditState>>({});
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+  const [idempotencyKey, setIdempotencyKey] = useState("");
   const [error, setError] = useState("");
   // 매뉴얼 관리 화면의 "파일로 매뉴얼 추가"로 들어왔는지(true) 회원가입 직후 온보딩인지(false).
   // hq 레이아웃이 force-dynamic이라 Suspense 없이 useSearchParams를 써도 된다.
@@ -140,14 +141,19 @@ export default function ManualOnboardingPage() {
           method: "POST",
           body: formData,
         });
-        const data = (await response.json()) as { preview?: ManualUploadPreview; error?: string };
+        const data = (await response.json()) as {
+          preview?: ManualUploadPreview;
+          idempotencyKey?: string;
+          error?: string;
+        };
 
-        if (!response.ok || !data.preview) {
+        if (!response.ok || !data.preview || !data.idempotencyKey) {
           throw new Error(data.error || "파일을 분석하는 중 오류가 발생했습니다.");
         }
 
         const nextPreview = data.preview;
         setPreview(nextPreview);
+        setIdempotencyKey(data.idempotencyKey);
         setCategoryLabels(
           Object.fromEntries(nextPreview.categories.map((category) => [category.tempId, category.label])),
         );
@@ -187,6 +193,7 @@ export default function ManualOnboardingPage() {
 
   const resetToUpload = () => {
     setPreview(null);
+    setIdempotencyKey("");
     setCategoryLabels({});
     setManualEdits({});
     setCollapsedCategories(new Set());
@@ -230,7 +237,7 @@ export default function ManualOnboardingPage() {
   };
 
   const handleSave = async () => {
-    if (!preview || isSubmittingRef.current) return;
+    if (!preview || !idempotencyKey || isSubmittingRef.current) return;
 
     setError("");
 
@@ -250,7 +257,7 @@ export default function ManualOnboardingPage() {
       const response = await fetch("/api/manuals/preview/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ manuals: payloadManuals }),
+        body: JSON.stringify({ manuals: payloadManuals, idempotencyKey }),
       });
       const data = (await response.json()) as { error?: string };
 
@@ -457,18 +464,22 @@ export default function ManualOnboardingPage() {
             <>
               <div className="text-center mb-8 break-keep">
                 <h1 className="text-2xl sm:text-3xl font-bold text-[var(--color-text-primary)] mb-3">
-                  매뉴얼을 정리했어요
+                  파일 내용을 정리했어요. 저장하기 전에 확인해 주세요.
                 </h1>
                 {preview && (
                   <div className="text-[var(--color-text-secondary)] space-y-1">
                     <p>세부 매뉴얼 {preview.totalDetailManualCount}개를 찾았습니다.</p>
                     <p>{preview.topCategoryCount}개의 항목으로 정리했습니다.</p>
                     <p className="font-semibold text-[var(--color-text-primary)]">
-                      내용을 확인한 후 저장해 주세요.
+                      제목이나 분류가 다르면 여기서 바꿀 수 있어요.
                     </p>
                   </div>
                 )}
               </div>
+
+              <p role="status" aria-live="polite" className="sr-only">
+                {isSaving ? "매뉴얼을 저장하고 있어요." : ""}
+              </p>
 
               {preview && (
                 <ManualPreviewEditor

@@ -39,7 +39,7 @@ describe("app/boss/store-manuals/upload/page.tsx (store-owner preview screen)", 
 
   test("sends storeId in both the preview upload and the confirm save request", () => {
     assert.match(source, /formData\.append\("storeId", storeId\)/);
-    assert.match(source, /JSON\.stringify\(\{ storeId, manuals: payloadManuals \}\)/);
+    assert.match(source, /JSON\.stringify\(\{ storeId, manuals: payloadManuals, idempotencyKey \}\)/);
   });
 
   test("the save button is disabled while saving (prevents duplicate-click double submits)", () => {
@@ -53,7 +53,7 @@ describe("app/boss/store-manuals/upload/page.tsx (store-owner preview screen)", 
 
   test("handleSave has an in-flight guard (isSubmittingRef) in addition to the isSaving disabled state", () => {
     assert.match(source, /isSubmittingRef\.current/);
-    assert.match(source, /if \(!preview \|\| !storeId \|\| isSubmittingRef\.current\) return;/);
+    assert.match(source, /if \(!preview \|\| !storeId \|\| !idempotencyKey \|\| isSubmittingRef\.current\) return;/);
   });
 
   test("redirects unapproved/non-owner sessions before any file can be uploaded", () => {

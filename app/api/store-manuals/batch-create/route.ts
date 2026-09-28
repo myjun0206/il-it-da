@@ -3,7 +3,8 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { requireStoreOwner } from "@/lib/manuals/store-manual-auth";
-import { saveManualGroupsWithChunks, type ManualGroupInput } from "@/lib/rag/save-manual-sections";
+import { type ManualGroupInput } from "@/lib/rag/save-manual-sections";
+import { saveManualGroupsWithBatchGuard } from "@/lib/manuals/save-manuals-with-batch";
 import type { ManualRecord } from "@/lib/types/manual";
 
 export const runtime = "nodejs";
@@ -111,8 +112,23 @@ export async function POST(request: Request): Promise<NextResponse<BatchCreateRe
       return NextResponse.json({ error: "등록할 카테고리/타이틀/세부 매뉴얼 정보가 올바르지 않습니다." }, { status: 400 });
     }
 
-    const manuals = await saveManualGroupsWithChunks(adminClient, storeAuth, groups, storeId);
-    return NextResponse.json({ manuals }, { status: 201 });
+    // 구식 "AI 분석" 흐름의 확정 저장 경로. preview/confirm과 동일한 중복 방지 계약을 적용한다.
+    const result = await saveManualGroupsWithBatchGuard(adminClient, {
+      auth: storeAuth,
+      groups,
+      storeId: storeAuth.storeId,
+      scope: { scopeType: "store", franchiseId: storeAuth.franchiseId, storeId: storeAuth.storeId },
+    });
+
+    if (result.kind === "blocked") {
+      return NextResponse.json({ error: result.error }, { status: result.status });
+    }
+
+    if (result.kind === "save_failed") {
+      return NextResponse.json({ error: result.error }, { status: 500 });
+    }
+
+    return NextResponse.json({ manuals: result.manuals }, { status: result.kind === "saved" ? 201 : 200 });
   } catch (e) {
     console.error("POST /api/store-manuals/batch-create error:", e);
     return NextResponse.json(

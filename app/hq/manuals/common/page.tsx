@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, FileText, Pencil, Plus, Search, Upload, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
@@ -95,7 +95,6 @@ function groupByCategory(manuals: ManualRecord[], groups: ManualGroup[]): Manual
 
 export default function ManualDashboardPage() {
   const router = useRouter();
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [userName, setUserName] = useState("본사 관리자");
   const [franchiseName, setFranchiseName] = useState("메가MGC커피");
   const [isReady, setIsReady] = useState(false);
@@ -108,8 +107,6 @@ export default function ManualDashboardPage() {
   const [selectedCategoryName, setSelectedCategoryName] = useState<string | null>(null);
   const [selectedTitleId, setSelectedTitleId] = useState<string | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<ManualGroup | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadError, setUploadError] = useState("");
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [categoryName, setCategoryName] = useState("");
   const [categoryError, setCategoryError] = useState("");
@@ -325,32 +322,8 @@ export default function ManualDashboardPage() {
     setItemError("");
   };
 
-  const handleFileSelected = async (file: File) => {
-    setUploadError("");
-    setIsUploading(true);
-
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const response = await fetch("/api/manuals/upload", {
-        method: "POST",
-        body: formData,
-      });
-      const data = (await response.json()) as { error?: string };
-
-      if (!response.ok) {
-        throw new Error(data.error || "매뉴얼 업로드 중 오류가 발생했습니다.");
-      }
-
-      await refetchManuals();
-      showToast("매뉴얼이 업로드되었습니다.");
-    } catch (e) {
-      setUploadError(e instanceof Error ? e.message : "매뉴얼 업로드 중 오류가 발생했습니다.");
-    } finally {
-      setIsUploading(false);
-    }
-  };
+  // 파일 업로드는 미리보기 화면이 공식 경로다. 이 화면에서 바로 저장하지 않는다.
+  const goToManualUpload = () => router.push("/hq/manuals/onboarding?from=manuals");
 
   const handleCreateCategory = async () => {
     const category = categoryName.trim();
@@ -800,20 +773,6 @@ export default function ManualDashboardPage() {
             </div>
           )}
 
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".xlsx,.xls,.csv,.txt,.pdf"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = "";
-              if (file) {
-                handleFileSelected(file);
-              }
-            }}
-          />
-
           {isLoadingManuals ? (
             <p className="text-sm text-[var(--color-text-secondary)]">불러오는 중...</p>
           ) : view === "categories" ? (
@@ -847,12 +806,8 @@ export default function ManualDashboardPage() {
                   >
                     전체 삭제
                   </button>
-                  <Button
-                    variant="outline"
-                    className="min-h-[44px]"
-                    onClick={() => fileInputRef.current?.click()}
-                    isLoading={isUploading}
-                  >
+                  {/* origin/develop: 파일 업로드는 중복 방지되는 미리보기 흐름(/hq/manuals/onboarding)으로 이동한다. */}
+                  <Button variant="outline" className="min-h-[44px]" onClick={goToManualUpload}>
                     <Upload size={16} className="mr-2" aria-hidden="true" /> 매뉴얼 파일 업로드
                   </Button>
                   <Button variant="primary" className="min-h-[44px]" onClick={() => setShowCategoryModal(true)}>
@@ -871,12 +826,7 @@ export default function ManualDashboardPage() {
                     매뉴얼 파일을 업로드하거나 첫 카테고리를 추가해보세요.
                   </p>
                   <div className="flex flex-wrap justify-center gap-2">
-                    <Button
-                      variant="outline"
-                      className="min-h-[44px]"
-                      onClick={() => fileInputRef.current?.click()}
-                      isLoading={isUploading}
-                    >
+                    <Button variant="outline" className="min-h-[44px]" onClick={goToManualUpload}>
                       <Upload size={16} className="mr-2" aria-hidden="true" /> 매뉴얼 파일 업로드
                     </Button>
                     <Button variant="primary" className="min-h-[44px]" onClick={() => setShowCategoryModal(true)}>
@@ -1127,10 +1077,6 @@ export default function ManualDashboardPage() {
               )}
 
             </section>
-          )}
-
-          {uploadError && (
-            <p className="mt-4 text-sm text-[var(--color-status-error)]">{uploadError}</p>
           )}
         </main>
       </div>

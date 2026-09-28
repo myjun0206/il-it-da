@@ -3,7 +3,8 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { requireHqUser } from "@/lib/supabase/hq-auth";
-import { saveManualGroupsWithChunks, type ManualItemInput } from "@/lib/rag/save-manual-sections";
+import { type ManualItemInput } from "@/lib/rag/save-manual-sections";
+import { saveManualGroupsWithBatchGuard } from "@/lib/manuals/save-manuals-with-batch";
 import type { ManualRecord } from "@/lib/types/manual";
 
 export const runtime = "nodejs";
@@ -182,7 +183,15 @@ export async function POST(request: Request): Promise<NextResponse<CreateManuals
   const topic = getString(body.topic);
   const category = getString(body.category);
   const items = parseItems(body.items);
-  const storeId = getString(body.storeId);
+
+  // 이 라우트는 항상 HQ 공통(scope_type "hq") 범위로만 저장한다.
+  // body.storeId로 범위를 바꿀 수 있게 두면 중복 방지 범위까지 우회된다. 지점 매뉴얼은 store-manuals 라우트를 쓴다.
+  if (getString(body.storeId)) {
+    return NextResponse.json(
+      { error: "지점 매뉴얼은 지점 매뉴얼 화면에서 등록해주세요." },
+      { status: 400 },
+    );
+  }
 
   if (body.categoryOnly === true) {
     if (!category) {
@@ -218,16 +227,23 @@ export async function POST(request: Request): Promise<NextResponse<CreateManuals
   }
 
   const supabase = createAdminClient();
+  // 단건 작성에는 미리보기 단계가 없어 발급된 key가 없다. guard가 요청단위 key를 만들고,
+  // 같은 내용의 재전송은 content fingerprint로 걸러낸다.
+  const result = await saveManualGroupsWithBatchGuard(supabase, {
+    auth: hqUser,
+    groups: [{ category, topic, items }],
+    scope: { scopeType: "hq", franchiseId: hqUser.franchiseId, storeId: null },
+  });
 
-  try {
-    const manuals = await saveManualGroupsWithChunks(supabase, hqUser, [{ category, topic, items }], storeId);
-    return NextResponse.json({ manuals }, { status: 201 });
-  } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "매뉴얼 저장 중 오류가 발생했습니다." },
-      { status: 500 },
-    );
+  if (result.kind === "blocked") {
+    return NextResponse.json({ error: result.error }, { status: result.status });
   }
+
+  if (result.kind === "save_failed") {
+    return NextResponse.json({ error: result.error }, { status: 500 });
+  }
+
+  return NextResponse.json({ manuals: result.manuals }, { status: result.kind === "saved" ? 201 : 200 });
 }
 
 export async function PATCH(request: Request): Promise<NextResponse<UpdateManualsResponse>> {

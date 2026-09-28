@@ -40,6 +40,11 @@
     "tests/manuals/store-manual-auth.test.ts",
     "tests/manuals/store-manual-upload-ui.test.ts",
     "tests/manuals/manual-confirm-flow.test.ts",
+    "tests/manuals/manual-content-fingerprint.test.ts",
+    "tests/manuals/manual-upload-batch.test.ts",
+    "tests/manuals/manual-upload-idempotency-api.test.ts",
+    "tests/manuals/manual-save-entrypoint.test.ts",
+    "tests/manuals/hq-manual-upload-flow.test.ts",
     "lib/rag/answer-prompt.ts",
     "lib/rag/chunk-manual.ts",
     "lib/rag/search-query.ts",
@@ -67,7 +72,11 @@
     "lib/manuals/build-manual-preview.ts",
     "lib/manuals/extract-manual-groups.ts",
     "lib/manuals/parse-confirmed-manual-groups.ts",
-    "lib/manuals/store-manual-auth.ts"
+    "lib/manuals/store-manual-auth.ts",
+    "lib/manuals/manual-content-fingerprint.ts",
+    "lib/manuals/manual-upload-batch.ts",
+    "lib/manuals/manual-upload-batch-messages.ts",
+    "lib/manuals/save-manuals-with-batch.ts"
   ],
   "exclude": ["node_modules"]
 }

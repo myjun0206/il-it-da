@@ -214,8 +214,9 @@ describe("app/api/manuals/upload/route.ts (Excel wiring contract)", () => {
     assert.match(extractorSource, /if \(extension === "\.docx"\) \{\s*\n\s*return parseManualText\(await extractDocxManualText\(file\)\);/);
   });
 
-  test("the parsed groups are saved via saveManualGroupsWithChunks, the same function HQ manual create/store-manual create use", () => {
-    assert.match(source, /const manuals = await saveManualGroupsWithChunks\(supabase, hqUser, groups\);/);
+  test("the parsed groups are saved via the shared batch guard, which HQ manual create/store-manual create also use", () => {
+    assert.match(source, /await saveManualGroupsWithBatchGuard\(supabase, \{/);
+    assert.match(source, /groups,/);
   });
 
   test("no AI/OpenAI/Vision classification is used for Excel parsing (parseManualText is a local-rules-only fallback)", () => {
