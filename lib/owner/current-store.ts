@@ -10,8 +10,13 @@ export interface OwnerStore {
   storeName: string;
 }
 
+export interface OwnerPendingStore extends OwnerStore {
+  membershipId: string;
+  requestedAt?: string;
+}
+
 export type OwnerStoreResolution =
-  | { status: "ready"; stores: OwnerStore[]; current: OwnerStore | null }
+  | { status: "ready"; stores: OwnerStore[]; pending: OwnerPendingStore[]; current: OwnerStore | null }
   | { status: "error" };
 
 const SELECTED_STORE_ID_KEY = "selectedStoreId";
@@ -19,7 +24,7 @@ const SELECTED_STORE_NAME_KEY = "selectedStoreName";
 
 interface MembershipResponse {
   success?: boolean;
-  data?: Array<{ storeId: string; storeName: string; status: string; role: string }>;
+  data?: Array<{ membershipId: string; storeId: string; storeName: string; status: string; role: string; requestedAt?: string }>;
 }
 
 function readStoredStoreId(): string | null {
@@ -58,11 +63,16 @@ export async function resolveOwnerCurrentStore(): Promise<OwnerStoreResolution> 
       .filter((membership) => membership.status === "approved" && membership.role === "owner")
       .map(({ storeId, storeName }) => ({ storeId, storeName }));
 
+    // 본사 승인 대기 중인 운영 매장 신청 (선택/사용 불가, 관리 화면 표시용)
+    const pending: OwnerPendingStore[] = result.data
+      .filter((membership) => membership.status === "pending" && membership.role === "owner")
+      .map(({ membershipId, storeId, storeName, requestedAt }) => ({ membershipId, storeId, storeName, requestedAt }));
+
     const storedStoreId = readStoredStoreId();
     const current = stores.find((store) => store.storeId === storedStoreId) ?? stores[0] ?? null;
     persistSelectedStore(current);
 
-    return { status: "ready", stores, current };
+    return { status: "ready", stores, pending, current };
   } catch (error) {
     console.error("Failed to resolve owner store:", error);
     return { status: "error" };

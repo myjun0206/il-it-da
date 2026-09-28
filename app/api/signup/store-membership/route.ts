@@ -16,6 +16,9 @@ interface CreateMembershipRequest {
 interface CreateMembershipResponse {
   success: boolean;
   membershipId?: string;
+  created?: boolean;
+  membershipStatus?: string;
+  code?: string;
   error?: string;
   details?: string;
 }
@@ -198,8 +201,9 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
     });
 
     if (!profileResult.success) {
+      logSafeAuthError("STORE_MEMBERSHIP_PROFILE_FAILED", profileResult.details ?? profileResult.error);
       return NextResponse.json(
-        { success: false, error: profileResult.error, details: profileResult.details },
+        { success: false, error: profileResult.error },
         { status: 500 }
       );
     }
@@ -219,15 +223,19 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
       {
         success: membershipResult.success,
         membershipId: membershipResult.membershipId,
+        created: membershipResult.created,
+        membershipStatus: membershipResult.membershipStatus,
+        code: membershipResult.code,
         error: membershipResult.error,
-        details: membershipResult.details,
+        // 서버 오류(5xx)의 내부 DB 메시지는 클라이언트로 보내지 않는다.
+        details: membershipResult.status < 500 ? membershipResult.details : undefined,
       },
       { status: membershipResult.status }
     );
   } catch (error) {
     logSafeAuthError("STORE_MEMBERSHIP_POST_UNEXPECTED", error);
     return NextResponse.json(
-      { success: false, error: "Unexpected error", details: String(error) },
+      { success: false, error: "Unexpected error" },
       { status: 500 }
     );
   }

@@ -1,45 +1,61 @@
 "use client";
 
-import React from "react";
-import { Bell } from "lucide-react";
+import { useEffect, useState } from "react";
+import NotificationCenter from "@/components/common/NotificationCenter";
+import ProfileMenu from "@/components/common/ProfileMenu";
+import { useStaffShell } from "@/components/staff/StaffShellContext";
+import { formatStoreDisplayName } from "@/lib/stores/search-stores";
+import { createClient } from "@/lib/supabase/client";
 
-interface StaffHeaderProps {
-  userName: string;
-  storeName: string;
-}
+// 직원 공통 Header: HQ/Owner와 같은 알림(NotificationCenter)과 계정 메뉴(ProfileMenu)를 쓴다.
+// 이름/역할/현재 근무 매장은 모두 StaffShell 공통 상태에서 읽는다(별도 매장 state 없음).
+export default function StaffHeader() {
+  const { userName, roleLabel, selectedStore, isStoresLoading, logout } = useStaffShell();
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const storeLabel = selectedStore ? formatStoreDisplayName(selectedStore.name) : isStoresLoading ? "" : "근무 매장 없음";
+  const subtitle = [storeLabel, roleLabel].filter(Boolean).join(" · ");
 
-export default function StaffHeader({
-  userName,
-  storeName,
-}: StaffHeaderProps) {
+  useEffect(() => {
+    let isCancelled = false;
+    const supabase = createClient();
+
+    void (async () => {
+      try {
+        const { data: userData } = await supabase.auth.getUser();
+        if (isCancelled || !userData.user) return;
+
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("avatar_url")
+          .eq("id", userData.user.id)
+          .maybeSingle<{ avatar_url: string | null }>();
+
+        if (!isCancelled) {
+          setAvatarUrl(profile?.avatar_url || null);
+        }
+      } catch (e) {
+        console.error("Failed to load avatar:", e);
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
   return (
-    <header className="sticky top-0 z-50 bg-white border-b border-[var(--color-border)] h-16 shrink-0">
-      <div className="flex items-center justify-end px-6 h-full">
-        {/* Right */}
-        <div className="flex items-center gap-6">
-          {/* Notification */}
-          <button className="relative p-2 rounded-lg hover:bg-[var(--color-bg-surface)] transition-colors">
-            <Bell size={20} className="text-[var(--color-text-secondary)]" />
-            <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
-          </button>
-
-          {/* Profile */}
-          <div className="flex items-center gap-3 pl-6 border-l border-[var(--color-border)]">
-            <div className="text-right">
-              <p className="text-sm font-semibold text-[var(--color-text-primary)]">
-                {userName}
-              </p>
-              <p className="text-xs text-[var(--color-text-secondary)]">
-                {storeName} · 직원
-              </p>
-            </div>
-            <div className="w-8 h-8 rounded-full bg-[var(--color-primary-light)] flex items-center justify-center">
-              <span className="text-xs font-bold text-[var(--color-primary)]">
-                {userName.charAt(0)}
-              </span>
-            </div>
-          </div>
-        </div>
+    <header className="sticky top-0 z-20 bg-white border-b border-[var(--color-border)] h-16 shrink-0">
+      <div className="flex items-center justify-end gap-3 sm:gap-6 pl-16 pr-4 sm:pr-6 h-full lg:pl-6">
+        <NotificationCenter />
+        <ProfileMenu
+          userName={userName || " "}
+          subtitle={subtitle}
+          roleLabel={roleLabel}
+          settingsHref="/staff/settings"
+          avatarUrl={avatarUrl}
+          context={selectedStore ? { label: "현재 근무 매장", value: formatStoreDisplayName(selectedStore.name) } : undefined}
+          onLogout={() => void logout()}
+        />
       </div>
     </header>
   );

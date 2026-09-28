@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Search, ChevronRight, Check, Loader2 } from "lucide-react";
 import type { Store } from "@/lib/types/store";
+import { searchStores } from "@/lib/stores/search-stores";
 
 interface StoreSearchDropdownProps {
   stores?: Store[]; // 더 이상 사용하지 않음 (이전 호환성 유지)
@@ -12,15 +13,6 @@ interface StoreSearchDropdownProps {
   selectedStoreIds?: string[];
 }
 
-interface ApiStore {
-  id: string;
-  name: string;
-  address: string;
-  roadAddress: string;
-  category?: string;
-  lat: number;
-  lng: number;
-}
 
 export default function StoreSearchDropdown({
   searchQuery,
@@ -77,35 +69,9 @@ export default function StoreSearchDropdown({
     // 350ms debounce
     debounceTimerRef.current = setTimeout(async () => {
       try {
-        const response = await fetch(
-          `/api/stores/search?q=${encodeURIComponent(searchQuery)}`,
-          {
-            signal: abortControllerRef.current?.signal,
-          }
-        );
-
-        if (!response.ok) {
-          throw new Error("검색 실패");
-        }
-
-        const data = await response.json();
-        const apiResults = data.results || [];
-
-        // API 결과를 Store 타입으로 변환
-        const convertedStores: Store[] = apiResults.map(
-          (result: ApiStore) => ({
-            id: result.id,
-            brandId: `brand_${result.id}`, // 임시 brandId
-            brandName: result.name.split(" ")[0] || result.name, // 첫 단어를 브랜드명으로
-            name: result.name,
-            address: result.address,
-            latitude: result.lat,
-            longitude: result.lng,
-            status: "active" as const,
-            createdAt: new Date(),
-            manualCount: 0,
-            memberCount: 0,
-          })
+        const convertedStores = await searchStores(
+          searchQuery,
+          abortControllerRef.current?.signal,
         );
 
         setFilteredStores(convertedStores);

@@ -8,6 +8,18 @@ interface StoreMapProps {
   selectedStoreIds?: string[];
   onStoreSelect?: (store: Store) => void;
   centerStore?: Store;
+  /** 지정하면 모든 마커를 기본/강조 스타일로 그리고, 이 매장 마커를 강조하며 지도 중심으로 이동한다. */
+  focusedStoreId?: string | null;
+}
+
+// focusedStoreId 사용 시 마커 스타일 (일잇다 green 강조 / 중립 회색)
+function markerIcon(isFocused: boolean) {
+  const size = isFocused ? 22 : 14;
+  const color = isFocused ? "#1c6b52" : "#60736b";
+  return {
+    content: `<span style="display:block;width:${size}px;height:${size}px;border-radius:9999px;background:${color};border:3px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.35)"></span>`,
+    anchor: { x: size / 2 + 3, y: size / 2 + 3 },
+  };
 }
 
 declare global {
@@ -39,7 +51,9 @@ export default function StoreMap({
   selectedStoreIds = [],
   onStoreSelect,
   centerStore,
+  focusedStoreId,
 }: StoreMapProps) {
+  const usesFocus = focusedStoreId !== undefined;
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapRef = useRef<any>(null);
@@ -103,6 +117,10 @@ export default function StoreMap({
         maxZoom: 21,
       };
 
+      // 지도를 새로 만들 때 이전 지도에 붙어 있던 마커를 정리해야 새 지도에 다시 그려진다.
+      markersMapRef.current.forEach((marker) => marker.setMap(null));
+      markersMapRef.current.clear();
+
       mapRef.current = new maps.Map(containerRef.current, mapOptions);
     } catch (error) {
       console.error("Failed to initialize NAVER Map:", error);
@@ -147,7 +165,9 @@ export default function StoreMap({
       const marker = new maps.Marker({
         position: new maps.LatLng(store.latitude, store.longitude),
         map: mapRef.current,
-        title: `${store.brandName} ${store.name}`,
+        // 검색 결과 name에 이미 브랜드명이 들어 있으므로 brandName을 다시 붙이지 않는다.
+        title: store.name,
+        ...(usesFocus ? { icon: markerIcon(false) } : {}),
       });
 
       // 마커 클릭 이벤트
@@ -183,7 +203,24 @@ export default function StoreMap({
         mapRef.current.setZoom(15);
       }
     }
-  }, [selectedStoreIds, stores, onStoreSelect]);
+  }, [selectedStoreIds, stores, onStoreSelect, usesFocus]);
+
+  // 강조 마커 동기화 (focusedStoreId를 넘긴 경우에만)
+  useEffect(() => {
+    if (!usesFocus || !mapRef.current || !window.naver?.maps) return;
+    const { maps } = window.naver;
+
+    markersMapRef.current.forEach((marker, storeId) => {
+      const isFocused = storeId === focusedStoreId;
+      marker.setIcon(markerIcon(isFocused));
+      marker.setZIndex(isFocused ? 100 : 1);
+    });
+
+    const focused = stores.find((store) => store.id === focusedStoreId);
+    if (focused?.latitude && focused?.longitude) {
+      mapRef.current.panTo(new maps.LatLng(focused.latitude, focused.longitude));
+    }
+  }, [usesFocus, focusedStoreId, stores, selectedStoreIds]);
 
   // cleanup: 컴포넌트 언마운트 시 모든 마커 제거
   useEffect(() => {

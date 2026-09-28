@@ -1,0 +1,126 @@
+import { NextResponse } from "next/server";
+
+import { POST as ragQuery } from "@/app/api/rag/query/route";
+import { buildConversationTitle, isMissingConversationTable } from "@/lib/staff/conversations";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
+
+export const runtime = "nodejs";
+
+type ChatBody = { question?: unknown; storeId?: unknown; conversationId?: unknown };
+
+/**
+ * 직원 AI 질문 + 대화 기록 저장.
+ * - conversationId가 있으면: 본인 대화인지 확인하고, 매장은 "대화에 저장된 store_id"만 사용한다(요청 storeId 무시).
+ * - 없으면: 요청 storeId로 새 대화를 시작하고, 답변이 성공한 뒤에야 대화를 만든다(빈 대화 row 없음).
+ * - 답변은 기존 /api/rag/query 로직을 그대로 호출한다. 그 안에서 로그인 사용자 + 해당 매장 approved staff
+ *   membership을 서버에서 다시 검증하고, 해당 매장/프랜차이즈 범위의 매뉴얼만 검색한다.
+ */
+export async function POST(request: Request): Promise<NextResponse> {
+  let body: ChatBody;
+  try {
+    body = (await request.json()) as ChatBody;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+  }
+
+  const serverClient = await createClient();
+  const { data: userData, error: userError } = await serverClient.auth.getUser();
+  if (userError || !userData.user) {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+  const userId = userData.user.id;
+  const question = typeof body.question === "string" ? body.question : "";
+  const adminClient = createAdminClient();
+
+  let conversationId: string | null = typeof body.conversationId === "string" && body.conversationId ? body.conversationId : null;
+  let storeId = typeof body.storeId === "string" ? body.storeId : "";
+  let historyAvailable = true;
+
+  if (conversationId) {
+    const { data: conversation, error } = await adminClient
+      .from("conversations")
+      .select("id, store_id")
+      .eq("id", conversationId)
+      .eq("user_id", userId)
+      .maybeSingle<{ id: string; store_id: string }>();
+
+    if (error && !isMissingConversationTable(error)) {
+      return NextResponse.json({ error: "대화를 불러오지 못했습니다." }, { status: 500 });
+    }
+    if (!conversation) {
+      return NextResponse.json({ error: "대화를 찾을 수 없습니다.", code: "CONVERSATION_NOT_FOUND" }, { status: 404 });
+    }
+    storeId = conversation.store_id;
+  }
+
+  // 기존 RAG 경로 재사용 (인증/매장 승인 검증/검색/답변/질문 로그)
+  const ragResponse = await ragQuery(
+    new Request(new URL("/api/rag/query", request.url), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, storeId }),
+    }),
+  );
+  const ragBody = (await ragResponse.json()) as {
+    answer?: string;
+    status?: "answered" | "cautious" | "insufficient";
+    source?: { title?: string; category?: string } | null;
+    similarity?: number | null;
+    error?: string;
+  };
+
+  if (!ragResponse.ok || !ragBody.answer) {
+    return NextResponse.json(
+      { error: ragBody.error ?? "답변을 받지 못했어요.", code: ragResponse.status === 403 ? "STORE_FORBIDDEN" : undefined },
+      { status: ragResponse.status },
+    );
+  }
+
+  // 대화 저장 (실패해도 답변은 돌려준다)
+  try {
+    const now = new Date().toISOString();
+    if (!conversationId) {
+      const { data: created, error: createError } = await adminClient
+        .from("conversations")
+        .insert({ user_id: userId, store_id: storeId, title: buildConversationTitle(question), created_at: now, updated_at: now })
+        .select("id")
+        .single<{ id: string }>();
+      if (createError) throw createError;
+      conversationId = created.id;
+    }
+
+    const { error: messageError } = await adminClient.from("conversation_messages").insert([
+      { conversation_id: conversationId, role: "user", content: question.trim(), created_at: now },
+      {
+        conversation_id: conversationId,
+        role: "assistant",
+        content: ragBody.answer,
+        status: ragBody.status ?? null,
+        source_title: ragBody.source?.title ?? null,
+        source_category: ragBody.source?.category ?? null,
+        similarity: typeof ragBody.similarity === "number" ? ragBody.similarity : null,
+        created_at: new Date(Date.now() + 1).toISOString(),
+      },
+    ]);
+    if (messageError) throw messageError;
+
+    await adminClient.from("conversations").update({ updated_at: now }).eq("id", conversationId).eq("user_id", userId);
+  } catch (error) {
+    historyAvailable = false;
+    if (!isMissingConversationTable(error as { code?: string })) {
+      console.error("POST /api/staff/chat save error:", error);
+    }
+    if (!body.conversationId) conversationId = null;
+  }
+
+  return NextResponse.json({
+    answer: ragBody.answer,
+    status: ragBody.status,
+    source: ragBody.source ?? null,
+    similarity: ragBody.similarity ?? null,
+    conversationId,
+    storeId,
+    historyAvailable,
+  });
+}
