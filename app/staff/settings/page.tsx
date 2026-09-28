@@ -54,7 +54,7 @@ export default function StaffSettingsPage() {
       try {
         const supabase = createClient();
         const { data: userData } = await supabase.auth.getUser();
-        
+
         if (!isCancelled && userData.user) {
           setUserId(userData.user.id);
           setEmail(userData.user.email ?? "");
