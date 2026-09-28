@@ -46,7 +46,10 @@ describe("buildManualPreview", () => {
   });
 
   test("flags an unclassified manual with a non-empty warning and never silently drops it", () => {
-    const preview = buildManualPreview(GROUPS);
+    const preview = buildManualPreview([
+      ...GROUPS,
+      { category: "", topic: "분류 없는 제목", items: ["내용"] },
+    ]);
     const unclassified = preview.manuals.find((manual) => manual.classification === "unclassified");
     assert.ok(unclassified);
     assert.ok(unclassified!.warnings.length > 0);

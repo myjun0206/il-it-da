@@ -1,9 +1,8 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Building2, Pencil, Search, Store } from "lucide-react";
+import { Building2, Loader2, Search, Store, Users, X } from "lucide-react";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
 import { createClient } from "@/lib/supabase/client";
@@ -23,6 +22,17 @@ interface StoreManualItem {
   store_id: string | null;
 }
 
+interface StoreMember {
+  id: string;
+  userId: string;
+  role: "owner" | "staff";
+  status: string;
+  requestedAt: string;
+  approvedAt: string | null;
+  name: string;
+  email: string | null;
+}
+
 async function readJson<T>(response: Response, fallbackMessage: string): Promise<T> {
   const data = (await response.json()) as T & { error?: string };
   if (!response.ok) {
@@ -39,6 +49,10 @@ export default function HqStoresPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [selectedStore, setSelectedStore] = useState<StoreInfo | null>(null);
+  const [storeMembers, setStoreMembers] = useState<StoreMember[]>([]);
+  const [isMembersLoading, setIsMembersLoading] = useState(false);
+  const [membersError, setMembersError] = useState("");
 
   useEffect(() => {
     const loadPage = async () => {
@@ -95,6 +109,26 @@ export default function HqStoresPage() {
       await supabase.auth.signOut();
     } finally {
       router.push("/");
+    }
+  };
+
+  const handleOpenMembers = async (store: StoreInfo) => {
+    setSelectedStore(store);
+    setStoreMembers([]);
+    setMembersError("");
+    setIsMembersLoading(true);
+
+    try {
+      const response = await fetch(`/api/hq/stores/${encodeURIComponent(store.id)}/members`);
+      const data = (await response.json()) as { members?: StoreMember[]; error?: string };
+      if (!response.ok) {
+        throw new Error(data.error || "지점 소속 사용자를 불러오지 못했습니다.");
+      }
+      setStoreMembers(data.members ?? []);
+    } catch (error) {
+      setMembersError(error instanceof Error ? error.message : "지점 소속 사용자를 불러오지 못했습니다.");
+    } finally {
+      setIsMembersLoading(false);
     }
   };
 
@@ -164,15 +198,18 @@ export default function HqStoresPage() {
                   }}
                   className="relative cursor-pointer rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-bg-surface)] p-6 text-left shadow-md transition-all hover:-translate-y-0.5 hover:border-[var(--color-primary)] hover:bg-white hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:ring-offset-2"
                 >
-                  <Link
-                    href={`/hq/stores/${store.id}`}
-                    onClick={(event) => event.stopPropagation()}
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void handleOpenMembers(store);
+                    }}
                     className="absolute right-4 top-4 z-10 inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] shadow-sm transition-colors hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
-                    aria-label={`${store.name} 관리`}
-                    title={`${store.name} 관리`}
+                    aria-label={`${store.name} 소속 직원 확인`}
+                    title={`${store.name} 소속 직원 확인`}
                   >
-                    <Pencil size={15} />
-                  </Link>
+                    <Users size={15} />
+                  </button>
                   <div className="relative">
                     <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--color-primary-light)] text-sm font-bold text-[var(--color-primary)]">
                       {index + 1}
@@ -182,8 +219,8 @@ export default function HqStoresPage() {
                       <h2 className="text-lg font-bold text-[var(--color-text-primary)]">{store.name}</h2>
                     </div>
                     <div className="flex items-center justify-between border-t border-[var(--color-border)] pt-4 text-sm text-[var(--color-text-secondary)]">
-                      <span>지점 전용 매뉴얼</span>
-                      <strong className="text-[var(--color-text-primary)]">{store.manualCount}개</strong>
+                        <span>지점 전용 매뉴얼</span>
+                        <strong className="text-[var(--color-text-primary)]">{store.manualCount}개</strong>
                     </div>
                   </div>
                 </article>
@@ -192,6 +229,76 @@ export default function HqStoresPage() {
           )}
         </main>
       </div>
+
+      {selectedStore && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="store-members-dialog-title"
+          onClick={() => setSelectedStore(null)}
+        >
+          <div
+            className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-6 flex items-start justify-between gap-4">
+              <div>
+                <p className="mb-1 text-sm text-[var(--color-text-secondary)]">지점 소속 사용자</p>
+                <h2 id="store-members-dialog-title" className="text-xl font-bold text-[var(--color-text-primary)]">
+                  {selectedStore.name}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedStore(null)}
+                aria-label="지점 소속 사용자 모달 닫기"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-default)]"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {isMembersLoading ? (
+              <div className="flex items-center justify-center gap-2 py-12 text-sm text-[var(--color-text-secondary)]">
+                <Loader2 size={18} className="animate-spin" /> 소속 사용자를 불러오는 중...
+              </div>
+            ) : membersError ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{membersError}</div>
+            ) : (
+              <div className="grid gap-6 md:grid-cols-2">
+                {(["owner", "staff"] as const).map((role) => {
+                  const members = storeMembers.filter((member) => member.role === role);
+                  return (
+                    <section key={role}>
+                      <h3 className="mb-3 text-base font-bold text-[var(--color-text-primary)]">
+                        {role === "owner" ? "지점 소속 사장" : "지점 소속 알바"}
+                        <span className="ml-2 text-sm font-medium text-[var(--color-text-secondary)]">{members.length}명</span>
+                      </h3>
+                      {members.length === 0 ? (
+                        <div className="rounded-lg border border-dashed border-[var(--color-border)] p-5 text-center text-sm text-[var(--color-text-secondary)]">
+                          {role === "owner" ? "등록된 사장이 없습니다." : "등록된 알바가 없습니다."}
+                        </div>
+                      ) : (
+                        <ul className="space-y-2">
+                          {members.map((member) => (
+                            <li key={member.id} className="rounded-lg border border-[var(--color-border)] p-3">
+                              <p className="font-semibold text-[var(--color-text-primary)]">{member.name}</p>
+                              <p className="mt-1 break-all text-sm text-[var(--color-text-secondary)]">
+                                {member.email || "이메일 미등록"}
+                              </p>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </section>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

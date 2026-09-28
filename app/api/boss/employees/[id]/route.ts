@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { createNotification } from "@/lib/notifications";
+import { ensureBrandProfileForApprovedMembership } from "@/lib/signup/store-membership-service";
 
 export const runtime = "nodejs";
 
@@ -160,6 +161,19 @@ export async function PUT(
 
     try {
       await syncProfileApprovalStatus(adminClient, membership.user_id);
+      if (newStatus === "approved") {
+        const brandProfileSynced = await ensureBrandProfileForApprovedMembership(
+          adminClient,
+          membership.user_id,
+          membership.store_id,
+        );
+        if (!brandProfileSynced) {
+          return NextResponse.json(
+            { success: false, error: "브랜드 프로필 동기화에 실패했습니다." },
+            { status: 500 },
+          );
+        }
+      }
     } catch (profileUpdateError) {
       console.error("[PUT /api/boss/employees/[id]] Profile approval sync error:", profileUpdateError);
       return NextResponse.json(

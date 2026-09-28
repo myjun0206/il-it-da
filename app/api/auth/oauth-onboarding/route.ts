@@ -140,6 +140,7 @@ export async function POST(
     .from("profiles")
     .insert({
       id: user.id,
+      user_id: user.id,
       email: user.email?.trim().toLowerCase() || null,
       full_name: name,
       role,

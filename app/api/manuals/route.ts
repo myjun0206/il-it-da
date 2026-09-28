@@ -104,11 +104,61 @@ export async function GET(request: Request): Promise<NextResponse<ManualsListRes
       return NextResponse.json({ error: "매뉴얼 열람 권한이 없습니다." }, { status: 403 });
     }
 
-    // 프랜차이즈 정보 조회
+    // HQ는 master profile의 franchise를 사용하고, owner는 브랜드별 profile과
+    // 승인된 owner membership이 모두 확인된 franchise만 조회한다.
     let franchiseId: string | null = null;
     let brandName = "본사";
+    let ownerFranchiseIds: string[] = [];
 
-    if (profile.brand_id) {
+    if (profile.role === "owner") {
+      const [{ data: brandProfiles, error: brandProfileError }, { data: memberships, error: membershipError }] =
+        await Promise.all([
+          adminClient
+            .from("profiles")
+            .select("brand_id")
+            .eq("user_id", userData.user.id)
+            .eq("role", "owner")
+            .not("brand_id", "is", null),
+          adminClient
+            .from("store_memberships")
+            .select("store_id, franchise_id")
+            .eq("user_id", userData.user.id)
+            .eq("role", "owner")
+            .eq("status", "approved")
+            .not("franchise_id", "is", null),
+        ]);
+
+      if (brandProfileError || membershipError) {
+        return NextResponse.json({ error: "브랜드 매뉴얼 범위를 확인하지 못했습니다." }, { status: 500 });
+      }
+
+      const storeIds = [...new Set((memberships ?? []).map((membership) => membership.store_id))];
+      const { data: stores, error: storesError } = storeIds.length > 0
+        ? await adminClient
+            .from("stores")
+            .select("id, franchise_id")
+            .in("id", storeIds)
+        : { data: [], error: null };
+
+      if (storesError) {
+        return NextResponse.json({ error: "매장 브랜드 범위를 확인하지 못했습니다." }, { status: 500 });
+      }
+
+      const profileBrandIds = new Set(
+        (brandProfiles ?? []).map((row) => row.brand_id).filter((id): id is string => !!id),
+      );
+      const franchiseIdByStoreId = new Map((stores ?? []).map((store) => [store.id, store.franchise_id]));
+      ownerFranchiseIds = [...new Set(
+        (memberships ?? [])
+          .filter((membership) =>
+            !!membership.franchise_id &&
+            profileBrandIds.has(membership.franchise_id) &&
+            franchiseIdByStoreId.get(membership.store_id) === membership.franchise_id,
+          )
+          .map((membership) => membership.franchise_id)
+          .filter((id): id is string => !!id),
+      )];
+    } else if (profile.brand_id) {
       const { data: franchise } = await adminClient
         .from("franchises")
         .select("id, name")
@@ -143,7 +193,14 @@ export async function GET(request: Request): Promise<NextResponse<ManualsListRes
       .order("created_at", { ascending: true });
 
     // 프랜차이즈별 스코핑
-    query = franchiseId ? query.eq("franchise_id", franchiseId) : query.eq("brand_name", brandName);
+    if (profile.role === "owner") {
+      if (ownerFranchiseIds.length === 0) {
+        return NextResponse.json({ manuals: [] });
+      }
+      query = query.in("franchise_id", ownerFranchiseIds);
+    } else {
+      query = franchiseId ? query.eq("franchise_id", franchiseId) : query.eq("brand_name", brandName);
+    }
 
     // 매뉴얼 범위 제한
     query = storeId ? query.or(`store_id.eq.${storeId},store_id.is.null`) : query.is("store_id", null);

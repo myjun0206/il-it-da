@@ -31,11 +31,13 @@ export async function extractManualGroups(file: File, extension: string): Promis
   }
   if (extension === ".csv") {
     const rows = await extractCsvRows(file);
-    return parseExcelTableGroups(rows) ?? parseManualText(rowsToFlatText(rows));
+    const dataRows = rows.slice(1);
+    return parseExcelTableGroups(rows) ?? parseManualText(rowsToFlatText(dataRows));
   }
   if (XLSX_EXTENSIONS.has(extension)) {
     const rows = await extractSpreadsheetRows(file);
-    return parseExcelTableGroups(rows) ?? parseManualText(rowsToFlatText(rows));
+    const dataRows = rows.slice(1);
+    return parseExcelTableGroups(rows) ?? parseManualText(rowsToFlatText(dataRows));
   }
   throw new Error("지원하지 않는 파일 형식입니다.");
 }

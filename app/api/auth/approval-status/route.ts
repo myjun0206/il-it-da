@@ -46,6 +46,8 @@ export async function POST(request: Request): Promise<NextResponse<ApprovalStatu
     .from("profiles")
     .select("id, role, full_name, brand_id, approval_status")
     .eq("email", email)
+    .or("brand_id.is.null,role.eq.hq")
+    .limit(1)
     .maybeSingle<{ id: string; role: string; full_name: string | null; brand_id: string | null; approval_status: string | null }>();
 
   if (error) {
@@ -106,6 +108,7 @@ export async function POST(request: Request): Promise<NextResponse<ApprovalStatu
     role: profile.role,
     fullName: profile.full_name,
     brandId: profile.brand_id,
+    brandIds: [...new Set(membershipList.map((membership) => membership.brandId).filter((id): id is string => !!id))],
     memberships: membershipList,
   });
 }
