@@ -229,7 +229,7 @@ export async function POST(request: Request): Promise<NextResponse<CreateStoreMa
   } catch (e) {
     console.error("POST /api/store-manuals error:", e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "지점 매뉴얼 저장 중 오류가 발생했습니다." },
+      { error: "지점 매뉴얼 저장 중 오류가 발생했습니다." },
       { status: 500 },
     );
   }

@@ -103,7 +103,7 @@ export async function POST(
   } catch (e) {
     console.error("POST /api/store-manuals/[id]/items error:", e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "세부 내용 추가 중 오류가 발생했습니다." },
+      { error: "세부 내용 추가 중 오류가 발생했습니다." },
       { status: 500 },
     );
   }

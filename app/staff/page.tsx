@@ -16,6 +16,7 @@ import {
   writeStaffConversationId,
 } from "@/lib/staff/selected-store";
 import { formatStoreDisplayName } from "@/lib/stores/search-stores";
+import { createClient } from "@/lib/supabase/client";
 
 type Message = {
   from: "ai" | "me";
@@ -240,6 +241,42 @@ export default function StaffPage() {
     const timer = setTimeout(() => setToastMessage(""), 2500);
     return () => clearTimeout(timer);
   }, [toastMessage]);
+
+  // Auth 확인: Staff 권한 검증
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase.auth.getUser();
+
+        if (error || !data.user) {
+          router.push("/");
+          return;
+        }
+
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role, approval_status")
+          .eq("id", data.user.id)
+          .maybeSingle<{ role: string; approval_status: string | null }>();
+
+        // Verify user is staff
+        if (profile?.role !== "staff") {
+          router.push("/");
+          return;
+        }
+        if (profile.approval_status !== "approved") {
+          router.push("/signup/approval-status");
+          return;
+        }
+      } catch (e) {
+        console.error("Auth check failed:", e);
+        router.push("/");
+      }
+    };
+
+    checkAuth();
+  }, [router]);
 
   // 새로고침: 이 탭에서 보던 대화가 현재 근무 매장의 대화면 다시 연다. (본인 대화인지는 서버가 확인)
   useEffect(() => {
