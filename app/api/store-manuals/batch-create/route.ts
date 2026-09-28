@@ -132,7 +132,7 @@ export async function POST(request: Request): Promise<NextResponse<BatchCreateRe
   } catch (e) {
     console.error("POST /api/store-manuals/batch-create error:", e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "매뉴얼 일괄 등록 중 오류가 발생했습니다." },
+      { error: "매뉴얼 일괄 등록 중 오류가 발생했습니다." },
       { status: 500 },
     );
   }
