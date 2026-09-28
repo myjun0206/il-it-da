@@ -118,48 +118,45 @@ describe("app/staff/page.tsx 근무 매장 선택 배선", () => {
     "utf8",
   ).replace(/\r\n/g, "\n");
 
-  test("/api/staff/stores 응답을 매장 목록 state에 반영한다", () => {
-    assert.match(source, /setStores\(availableStores\)/);
+  test("StaffShellContext에서 근무 매장 목록을 받아 StoreSwitcher에 전달한다", () => {
+    assert.match(source, /const \{\s*stores,/);
+    assert.match(source, /useStaffShell\(\)/);
+    assert.match(source, /stores={stores}/);
   });
 
-  test("매장 목록 state를 빈 배열로만 채우고 끝내지 않는다", () => {
-    const assignments = source.match(/setStores\([^)]*\)/g) ?? [];
-    assert.ok(assignments.length > 0);
-    assert.ok(assignments.some((call) => call !== "setStores([])"));
+  test("StoreSwitcher와 selectStore 함수를 통해 매장을 선택할 수 있다", () => {
+    assert.match(source, /onSelect={selectStore}/);
+    assert.match(source, /function selectStore/);
   });
 
   test("서버가 재검증하도록 선택한 매장 id를 질문 요청에 담아 보낸다", () => {
     assert.match(source, /storeId: selectedStore\.id/);
   });
 
-  test("매장이 하나면 자동 선택하고 여러 개면 직원이 직접 고르게 둔다", () => {
+  test("선택 매장이 바뀔 때 이전 매장의 대화·입력·오류를 초기화한다", () => {
+    assert.match(source, /function selectStore\(storeId: string\)/);
+    assert.match(source, /resetConversation/);
+    assert.match(source, /applyStore\(store\)/);
+  });
+
+  test("같은 매장을 다시 선택하면 대화를 보존한다", () => {
     assert.match(
       source,
-      /const nextStore = restoredStore \?\? \(availableStores\.length === 1 \? availableStores\[0\] : null\)/,
+      /if \(!store \|\| \(selectedStore\?\.id === store\.id && readOnlyStoreName === null\)\) return;/,
     );
   });
 
-  test("선택 매장이 바뀔 때만 이전 매장의 대화·입력·오류를 초기화한다", () => {
-    assert.match(
-      source,
-      /function resetConversationOnStoreChange\(nextStoreId: string \| null\) \{\s*if \(lastConversationStoreIdRef\.current === nextStoreId\) return;\s*lastConversationStoreIdRef\.current = nextStoreId;\s*setMessages\(INITIAL_MESSAGES\);\s*setInput\(""\);\s*setErrorMessage\(""\);/,
-    );
+  test("StoreSwitcher가 매장 로딩 상태를 표시한다", () => {
+    assert.match(source, /isLoading={isStoresLoading}/);
+    assert.match(source, /selectedStoreId={selectedStore\?\.id \?\? null}/);
   });
 
-  test("직접 선택과 목록 재조회 두 경로 모두 같은 초기화를 거친다", () => {
-    assert.equal((source.match(/resetConversationOnStoreChange\(/g) ?? []).length, 3);
-    assert.match(source, /resetConversationOnStoreChange\(store\?\.id \?\? null\);\s*\n\s*setSelectedStore\(store\)/);
-    assert.match(source, /resetConversationOnStoreChange\(nextStore\?\.id \?\? null\);\s*\n\s*setSelectedStore\(nextStore\)/);
-  });
-
-  test("effect 클로저의 낡은 selectedStore 대신 ref로 직전 매장을 비교한다", () => {
-    assert.match(source, /const lastConversationStoreIdRef = useRef<string \| null>\(null\)/);
-  });
-
-  test("목록 조회 실패를 '승인 매장 없음'으로 잘못 안내하지 않는다", () => {
-    assert.match(
-      source,
-      /: storesError\s*\n\s*\? "매장 정보를 불러오지 못했습니다"\s*\n\s*: stores\.length > 0/,
-    );
+  test("목록 조회 실패와 매장 없음을 구분해서 안내한다", () => {
+    // storesError가 있으면 에러 메시지 표시
+    assert.match(source, /\{storesError && \(/);
+    // 매장이 없으면 '승인된 근무 매장이 없습니다' 표시
+    assert.match(source, /"승인된 근무 매장이 없습니다/);
+    // 두 조건이 분리되어 있음을 확인
+    assert.match(source, /!isStoresLoading && !storesError && stores\.length === 0/);
   });
 });
