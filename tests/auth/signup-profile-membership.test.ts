@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
+  MembershipAuthNotReadyError,
+  ensureBrandProfileForApprovedMembership,
+  requireConfirmedMembershipAuthUser,
   resolveOwnerRequestHqRecipientIds,
   submitStoreMembershipRequest,
   upsertSignupProfile,
@@ -29,8 +33,12 @@ function fakeClient(options: {
   stores?: Row[];
   memberships?: Row[];
   profileLookupError?: { code: string; message: string };
-  profileInsertError?: { code: string; message: string };
+  profileInsertError?: { code: string; message: string; details?: string; hint?: string };
+  brandInsertThrows?: boolean;
   membershipUpdateError?: { code: string; message: string };
+  missingAuthUser?: boolean;
+  unconfirmedAuthUser?: boolean;
+  raceBrandInsert?: boolean;
 } = {}) {
   const tables: Record<string, Row[]> = {
     profiles: (options.profiles ?? []).map((row) => ({ ...row })),
@@ -73,6 +81,13 @@ function fakeClient(options: {
   }
 
   const client = {
+    auth: { admin: { getUserById: async () => ({
+      data: { user: options.missingAuthUser ? null : {
+        id: USER_ID, email: "Owner@Example.com",
+        email_confirmed_at: options.unconfirmedAuthUser ? null : "2026-09-29T00:00:00Z",
+        user_metadata: { name: "김점주", phone: "01011112222" },
+      } }, error: null,
+    }) } },
     from(table: string) {
       if (!tables[table]) {
         throw new Error(`Unexpected table: ${table}`);
@@ -81,7 +96,13 @@ function fakeClient(options: {
       return {
         select: () => makeSelect(table),
         insert(payload: Row) {
+          if (table === "profiles" && options.brandInsertThrows && payload.brand_id) {
+            throw new Error("Brand insert failed for owner@example.com");
+          }
           if (table === "profiles" && options.profileInsertError) {
+            if (options.raceBrandInsert && payload.brand_id) {
+              tables.profiles.push({ ...payload, id: "concurrent-brand-profile" });
+            }
             calls.push({ table, op: "insert", payload, filters: {} });
             return Promise.resolve({ error: options.profileInsertError });
           }
@@ -151,6 +172,7 @@ describe("upsertSignupProfile - 신규 계정", () => {
     // 023에서 profiles.user_id가 NOT NULL이므로 빠지면 23502로 가입이 막힌다.
     assert.equal(inserts[0].payload.user_id, USER_ID);
     assert.equal(inserts[0].payload.id, USER_ID);
+    assert.equal(inserts[0].payload.brand_id, null);
     assert.equal(inserts[0].payload.approval_status, "pending");
     assert.equal(inserts[0].payload.role, "staff");
   });
@@ -168,6 +190,209 @@ describe("upsertSignupProfile - 신규 계정", () => {
 
     assert.equal(db.callsFor("profiles", "update").length, 0);
   });
+});
+
+describe("ensureBrandProfileForApprovedMembership - 누락된 마스터", () => {
+  const approvedMembership = {
+    id: MEMBERSHIP_ID, user_id: USER_ID, store_id: STORE_ID, role: "owner", status: "approved",
+    franchise_id: FRANCHISE_ID, approved_at: "2026-09-29T00:00:00Z", approved_by: "hq-user",
+  };
+
+  test("Auth 사용자와 승인된 점주 멤버십을 확인한 뒤 마스터와 브랜드 행을 각각 insert한다", async () => {
+    const db = fakeClient({ stores: [STORE_ROW], memberships: [approvedMembership] });
+    assert.equal(await ensureBrandProfileForApprovedMembership(db.client, USER_ID, STORE_ID), true);
+
+    const inserts = db.callsFor("profiles", "insert");
+    assert.equal(inserts.length, 2);
+    assert.deepEqual({ id: inserts[0].payload.id, user_id: inserts[0].payload.user_id,
+      brand_id: inserts[0].payload.brand_id, role: inserts[0].payload.role },
+    { id: USER_ID, user_id: USER_ID, brand_id: null, role: "owner" });
+    assert.equal(inserts[1].payload.user_id, USER_ID);
+    assert.equal(inserts[1].payload.brand_id, FRANCHISE_ID);
+    assert.equal(inserts[1].payload.role, "owner");
+    assert.notEqual(inserts[1].payload.id, USER_ID);
+    assert.equal(db.callsFor("profiles", "update").length, 0);
+    for (const { payload } of inserts) {
+      assert.equal("created_at" in payload, false);
+      assert.equal("updated_at" in payload, false);
+    }
+  });
+
+  test("디버그를 켰을 때만 INSERT의 Auth user_id와 독립 브랜드 프로필 ID를 보여준다", async () => {
+    const db = fakeClient({ stores: [STORE_ROW], memberships: [approvedMembership] });
+    const originalFlag = process.env.DEBUG_PROFILE_INSERT;
+    const originalInfo = console.info;
+    const logs: unknown[][] = [];
+    process.env.DEBUG_PROFILE_INSERT = "true";
+    console.info = (...args: unknown[]) => { logs.push(args); };
+    try {
+      assert.equal(await ensureBrandProfileForApprovedMembership(db.client, USER_ID, STORE_ID), true);
+    } finally {
+      console.info = originalInfo;
+      if (originalFlag === undefined) delete process.env.DEBUG_PROFILE_INSERT;
+      else process.env.DEBUG_PROFILE_INSERT = originalFlag;
+    }
+    assert.equal(logs.length, 2);
+    assert.equal(logs[0][1], USER_ID);
+    assert.equal(logs[1][1], USER_ID);
+    assert.equal((logs[0][2] as { profileId: string }).profileId, USER_ID);
+    assert.notEqual((logs[1][2] as { profileId: string }).profileId, USER_ID);
+  });
+
+  test("Auth 사용자가 없으면 명확한 오류를 반환하고 프로필 insert를 시도하지 않는다", async () => {
+    const db = fakeClient({ stores: [STORE_ROW], memberships: [approvedMembership], missingAuthUser: true });
+    await assert.rejects(ensureBrandProfileForApprovedMembership(db.client, USER_ID, STORE_ID),
+      (error: unknown) => error instanceof MembershipAuthNotReadyError && /인증 또는 계정 생성/.test(error.message));
+    assert.equal(db.callsFor("profiles", "insert").length, 0);
+  });
+
+  test("미인증 Auth 사용자는 프로필을 만들지 않는다", async () => {
+    const db = fakeClient({ stores: [STORE_ROW], memberships: [approvedMembership], unconfirmedAuthUser: true });
+    await assert.rejects(ensureBrandProfileForApprovedMembership(db.client, USER_ID, STORE_ID), MembershipAuthNotReadyError);
+    assert.equal(db.callsFor("profiles", "insert").length, 0);
+  });
+
+  test("UUID가 아닌 사용자 ID는 프로필을 만들지 않는다", async () => {
+    const db = fakeClient({ stores: [STORE_ROW], memberships: [{ ...approvedMembership, user_id: "[id]" }] });
+    await assert.rejects(ensureBrandProfileForApprovedMembership(db.client, "[id]", STORE_ID), MembershipAuthNotReadyError);
+    assert.equal(db.callsFor("profiles", "insert").length, 0);
+  });
+
+  test("마스터 insert 실패 시 브랜드 행은 생성하지 않고 안전한 오류 코드만 남긴다", async () => {
+    const db = fakeClient({
+      stores: [STORE_ROW], memberships: [approvedMembership],
+      profileInsertError: { code: "23502", message: "owner@example.com is missing" },
+    });
+    const calls: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => { calls.push(args); };
+    try {
+      assert.equal(await ensureBrandProfileForApprovedMembership(db.client, USER_ID, STORE_ID), false);
+    } finally {
+      console.error = original;
+    }
+    assert.equal(db.callsFor("profiles", "insert").length, 1);
+    assert.equal(db.tables.profiles.length, 0);
+    assert.match(JSON.stringify(calls), /23502/);
+    assert.equal(JSON.stringify(calls).includes("owner@example.com"), false);
+  });
+
+  test("브랜드 insert FK 실패는 제약명과 코드를 한 번만 기록하고 민감한 값은 가린다", async () => {
+    const db = fakeClient({
+      profiles: [{ id: USER_ID, user_id: USER_ID, brand_id: null, role: "owner",
+        email: "owner@example.com", approved_at: "2026-09-29T00:00:00Z", approved_by: "hq-user" }],
+      stores: [STORE_ROW], memberships: [approvedMembership],
+      profileInsertError: { code: "23503", message: 'constraint "profiles_id_fkey" for owner@example.com',
+        details: `Key (id)=(${USER_ID}) is not present` },
+    });
+    const calls: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => { calls.push(args); };
+    try {
+      assert.equal(await ensureBrandProfileForApprovedMembership(db.client, USER_ID, STORE_ID), false);
+    } finally {
+      console.error = original;
+    }
+    assert.equal(calls.length, 1);
+    assert.match(JSON.stringify(calls), /23503.*profiles_id_fkey|profiles_id_fkey.*23503/);
+    assert.equal(JSON.stringify(calls).includes("owner@example.com"), false);
+    assert.equal(JSON.stringify(calls).includes(USER_ID), false);
+    assert.match(JSON.stringify(calls), /\[redacted-uuid\]/);
+    assert.equal(JSON.stringify(calls).includes("([id])"), false);
+    assert.match(JSON.stringify(calls), /generated_brand_profile/);
+    assert.match(JSON.stringify(calls), /legacy profiles\.id FK/);
+    assert.equal(db.callsFor("profiles", "update").length, 0);
+  });
+
+  test("23505 경쟁으로 브랜드 행이 생겼을 때만 해당 행을 찾아 갱신한다", async () => {
+    const db = fakeClient({
+      profiles: [{ id: USER_ID, user_id: USER_ID, brand_id: null, role: "owner",
+        email: "owner@example.com", approved_at: "2026-09-29T00:00:00Z" }],
+      stores: [STORE_ROW], memberships: [approvedMembership], raceBrandInsert: true,
+      profileInsertError: { code: "23505", message: "duplicate brand profile" },
+    });
+    assert.equal(await ensureBrandProfileForApprovedMembership(db.client, USER_ID, STORE_ID), true);
+    assert.equal(db.callsFor("profiles", "update")[0].filters.id, "concurrent-brand-profile");
+    assert.equal(db.tables.profiles.filter((profile) => profile.brand_id === FRANCHISE_ID).length, 1);
+  });
+
+  test("23505가 발생했어도 해당 브랜드 행이 없으면 성공으로 처리하지 않는다", async () => {
+    const db = fakeClient({
+      profiles: [{ id: USER_ID, user_id: USER_ID, brand_id: null, role: "owner",
+        email: "owner@example.com", approved_at: "2026-09-29T00:00:00Z" }],
+      stores: [STORE_ROW], memberships: [approvedMembership],
+      profileInsertError: { code: "23505", message: 'constraint "profiles_email_lower_key"' },
+    });
+    const original = console.error;
+    console.error = () => {};
+    try {
+      assert.equal(await ensureBrandProfileForApprovedMembership(db.client, USER_ID, STORE_ID), false);
+    } finally {
+      console.error = original;
+    }
+    assert.equal(db.callsFor("profiles", "update").length, 0);
+  });
+
+  test("브랜드 insert 예외도 민감정보를 가린 메시지와 스택으로 진단한다", async () => {
+    const db = fakeClient({
+      profiles: [{ id: USER_ID, user_id: USER_ID, brand_id: null, role: "owner",
+        email: "owner@example.com", approved_at: "2026-09-29T00:00:00Z" }],
+      stores: [STORE_ROW], memberships: [approvedMembership], brandInsertThrows: true,
+    });
+    const calls: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => { calls.push(args); };
+    try {
+      assert.equal(await ensureBrandProfileForApprovedMembership(db.client, USER_ID, STORE_ID), false);
+    } finally {
+      console.error = original;
+    }
+    assert.equal(calls.length, 1);
+    assert.match(JSON.stringify(calls), /Brand insert failed for \[email\]/);
+    assert.equal(JSON.stringify(calls).includes("owner@example.com"), false);
+  });
+});
+
+test("028 moves the auth FK from profile id to user_id without removing valid user references", () => {
+  const sql = readFileSync(new URL("../../supabase/migrations/028_repair_brand_profile_auth_user_fk.sql", import.meta.url), "utf8");
+  assert.match(sql, /column_row\.attname = 'id'/);
+  assert.match(sql, /alter table public\.profiles drop constraint %I/);
+  assert.match(sql, /column_row\.attname = 'user_id'/);
+  assert.match(sql, /foreign key \(user_id\) references auth\.users\(id\) on delete cascade/);
+  assert.match(sql, /where profile\.user_id is null[\s\S]*?not exists/);
+  assert.match(sql, /alter table public\.profiles alter column user_id set not null/);
+});
+
+test("HQ and owner APIs validate Auth before changing membership approval", () => {
+  for (const relative of ["../../app/api/hq/approvals/route.ts", "../../app/api/boss/employees/[id]/route.ts"]) {
+    const route = readFileSync(new URL(relative, import.meta.url), "utf8");
+    const approvalUpdate = route.indexOf(".update(update");
+    assert.ok(approvalUpdate > route.indexOf("await requireConfirmedMembershipAuthUser("), relative);
+    assert.match(route, /authError instanceof MembershipAuthNotReadyError/);
+    assert.match(route, /status: 409/);
+  }
+});
+
+test("HQ request membershipId selects the membership row; user_id comes from the database", () => {
+  const route = readFileSync(new URL("../../app/api/hq/approvals/route.ts", import.meta.url), "utf8");
+  assert.match(route, /\.from\("store_memberships"\)[\s\S]*?\.eq\("id", body\.membershipId\.trim\(\)\)/);
+  assert.match(route, /ensureBrandProfileForApprovedMembership\([\s\S]*?updated\.user_id/);
+  assert.match(route, /membershipUserId: membership\.user_id,\s*authUserId: authUser\.id/);
+  assert.equal(/body\.(userId|user_id|member_id)/.test(route), false);
+});
+
+test("placeholder user ID is rejected before any database lookup", async () => {
+  const db = fakeClient();
+  const warnings: unknown[][] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => { warnings.push(args); };
+  try {
+    await assert.rejects(requireConfirmedMembershipAuthUser(db.client, "[id]"), MembershipAuthNotReadyError);
+  } finally {
+    console.warn = original;
+  }
+  assert.deepEqual(warnings, [["[AUTH] STORE_MEMBERSHIP_USER_ID_INVALID", { reason: "not_uuid" }]]);
+  assert.equal(db.calls.length, 0);
 });
 
 describe("upsertSignupProfile - 기존 계정", () => {

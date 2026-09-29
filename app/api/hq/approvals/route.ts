@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireHqUser } from "@/lib/supabase/hq-auth";
 import { isMembershipInHqFranchise, isUuid } from "@/lib/hq/approval-scope";
 import { createNotification } from "@/lib/notifications";
-import { ensureBrandProfileForApprovedMembership } from "@/lib/signup/store-membership-service";
+import { ensureBrandProfileForApprovedMembership, MembershipAuthNotReadyError, requireConfirmedMembershipAuthUser } from "@/lib/signup/store-membership-service";
 
 export const runtime = "nodejs";
 
@@ -260,6 +260,24 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
   if (!isMembershipInHqFranchise(membership.franchise_id, membershipStore?.franchise_id, hqUser.franchiseId)) {
     return forbiddenResponse();
   }
+  if (body.action === "approve") {
+    try {
+      const authUser = await requireConfirmedMembershipAuthUser(adminClient, membership.user_id);
+      if (process.env.DEBUG_PROFILE_INSERT === "true") {
+        console.info("[HQ_APPROVALS] ID_FLOW", {
+          membershipId: membership.id,
+          membershipUserId: membership.user_id,
+          authUserId: authUser.id,
+        });
+      }
+    } catch (authError) {
+      if (authError instanceof MembershipAuthNotReadyError) {
+        return NextResponse.json({ success: false, error: authError.message }, { status: 409 });
+      }
+      console.error("[HQ_APPROVALS] Auth user lookup failed");
+      return NextResponse.json({ success: false, error: "승인 대상 계정을 확인하지 못했습니다." }, { status: 500 });
+    }
+  }
   const allowedCurrentStatuses = body.action === "approve"
     ? ["pending", "requested", "rejected"]
     : ["pending", "requested", "approved"];
@@ -336,6 +354,12 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       }
     }
   } catch (profileUpdateError) {
+    if (profileUpdateError instanceof MembershipAuthNotReadyError) {
+      return NextResponse.json(
+        { success: false, error: profileUpdateError.message, membershipApproved: true },
+        { status: 409 },
+      );
+    }
     console.error("Failed to sync profile approval status:", profileUpdateError);
     return NextResponse.json(
       { success: false, error: "Failed to sync profile approval status" },

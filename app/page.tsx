@@ -91,7 +91,8 @@ function LoginPageContent() {
         user?: {
           id: string;
           email: string;
-          role: string;
+          mustChangePassword?: boolean;
+          role?: string;
           approvalStatus?: "pending" | "approved" | "rejected";
         };
         error?: string;
@@ -104,6 +105,11 @@ function LoginPageContent() {
           ...prev,
           email: result.error || "아이디 또는 비밀번호를 확인해주세요.",
         }));
+        return;
+      }
+
+      if (result.user.mustChangePassword === true) {
+        router.push("/change-password");
         return;
       }
 
