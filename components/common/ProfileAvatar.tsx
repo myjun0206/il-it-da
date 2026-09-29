@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo } from "react";
 
 interface ProfileAvatarProps {
   /** 사용자 이름 (initials 생성용) */
@@ -51,13 +51,7 @@ export default function ProfileAvatar({
   className = "",
   onImageError,
 }: ProfileAvatarProps) {
-  const [imageError, setImageError] = useState(false);
-
-  // avatarUrl이 변경되면 imageError state 초기화
-  // (이전 URL 로드 실패 상태가 새 URL에 영향을 주지 않도록)
-  useEffect(() => {
-    setImageError(false);
-  }, [avatarUrl]);
+  const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
 
   // initials 계산: "송채현" → "송"
   const initials = useMemo(() => {
@@ -78,12 +72,12 @@ export default function ProfileAvatar({
 
   // 이미지 로드 실패 처리
   const handleImageError = () => {
-    setImageError(true);
+    setFailedAvatarUrl(avatarUrl ?? null);
     onImageError?.();
   };
 
-  // 실제 이미지 표시 (URL 있고 로드 성공)
-  if (avatarUrl && !imageError) {
+  // 실제 이미지 표시 (URL 있고 이전에 로드 실패한 URL이 아닌 경우)
+  if (avatarUrl && failedAvatarUrl !== avatarUrl) {
     return (
       <div
         className={`rounded-full overflow-hidden flex items-center justify-center shrink-0 ${sizeClass} ${className}`}

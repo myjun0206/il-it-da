@@ -273,7 +273,7 @@ export default function StaffStoresPage() {
               description={
                 <>
                   <p>
-                    "<strong>{formatStoreDisplayName(removeDialog.storeName)}</strong>"의 근무 연결이 해제됩니다.
+                    &quot;<strong>{formatStoreDisplayName(removeDialog.storeName)}</strong>&quot;의 근무 연결이 해제됩니다.
                   </p>
                   <p className="mt-2 text-[var(--color-text-tertiary)]">
                     종료 후에는 해당 매장의 지점 매뉴얼과 매장 기준 기능을 이용할 수 없습니다.

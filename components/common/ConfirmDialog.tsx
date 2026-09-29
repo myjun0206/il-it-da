@@ -26,10 +26,7 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
-  const [isVisible, setIsVisible] = useState(false);
-
   useEffect(() => {
-    setIsVisible(isOpen);
     if (isOpen) {
       document.body.style.overflow = "hidden";
     } else {
@@ -50,7 +47,7 @@ export function ConfirmDialog({
     }
   };
 
-  if (!isVisible) return null;
+  if (!isOpen) return null;
 
   return (
     <div
