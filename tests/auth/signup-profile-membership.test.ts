@@ -8,6 +8,7 @@ import {
   MembershipAuthNotReadyError,
   ensureBrandProfileForApprovedMembership,
   requireConfirmedMembershipAuthUser,
+  resolveOwnerRequestHqRecipientIds,
   submitStoreMembershipRequest,
   upsertSignupProfile,
 } from "../../lib/signup/store-membership-service.ts";
@@ -600,5 +601,108 @@ describe("submitStoreMembershipRequest - 신규 요청", () => {
 
     assert.equal(result.success, false);
     assert.equal(db.callsFor("store_memberships", "insert").length, 0);
+  });
+});
+
+describe("resolveOwnerRequestHqRecipientIds - 점주 신청 알림은 매장 브랜드 HQ에게만", () => {
+  const M_STORE = "aaaaaaaa-0000-4000-8000-000000000001";
+  const B_STORE = "bbbbbbbb-0000-4000-8000-000000000001";
+  const NO_BRAND_STORE = "cccccccc-0000-4000-8000-000000000001";
+  const M_FRANCHISE = FRANCHISE_ID;
+  const B_FRANCHISE = OTHER_FRANCHISE_ID;
+  const M_HQ = "aaaaaaaa-1111-4111-8111-000000000001";
+  const M_HQ2 = "aaaaaaaa-1111-4111-8111-000000000002";
+  const B_HQ = "bbbbbbbb-1111-4111-8111-000000000001";
+  const MULTI_HQ = "dddddddd-1111-4111-8111-000000000001";
+  const LEGACY_HQ = "eeeeeeee-1111-4111-8111-000000000001";
+  const M_OWNER = "ffffffff-1111-4111-8111-000000000001";
+
+  /** stores + profiles(마스터 id=user_id, 브랜드별 행은 별도 id)만 흉내낸 가짜 DB. */
+  function recipientDb(options: { storeError?: boolean; profileError?: boolean } = {}) {
+    const tables: Record<string, Row[]> = {
+      stores: [
+        { id: M_STORE, franchise_id: M_FRANCHISE },
+        { id: B_STORE, franchise_id: B_FRANCHISE },
+        { id: NO_BRAND_STORE, franchise_id: null },
+      ],
+      profiles: [
+        { id: M_HQ, user_id: M_HQ, role: "hq", brand_id: M_FRANCHISE },
+        { id: M_HQ2, user_id: M_HQ2, role: "hq", brand_id: M_FRANCHISE },
+        { id: B_HQ, user_id: B_HQ, role: "hq", brand_id: B_FRANCHISE },
+        // 같은 HQ 사용자의 마스터 행 + 브랜드별 행
+        { id: MULTI_HQ, user_id: MULTI_HQ, role: "hq", brand_id: M_FRANCHISE },
+        { id: "dddddddd-2222-4222-8222-000000000001", user_id: MULTI_HQ, role: "hq", brand_id: M_FRANCHISE },
+        { id: "dddddddd-2222-4222-8222-000000000002", user_id: MULTI_HQ, role: "hq", brand_id: B_FRANCHISE },
+        // 023 이전 행(user_id 없음)은 마스터 id를 auth 사용자로 쓴다
+        { id: LEGACY_HQ, role: "hq", brand_id: M_FRANCHISE },
+        // 같은 브랜드의 점주 브랜드 행은 수신자가 아니다
+        { id: "ffffffff-2222-4222-8222-000000000001", user_id: M_OWNER, role: "owner", brand_id: M_FRANCHISE },
+      ],
+    };
+    const queried: string[] = [];
+
+    const client = {
+      from(table: string) {
+        queried.push(table);
+        const filters: Row = {};
+        const builder = {
+          select: () => builder,
+          eq(column: string, value: unknown) {
+            filters[column] = value;
+            return builder;
+          },
+          maybeSingle() {
+            if (table === "stores" && options.storeError) {
+              return Promise.resolve({ data: null, error: { code: "500", message: "store lookup failed" } });
+            }
+            const found = tables[table].find((row) => Object.entries(filters).every(([k, v]) => row[k] === v)) ?? null;
+            return Promise.resolve({ data: found, error: null });
+          },
+          then(resolve: (value: unknown) => unknown) {
+            if (table === "profiles" && options.profileError) {
+              return Promise.resolve({ data: null, error: { code: "500", message: "x" } }).then(resolve);
+            }
+            const rows = tables[table].filter((row) => Object.entries(filters).every(([k, v]) => row[k] === v));
+            return Promise.resolve({ data: rows.map(({ id, user_id }) => ({ id, user_id })), error: null }).then(resolve);
+          },
+        };
+        return builder;
+      },
+    } as unknown as SupabaseClient;
+
+    return { client, queried };
+  }
+
+  test("M Coffee 매장 신청 → M Coffee HQ만, 복수 프로필 HQ도 1번만", async () => {
+    const { client } = recipientDb();
+    const recipients = await resolveOwnerRequestHqRecipientIds(client, M_STORE);
+
+    assert.deepEqual([...recipients].sort(), [M_HQ, M_HQ2, MULTI_HQ, LEGACY_HQ].sort());
+    assert.equal(recipients.includes(B_HQ), false);
+    assert.equal(recipients.includes(M_OWNER), false);
+    assert.equal(recipients.length, new Set(recipients).size);
+  });
+
+  test("B Burger 매장 신청 → B Burger HQ만 (M Coffee 전용 HQ 0건)", async () => {
+    const { client } = recipientDb();
+    const recipients = await resolveOwnerRequestHqRecipientIds(client, B_STORE);
+
+    assert.deepEqual([...recipients].sort(), [B_HQ, MULTI_HQ].sort());
+    for (const mOnly of [M_HQ, M_HQ2, LEGACY_HQ]) {
+      assert.equal(recipients.includes(mOnly), false);
+    }
+  });
+
+  test("매장 브랜드가 없거나 매장을 찾지 못하면 0건이고 HQ 조회를 하지 않는다", async () => {
+    for (const storeId of [NO_BRAND_STORE, "99999999-0000-4000-8000-000000000000"]) {
+      const { client, queried } = recipientDb();
+      assert.deepEqual(await resolveOwnerRequestHqRecipientIds(client, storeId), []);
+      assert.deepEqual(queried, ["stores"]);
+    }
+  });
+
+  test("매장·HQ 조회 오류는 전체 HQ로 넘어가지 않고 0건", async () => {
+    assert.deepEqual(await resolveOwnerRequestHqRecipientIds(recipientDb({ storeError: true }).client, M_STORE), []);
+    assert.deepEqual(await resolveOwnerRequestHqRecipientIds(recipientDb({ profileError: true }).client, M_STORE), []);
   });
 });

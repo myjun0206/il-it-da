@@ -5,11 +5,11 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { requireStoreOwner } from "@/lib/manuals/store-manual-auth";
 import {
-  extractManualGroups,
   getFileExtension,
   TEXT_EXTENSIONS,
   XLSX_EXTENSIONS,
 } from "@/lib/manuals/extract-manual-groups";
+import { extractStoreManualGroups } from "@/lib/manuals/extract-store-manual-groups";
 import { isFileSizeWithinLimit, isPlausibleXlsxMimeType } from "@/lib/manuals/upload-limits";
 import { buildManualPreview, type ManualUploadPreview } from "@/lib/manuals/build-manual-preview";
 
@@ -99,7 +99,7 @@ export async function POST(request: Request): Promise<NextResponse<PreviewManual
   let groups;
 
   try {
-    groups = await extractManualGroups(file, extension);
+    groups = await extractStoreManualGroups(file, extension);
   } catch (parseError) {
     console.error("[STORE_MANUALS_PREVIEW] parse failed:", parseError);
     const message =

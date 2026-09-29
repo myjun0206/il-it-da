@@ -41,10 +41,18 @@ type ManualRow = Record<string, unknown> & { id: string; upload_batch_id: string
  * 함께 흉내내어, 라우트가 쓰는 저장 진입점을 실제로 실행한다. 실제 Supabase/OpenAI는 쓰지 않는다.
  */
 function fakeClient(
-  options: { seedBatches?: BatchRow[]; failChildInsert?: boolean; throwOnManualInsert?: Error } = {},
+  options: {
+    seedBatches?: BatchRow[];
+    failChildInsert?: boolean;
+    failParentInsert?: boolean;
+    throwOnManualInsert?: Error;
+    /** 실제 PostgREST처럼 hash 충돌 후 completed batch 조회(select().eq()...)를 await 가능하게 한다. */
+    modelCompletedLookup?: boolean;
+  } = {},
 ) {
   const batches: BatchRow[] = (options.seedBatches ?? []).map((row) => ({ ...row }));
   const manuals: ManualRow[] = [];
+  const chunks: Record<string, unknown>[] = [];
   let sequence = 0;
 
   const isActive = (row: BatchRow) =>
@@ -68,7 +76,12 @@ function fakeClient(
   const client = {
     from(table: string) {
       if (table === "manual_chunks") {
-        return { insert: () => Promise.resolve({ error: null }) };
+        return {
+          insert: (rows: Record<string, unknown>[]) => {
+            chunks.push(...rows);
+            return Promise.resolve({ error: null });
+          },
+        };
       }
 
       if (table === "manuals") {
@@ -100,6 +113,13 @@ function fakeClient(
               throw options.throwOnManualInsert;
             }
             const isParent = !Array.isArray(payload);
+            if (isParent && options.failParentInsert) {
+              return {
+                select: () => ({
+                  single: () => Promise.resolve({ data: null, error: { code: "23502", message: "parent insert failed" } }),
+                }),
+              };
+            }
             if (!isParent && options.failChildInsert) {
               return {
                 select: () => ({
@@ -132,15 +152,27 @@ function fakeClient(
       return {
         select(_columns: string) {
           let keyFilter: string | undefined;
+          const filters: Record<string, unknown> = {};
           const query = {
-            eq(_column: string, value: string) {
+            eq(column: string, value: string) {
               keyFilter = value;
+              filters[column] = value;
               return query;
             },
             maybeSingle() {
               const found = batches.find((row) => row.idempotency_key === keyFilter) ?? null;
               return Promise.resolve({ data: found ? { ...found } : null, error: null });
             },
+            ...(options.modelCompletedLookup
+              ? {
+                  then(resolve: (value: unknown) => unknown) {
+                    const rows = batches.filter((row) =>
+                      Object.entries(filters).every(([column, value]) => (row as Record<string, unknown>)[column] === value),
+                    );
+                    return Promise.resolve({ data: rows.map((row) => ({ ...row })), error: null }).then(resolve);
+                  },
+                }
+              : {}),
           };
           return query;
         },
@@ -205,7 +237,7 @@ function fakeClient(
     },
   } as unknown as SupabaseClient;
 
-  return { client, batches, manuals };
+  return { client, batches, manuals, chunks };
 }
 
 const HQ_SCOPE = { scopeType: "hq" as const, franchiseId: "franchise-1", storeId: null };
@@ -578,5 +610,139 @@ describe("020 마이그레이션 재검토 결과", () => {
 
   test("021 이후 번호를 선점하지 않아 공지사항 작업과 충돌하지 않는다", () => {
     assert.equal(sql.includes("021_"), false);
+  });
+});
+
+describe("HQ 확정 저장 경로 시나리오 (실제 함수 실행, 가짜 client)", () => {
+  const embedOk = async () => undefined;
+  const silence = <T>(run: () => Promise<T>): Promise<T> => {
+    const original = console.error;
+    console.error = () => {};
+    return run().finally(() => {
+      console.error = original;
+    });
+  };
+
+  test("정상 저장: 부모 1 + 자식 N, 자식만 청크, franchise·scope·status가 검색 계약과 맞다", async () => {
+    const { client, manuals, chunks, batches } = fakeClient({ modelCompletedLookup: true });
+    const indexed: string[] = [];
+    const result = await saveManualGroupsWithBatchGuard(client, {
+      auth: HQ_AUTH,
+      groups: GROUPS,
+      scope: HQ_SCOPE,
+      idempotencyKey: "key-ok",
+      indexManual: async (id) => {
+        indexed.push(id);
+      },
+    });
+
+    assert.equal(result.kind, "saved");
+    const children = manuals.filter((row) => row.parent_manual_id !== null);
+    assert.equal(manuals.length, 3);
+    assert.equal(chunks.length, 2);
+    assert.deepEqual(indexed.sort(), children.map((row) => row.id).sort());
+    for (const row of manuals) {
+      assert.equal(row.franchise_id, "franchise-1");
+      assert.equal(row.store_id, null);
+      assert.equal(row.scope_type, "hq");
+      assert.equal(row.status, "approved");
+    }
+    assert.equal(batches[0].status, "completed");
+  });
+
+  test("HQ 브랜드 없음: 403 고정 문구, batch·manuals를 만들지 않는다", async () => {
+    const { client, manuals, batches } = fakeClient({ modelCompletedLookup: true });
+    const result = await saveManualGroupsWithBatchGuard(client, {
+      auth: { ...HQ_AUTH, franchiseId: null },
+      groups: GROUPS,
+      scope: { ...HQ_SCOPE, franchiseId: null },
+      idempotencyKey: "key-nobrand",
+      indexManual: embedOk,
+    });
+
+    assert.equal(result.kind, "blocked");
+    assert.equal(result.kind === "blocked" ? result.status : 0, 403);
+    assert.equal(manuals.length, 0);
+    assert.equal(batches.length, 0);
+  });
+
+  test("배치 중복: 매뉴얼이 남아 있으면 새 key로 같은 내용을 올려도 새 행 없이 기존 결과를 돌려준다", async () => {
+    const { client, manuals } = fakeClient({ modelCompletedLookup: true });
+    await saveManualGroupsWithBatchGuard(client, { auth: HQ_AUTH, groups: GROUPS, scope: HQ_SCOPE, idempotencyKey: "key-a", indexManual: embedOk });
+    const again = await saveManualGroupsWithBatchGuard(client, { auth: HQ_AUTH, groups: GROUPS, scope: HQ_SCOPE, idempotencyKey: "key-b", indexManual: embedOk });
+
+    assert.equal(again.kind, "replayed");
+    assert.equal(again.kind === "replayed" ? again.manuals.length : 0, 3);
+    assert.equal(manuals.length, 3);
+  });
+
+  test("삭제 후 재업로드(회귀): 완료 기록만 남은 batch는 빈 성공(200·0건)이 아니라 새로 저장한다", async () => {
+    const { client, manuals, batches } = fakeClient({ modelCompletedLookup: true });
+    await saveManualGroupsWithBatchGuard(client, { auth: HQ_AUTH, groups: GROUPS, scope: HQ_SCOPE, idempotencyKey: "key-a", indexManual: embedOk });
+    manuals.splice(0);
+
+    const again = await saveManualGroupsWithBatchGuard(client, { auth: HQ_AUTH, groups: GROUPS, scope: HQ_SCOPE, idempotencyKey: "key-b", indexManual: embedOk });
+
+    assert.equal(again.kind, "saved");
+    assert.equal(manuals.length, 3);
+    assert.equal(batches.find((row) => row.idempotency_key === "key-a")?.status, "failed");
+    assert.equal(batches.find((row) => row.idempotency_key === "key-a")?.manual_count, 0);
+    assert.equal(batches.find((row) => row.idempotency_key === "key-b")?.status, "completed");
+  });
+
+  test("삭제 후 같은 key로 재시도해도 새로 저장한다", async () => {
+    const { client, manuals } = fakeClient({ modelCompletedLookup: true });
+    const input = { auth: HQ_AUTH, groups: GROUPS, scope: HQ_SCOPE, idempotencyKey: "key-a", indexManual: embedOk };
+    await saveManualGroupsWithBatchGuard(client, input);
+    manuals.splice(0);
+
+    const retry = await saveManualGroupsWithBatchGuard(client, input);
+    assert.equal(retry.kind, "saved");
+    assert.equal(manuals.length, 3);
+  });
+
+  test("부모 INSERT 실패: 500 고정 문구, 행 0건, batch는 failed/0으로 재시도 가능", async () => {
+    const { client, manuals, batches } = fakeClient({ modelCompletedLookup: true, failParentInsert: true });
+    const result = await silence(() =>
+      saveManualGroupsWithBatchGuard(client, { auth: HQ_AUTH, groups: GROUPS, scope: HQ_SCOPE, idempotencyKey: "key-p", indexManual: embedOk }),
+    );
+
+    assert.deepEqual(result, { kind: "save_failed", error: "매뉴얼 저장 중 오류가 발생했습니다." });
+    assert.equal(manuals.length, 0);
+    assert.equal(batches[0].status, "failed");
+    assert.equal(batches[0].manual_count, 0);
+  });
+
+  test("자식 INSERT 실패: 500 고정 문구, 부모만 남은 부분 저장은 failed/1로 기록돼 중복 저장을 막는다", async () => {
+    const { client, manuals, batches } = fakeClient({ modelCompletedLookup: true, failChildInsert: true });
+    const result = await silence(() =>
+      saveManualGroupsWithBatchGuard(client, { auth: HQ_AUTH, groups: GROUPS, scope: HQ_SCOPE, idempotencyKey: "key-c", indexManual: embedOk }),
+    );
+
+    assert.equal(result.kind, "save_failed");
+    assert.equal(JSON.stringify(result).includes("child insert failed"), false);
+    assert.equal(manuals.length, 1);
+    assert.equal(batches[0].status, "failed");
+    assert.equal(batches[0].manual_count, 1);
+  });
+
+  test("임베딩 실패: 저장은 성공하고 청크는 embedding=null 상태로 남아 '검색 준비 필요'가 된다", async () => {
+    const { client, manuals, chunks } = fakeClient({ modelCompletedLookup: true });
+    const result = await silence(() =>
+      saveManualGroupsWithBatchGuard(client, {
+        auth: HQ_AUTH,
+        groups: GROUPS,
+        scope: HQ_SCOPE,
+        idempotencyKey: "key-e",
+        indexManual: async () => {
+          throw new Error("embedding failed");
+        },
+      }),
+    );
+
+    assert.equal(result.kind, "saved");
+    assert.equal(manuals.length, 3);
+    assert.equal(chunks.length, 2);
+    assert.equal(chunks.every((chunk) => chunk.embedding === null), true);
   });
 });
