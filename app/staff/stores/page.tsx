@@ -9,6 +9,7 @@ import {
   PendingStoreRow,
   StoreMembershipList,
 } from "@/components/stores/StoreMembershipList";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { formatStoreDisplayName } from "@/lib/stores/search-stores";
 
 import { useStaffShell, type StaffPendingStore } from "@/components/staff/StaffShellContext";
@@ -16,10 +17,20 @@ import { useStaffShell, type StaffPendingStore } from "@/components/staff/StaffS
 type PendingRequest = StaffPendingStore;
 
 export default function StaffStoresPage() {
-  // 승인된 매장(/api/staff/stores)·승인 대기 신청·현재 근무 매장은 직원 공통 상태를 그대로 쓴다.
-  const { stores, pendingStores, selectedStore, isStoresLoading, storesError, reloadStores } = useStaffShell();
+  // 승인된 매장(/api/staff/stores)·승인 대기 신청·기본 매장은 직원 공통 상태를 그대로 쓴다.
+  const { stores, pendingStores, selectedStore, isStoresLoading, storesError, reloadStores, selectStore } = useStaffShell();
   const [cancelingId, setCancelingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  // 근무 매장 해제 dialog
+  const [removeDialog, setRemoveDialog] = useState<{
+    isOpen: boolean;
+    storeId: string | null;
+    storeName: string;
+    isCurrent: boolean;
+  }>({ isOpen: false, storeId: null, storeName: "", isCurrent: false });
+  const [isRemoving, setIsRemoving] = useState(false);
+
   const currentStoreId = selectedStore?.id ?? null;
   const state = isStoresLoading
     ? ({ status: "loading" } as const)
@@ -55,6 +66,80 @@ export default function StaffStoresPage() {
     }
   };
 
+  const openRemoveDialog = (storeId: string, storeName: string) => {
+    const store = stores.find((s) => s.id === storeId);
+    const isCurrent = storeId === currentStoreId;
+
+    // 기본 매장인 경우, 다른 매장이 있으면 경고
+    if (isCurrent && stores.length > 1) {
+      setNotice({
+        type: "error",
+        message: "다른 매장을 기본 매장으로 지정한 후 근무를 종료해 주세요.",
+      });
+      return;
+    }
+
+    setRemoveDialog({ isOpen: true, storeId, storeName, isCurrent });
+  };
+
+  const closeRemoveDialog = () => {
+    setRemoveDialog({ isOpen: false, storeId: null, storeName: "", isCurrent: false });
+  };
+
+  const removeStore = async () => {
+    if (!removeDialog.storeId) return;
+    if (isRemoving) return;
+
+    setIsRemoving(true);
+    setNotice(null);
+
+    try {
+      const store = stores.find((s) => s.id === removeDialog.storeId);
+      if (!store) {
+        setNotice({ type: "error", message: "매장 정보를 찾을 수 없습니다." });
+        setIsRemoving(false);
+        return;
+      }
+
+      // membership ID 사용
+      const membershipId = store.membershipId ?? store.id;
+
+      const response = await fetch(`/api/staff/memberships/${encodeURIComponent(membershipId)}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const result = (await response.json()) as { success?: boolean; code?: string };
+
+      if (response.ok && result.success) {
+        setNotice({ type: "success", message: `${formatStoreDisplayName(removeDialog.storeName)}의 근무를 종료했습니다.` });
+        closeRemoveDialog();
+
+        // 현재 선택된 매장이 방금 제거된 매장인 경우 처리
+        if (currentStoreId === removeDialog.storeId) {
+          // 남은 승인 매장 중 첫 번째를 새로운 기본 매장으로 선택
+          const remainingStores = stores.filter((s) => s.id !== removeDialog.storeId);
+          if (remainingStores.length > 0) {
+            selectStore(remainingStores[0].id);
+          }
+        }
+
+        // 목록 새로고침
+        reload();
+      } else if (result.code === "NOT_FOUND") {
+        setNotice({ type: "error", message: "이 근무 매장을 찾을 수 없습니다." });
+      } else if (result.code === "INVALID_STATUS") {
+        setNotice({ type: "error", message: "이 근무 매장을 더 이상 종료할 수 없습니다." });
+      } else {
+        setNotice({ type: "error", message: "근무를 종료하지 못했습니다. 잠시 후 다시 시도해 주세요." });
+      }
+    } catch (error) {
+      console.error("Remove store error:", error);
+      setNotice({ type: "error", message: "근무를 종료하지 못했습니다. 잠시 후 다시 시도해 주세요." });
+    } finally {
+      setIsRemoving(false);
+    }
+  };
+
   return (
     <div className="p-6 lg:p-8">
           <div className="max-w-7xl mx-auto">
@@ -62,10 +147,7 @@ export default function StaffStoresPage() {
               <div>
                 <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">근무 매장</h1>
                 <p className="text-base text-[var(--color-text-secondary)]">
-                  근무 중인 매장과 승인 대기 중인 신청을 관리할 수 있습니다.
-                </p>
-                <p className="mt-1 text-sm text-[var(--color-text-tertiary)]">
-                  현재 근무 매장 변경은 AI 챗봇 상단의 근무 매장 선택에서 할 수 있습니다.
+                  승인된 근무 매장을 관리하고 서비스에서 우선 사용할 기본 매장을 설정할 수 있습니다.
                 </p>
               </div>
               <Link
@@ -114,10 +196,10 @@ export default function StaffStoresPage() {
               <div className="space-y-10">
                 <div className="flex flex-wrap gap-2" aria-label="근무 매장 요약">
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-primary-light)]/40 px-3 py-1 text-sm font-semibold text-[var(--color-primary)]">
-                    근무 중 {state.approved.length}
+                    근무 매장 {state.approved.length}곳
                   </span>
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-sm font-semibold text-amber-800">
-                    승인 대기 {state.pending.length}
+                    승인 대기 {state.pending.length}건
                   </span>
                 </div>
 
@@ -137,20 +219,22 @@ export default function StaffStoresPage() {
                   <>
                     <section aria-labelledby="approved-heading">
                       <h2 id="approved-heading" className="mb-3 text-lg font-bold text-[var(--color-text-primary)]">
-                        근무 중
+                        승인된 근무 매장
                       </h2>
                       {state.approved.length === 0 ? (
                         <p className="rounded-xl border border-[var(--color-border)] bg-white px-5 py-4 text-sm text-[var(--color-text-secondary)]">
-                          현재 근무 중인 매장이 없습니다.
+                          승인된 근무 매장이 없습니다.
                         </p>
                       ) : (
-                        <StoreMembershipList label="근무 중 매장">
+                        <StoreMembershipList label="승인된 근무 매장">
                           {state.approved.map((store) => (
                             <ApprovedStoreRow
                               key={store.id}
+                              storeId={store.id}
                               storeName={store.name}
-                              approvedLabel="승인 완료"
                               isCurrent={store.id === currentStoreId}
+                              onSetAsDefault={() => selectStore(store.id)}
+                              onRemoveStart={() => openRemoveDialog(store.id, store.name)}
                             />
                           ))}
                         </StoreMembershipList>
@@ -171,9 +255,7 @@ export default function StaffStoresPage() {
                               storeName={request.storeName}
                               waitingLabel="점주 승인 대기"
                               requestedAt={request.requestedAt}
-                              isCanceling={cancelingId === request.membershipId}
-                              cancelDisabled={cancelingId !== null}
-                              onCancel={() => cancelRequest(request)}
+                              onCancelStart={() => cancelRequest(request)}
                             />
                           ))}
                         </StoreMembershipList>
@@ -183,6 +265,28 @@ export default function StaffStoresPage() {
                 )}
               </div>
             )}
+
+            {/* 근무 매장 근무 종료 확인 dialog */}
+            <ConfirmDialog
+              isOpen={removeDialog.isOpen}
+              title="근무를 종료하시겠어요?"
+              description={
+                <>
+                  <p>
+                    "<strong>{formatStoreDisplayName(removeDialog.storeName)}</strong>"의 근무 연결이 해제됩니다.
+                  </p>
+                  <p className="mt-2 text-[var(--color-text-tertiary)]">
+                    종료 후에는 해당 매장의 지점 매뉴얼과 매장 기준 기능을 이용할 수 없습니다.
+                  </p>
+                </>
+              }
+              cancelText="취소"
+              confirmText="근무 종료"
+              isDangerous
+              isLoading={isRemoving}
+              onCancel={closeRemoveDialog}
+              onConfirm={removeStore}
+            />
           </div>
     </div>
   );

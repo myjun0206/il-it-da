@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { AlertCircle, CheckCircle2, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { AlertCircle, CheckCircle2, Check } from "lucide-react";
 
 import ThemeSelector from "@/components/common/ThemeSelector";
 import ProfileAvatar from "@/components/common/ProfileAvatar";
@@ -29,15 +30,16 @@ function FeedbackMessage({ feedback }: { feedback: Feedback }) {
   return (
     <p
       role={isSuccess ? "status" : "alert"}
-      className={`mt-3 flex items-center gap-2 text-sm ${isSuccess ? "text-[var(--color-primary)]" : "text-red-700"}`}
+      className={`mt-4 flex items-center gap-2 text-base font-medium ${isSuccess ? "text-[var(--color-primary)]" : "text-red-700"}`}
     >
-      <Icon size={16} aria-hidden="true" />
+      <Icon size={20} aria-hidden="true" />
       {feedback.message}
     </p>
   );
 }
 
 export default function StaffSettingsPage() {
+  const router = useRouter();
   const { userName, roleLabel, selectedStore, stores, isStoresLoading, logout } = useStaffShell();
   const [email, setEmail] = useState("");
   const [userId, setUserId] = useState("");
@@ -59,14 +61,16 @@ export default function StaffSettingsPage() {
           setUserId(userData.user.id);
           setEmail(userData.user.email ?? "");
 
-          // avatar_url 조회
+          // avatar_url 조회 (cache busting은 이제 filename에 포함됨)
           const { data: profile } = await supabase
             .from("profiles")
-            .select("avatar_url")
+            .select("avatar_url, avatar_updated_at")
             .eq("id", userData.user.id)
-            .maybeSingle<{ avatar_url: string | null }>();
+            .maybeSingle<{ avatar_url: string | null; avatar_updated_at: string | null }>();
 
           if (!isCancelled) {
+            // 원본 URL만 사용 (query string 없음)
+            // filename이 avatar-{timestamp}.jpg 형태이므로 cache busting 불필요
             setAvatarUrl(profile?.avatar_url || null);
           }
         }
@@ -84,11 +88,19 @@ export default function StaffSettingsPage() {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    // 브라우저 로컬 미리보기: DataURL 사용
     const reader = new FileReader();
     reader.onload = () => {
       setAvatarPreview(reader.result as string);
+      setAvatarFeedback(null);
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleCancelAvatarPreview = () => {
+    setAvatarPreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    setAvatarFeedback(null);
   };
 
   const handleUploadAvatar = async () => {
@@ -105,11 +117,19 @@ export default function StaffSettingsPage() {
       const result = await uploadProfileAvatarClient(file, mimeType);
 
       if (result.success && result.avatarUrl) {
+        // cache busting은 이제 filename에 포함됨 (avatar-{timestamp}.jpg)
+        // 따라서 query string 불필요, 원본 URL만 사용
         setAvatarUrl(result.avatarUrl);
         setAvatarPreview(null);
         if (fileInputRef.current) fileInputRef.current.value = "";
         setAvatarFeedback({ type: "success", message: "프로필 사진이 저장되었습니다." });
-        void createClient().auth.refreshSession();
+
+        // Header에 avatar 변경 이벤트 전송
+        window.dispatchEvent(
+          new CustomEvent("staffAvatarUpdated", {
+            detail: { avatarUrl: result.avatarUrl },
+          })
+        );
       } else {
         setAvatarFeedback({
           type: "error",
@@ -140,7 +160,13 @@ export default function StaffSettingsPage() {
         setAvatarPreview(null);
         if (fileInputRef.current) fileInputRef.current.value = "";
         setAvatarFeedback({ type: "success", message: "프로필 사진이 삭제되었습니다." });
-        void createClient().auth.refreshSession();
+
+        // Header에 avatar 변경 이벤트 전송
+        window.dispatchEvent(
+          new CustomEvent("staffAvatarUpdated", {
+            detail: { avatarUrl: null },
+          })
+        );
       } else {
         setAvatarFeedback({
           type: "error",
@@ -155,41 +181,50 @@ export default function StaffSettingsPage() {
     }
   };
 
-  const rows = [
-    { label: "이름", value: userName || "등록된 이름 없음" },
-    { label: "이메일", value: email || "등록된 이메일 없음" },
-    {
-      label: "현재 근무 매장",
-      value: isStoresLoading ? "불러오는 중..." : selectedStore ? formatStoreDisplayName(selectedStore.name) : "승인된 근무 매장 없음",
-    },
-    { label: "근무 매장 수", value: isStoresLoading ? "불러오는 중..." : `${stores.length}곳` },
-    { label: "역할", value: roleLabel || "-" },
-  ];
-
   return (
     <div className="p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">환경설정</h1>
-          <p className="text-base text-[var(--color-text-secondary)]">계정 정보와 화면 설정을 확인할 수 있습니다.</p>
+          <h1 className="text-3xl font-bold text-[var(--color-text-primary)] mb-2">환경설정</h1>
+          <p className="text-base text-[var(--color-text-primary)] opacity-70">프로필과 서비스 이용 환경을 설정합니다.</p>
         </div>
 
+        {/* === 계정 정보 카드 === */}
         <section aria-labelledby="account-heading" className={cardClass}>
-          <h2 id="account-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-1">
+          <h2 id="account-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-2">
             계정 정보
           </h2>
-          <p className="mb-5 text-sm text-[var(--color-text-secondary)]">서비스에서 사용하는 내 정보입니다.</p>
+          <p className="mb-7 text-base text-[var(--color-text-primary)] opacity-70">내 프로필과 근무 정보를 확인하고 관리합니다.</p>
 
-          {/* 프로필 사진 */}
-          <div className={rowClass}>
-            <span className={rowLabelClass}>프로필 사진</span>
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 flex-1">
+          {/* === 프로필 섹션 === */}
+          <div className="flex flex-col sm:flex-row sm:items-start gap-10 mb-8">
+            {/* 프로필 사진 */}
+            <div className="flex-shrink-0">
               <ProfileAvatar
                 name={userName}
                 avatarUrl={avatarPreview || avatarUrl}
-                size="lg"
-                className="w-12 h-12"
+                size="xxl"
               />
+            </div>
+
+            {/* 프로필 정보 및 액션 */}
+            <div className="flex-1 flex flex-col justify-between">
+              {/* 프로필 텍스트 정보 */}
+              <div className="mb-6">
+                <h3 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
+                  {userName || "등록된 이름 없음"}
+                </h3>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="inline-flex items-center px-3 py-1 rounded-full bg-[var(--color-primary)]/10 text-sm font-medium text-[var(--color-primary)]">
+                    {roleLabel || "역할 정보 없음"}
+                  </span>
+                </div>
+                <p className="text-base text-[var(--color-text-primary)] break-all">
+                  {email || "등록된 이메일 없음"}
+                </p>
+              </div>
+
+              {/* 액션 버튼 */}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -199,8 +234,9 @@ export default function StaffSettingsPage() {
                 className="hidden"
                 aria-label="프로필 사진 선택"
               />
+
               {avatarPreview ? (
-                <div className="flex gap-2">
+                <div className="flex gap-3 flex-wrap">
                   <button
                     type="button"
                     onClick={handleUploadAvatar}
@@ -211,10 +247,7 @@ export default function StaffSettingsPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      setAvatarPreview(null);
-                      if (fileInputRef.current) fileInputRef.current.value = "";
-                    }}
+                    onClick={handleCancelAvatarPreview}
                     disabled={isUploadingAvatar}
                     className={secondaryButtonClass}
                   >
@@ -222,7 +255,7 @@ export default function StaffSettingsPage() {
                   </button>
                 </div>
               ) : (
-                <div className="flex gap-2">
+                <div className="flex gap-3 flex-wrap items-center">
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
@@ -236,57 +269,80 @@ export default function StaffSettingsPage() {
                       type="button"
                       onClick={handleDeleteAvatar}
                       disabled={isUploadingAvatar}
-                      aria-label="프로필 사진 삭제"
-                      className="inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-lg text-sm font-medium text-red-700 transition-colors hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-lg border-2 border-red-300 bg-white px-4 text-sm font-medium text-red-700 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 disabled:cursor-not-allowed disabled:opacity-60 transition-colors"
                     >
-                      <Trash2 size={18} aria-hidden="true" />
+                      사진 삭제
                     </button>
                   )}
                 </div>
               )}
             </div>
           </div>
+
           <FeedbackMessage feedback={avatarFeedback} />
 
-          <dl>
-            {rows.map((row) => (
-              <div key={row.label} className={rowClass}>
-                <dt className={rowLabelClass}>{row.label}</dt>
-                <dd className="text-base font-medium text-[var(--color-text-primary)] break-all">{row.value}</dd>
+          {/* === 근무 정보 섹션 === */}
+          <div className="border-t border-[var(--color-border)] pt-8 mt-8">
+            {/* 제목 및 링크 */}
+            <div className="flex items-center justify-between gap-4 mb-5">
+              <div className="flex items-center gap-3">
+                <h3 className="text-lg font-bold text-[var(--color-text-primary)]">근무 매장</h3>
+                <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-[var(--color-primary)]/10 text-xs font-bold text-[var(--color-primary)]">
+                  {isStoresLoading ? "로드중" : `${stores.length}`}
+                </span>
               </div>
-            ))}
-          </dl>
-          <p className="text-sm text-[var(--color-text-secondary)] mt-5 pt-5 border-t border-[var(--color-border)]">
-            현재 근무 매장은 AI 챗봇 또는 지점 매뉴얼의 매장 선택에서 바꿀 수 있고, 근무 매장 추가는 근무 매장 메뉴에서 신청할 수 있습니다.
-          </p>
+              <a
+                href="/staff/stores"
+                className="inline-flex min-h-[44px] items-center justify-center px-4 text-base font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary)]/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] rounded-lg transition-colors"
+              >
+                근무 매장 관리 →
+              </a>
+            </div>
+
+            {/* 매장 목록 */}
+            {isStoresLoading ? (
+              <p className="text-base text-[var(--color-text-secondary)]">불러오는 중...</p>
+            ) : stores.length > 0 ? (
+              <div className="space-y-3">
+                {stores.map((store) => {
+                  const isCurrent = selectedStore?.id === store.id;
+                  return (
+                    <div
+                      key={store.id}
+                      className={`flex items-center justify-between gap-3 p-4 rounded-lg transition-colors ${
+                        isCurrent
+                          ? "bg-[var(--color-primary)]/8 border border-[var(--color-primary)]/20"
+                          : "bg-[var(--color-bg-default)] border border-transparent"
+                      }`}
+                    >
+                      <p className="text-base font-medium text-[var(--color-text-primary)]">
+                        {formatStoreDisplayName(store.name)}
+                      </p>
+                      {isCurrent && (
+                        <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--color-primary)]/10">
+                          <Check size={16} className="text-[var(--color-primary)] flex-shrink-0" aria-hidden="true" />
+                          <span className="text-xs font-medium text-[var(--color-primary)]">기본 매장</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-base text-[var(--color-text-secondary)]">승인된 근무 매장이 없습니다.</p>
+            )}
+          </div>
         </section>
 
+        {/* === 화면 설정 카드 === */}
         <section aria-labelledby="display-heading" className={cardClass}>
-          <h2 id="display-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-1">
+          <h2 id="display-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-2">
             화면 설정
           </h2>
-          <p className="mb-5 text-sm text-[var(--color-text-secondary)]">
-            일잇다 화면의 테마를 설정합니다. 시스템 설정은 기기의 라이트/다크 설정을 따릅니다.
+          <p className="mb-6 text-base text-[var(--color-text-primary)] opacity-70">
+            일잇다의 화면 테마를 선택합니다. 시스템 설정을 선택하면 기기의 라이트/다크 모드를 따릅니다.
           </p>
           <ThemeSelector />
-        </section>
-
-        <section aria-labelledby="security-heading" className={cardClass}>
-          <h2 id="security-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-1">
-            보안
-          </h2>
-          <p className="mb-5 text-sm text-[var(--color-text-secondary)]">현재 로그인된 계정과 세션을 관리합니다.</p>
-          <div className={rowClass}>
-            <span className={rowLabelClass}>로그인 계정</span>
-            <span className="text-base font-medium text-[var(--color-text-primary)] break-all">{email || "등록된 이메일 없음"}</span>
-            <button
-              type="button"
-              onClick={() => void logout()}
-              className="inline-flex min-h-[44px] shrink-0 items-center justify-center self-start rounded-lg border-2 border-red-200 bg-transparent px-4 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 sm:ml-auto sm:self-auto"
-            >
-              로그아웃
-            </button>
-          </div>
         </section>
       </div>
     </div>

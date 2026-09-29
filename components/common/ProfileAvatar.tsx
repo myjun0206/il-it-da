@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 
 interface ProfileAvatarProps {
   /** 사용자 이름 (initials 생성용) */
@@ -8,7 +8,7 @@ interface ProfileAvatarProps {
   /** 프로필 사진 URL (없으면 initials 표시) */
   avatarUrl?: string | null;
   /** Avatar 크기 (기본값: 'md') */
-  size?: "sm" | "md" | "lg";
+  size?: "sm" | "md" | "lg" | "xl" | "xxl";
   /** className 추가 (선택사항) */
   className?: string;
   /** 이미지 로드 실패 시 처리 */
@@ -19,6 +19,8 @@ const SIZES = {
   sm: "w-6 h-6 text-xs",
   md: "w-8 h-8 text-sm",
   lg: "w-12 h-12 text-base",
+  xl: "w-16 h-16 text-lg",
+  xxl: "w-20 h-20 text-xl",
 };
 
 const BG_COLORS = [
@@ -50,6 +52,12 @@ export default function ProfileAvatar({
   onImageError,
 }: ProfileAvatarProps) {
   const [imageError, setImageError] = useState(false);
+
+  // avatarUrl이 변경되면 imageError state 초기화
+  // (이전 URL 로드 실패 상태가 새 URL에 영향을 주지 않도록)
+  useEffect(() => {
+    setImageError(false);
+  }, [avatarUrl]);
 
   // initials 계산: "송채현" → "송"
   const initials = useMemo(() => {
