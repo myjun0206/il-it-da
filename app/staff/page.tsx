@@ -1,29 +1,36 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, Bot, CheckCircle2, ChevronRight, Clock3, Info, Paperclip, Send, Store, UserRound } from "lucide-react";
+import { AlertCircle, Bot, CheckCircle2, Clock3, History, Info, Lock, Paperclip, Plus, Send, UserRound } from "lucide-react";
 
-import StaffHeader from "@/components/staff/StaffHeader";
-import StaffSidebar from "@/components/staff/StaffSidebar";
+import { useStaffShell } from "@/components/staff/StaffShellContext";
+import ConversationHistoryDrawer from "@/components/staff/ConversationHistoryDrawer";
+import StoreSwitcher from "@/components/common/StoreSwitcher";
 import type { RagSource, RagStatus } from "@/lib/rag/types";
 import type { StaffStore } from "@/lib/staff/approved-stores";
+import type { ConversationMessageDto, ConversationSummaryDto } from "@/lib/staff/conversations";
+import {
+  readStaffConversationId,
+  writeStaffConversationId,
+} from "@/lib/staff/selected-store";
+import { formatStoreDisplayName } from "@/lib/stores/search-stores";
 import { createClient } from "@/lib/supabase/client";
 
 type Message = {
   from: "ai" | "me";
   text: string;
+  /** 비어 있으면 시간 표시 생략 (안내 메시지) */
   time: string;
   status?: RagStatus;
   source?: Partial<Pick<RagSource, "title" | "category">>;
   similarity?: number;
 };
 
-type StoreMembership = {
-  storeId: string;
-  storeName: string;
-  role: string;
-  status: string;
+type ConversationDetail = {
+  conversation: ConversationSummaryDto & { canContinue: boolean };
+  messages: ConversationMessageDto[];
 };
 
 const statusBadgeConfig = {
@@ -40,10 +47,10 @@ const quickQuestions = [
   "매장 청소 체크리스트 보여줘",
   "신규 알바가 꼭 알아야 할 내용은?",
 ];
-const SELECTED_STORE_STORAGE_KEY = "staffSelectedStoreId";
-const INITIAL_MESSAGES: Message[] = [
-  { from: "ai", text: "안녕하세요!\n일잇다 AI입니다.\n매장 업무와 관련된 궁금한 점이 있다면 언제든 물어보세요.\n매뉴얼을 기반으로 정확하고 친절하게 답변해드릴게요.", time: "오후 1:58" },
-  { from: "ai", text: "아래 예시 질문을 참고하거나,\n직접 궁금한 내용을 입력해보세요.", time: "오후 1:58" },
+const EXAMPLE_GUIDE_MESSAGE: Message = { from: "ai", text: "아래 예시 질문을 참고하거나,\n직접 궁금한 내용을 입력해보세요.", time: "" };
+const NEW_CHAT_MESSAGES: Message[] = [
+  { from: "ai", text: "안녕하세요! 일잇다 AI입니다.\n현재 매장의 업무에 대해 궁금한 점을 물어보세요.", time: "" },
+  EXAMPLE_GUIDE_MESSAGE,
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -61,104 +68,187 @@ function normalizeSource(value: unknown): Message["source"] {
   return title || category ? { title, category } : undefined;
 }
 
+function formatMessageTime(value: string | Date): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString("ko-KR", { hour: "numeric", minute: "2-digit" });
+}
+
+/** 채팅 상단 날짜 표시: 오늘 / 어제 / M월 D일 */
+function formatDateLabel(value?: string): string {
+  if (!value) return "오늘";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "오늘";
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if (date.getTime() >= todayStart) return "오늘";
+  if (date.getTime() >= todayStart - 24 * 60 * 60 * 1000) return "어제";
+  return `${date.getMonth() + 1}월 ${date.getDate()}일`;
+}
+
+function toChatMessages(rows: ConversationMessageDto[]): Message[] {
+  return rows.map((row) => {
+    const message: Message = { from: row.role === "user" ? "me" : "ai", text: row.content, time: formatMessageTime(row.createdAt) };
+    if (row.role === "assistant") {
+      if (isRagStatus(row.status)) message.status = row.status;
+      if (row.sourceTitle || row.sourceCategory) {
+        message.source = { title: row.sourceTitle ?? undefined, category: row.sourceCategory ?? undefined };
+      }
+      if (typeof row.similarity === "number") message.similarity = row.similarity;
+    }
+    return message;
+  });
+}
+
+/** 본인 대화 1건 조회 (서버가 user_id를 검증; 없거나 남의 대화면 null) */
+async function fetchConversationDetail(conversationId: string, signal?: AbortSignal): Promise<ConversationDetail | null> {
+  const response = await fetch(`/api/staff/conversations/${encodeURIComponent(conversationId)}`, {
+    credentials: "include",
+    signal,
+  });
+  if (!response.ok) return null;
+  const payload = (await response.json()) as Partial<ConversationDetail>;
+  if (!payload.conversation || !Array.isArray(payload.messages)) return null;
+  return payload as ConversationDetail;
+}
+
 export default function StaffPage() {
   const router = useRouter();
-  const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
+  const [messages, setMessages] = useState<Message[]>(NEW_CHAT_MESSAGES);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [userName, setUserName] = useState("직원");
-  const [storeName, setStoreName] = useState("매장");
-const [stores, setStores] = useState<StaffStore[]>([]);
-const [selectedStore, setSelectedStore] = useState<StaffStore | null>(null);
-const [isStoresLoading, setIsStoresLoading] = useState(true);
-const [storesError, setStoresError] = useState("");
-const [storesReloadToken, setStoresReloadToken] = useState(0);
+  // 근무 매장 목록/현재 매장은 직원 공통 상태(Header와 같은 source)를 쓴다.
+  const {
+    stores,
+    pendingStores,
+    selectedStore,
+    isStoresLoading,
+    storesError,
+    reloadStores,
+    selectStore: selectShellStore,
+  } = useStaffShell();
+  const restoreCheckedRef = useRef(false);
+  const [toastMessage, setToastMessage] = useState("");
+  // 대화: 첫 질문에 서버가 만든 ID. null이면 아직 저장되지 않은 새 대화.
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  // 근무 권한이 없는 매장의 지난 대화를 열었을 때: 열람만 가능 (값 = 대화 매장명)
+  const [readOnlyStoreName, setReadOnlyStoreName] = useState<string | null>(null);
+  const [dateLabel, setDateLabel] = useState("오늘");
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isConversationLoading, setIsConversationLoading] = useState(false);
 
-function selectStore(storeId: string) {
-  if (isLoading || isStoresLoading) return;
+  const messagesAreaRef = useRef<HTMLDivElement>(null);
 
-  const store = stores.find((candidate) => candidate.id === storeId) ?? null;
+  // 새 메시지·복원된 대화는 항상 최신 메시지가 보이도록 아래로 스크롤한다.
+  useEffect(() => {
+    const area = messagesAreaRef.current;
+    if (area) area.scrollTop = area.scrollHeight;
+  }, [messages, isLoading, errorMessage]);
 
-  if (selectedStore?.id !== store?.id) {
-    setMessages(INITIAL_MESSAGES);
+  const isBusy = isLoading || isStoresLoading || isConversationLoading;
+  const canAsk = !isBusy && Boolean(selectedStore) && readOnlyStoreName === null;
+
+  function resetConversation(nextMessages: Message[] = NEW_CHAT_MESSAGES) {
+    setMessages(nextMessages);
+    setConversationId(null);
+    writeStaffConversationId(null);
+    setReadOnlyStoreName(null);
+    setDateLabel("오늘");
     setInput("");
     setErrorMessage("");
   }
 
-  setSelectedStore(store);
-  setStoreName(store?.name ?? "매장");
-
-  if (store) {
-    sessionStorage.setItem(SELECTED_STORE_STORAGE_KEY, store.id);
-  } else {
-    sessionStorage.removeItem(SELECTED_STORE_STORAGE_KEY);
+  /** + 새 대화: 화면만 초기화한다. DB row는 첫 질문 때 서버가 만든다. */
+  function startNewConversation() {
+    if (isBusy) return;
+    resetConversation();
   }
-}
 
-  useEffect(() => {
-    const controller = new AbortController();
+  function applyStore(store: StaffStore) {
+    // 공통 상태를 바꾸면 Header/ProfileMenu도 즉시 같은 매장으로 바뀐다.
+    selectShellStore(store.id);
+  }
 
-    async function loadApprovedStores() {
-      setIsStoresLoading(true);
-      setStoresError("");
+  function selectStore(storeId: string) {
+    if (isBusy) return;
 
-      try {
-        const response = await fetch("/api/staff/stores", { signal: controller.signal });
-        if (response.status === 401) {
-          router.push("/");
-          return;
-        }
+    const store = stores.find((candidate) => candidate.id === storeId) ?? null;
 
-        const payload = (await response.json()) as { stores?: StaffStore[]; error?: string };
-        if (!response.ok || !Array.isArray(payload.stores)) {
-          throw new Error("Unable to load approved stores.");
-        }
+    if (!store || (selectedStore?.id === store.id && readOnlyStoreName === null)) return;
 
-        if (controller.signal.aborted) return;
+    // 대화는 매장에 고정된다: 현재 대화는 기록에 그대로 두고, 새 매장 기준 새 대화를 시작한다.
+    resetConversation([
+      {
+        from: "ai",
+        text: `${store.name}으로 전환했습니다.\n이제 이 매장의 매뉴얼을 기준으로 답변합니다.`,
+        time: "",
+      },
+      EXAMPLE_GUIDE_MESSAGE,
+    ]);
+    applyStore(store);
+    setToastMessage(`${store.name}으로 전환했습니다.`);
+  }
 
-        const availableStores = payload.stores;
-        const storedStoreId = sessionStorage.getItem(SELECTED_STORE_STORAGE_KEY);
-        const restoredStore =
-          availableStores.find((store) => store.id === storedStoreId) ?? null;
+  async function openConversation(summary: ConversationSummaryDto) {
+    setIsHistoryOpen(false);
+    if (isBusy || summary.id === conversationId) return;
 
-        if (restoredStore) {
-          setSelectedStore(restoredStore);
-          setStoreName(restoredStore.name);
-        } else if (availableStores.length === 1) {
-          setSelectedStore(availableStores[0]);
-          setStoreName(availableStores[0].name);
-        } else {
-          setSelectedStore(null);
-          setStoreName("매장");
-        }
-        if (!restoredStore && storedStoreId) {
-          sessionStorage.removeItem(SELECTED_STORE_STORAGE_KEY);
-        }
-      } catch {
-        if (controller.signal.aborted) return;
-        setStores([]);
-        setSelectedStore(null);
-        setStoreName("매장");
-        setStoresError("승인된 소속 매장을 불러오지 못했습니다. 다시 시도해 주세요.");
-      } finally {
-        if (!controller.signal.aborted) {
-          setIsStoresLoading(false);
-        }
+    setIsConversationLoading(true);
+    setErrorMessage("");
+    try {
+      const detail = await fetchConversationDetail(summary.id);
+      if (!detail) {
+        setErrorMessage("대화를 불러오지 못했습니다. 삭제되었거나 접근할 수 없는 대화입니다.");
+        return;
       }
-    }
 
-    loadApprovedStores();
-    return () => controller.abort();
-  }, [router, storesReloadToken]);
+      const { conversation } = detail;
+      // canContinue는 서버가 approved staff membership으로 판단한 값. 화면 목록에도 있어야 전환한다.
+      const conversationStore = conversation.canContinue
+        ? stores.find((store) => store.id === conversation.storeId) ?? null
+        : null;
+
+      setMessages(toChatMessages(detail.messages));
+      setDateLabel(formatDateLabel(detail.messages[0]?.createdAt));
+      setConversationId(conversation.id);
+      writeStaffConversationId(conversation.id);
+      setInput("");
+
+      if (conversationStore) {
+        setReadOnlyStoreName(null);
+        if (conversationStore.id !== selectedStore?.id) {
+          applyStore(conversationStore);
+          setToastMessage(`${formatStoreDisplayName(conversationStore.name)} 대화로 전환했습니다.`);
+        }
+      } else {
+        // 현재 근무 매장은 바꾸지 않고, 지난 대화는 열람만 허용한다.
+        setReadOnlyStoreName(conversation.storeName || "이전 매장");
+      }
+    } catch {
+      setErrorMessage("대화를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setIsConversationLoading(false);
+    }
+  }
+
+  function handleConversationDeleted(deletedId: string) {
+    if (deletedId === conversationId) resetConversation();
+  }
 
   useEffect(() => {
-    // Check Supabase session - redirect if needed
+    if (!toastMessage) return;
+    const timer = setTimeout(() => setToastMessage(""), 2500);
+    return () => clearTimeout(timer);
+  }, [toastMessage]);
+
+  // Auth 확인: Staff 권한 검증
+  useEffect(() => {
     const checkAuth = async () => {
       try {
         const supabase = createClient();
         const { data, error } = await supabase.auth.getUser();
-        
+
         if (error || !data.user) {
           router.push("/");
           return;
@@ -188,72 +278,77 @@ function selectStore(storeId: string) {
     checkAuth();
   }, [router]);
 
+  // 새로고침: 이 탭에서 보던 대화가 현재 근무 매장의 대화면 다시 연다. (본인 대화인지는 서버가 확인)
   useEffect(() => {
-    // Set user info from metadata
-    const setUserInfo = async () => {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
+    if (isStoresLoading || restoreCheckedRef.current) return;
+    restoreCheckedRef.current = true;
+    const storedConversationId = readStaffConversationId();
+    if (!storedConversationId) return;
 
-        if (!data.session?.user) return;
-
-        const user = data.session.user;
-        const name = user.user_metadata?.name;
-
-        // Set user name from metadata
-        if (name) {
-          setUserName(name);
+    void fetchConversationDetail(storedConversationId)
+      .catch(() => null)
+      .then((restored) => {
+        const { conversation } = restored ?? {};
+        const sameStore = conversation?.canContinue && conversation.storeId === selectedStore?.id;
+        if (!restored || !conversation || (conversation.canContinue && !sameStore)) {
+          writeStaffConversationId(null);
+          return;
         }
-      } catch (e) {
-        console.error("Set user info failed:", e);
-      }
-    };
+        setMessages(toChatMessages(restored.messages));
+        setDateLabel(formatDateLabel(restored.messages[0]?.createdAt));
+        setConversationId(conversation.id);
+        setReadOnlyStoreName(sameStore ? null : conversation.storeName || "이전 매장");
+      });
+  }, [isStoresLoading, selectedStore]);
 
-    setUserInfo();
-  }, []);
-
-  const handleLogout = async () => {
-    try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
-      router.push("/");
-    } catch (e) {
-      console.error("Logout failed:", e);
-      router.push("/");
+  async function submitQuestion(rawQuestion: string) {
+    const question = rawQuestion.trim();
+    if (!question || isBusy) return;
+    if (readOnlyStoreName !== null) {
+      setErrorMessage("이 대화는 열람만 할 수 있습니다. 새 질문은 새 대화에서 시작해 주세요.");
+      return;
     }
-  };
-
-  async function sendMessage(event?: FormEvent) {
-    event?.preventDefault();
-    const question = input.trim();
-    if (!question || isLoading || isStoresLoading) return;
     if (!selectedStore) {
       setErrorMessage(
         stores.length === 0
-          ? "승인된 소속 매장이 없습니다. 관리자에게 승인 상태를 확인해 주세요."
+          ? "승인된 근무 매장이 없습니다. 근무 매장이 승인된 뒤에 질문할 수 있어요."
           : "먼저 근무 매장을 선택해 주세요.",
       );
       return;
     }
     setInput("");
     setErrorMessage("");
-    setMessages(current => [...current, { from: "me", text: question, time: "방금 전" }]);
+    setMessages(current => [...current, { from: "me", text: question, time: formatMessageTime(new Date()) }]);
     setIsLoading(true);
 
     try {
-      const response = await fetch("/api/rag/query", {
+      // 이어서 묻는 대화면 서버가 대화에 저장된 매장을 쓰고, storeId는 새 대화 시작에만 쓰인다.
+      const response = await fetch("/api/staff/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, storeId: selectedStore.id }),
+        body: JSON.stringify({ question, storeId: selectedStore.id, conversationId }),
       });
 
       const result: unknown = await response.json();
       const payload = isRecord(result) ? result : {};
+
+      if (payload.code === "CONVERSATION_NOT_FOUND") {
+        // 다른 탭에서 삭제된 대화: 새 대화로 돌린다.
+        setConversationId(null);
+        writeStaffConversationId(null);
+        setErrorMessage("이 대화를 찾을 수 없어 새 대화로 전환했습니다. 질문을 다시 보내 주세요.");
+        return;
+      }
+      if (payload.code === "STORE_FORBIDDEN") {
+        setErrorMessage("이 매장의 근무 권한이 확인되지 않아 답변할 수 없습니다. 근무 매장을 확인해 주세요.");
+        return;
+      }
+
       const answer = typeof payload.answer === "string" ? payload.answer.trim() : "";
       const error = typeof payload.error === "string" ? payload.error : "답변을 받지 못했어요.";
       if (!response.ok || !answer) throw new Error(error);
 
-      const message: Message = { from: "ai", text: answer, time: "방금 전" };
+      const message: Message = { from: "ai", text: answer, time: formatMessageTime(new Date()) };
       if (isRagStatus(payload.status)) message.status = payload.status;
 
       const source = normalizeSource(payload.source);
@@ -264,6 +359,11 @@ function selectStore(storeId: string) {
       }
 
       setMessages(current => [...current, message]);
+
+      if (typeof payload.conversationId === "string" && payload.conversationId) {
+        setConversationId(payload.conversationId);
+        writeStaffConversationId(payload.conversationId);
+      }
     } catch {
       setErrorMessage("답변을 불러오지 못했어요. 잠시 후 다시 시도해주세요.");
     } finally {
@@ -271,29 +371,21 @@ function selectStore(storeId: string) {
     }
   }
 
+  function sendMessage(event: FormEvent) {
+    event.preventDefault();
+    void submitQuestion(input);
+  }
+
   function dismissError() {
     setErrorMessage("");
   }
 
   return (
-    <div className="h-screen overflow-hidden bg-[var(--color-bg-default)]">
-      {/* Sidebar */}
-      <StaffSidebar
-        activeMenu="ai-chat"
-        onLogout={handleLogout}
-      />
-
-      {/* Main Content - Right side with flex column layout */}
-      <div className="lg:ml-[240px] h-screen flex flex-col overflow-hidden">
-        {/* Header */}
-        <StaffHeader userName={userName} storeName={storeName} />
-
-        {/* Content */}
-        <main className="flex-1 min-h-0 overflow-y-auto p-6 lg:p-8">
+    <div className="h-full p-6 lg:p-8">
           <div className="max-w-7xl mx-auto h-full flex flex-col">
             {/* Title Section */}
-            <div className="mb-8 flex items-center justify-between flex-shrink-0">
-              <div>
+            <div className="mb-8 flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
+              <div className="min-w-0">
                 <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
                   일잇다 AI
                 </h1>
@@ -301,44 +393,40 @@ function selectStore(storeId: string) {
                   매장 업무에 대한 궁금한 점을 언제든지 물어보세요.
                 </p>
               </div>
-              <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-[var(--color-primary)] hover:text-[var(--color-primary-light)] transition-colors flex-shrink-0">
-                새 대화 시작
-                <ChevronRight size={16} />
-              </button>
+              {/* 대화 액션: 기록 열기 / 새 대화 (compact) */}
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsHistoryOpen(true)}
+                  aria-haspopup="dialog"
+                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-white px-3 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-bg-default)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                >
+                  <History size={16} aria-hidden="true" /> 대화 기록
+                </button>
+                <button
+                  type="button"
+                  onClick={startNewConversation}
+                  disabled={isBusy}
+                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-[var(--color-primary)]/40 bg-[var(--color-primary-light)]/20 px-3 text-sm font-semibold text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary-light)]/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Plus size={16} aria-hidden="true" /> 새 대화
+                </button>
+              </div>
             </div>
 
-            {/* Store Selector */}
-            <div className="mb-4 flex items-center gap-3 rounded-lg border border-[var(--color-border)] bg-white px-4 py-3 flex-shrink-0">
-              <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary-light)]/30 text-[var(--color-primary)]">
-                <Store size={16} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <label htmlFor="staff-store" className="block text-xs font-semibold text-[var(--color-text-secondary)]">
-                  근무 매장
-                </label>
-                <select
-                  id="staff-store"
-                  value={selectedStore?.id ?? ""}
-                  disabled={isLoading || isStoresLoading || stores.length === 0}
-                  onChange={(event) => selectStore(event.target.value)}
-                  className="mt-0.5 w-full bg-transparent text-sm font-semibold text-[var(--color-text-primary)] outline-none disabled:cursor-not-allowed disabled:opacity-70"
-                >
-<option value="">
-  {isStoresLoading
-    ? "승인된 매장 정보를 불러오는 중..."
-    : stores.length > 0
-      ? "매장을 선택해 주세요"
-      : "승인된 근무 매장이 없습니다"}
-</option>
-
-{stores.map((store) => (
-  <option key={store.id} value={store.id}>
-    {store.name}
-  </option>
-))}
-
-                </select>
-              </div>
+            {/* Store Selector: 승인된 매장만 선택 가능, 승인 대기 매장은 안내만, 근무 매장 추가 신청 */}
+            <div className="mb-4 flex-shrink-0">
+              <StoreSwitcher
+                label="현재 근무 매장"
+                manageLabel="근무 매장 관리"
+                stores={stores}
+                pendingCount={pendingStores.length}
+                selectedStoreId={selectedStore?.id ?? null}
+                isLoading={isStoresLoading}
+                disabled={isLoading || isConversationLoading}
+                onSelect={selectStore}
+                onManageStores={() => router.push("/staff/stores")}
+              />
             </div>
 
             {storesError && (
@@ -346,7 +434,7 @@ function selectStore(storeId: string) {
                 <span>{storesError}</span>
                 <button
                   type="button"
-                  onClick={() => setStoresReloadToken((value) => value + 1)}
+                  onClick={reloadStores}
                   className="shrink-0 font-semibold text-red-700 hover:text-red-900"
                 >
                   다시 시도
@@ -355,21 +443,48 @@ function selectStore(storeId: string) {
             )}
 
             {!isStoresLoading && !storesError && stores.length === 0 && (
-              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                승인된 소속 매장이 없습니다. 관리자에게 승인 상태를 확인해 주세요.
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                <span>
+                  {pendingStores.length > 0
+                    ? "근무 신청이 승인 대기 중입니다. 점주가 승인하면 근무 매장으로 선택할 수 있습니다."
+                    : "승인된 근무 매장이 없습니다."}
+                </span>
+                <Link
+                  href="/staff/stores"
+                  className="inline-flex min-h-[36px] items-center rounded-lg px-2 font-semibold text-[var(--color-primary)] hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                >
+                  근무 매장 관리 →
+                </Link>
               </div>
             )}
+
+            {toastMessage && (
+              <div
+                role="status"
+                className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-lg bg-[var(--color-text-primary)] px-4 py-3 text-sm font-medium text-[var(--color-bg-surface)] shadow-md lg:left-[calc(50%+120px)]"
+              >
+                <CheckCircle2 size={16} aria-hidden="true" />
+                {toastMessage}
+              </div>
+            )}
+
 
             {/* Chat Container - takes remaining space */}
             <div className="bg-white border border-[var(--color-border)] rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
             {/* Messages Area - Only this scrolls */}
-            <div className="flex-1 overflow-y-auto space-y-4 p-6 min-h-0">
+            <div ref={messagesAreaRef} className="flex-1 overflow-y-auto space-y-4 p-6 min-h-0">
               {/* Date Indicator */}
               <div className="flex justify-center">
                 <span className="flex items-center gap-1.5 rounded-full bg-[var(--color-bg-surface)] px-3 py-1.5 text-xs font-semibold text-[var(--color-text-secondary)]">
-                  <Clock3 size={12} /> 오늘
+                  <Clock3 size={12} /> {dateLabel}
                 </span>
               </div>
+
+              {isConversationLoading && (
+                <p className="py-2 text-center text-sm text-[var(--color-text-secondary)]" role="status">
+                  대화를 불러오는 중...
+                </p>
+              )}
 
               {/* Messages */}
               {messages.map((message, index) => (
@@ -406,11 +521,8 @@ function selectStore(storeId: string) {
                     key={question}
                     type="button"
                     aria-label={`질문: ${question}`}
-                    disabled={isLoading || isStoresLoading || !selectedStore}
-                    onClick={() => {
-                      setInput(question);
-                      sendMessage({ preventDefault: () => {} } as FormEvent);
-                    }}
+                    disabled={!canAsk}
+                    onClick={() => void submitQuestion(question)}
                     className="shrink-0 whitespace-nowrap rounded-full border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-4 py-2.5 text-sm font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-primary-light)]/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
                   >
                     {question}
@@ -421,6 +533,23 @@ function selectStore(storeId: string) {
 
             {/* Input Area - Fixed at bottom */}
             <div className="border-t border-[var(--color-border)] bg-white p-4 flex-shrink-0">
+              {readOnlyStoreName !== null && (
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900" role="note">
+                  <span className="flex min-w-0 items-start gap-1.5">
+                    <Lock size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                    <span>
+                      {formatStoreDisplayName(readOnlyStoreName)} 근무 권한이 없어 이 대화는 열람만 할 수 있습니다.
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={startNewConversation}
+                    className="inline-flex min-h-[36px] shrink-0 items-center gap-1 rounded-lg px-2 font-semibold text-[var(--color-primary)] hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                  >
+                    <Plus size={14} aria-hidden="true" /> 새 대화 시작
+                  </button>
+                </div>
+              )}
               <form onSubmit={sendMessage} className="flex items-center gap-3">
                 <button
                   type="button"
@@ -432,16 +561,16 @@ function selectStore(storeId: string) {
 
                 <input
                   value={input}
-                  disabled={isLoading || isStoresLoading || !selectedStore}
+                  disabled={!canAsk}
                   onChange={event => setInput(event.target.value)}
-                  placeholder={isLoading ? "답변을 기다리는 중이에요…" : "질문을 입력하세요"}
+                  placeholder={isLoading ? "답변을 기다리는 중이에요…" : readOnlyStoreName !== null ? "열람 전용 대화입니다" : "질문을 입력하세요"}
                   aria-label="질문 입력창"
                   className="min-w-0 flex-1 px-4 py-3 border border-[var(--color-border)] rounded-lg bg-white text-base font-normal text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-secondary)]/70 focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]/20 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                 />
 
                 <button
                   type="submit"
-                  disabled={isLoading || isStoresLoading || !selectedStore || !input.trim()}
+                  disabled={!canAsk || !input.trim()}
                   aria-label="메시지 보내기"
                   className="flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary)]/90 transition-colors flex-shrink-0 disabled:cursor-not-allowed disabled:bg-[var(--color-primary)]/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
                 >
@@ -451,8 +580,15 @@ function selectStore(storeId: string) {
             </div>
           </div>
           </div>
-        </main>
-      </div>
+
+      {isHistoryOpen && (
+        <ConversationHistoryDrawer
+          activeConversationId={conversationId}
+          onClose={() => setIsHistoryOpen(false)}
+          onOpenConversation={openConversation}
+          onDeleted={handleConversationDeleted}
+        />
+      )}
     </div>
   );
 }
@@ -518,7 +654,7 @@ function MessageBubble({ message }: { message: Message }) {
         )}
 
         {/* Timestamp */}
-        <span className="mt-2 px-1 text-xs text-[#888]">{message.time}</span>
+        {message.time && <span className="mt-2 px-1 text-xs text-[#888]">{message.time}</span>}
       </div>
 
       {/* User Avatar */}

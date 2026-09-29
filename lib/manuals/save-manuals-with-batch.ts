@@ -89,9 +89,7 @@ export async function saveManualGroupsWithBatchGuard(
   } catch (e) {
     console.error("[MANUAL_SAVE_GUARD] save failed:", { name: e instanceof Error ? e.name : "UnknownError" });
     await failManualUploadBatch(client, claim.batchId);
-    return {
-      kind: "save_failed",
-      error: e instanceof Error ? e.message : "매뉴얼 저장 중 오류가 발생했습니다.",
-    };
+    // 예상치 못한 오류의 message는 DB 제약명/쿼리/네트워크 상세를 담을 수 있어 응답에 넣지 않는다.
+    return { kind: "save_failed", error: "매뉴얼 저장 중 오류가 발생했습니다." };
   }
 }

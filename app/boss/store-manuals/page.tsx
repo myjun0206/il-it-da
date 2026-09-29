@@ -2,14 +2,16 @@
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { FileText, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, FileText, Pencil, Plus, RefreshCw, Search, Sparkles, Store, Trash2, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
 import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
+import { ManualSearchReadinessPanel } from "@/components/manuals/ManualSearchReadinessPanel";
 import type { ManualRecord } from "@/lib/types/manual";
+import { resolveOwnerCurrentStore } from "@/lib/owner/current-store";
 import type { AnalyzedManualGroup } from "@/lib/manuals/analyze-manual-with-ai";
 
 type ManualGroup = {
@@ -112,7 +114,9 @@ export default function StoreManualsManagementPage() {
   const [selectedStoreId, setSelectedStoreId] = useState("");
   const [manuals, setManuals] = useState<ManualRecord[]>([]);
   const [isLoadingManuals, setIsLoadingManuals] = useState(true);
-  const [error, setError] = useState("");
+  // 현재 매장 결정 상태: loading → none(승인 매장 없음) | ready | error. 서로 동시에 표시되지 않는다.
+  const [storeStatus, setStoreStatus] = useState<"loading" | "none" | "ready" | "error">("loading");
+  const [manualsError, setManualsError] = useState(false);
   const [view, setView] = useState<ManualView>("categories");
   const [searchQuery, setSearchQuery] = useState("");
   const [titleSearchQuery, setTitleSearchQuery] = useState("");
@@ -191,60 +195,35 @@ export default function StoreManualsManagementPage() {
     checkAuth();
   }, [router]);
 
-  // 사용자 정보 로드 및 지점 검증 (승인된 지점 목록 중 sessionStorage에 저장된 지점을 사용, 없으면 첫 번째 지점)
+  // 사용자 정보 로드 + 현재 매장 결정 (점주 공통 로직: approved owner membership → store)
   useEffect(() => {
+    if (!isReady) return;
+    let isCancelled = false;
+
     const loadUserAndStoreInfo = async () => {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
+      const supabase = createClient();
+      const { data } = await supabase.auth.getSession();
+      if (isCancelled) return;
+      setUserName(data.session?.user?.user_metadata?.name || "점주");
 
-        if (!data.session?.user) return;
+      const resolution = await resolveOwnerCurrentStore();
+      if (isCancelled) return;
 
-        const name = data.session.user.user_metadata?.name || "점주";
-        setUserName(name);
-
-        const storedStoreId = sessionStorage.getItem("selectedStoreId") || "";
-        const storedStoreName = sessionStorage.getItem("selectedStoreName") || "";
-
-        try {
-          const response = await fetch("/api/signup/store-membership", { credentials: "include" });
-          const result = (await response.json()) as {
-            success?: boolean;
-            data?: Array<{ storeId: string; storeName: string; status: string; role: string }>;
-          };
-
-          if (response.ok && result.data) {
-            const approvedStores = result.data.filter((m) => m.status === "approved" && m.role === "owner");
-
-            if (approvedStores.length === 0) {
-              setError("승인된 지점이 없습니다.");
-              return;
-            }
-
-            const isValidStore = approvedStores.some((s) => s.storeId === storedStoreId);
-
-            if (isValidStore) {
-              setSelectedStoreId(storedStoreId);
-              setStoreName(storedStoreName || "선택된 지점");
-            } else {
-              setSelectedStoreId(approvedStores[0].storeId);
-              setStoreName(approvedStores[0].storeName);
-              sessionStorage.setItem("selectedStoreId", approvedStores[0].storeId);
-              sessionStorage.setItem("selectedStoreName", approvedStores[0].storeName);
-            }
-          }
-        } catch (e) {
-          console.error("Failed to load store memberships:", e);
-          setError("지점 정보를 불러올 수 없습니다.");
-        }
-      } catch (e) {
-        console.error("Failed to load user info:", e);
+      if (resolution.status === "error") {
+        setStoreStatus("error");
+      } else if (!resolution.current) {
+        setStoreStatus("none");
+      } else {
+        setSelectedStoreId(resolution.current.storeId);
+        setStoreName(resolution.current.storeName);
+        setStoreStatus("ready");
       }
     };
 
-    if (isReady) {
-      loadUserAndStoreInfo();
-    }
+    void loadUserAndStoreInfo();
+    return () => {
+      isCancelled = true;
+    };
   }, [isReady]);
 
   const fetchManualsData = async (storeId: string): Promise<ManualRecord[] | null> => {
@@ -260,9 +239,13 @@ export default function StoreManualsManagementPage() {
       const manuals = await fetchManualsData(selectedStoreId);
       if (manuals) {
         setManuals(manuals);
+        setManualsError(false);
+      } else {
+        setManualsError(true);
       }
     } catch (e) {
       console.error("지점 매뉴얼 목록 조회 실패:", e);
+      setManualsError(true);
     } finally {
       setIsLoadingManuals(false);
     }
@@ -275,9 +258,14 @@ export default function StoreManualsManagementPage() {
       .then((manuals) => {
         if (manuals) {
           setManuals(manuals);
+        } else {
+          setManualsError(true);
         }
       })
-      .catch((e) => console.error("지점 매뉴얼 목록 조회 실패:", e))
+      .catch((e) => {
+        console.error("지점 매뉴얼 목록 조회 실패:", e);
+        setManualsError(true);
+      })
       .finally(() => setIsLoadingManuals(false));
   }, [isReady, selectedStoreId]);
 
@@ -290,6 +278,13 @@ export default function StoreManualsManagementPage() {
       console.error("Logout failed:", e);
       router.push("/");
     }
+  };
+
+  // 카테고리 → 타이틀 → 세부 매뉴얼은 같은 route의 view 상태라 이전 단계 view를 명시적으로 지정한다.
+  const goToCategories = () => {
+    setTitleSearchQuery("");
+    setItemSearchQuery("");
+    setView("categories");
   };
 
   const groups = groupByParent(manuals);
@@ -858,6 +853,31 @@ export default function StoreManualsManagementPage() {
     }
   };
 
+  const goToTitles = () => {
+    setItemSearchQuery("");
+    cancelEditItem();
+    setView("titles");
+  };
+
+  const detailHeader =
+    storeStatus === "ready" && !isLoadingManuals && !manualsError
+      ? view === "items" && selectedTitle
+        ? {
+            title: selectedTitle.title,
+            description: "세부 매뉴얼을 관리합니다.",
+            backLabel: "타이틀 목록으로 돌아가기",
+            onBack: goToTitles,
+          }
+        : view !== "categories" && selectedCategory
+          ? {
+              title: getDisplayCategoryName(selectedCategory.category),
+              description: "이 카테고리의 타이틀과 세부 매뉴얼을 관리합니다.",
+              backLabel: "카테고리 목록으로 돌아가기",
+              onBack: goToCategories,
+            }
+          : null
+      : null;
+
   if (!isReady) {
     return null;
   }
@@ -867,21 +887,33 @@ export default function StoreManualsManagementPage() {
       <OwnerSidebar activeMenu="manual-store" onLogout={handleLogout} />
 
       <div className="lg:ml-[240px]">
-        <OwnerHeader userName={userName} storeName={storeName} />
+        <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
 
         <main className="p-6 lg:p-8 max-w-7xl mx-auto">
-          <div className="mb-6">
-            <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
-              지점 매뉴얼 관리
-            </h1>
-            <p className="text-base text-[var(--color-text-secondary)]">
-              카테고리, 타이틀, 세부 매뉴얼 순서로 {storeName || "우리 지점"} 전용 매뉴얼을 관리합니다.
-            </p>
-          </div>
-
-          {error && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-              <p className="text-sm text-red-600">{error}</p>
+          {detailHeader ? (
+            <div className="mb-8 flex items-start gap-3">
+              <button
+                type="button"
+                onClick={detailHeader.onBack}
+                aria-label={detailHeader.backLabel}
+                title={detailHeader.backLabel}
+                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/30 hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+              >
+                <ArrowLeft size={20} aria-hidden="true" />
+              </button>
+              <div className="min-w-0 pt-1.5">
+                <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2 break-keep">{detailHeader.title}</h1>
+                <p className="text-base text-[var(--color-text-secondary)]">{detailHeader.description}</p>
+              </div>
+            </div>
+          ) : (
+            <div className="mb-8">
+              <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
+                지점 매뉴얼 관리
+              </h1>
+              <p className="text-base text-[var(--color-text-secondary)]">
+                우리 매장의 업무 절차와 운영 노하우를 등록하고 관리하세요.
+              </p>
             </div>
           )}
 
@@ -905,20 +937,83 @@ export default function StoreManualsManagementPage() {
             </div>
           )}
 
-          {isLoadingManuals ? (
-            <p className="text-sm text-[var(--color-text-secondary)]">불러오는 중...</p>
+          {selectedStoreId && (
+            <ManualSearchReadinessPanel
+              readinessUrl={`/api/store-manuals/search-readiness?storeId=${selectedStoreId}`}
+              reindexUrl="/api/store-manuals/search-readiness/reindex"
+              storeId={selectedStoreId}
+            />
+          )}
+
+          {storeStatus === "loading" || (storeStatus === "ready" && isLoadingManuals) ? (
+            <div className="bg-white border border-[var(--color-border)] rounded-xl p-8 shadow-sm text-center">
+              <p className="text-base text-[var(--color-text-secondary)]" role="status">
+                불러오는 중...
+              </p>
+            </div>
+          ) : storeStatus === "error" || manualsError ? (
+            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-5" role="alert">
+              <AlertCircle size={20} className="shrink-0 text-red-700" aria-hidden="true" />
+              <p className="flex-1 text-sm text-red-700">
+                {storeStatus === "error" ? "매장 정보를 불러오지 못했습니다." : "지점 매뉴얼을 불러오지 못했습니다."}
+              </p>
+              <button
+                type="button"
+                onClick={() => (storeStatus === "error" ? window.location.reload() : void refetchManuals())}
+                className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-[var(--color-primary)] hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+              >
+                <RefreshCw size={16} aria-hidden="true" /> 다시 시도
+              </button>
+            </div>
+          ) : storeStatus === "none" ? (
+            <div className="flex items-start gap-3 bg-white border border-[var(--color-border)] rounded-xl p-6 shadow-sm">
+              <Store size={20} className="mt-0.5 shrink-0 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+              <div>
+                <p className="text-base font-semibold text-[var(--color-text-primary)]">아직 연결된 매장이 없습니다.</p>
+                <p className="mt-0.5 text-sm text-[var(--color-text-secondary)]">
+                  매장 승인 또는 등록이 완료되면 지점 전용 매뉴얼을 관리할 수 있습니다.
+                </p>
+              </div>
+            </div>
           ) : view === "categories" ? (
             <section>
-              <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <div className="w-full lg:max-w-md">
-                  <Input
-                    label="검색"
-                    placeholder="카테고리 검색하기"
+              <div className="mb-6 flex flex-wrap items-center gap-3 bg-white border border-[var(--color-border)] rounded-xl px-6 py-4 shadow-sm">
+                <p className="text-sm font-medium text-[var(--color-text-secondary)]">현재 매장</p>
+                <p className="text-base font-bold text-[var(--color-text-primary)]">{storeName}</p>
+                <span className="inline-flex items-center rounded-full bg-[var(--color-primary-light)]/40 px-2.5 py-0.5 text-sm font-medium text-[var(--color-primary)]">
+                  승인 완료
+                </span>
+              </div>
+
+              <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+                <div className="relative w-full md:w-[420px] md:flex-none">
+                  <Search
+                    size={18}
+                    aria-hidden="true"
+                    className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]"
+                  />
+                  <input
+                    type="search"
                     value={searchQuery}
                     onChange={(event) => setSearchQuery(event.target.value)}
+                    placeholder="카테고리 검색"
+                    aria-label="카테고리 검색"
+                    className="h-11 w-full rounded-lg border-2 border-[var(--color-border)] bg-white pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/30"
                   />
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {manuals.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeleteAllError("");
+                        setShowDeleteAllConfirm(true);
+                      }}
+                      className="mr-2 inline-flex h-10 items-center justify-center whitespace-nowrap rounded-md border-2 border-red-200 bg-transparent px-4 text-base font-semibold text-red-700 transition-colors hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2"
+                    >
+                      전체 삭제
+                    </button>
+                  )}
                   <Button variant="outline" onClick={() => router.push("/boss/store-manuals/upload")}>
                     <FileText size={16} className="mr-2" /> 미리보기로 올리기
                   </Button>
@@ -943,14 +1038,18 @@ export default function StoreManualsManagementPage() {
                     <FileText size={32} className="text-[var(--color-primary)]" />
                   </div>
                   <p className="mb-2 text-base text-[var(--color-text-secondary)]">
-                    {categories.length === 0 ? "등록된 지점 매뉴얼 카테고리가 없습니다." : "검색 결과가 없습니다."}
+                    {categories.length === 0 ? "아직 등록된 지점 매뉴얼이 없습니다." : "검색 결과가 없습니다."}
                   </p>
                   <p className="mb-6 text-sm text-[var(--color-text-tertiary)]">
-                    카테고리를 추가한 뒤 타이틀과 세부 매뉴얼을 채워 넣어보세요.
+                    {categories.length === 0
+                      ? "우리 매장의 업무 절차와 운영 노하우를 등록해보세요."
+                      : "다른 검색어를 입력해보세요."}
                   </p>
-                  <Button variant="primary" onClick={() => setShowCategoryModal(true)}>
-                    <Plus size={16} className="mr-2" /> 카테고리 추가
-                  </Button>
+                  {categories.length === 0 && (
+                    <Button variant="primary" onClick={() => setShowCategoryModal(true)}>
+                      <Plus size={16} className="mr-2" /> 첫 매뉴얼 등록
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -997,28 +1096,23 @@ export default function StoreManualsManagementPage() {
                 </div>
               )}
 
-              {manuals.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDeleteAllError("");
-                    setShowDeleteAllConfirm(true);
-                  }}
-                  className="fixed bottom-6 left-6 z-40 rounded-full border border-red-200 bg-white px-5 py-3 text-sm font-bold text-[var(--color-status-error)] shadow-lg transition-colors hover:bg-red-50 lg:left-[272px]"
-                >
-                  전체 삭제
-                </button>
-              )}
             </section>
           ) : view === "titles" ? (
             <section>
-              <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-                <div className="w-full lg:max-w-md">
-                  <Input
-                    label="검색"
-                    placeholder="타이틀 검색하기"
+              <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+                <div className="relative w-full md:w-[420px] md:flex-none">
+                  <Search
+                    size={18}
+                    aria-hidden="true"
+                    className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]"
+                  />
+                  <input
+                    type="search"
                     value={titleSearchQuery}
                     onChange={(event) => setTitleSearchQuery(event.target.value)}
+                    placeholder="타이틀 검색"
+                    aria-label="타이틀 검색"
+                    className="h-11 w-full rounded-lg border-2 border-[var(--color-border)] bg-white pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/30"
                   />
                 </div>
                 <div className="flex items-center justify-end">
@@ -1077,27 +1171,22 @@ export default function StoreManualsManagementPage() {
                 </div>
               )}
 
-              <div className="fixed bottom-6 right-6 z-40 rounded-full border border-[var(--color-border)] bg-white p-2 shadow-lg lg:right-8">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTitleSearchQuery("");
-                    setView("categories");
-                  }}
-                  className="rounded-full bg-[var(--color-primary)] px-5 py-2 text-sm font-bold text-white shadow-sm transition-colors hover:bg-[var(--color-primary-hover)]"
-                >
-                  ← 카테고리 목록
-                </button>
-              </div>
             </section>
           ) : (
             <section>
-              <div className="mb-6 w-full lg:max-w-md">
-                <Input
-                  label="검색"
-                  placeholder="매뉴얼 검색하기"
+              <div className="mb-6 relative w-full md:w-[420px]">
+                <Search
+                  size={18}
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]"
+                />
+                <input
+                  type="search"
                   value={itemSearchQuery}
                   onChange={(event) => setItemSearchQuery(event.target.value)}
+                  placeholder="세부 매뉴얼 검색"
+                  aria-label="세부 매뉴얼 검색"
+                  className="h-11 w-full rounded-lg border-2 border-[var(--color-border)] bg-white pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/30"
                 />
               </div>
 
@@ -1180,19 +1269,6 @@ export default function StoreManualsManagementPage() {
                 </div>
               )}
 
-              <div className="fixed bottom-6 right-6 z-40 rounded-full border border-[var(--color-border)] bg-white p-2 shadow-lg lg:right-8">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setItemSearchQuery("");
-                    cancelEditItem();
-                    setView("titles");
-                  }}
-                  className="rounded-full bg-[var(--color-primary)] px-5 py-2 text-sm font-bold text-white shadow-sm transition-colors hover:bg-[var(--color-primary-hover)]"
-                >
-                  ← 타이틀 목록
-                </button>
-              </div>
             </section>
           )}
         </main>

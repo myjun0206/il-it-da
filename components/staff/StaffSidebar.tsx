@@ -7,6 +7,7 @@ import {
   MessageCircle,
   BookOpen,
   FileText,
+  Store,
   Megaphone,
   Settings,
   LogOut,
@@ -27,13 +28,14 @@ export default function StaffSidebar({
 
   const menuItems = [
     { id: "ai-chat", label: "AI 챗봇", icon: MessageCircle, href: "/staff" },
-    { id: "manual-common", label: "공통 매뉴얼", icon: BookOpen, href: "#" },
-    { id: "manual-store", label: "지점 매뉴얼", icon: FileText, href: "#" },
+    { id: "manual-common", label: "공통 매뉴얼", icon: BookOpen, href: "/staff/manuals" },
+    { id: "manual-store", label: "지점 매뉴얼", icon: FileText, href: "/staff/store-manuals" },
+    { id: "stores", label: "근무 매장", icon: Store, href: "/staff/stores" },
     { id: "notice", label: "공지사항", icon: Megaphone, href: "#" },
   ];
 
   const bottomMenuItems = [
-    { id: "settings", label: "설정", icon: Settings },
+    { id: "settings", label: "설정", icon: Settings, href: "/staff/settings" },
   ];
 
   return (
@@ -79,6 +81,7 @@ export default function StaffSidebar({
               <Link
                 key={item.id}
                 href={item.href}
+                aria-current={isActive ? "page" : undefined}
                 className={buttonClass}
                 onClick={() => setIsOpen(false)}
               >
@@ -90,15 +93,23 @@ export default function StaffSidebar({
         </nav>
 
         {/* Bottom Menu */}
-        <div className="py-3 px-3 border-t border-[var(--color-border)]">
+        {/* data-app-sidebar-footer: 하단 고정 Action Bar가 이 영역 높이에 맞춰 상단 구분선을 이어 붙인다. */}
+        <div data-app-sidebar-footer className="py-3 px-3 border-t border-[var(--color-border)]">
           {bottomMenuItems.map((item) => (
-            <button
+            <Link
               key={item.id}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
+              href={item.href}
+              onClick={() => setIsOpen(false)}
+              aria-current={activeMenu === item.id ? "page" : undefined}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium transition-colors ${
+                activeMenu === item.id
+                  ? "bg-[var(--color-primary-light)]/30 text-[var(--color-primary)]"
+                  : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+              }`}
             >
               <item.icon size={20} />
               <span>{item.label}</span>
-            </button>
+            </Link>
           ))}
 
           {/* Divider */}

@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   failedStaffStoresResult,
@@ -104,5 +107,56 @@ describe("staff stores API results", () => {
       status: 500,
       body: { error: "Unable to load approved stores." },
     });
+  });
+});
+
+// 직원 복수 매장 선택은 app/staff/page.tsx의 React state 배선에 달려 있어 Next 런타임 밖에서
+// 실행할 수 없다. 회귀(설정 누락으로 선택 목록이 영구히 비는 문제)만 소스 계약으로 고정한다.
+describe("app/staff/page.tsx 근무 매장 선택 배선", () => {
+  const source = readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "../../app/staff/page.tsx"),
+    "utf8",
+  ).replace(/\r\n/g, "\n");
+
+  test("StaffShellContext에서 근무 매장 목록을 받아 StoreSwitcher에 전달한다", () => {
+    assert.match(source, /const \{\s*stores,/);
+    assert.match(source, /useStaffShell\(\)/);
+    assert.match(source, /stores={stores}/);
+  });
+
+  test("StoreSwitcher와 selectStore 함수를 통해 매장을 선택할 수 있다", () => {
+    assert.match(source, /onSelect={selectStore}/);
+    assert.match(source, /function selectStore/);
+  });
+
+  test("서버가 재검증하도록 선택한 매장 id를 질문 요청에 담아 보낸다", () => {
+    assert.match(source, /storeId: selectedStore\.id/);
+  });
+
+  test("선택 매장이 바뀔 때 이전 매장의 대화·입력·오류를 초기화한다", () => {
+    assert.match(source, /function selectStore\(storeId: string\)/);
+    assert.match(source, /resetConversation/);
+    assert.match(source, /applyStore\(store\)/);
+  });
+
+  test("같은 매장을 다시 선택하면 대화를 보존한다", () => {
+    assert.match(
+      source,
+      /if \(!store \|\| \(selectedStore\?\.id === store\.id && readOnlyStoreName === null\)\) return;/,
+    );
+  });
+
+  test("StoreSwitcher가 매장 로딩 상태를 표시한다", () => {
+    assert.match(source, /isLoading={isStoresLoading}/);
+    assert.match(source, /selectedStoreId={selectedStore\?\.id \?\? null}/);
+  });
+
+  test("목록 조회 실패와 매장 없음을 구분해서 안내한다", () => {
+    // storesError가 있으면 에러 메시지 표시
+    assert.match(source, /\{storesError && \(/);
+    // 매장이 없으면 '승인된 근무 매장이 없습니다' 표시
+    assert.match(source, /"승인된 근무 매장이 없습니다/);
+    // 두 조건이 분리되어 있음을 확인
+    assert.match(source, /!isStoresLoading && !storesError && stores\.length === 0/);
   });
 });

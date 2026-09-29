@@ -1,17 +1,48 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import NotificationCenter from "@/components/common/NotificationCenter";
+import ProfileMenu from "@/components/common/ProfileMenu";
+import { createClient } from "@/lib/supabase/client";
 
 interface HQHeaderProps {
   userName: string;
   franchiseName: string;
+  /** 각 HQ 페이지가 사이드바에 넘기는 기존 로그아웃 핸들러를 그대로 재사용한다. */
+  onLogout: () => void;
 }
 
-export default function HQHeader({
-  userName,
-  franchiseName,
-}: HQHeaderProps) {
+export default function HQHeader({ userName, franchiseName, onLogout }: HQHeaderProps) {
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isCancelled = false;
+    const supabase = createClient();
+
+    void (async () => {
+      try {
+        const { data: userData } = await supabase.auth.getUser();
+        if (isCancelled || !userData.user) return;
+
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("avatar_url")
+          .eq("id", userData.user.id)
+          .maybeSingle<{ avatar_url: string | null }>();
+
+        if (!isCancelled) {
+          setAvatarUrl(profile?.avatar_url || null);
+        }
+      } catch (e) {
+        console.error("Failed to load avatar:", e);
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
   return (
     <header className="bg-white border-b border-[var(--color-border)] h-16">
       <div className="flex items-center justify-end px-6 h-full">
@@ -21,21 +52,14 @@ export default function HQHeader({
           <NotificationCenter />
 
           {/* Profile */}
-          <div className="flex items-center gap-3 pl-6 border-l border-[var(--color-border)]">
-            <div className="text-right">
-              <p className="text-sm font-semibold text-[var(--color-text-primary)]">
-                {userName}
-              </p>
-              <p className="text-xs text-[var(--color-text-secondary)]">
-                {franchiseName} · 본사 관리자
-              </p>
-            </div>
-            <div className="w-8 h-8 rounded-full bg-[var(--color-primary-light)] flex items-center justify-center">
-              <span className="text-xs font-bold text-[var(--color-primary)]">
-                {userName.charAt(0)}
-              </span>
-            </div>
-          </div>
+          <ProfileMenu
+            userName={userName}
+            subtitle={`${franchiseName} · 본사 관리자`}
+            roleLabel="본사 관리자"
+            settingsHref="/hq/settings"
+            avatarUrl={avatarUrl}
+            onLogout={onLogout}
+          />
         </div>
       </div>
     </header>

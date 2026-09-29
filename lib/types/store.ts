@@ -26,3 +26,13 @@ export interface StoreMarker {
   longitude: number;
   selected?: boolean;
 }
+
+/** 본사 지점 관리(GET /api/hq/stores) 응답 항목 */
+export interface HqStoreSummary {
+  id: string;
+  name: string;
+  createdAt: string | null;
+  ownerNames: string[];
+  staffCount: number;
+  manualCount: number;
+}
