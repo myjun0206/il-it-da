@@ -6,6 +6,7 @@ import {
   claimManualUploadBatch,
   completeManualUploadBatch,
   failManualUploadBatch,
+  releaseEmptyCompletedBatch,
 } from "@/lib/manuals/manual-upload-batch";
 import { CLAIM_BLOCKED_RESPONSES } from "@/lib/manuals/manual-upload-batch-messages";
 import { saveManualGroupsWithChunks, type ManualGroupInput } from "@/lib/rag/save-manual-sections";
@@ -36,13 +37,23 @@ export interface SaveWithBatchGuardInput {
   storeId?: string;
   /** 미리보기가 발급한 key. 미리보기 단계가 없는 경로는 비워 두면 서버가 요청 단위로 만든다. */
   idempotencyKey?: string;
+  /** 테스트에서만 주입한다. 생략하면 실제 임베딩(indexManualById)을 쓴다. */
+  indexManual?: (manualId: string) => Promise<unknown>;
 }
+
+export const HQ_BRAND_REQUIRED_MESSAGE =
+  "소속 브랜드가 연결되지 않은 본사 계정은 매뉴얼을 저장할 수 없어요. 관리자에게 문의해 주세요.";
 
 export async function saveManualGroupsWithBatchGuard(
   client: SupabaseClient,
   input: SaveWithBatchGuardInput,
 ): Promise<SaveWithBatchGuardResult> {
   const { auth, groups, scope, storeId } = input;
+
+  // 018 RPC는 franchise_id가 일치하는 HQ 매뉴얼만 검색한다. NULL로 저장하면 직원 챗봇이 영원히 찾지 못한다.
+  if (scope.scopeType === "hq" && !scope.franchiseId) {
+    return { kind: "blocked", status: 403, error: HQ_BRAND_REQUIRED_MESSAGE };
+  }
 
   const contentHash = buildManualContentFingerprint(scope, groups);
   // 미리보기가 없는 경로는 요청마다 새 key를 쓴다. 같은 내용을 다시 보내면 key가 달라도
@@ -52,7 +63,7 @@ export async function saveManualGroupsWithBatchGuard(
   let claim;
 
   try {
-    claim = await claimManualUploadBatch(client, {
+    const claimInput = {
       idempotencyKey,
       contentHash,
       scope: {
@@ -61,20 +72,37 @@ export async function saveManualGroupsWithBatchGuard(
         storeId: scope.storeId,
         requestedBy: auth.userId,
       },
-    });
+    };
+
+    claim = await claimManualUploadBatch(client, claimInput);
+
+    if (claim.kind === "already_completed") {
+      const { data: replayed, error: replayError } = await client
+        .from("manuals")
+        .select(MANUAL_SELECT_COLUMNS)
+        .eq("upload_batch_id", claim.batchId)
+        .order("created_at", { ascending: true });
+
+      if (replayError) {
+        throw new Error("MANUAL_UPLOAD_BATCH_REPLAY_LOOKUP_FAILED");
+      }
+
+      if ((replayed ?? []).length > 0) {
+        return { kind: "replayed", manuals: replayed as ManualRecord[] };
+      }
+
+      // 완료 기록만 남고 매뉴얼은 모두 삭제된 경우: 빈 결과를 성공으로 돌려주지 않고 새로 저장한다.
+      await releaseEmptyCompletedBatch(client, claim.batchId);
+      claim = await claimManualUploadBatch(client, claimInput);
+
+      if (claim.kind === "already_completed") {
+        const concurrent = CLAIM_BLOCKED_RESPONSES.processing;
+        return { kind: "blocked", status: concurrent.status, error: concurrent.error };
+      }
+    }
   } catch (e) {
     console.error("[MANUAL_SAVE_GUARD] claim failed:", { name: e instanceof Error ? e.name : "UnknownError" });
     return { kind: "save_failed", error: "매뉴얼 저장 중 오류가 발생했습니다." };
-  }
-
-  if (claim.kind === "already_completed") {
-    const { data } = await client
-      .from("manuals")
-      .select(MANUAL_SELECT_COLUMNS)
-      .eq("upload_batch_id", claim.batchId)
-      .order("created_at", { ascending: true });
-
-    return { kind: "replayed", manuals: (data ?? []) as ManualRecord[] };
   }
 
   if (claim.kind !== "claimed") {
@@ -83,7 +111,7 @@ export async function saveManualGroupsWithBatchGuard(
   }
 
   try {
-    const manuals = await saveManualGroupsWithChunks(client, auth, groups, storeId, undefined, claim.batchId);
+    const manuals = await saveManualGroupsWithChunks(client, auth, groups, storeId, input.indexManual, claim.batchId);
     await completeManualUploadBatch(client, claim.batchId, manuals.length);
     return { kind: "saved", manuals };
   } catch (e) {

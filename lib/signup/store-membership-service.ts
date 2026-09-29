@@ -706,9 +706,53 @@ export async function submitStoreMembershipRequest(
 }
 
 /**
+ * 점주 신청 알림 수신자: 신청 매장의 stores.franchise_id(서버 조회)에 속한 HQ auth 사용자만 돌려준다.
+ * 브랜드를 확인할 수 없으면 빈 배열이다(전체 HQ에 보내지 않는다).
+ */
+export async function resolveOwnerRequestHqRecipientIds(
+  adminClient: SupabaseClient,
+  storeId: string,
+): Promise<string[]> {
+  const { data: store, error: storeError } = await adminClient
+    .from("stores")
+    .select("franchise_id")
+    .eq("id", storeId)
+    .maybeSingle<{ franchise_id: string | null }>();
+
+  if (storeError) {
+    logSafeAuthError("OWNER_REQUEST_NOTIFY_STORE_LOOKUP_FAILED", storeError);
+    return [];
+  }
+  if (!store?.franchise_id) {
+    logSafeAuthError("OWNER_REQUEST_NOTIFY_BRAND_UNRESOLVED", new Error("store franchise is missing"));
+    return [];
+  }
+
+  const { data: hqProfiles, error: hqError } = await adminClient
+    .from("profiles")
+    .select("id, user_id")
+    .eq("role", "hq")
+    .eq("brand_id", store.franchise_id);
+
+  if (hqError) {
+    logSafeAuthError("OWNER_REQUEST_NOTIFY_HQ_LOOKUP_FAILED", hqError);
+    return [];
+  }
+
+  // 한 HQ 사용자의 프로필 행이 여럿이어도 auth 사용자(user_id, 없으면 마스터 id) 기준으로 한 번만 보낸다.
+  return [
+    ...new Set(
+      ((hqProfiles ?? []) as { id?: unknown; user_id?: unknown }[])
+        .map((profile) => profile.user_id ?? profile.id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0),
+    ),
+  ];
+}
+
+/**
  * Generate notifications for new membership requests
  * - Staff request: notify store owners
- * - Owner request: notify all HQ users
+ * - Owner request: notify HQ users of the store's franchise only
  */
 async function generateMembershipNotifications(
   userId: string,
@@ -746,27 +790,17 @@ async function generateMembershipNotifications(
         }
       }
     } else if (role === "owner") {
-      const { data: hqUsers, error: queryError } = await adminClient
-        .from("profiles")
-        .select("id")
-        .eq("role", "hq");
+      const hqRecipientIds = await resolveOwnerRequestHqRecipientIds(adminClient, storeId);
 
-      if (queryError) {
-        console.error("Failed to find HQ users:", queryError);
-        return;
-      }
-
-      if (hqUsers && hqUsers.length > 0) {
-        for (const profile of hqUsers) {
-          await createNotification({
-            recipientUserId: profile.id,
-            type: "owner_pending_approval",
-            title: "새로운 점주 승인 요청",
-            message: `${storeName} 점주 가입 요청이 있습니다. (${userName})`,
-            targetUrl: "/hq/approvals",
-            relatedId: userId,
-          });
-        }
+      for (const recipientUserId of hqRecipientIds) {
+        await createNotification({
+          recipientUserId,
+          type: "owner_pending_approval",
+          title: "새로운 점주 승인 요청",
+          message: `${storeName} 점주 가입 요청이 있습니다. (${userName})`,
+          targetUrl: "/hq/approvals",
+          relatedId: userId,
+        });
       }
     }
   } catch (e) {

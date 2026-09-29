@@ -76,7 +76,9 @@ describe("app/api/manuals/preview/confirm/route.ts (only route that actually sav
     // 저장 호출은 중복 방지 가드와 함께 lib/manuals/save-manuals-with-batch.ts로 옵겨졌다.
     assert.match(source, /from "@\/lib\/manuals\/save-manuals-with-batch"/);
     assert.match(guardSource, /from "@\/lib\/rag\/save-manual-sections"/);
-    assert.match(guardSource, /saveManualGroupsWithChunks\(client, auth, groups, storeId, undefined, claim\.batchId\)/);
+    assert.match(guardSource, /saveManualGroupsWithChunks\(client, auth, groups, storeId, input\.indexManual, claim\.batchId\)/);
+    // indexManual은 테스트 주입용이다. 라우트가 넘기지 않으므로 실제 저장은 기본 indexManualById를 쓴다.
+    assert.equal(/\bindexManual\s*[:,}]/.test(source), false);
   });
 
   test("reuses the shared parseConfirmedManualGroups instead of duplicating the confirm-payload parsing rule", () => {

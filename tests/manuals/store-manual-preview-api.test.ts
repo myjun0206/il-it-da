@@ -35,7 +35,7 @@ describe("app/api/store-manuals/preview/route.ts (store preview never writes to 
   test("fails closed (403) when requireStoreOwner returns null - covers pending/rejected/other-owner's store", () => {
     const authIndex = source.indexOf("requireStoreOwner(");
     const guardIndex = source.indexOf("if (!storeAuth)");
-    const parseIndex = source.indexOf("extractManualGroups(");
+    const parseIndex = source.indexOf("extractStoreManualGroups(");
     assert.ok(authIndex >= 0 && guardIndex >= 0 && parseIndex >= 0);
     assert.ok(authIndex < guardIndex && guardIndex < parseIndex);
     assert.match(source, /status: 403/);

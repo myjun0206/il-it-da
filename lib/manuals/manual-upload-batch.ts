@@ -221,6 +221,28 @@ export async function completeManualUploadBatch(
 }
 
 /**
+ * 완료된 batch의 manuals가 이후 모두 삭제된 경우, 그 batch가 content_hash를 계속 붙잡지 않도록
+ * failed + manual_count 0(partial unique index 대상 밖)으로 풀어 준다. 이미 다른 요청이 바꿨으면 false.
+ */
+export async function releaseEmptyCompletedBatch(
+  client: SupabaseClient,
+  batchId: string,
+): Promise<boolean> {
+  const { data, error } = await client
+    .from("manual_upload_batches")
+    .update({ status: "failed", manual_count: 0 })
+    .eq("id", batchId)
+    .eq("status", "completed")
+    .select("id");
+
+  if (error) {
+    throw new Error("MANUAL_UPLOAD_BATCH_RELEASE_FAILED");
+  }
+
+  return Array.isArray(data) && data.length > 0;
+}
+
+/**
  * 저장이 실패했을 때, 이 batch가 실제로 남긴 manuals 행 수를 함께 기록한다.
  * 0건이면 content_hash가 풀려 사용자가 그대로 다시 시도할 수 있고,
  * 1건 이상이면 partial unique index가 계속 중복을 막아 같은 내용이 두 번 저장되지 않는다.
