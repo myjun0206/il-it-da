@@ -53,6 +53,7 @@
     "tests/notifications/escalate-question-log.test.ts",
     "tests/owner/pending-questions.test.ts",
     "tests/owner/repeated-questions.test.ts",
+    "tests/hq/approval-scope.test.ts",
     "lib/rag/answer-prompt.ts",
     "lib/rag/chunk-manual.ts",
     "lib/rag/search-query.ts",
@@ -90,7 +91,8 @@
     "lib/manuals/manual-reindex-guard.ts",
     "lib/notifications/escalate-question-log.ts",
     "lib/owner/pending-questions.ts",
-    "lib/owner/repeated-questions.ts"
+    "lib/owner/repeated-questions.ts",
+    "lib/hq/approval-scope.ts"
   ],
   "exclude": ["node_modules"]
 }
