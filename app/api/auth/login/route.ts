@@ -14,8 +14,9 @@ type LoginResponseBody = {
   user?: {
     id: string;
     email: string;
-    role: string;
-    approvalStatus: "pending" | "approved" | "rejected";
+    mustChangePassword?: boolean;
+    role?: string;
+    approvalStatus?: "pending" | "approved" | "rejected";
   };
   error?: string;
 };
@@ -57,6 +58,16 @@ export async function POST(request: Request): Promise<NextResponse<LoginResponse
       { error: authError?.message || "아이디 또는 비밀번호를 확인해주세요." },
       { status: 401 },
     );
+  }
+
+  if (authData.user.app_metadata?.must_change_password === true) {
+    return NextResponse.json({
+      user: {
+        id: authData.user.id,
+        email: authData.user.email ?? email,
+        mustChangePassword: true,
+      },
+    });
   }
 
   // profiles has RLS enabled with no anon-facing policies, so use the admin client to read the role.
