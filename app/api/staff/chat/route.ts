@@ -78,6 +78,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   // 대화 저장 (실패해도 답변은 돌려준다)
+  let saveError: string | null = null;
   try {
     const now = new Date().toISOString();
     if (!conversationId) {
@@ -108,10 +109,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     await adminClient.from("conversations").update({ updated_at: now }).eq("id", conversationId).eq("user_id", userId);
   } catch (error) {
     historyAvailable = false;
+    // 새 대화 생성 실패 시 에러 기록
+    if (!body.conversationId) {
+      conversationId = null;
+      saveError = "대화 기록 저장에 실패했습니다. 다시 시도해 주세요.";
+    }
     if (!isMissingConversationTable(error as { code?: string })) {
       console.error("POST /api/staff/chat save error:", error);
     }
-    if (!body.conversationId) conversationId = null;
   }
 
   return NextResponse.json({
@@ -122,5 +127,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     conversationId,
     storeId,
     historyAvailable,
+    saveError,
   });
 }

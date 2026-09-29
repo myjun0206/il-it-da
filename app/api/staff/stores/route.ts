@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 
 import {
   failedStaffStoresResult,
-  filterApprovedStaffMemberships,
   successfulStaffStoresResult,
   toStaffStores,
   unauthorizedStaffStoresResult,
@@ -13,7 +12,7 @@ import { createClient } from "@/lib/supabase/server";
 export const runtime = "nodejs";
 
 type StaffStoresResponse = {
-  stores?: Array<{ id: string; name: string }>;
+  stores?: Array<{ id: string; membershipId?: string; name: string }>;
   error?: string;
 };
 
@@ -37,7 +36,7 @@ export async function GET(): Promise<NextResponse<StaffStoresResponse>> {
     const adminClient = createAdminClient();
     const { data: memberships, error: membershipError } = await adminClient
       .from("store_memberships")
-      .select("user_id, store_id, role, status")
+      .select("id, user_id, store_id, role, status")
       .eq("user_id", userId)
       .eq("role", "staff")
       .eq("status", "approved");
@@ -46,7 +45,25 @@ export async function GET(): Promise<NextResponse<StaffStoresResponse>> {
       throw membershipError;
     }
 
-    const storeIds = filterApprovedStaffMemberships(memberships ?? [], userId);
+    // membership ID 매핑 (store_id -> membership ID)
+    const membershipByStoreId = new Map<string, string>();
+    const storeIds: string[] = [];
+
+    for (const membership of memberships ?? []) {
+      if (
+        typeof membership.store_id === "string"
+        && membership.store_id.trim().length > 0
+        && typeof membership.id === "string"
+        && membership.id.trim().length > 0
+      ) {
+        const storeId = membership.store_id.trim();
+        if (!membershipByStoreId.has(storeId)) {
+          membershipByStoreId.set(storeId, membership.id);
+          storeIds.push(storeId);
+        }
+      }
+    }
+
     console.info("[STAFF_STORES] Membership lookup", {
       userId,
       membershipRows: memberships?.length ?? 0,
@@ -93,7 +110,11 @@ export async function GET(): Promise<NextResponse<StaffStoresResponse>> {
       throw storeError;
     }
 
-    const resolvedStores = toStaffStores(validStoreIds, stores ?? []);
+    const resolvedStores = toStaffStores(validStoreIds, stores ?? []).map((store) => ({
+      ...store,
+      membershipId: membershipByStoreId.get(store.id) ?? "",
+    }));
+
     const resolvedStoreIds = new Set(resolvedStores.map((store) => store.id));
     const missingStoreIds = validStoreIds.filter((storeId) => !resolvedStoreIds.has(storeId));
     if (missingStoreIds.length > 0) {

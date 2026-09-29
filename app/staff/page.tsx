@@ -48,10 +48,18 @@ const quickQuestions = [
   "신규 알바가 꼭 알아야 할 내용은?",
 ];
 const EXAMPLE_GUIDE_MESSAGE: Message = { from: "ai", text: "아래 예시 질문을 참고하거나,\n직접 궁금한 내용을 입력해보세요.", time: "" };
-const NEW_CHAT_MESSAGES: Message[] = [
-  { from: "ai", text: "안녕하세요! 일잇다 AI입니다.\n현재 매장의 업무에 대해 궁금한 점을 물어보세요.", time: "" },
-  EXAMPLE_GUIDE_MESSAGE,
-];
+
+function buildNewChatMessages(storeName?: string): Message[] {
+  const greetingText = storeName
+    ? `새로운 대화를 시작해보세요.\n"${storeName}"의 업무에 대해 무엇이든 물어보세요.`
+    : `새로운 대화를 시작해보세요.\n업무에 대해 무엇이든 물어보세요.`;
+  return [
+    { from: "ai", text: greetingText, time: "" },
+    EXAMPLE_GUIDE_MESSAGE,
+  ];
+}
+
+const NEW_CHAT_MESSAGES: Message[] = buildNewChatMessages();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -149,8 +157,9 @@ export default function StaffPage() {
   const isBusy = isLoading || isStoresLoading || isConversationLoading;
   const canAsk = !isBusy && Boolean(selectedStore) && readOnlyStoreName === null;
 
-  function resetConversation(nextMessages: Message[] = NEW_CHAT_MESSAGES) {
-    setMessages(nextMessages);
+  function resetConversation(nextMessages?: Message[]) {
+    const messagesToUse = nextMessages ?? buildNewChatMessages(selectedStore?.name);
+    setMessages(messagesToUse);
     setConversationId(null);
     writeStaffConversationId(null);
     setReadOnlyStoreName(null);
@@ -181,13 +190,13 @@ export default function StaffPage() {
     resetConversation([
       {
         from: "ai",
-        text: `${store.name}으로 전환했습니다.\n이제 이 매장의 매뉴얼을 기준으로 답변합니다.`,
+        text: `${formatStoreDisplayName(store.name)}으로 전환했습니다.\n이제 이 매장의 매뉴얼을 기준으로 답변합니다.`,
         time: "",
       },
       EXAMPLE_GUIDE_MESSAGE,
     ]);
     applyStore(store);
-    setToastMessage(`${store.name}으로 전환했습니다.`);
+    setToastMessage(`${formatStoreDisplayName(store.name)}으로 전환했습니다.`);
   }
 
   async function openConversation(summary: ConversationSummaryDto) {
@@ -360,9 +369,14 @@ export default function StaffPage() {
 
       setMessages(current => [...current, message]);
 
+      // 새 대화인데 conversationId가 저장되지 않은 경우 감지
       if (typeof payload.conversationId === "string" && payload.conversationId) {
         setConversationId(payload.conversationId);
         writeStaffConversationId(payload.conversationId);
+      } else if (!conversationId) {
+        // 새 대화 시작 중이었는데 저장 실패
+        const saveErr = typeof payload.saveError === "string" ? payload.saveError : "대화 기록을 저장하지 못했습니다.";
+        setErrorMessage(saveErr);
       }
     } catch {
       setErrorMessage("답변을 불러오지 못했어요. 잠시 후 다시 시도해주세요.");
@@ -417,7 +431,7 @@ export default function StaffPage() {
             {/* Store Selector: 승인된 매장만 선택 가능, 승인 대기 매장은 안내만, 근무 매장 추가 신청 */}
             <div className="mb-4 flex-shrink-0">
               <StoreSwitcher
-                label="현재 근무 매장"
+                label="기본 매장"
                 manageLabel="근무 매장 관리"
                 stores={stores}
                 pendingCount={pendingStores.length}

@@ -74,11 +74,13 @@ export default function OwnerHeader({
 
         const { data: profile } = await supabase
           .from("profiles")
-          .select("avatar_url")
+          .select("avatar_url, avatar_updated_at")
           .eq("id", userData.user.id)
-          .maybeSingle<{ avatar_url: string | null }>();
+          .maybeSingle<{ avatar_url: string | null; avatar_updated_at: string | null }>();
 
         if (!isCancelled) {
+          // cache busting은 이제 filename에 포함됨 (avatar-{timestamp}.jpg)
+          // 따라서 query string 불필요, 원본 URL만 사용
           setAvatarUrl(profile?.avatar_url || null);
         }
       } catch (e) {
@@ -88,6 +90,23 @@ export default function OwnerHeader({
 
     return () => {
       isCancelled = true;
+    };
+  }, []);
+
+  // Settings에서 avatar 변경 이벤트 수신
+  useEffect(() => {
+    const handleAvatarUpdate = (event: CustomEvent) => {
+      const newAvatarUrl = event.detail?.avatarUrl;
+      if (newAvatarUrl && typeof newAvatarUrl === "string") {
+        setAvatarUrl(newAvatarUrl);
+      } else if (newAvatarUrl === null) {
+        setAvatarUrl(null);
+      }
+    };
+
+    window.addEventListener("ownerAvatarUpdated", handleAvatarUpdate as EventListener);
+    return () => {
+      window.removeEventListener("ownerAvatarUpdated", handleAvatarUpdate as EventListener);
     };
   }, []);
 

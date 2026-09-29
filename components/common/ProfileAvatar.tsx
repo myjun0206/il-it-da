@@ -8,7 +8,7 @@ interface ProfileAvatarProps {
   /** 프로필 사진 URL (없으면 initials 표시) */
   avatarUrl?: string | null;
   /** Avatar 크기 (기본값: 'md') */
-  size?: "sm" | "md" | "lg";
+  size?: "sm" | "md" | "lg" | "xl" | "xxl";
   /** className 추가 (선택사항) */
   className?: string;
   /** 이미지 로드 실패 시 처리 */
@@ -19,6 +19,8 @@ const SIZES = {
   sm: "w-6 h-6 text-xs",
   md: "w-8 h-8 text-sm",
   lg: "w-12 h-12 text-base",
+  xl: "w-16 h-16 text-lg",
+  xxl: "w-20 h-20 text-xl",
 };
 
 const BG_COLORS = [
@@ -49,7 +51,7 @@ export default function ProfileAvatar({
   className = "",
   onImageError,
 }: ProfileAvatarProps) {
-  const [imageError, setImageError] = useState(false);
+  const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
 
   // initials 계산: "송채현" → "송"
   const initials = useMemo(() => {
@@ -70,12 +72,12 @@ export default function ProfileAvatar({
 
   // 이미지 로드 실패 처리
   const handleImageError = () => {
-    setImageError(true);
+    setFailedAvatarUrl(avatarUrl ?? null);
     onImageError?.();
   };
 
-  // 실제 이미지 표시 (URL 있고 로드 성공)
-  if (avatarUrl && !imageError) {
+  // 실제 이미지 표시 (URL 있고 이전에 로드 실패한 URL이 아닌 경우)
+  if (avatarUrl && failedAvatarUrl !== avatarUrl) {
     return (
       <div
         className={`rounded-full overflow-hidden flex items-center justify-center shrink-0 ${sizeClass} ${className}`}

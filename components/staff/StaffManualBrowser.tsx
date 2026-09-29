@@ -37,7 +37,7 @@ const COPY: Record<Scope, { title: string; description: string; empty: string; b
   },
   store: {
     title: "지점 매뉴얼",
-    description: "현재 근무 매장의 업무 매뉴얼을 확인할 수 있습니다.",
+    description: "선택 매장의 업무 매뉴얼을 확인할 수 있습니다.",
     empty: "현재 매장에 등록된 지점 매뉴얼이 없습니다.",
     backLabel: "지점 매뉴얼",
   },
@@ -216,18 +216,18 @@ export default function StaffManualBrowser({ scope }: { scope: Scope }) {
           <p className="text-base text-[var(--color-text-secondary)]">{copy.description}</p>
           {scope === "common" && selectedStore && (
             <p className="mt-1 text-sm text-[var(--color-text-tertiary)]">
-              현재 근무 매장({formatStoreDisplayName(selectedStore.name)})의 브랜드 공통 매뉴얼입니다.
+              선택 매장({formatStoreDisplayName(selectedStore.name)})의 브랜드 공통 매뉴얼입니다.
             </p>
           )}
         </div>
 
-        {/* 지점 매뉴얼: 어떤 매장 기준인지 + 승인 매장 간 빠른 전환 (AI 챗봇과 같은 현재 근무 매장) */}
+        {/* 지점 매뉴얼: 어떤 매장 기준인지 + 승인 매장 간 빠른 전환 (AI 챗봇과 같은 선택 매장) */}
         {scope === "store" && stores.length > 0 && (
           <div className="mb-6 w-full max-w-sm">
-            <p className="mb-1.5 text-sm font-medium text-[var(--color-text-secondary)]">현재 매장</p>
+            <p className="mb-1.5 text-sm font-medium text-[var(--color-text-secondary)]">선택 매장</p>
             <StoreSwitcher
               compact
-              label="현재 근무 매장"
+              label="선택 매장"
               manageLabel="근무 매장 관리"
               stores={stores}
               pendingCount={pendingStores.length}

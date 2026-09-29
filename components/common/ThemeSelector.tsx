@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Sun, Moon, Monitor } from "lucide-react";
+import { Sun, Moon, Monitor, Check } from "lucide-react";
 import { useTheme } from "@/lib/theme-context";
 
 export default function ThemeSelector() {
@@ -26,18 +26,19 @@ export default function ThemeSelector() {
             role="radio"
             aria-checked={isSelected}
             onClick={() => setTheme(option.value)}
-            className={`flex min-h-[48px] items-center justify-center gap-2 rounded-lg border-2 px-4 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 ${
+            className={`flex min-h-[56px] items-center justify-center gap-2 rounded-lg border-2 px-4 text-base font-medium transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 ${
               isSelected
-                ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/30 text-[var(--color-primary)]"
-                : "border-[var(--color-border)] bg-[var(--color-bg-surface)] text-[var(--color-text-primary)] hover:border-[var(--color-primary)]/50"
+                ? "border-[var(--color-primary)] bg-[var(--color-primary)]/8 text-[var(--color-primary)]"
+                : "border-[var(--color-border)] bg-[var(--color-bg-surface)] text-[var(--color-text-primary)] hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-bg-default)]"
             }`}
           >
             <Icon
-              size={18}
+              size={20}
               aria-hidden="true"
               className={isSelected ? "text-[var(--color-primary)]" : "text-[var(--color-text-secondary)]"}
             />
             {option.label}
+            {isSelected && <Check size={18} aria-hidden="true" />}
           </button>
         );
       })}

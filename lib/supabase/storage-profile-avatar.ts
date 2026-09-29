@@ -31,6 +31,7 @@ export interface UploadAvatarInput {
 export interface UploadAvatarResult {
   success: boolean;
   avatarUrl?: string; // Storage 공개 URL 또는 경로
+  avatarUpdatedAt?: string; // ISO string timestamp (캐시 busting용)
   oldAvatarUrl?: string; // 이전 avatar URL (삭제 필요시)
   error?: string;
 }

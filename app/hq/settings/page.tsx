@@ -117,9 +117,14 @@ export default function HqSettingsPage() {
 
         const { data: profile } = await supabase
           .from("profiles")
-          .select("full_name, brand_id, avatar_url")
+          .select("full_name, brand_id, avatar_url, avatar_updated_at")
           .eq("id", user.id)
-          .maybeSingle<{ full_name: string | null; brand_id: string | null; avatar_url: string | null }>();
+          .maybeSingle<{
+            full_name: string | null;
+            brand_id: string | null;
+            avatar_url: string | null;
+            avatar_updated_at: string | null;
+          }>();
 
         // 소속 프랜차이즈는 profiles.brand_id와 기존 franchises 목록 API로만 확인한다.
         let franchiseName: string | null = null;
@@ -136,11 +141,18 @@ export default function HqSettingsPage() {
           ...((user.app_metadata?.providers as string[] | undefined) ?? []),
         ];
 
+        let finalAvatarUrl: string | null = null;
+        if (profile?.avatar_url) {
+          // cache busting은 이제 filename에 포함됨 (avatar-{timestamp}.jpg)
+          // 따라서 query string 불필요, 원본 URL만 사용
+          finalAvatarUrl = profile.avatar_url;
+        }
+
         setAccount({
           name: profile?.full_name || user.user_metadata?.name || "",
           email: user.email ?? "",
           franchiseName,
-          avatarUrl: profile?.avatar_url || null,
+          avatarUrl: finalAvatarUrl,
           userId: user.id,
           hasPasswordLogin: providers.includes("email"),
         });
@@ -267,8 +279,15 @@ export default function HqSettingsPage() {
     const reader = new FileReader();
     reader.onload = () => {
       setAvatarPreview(reader.result as string);
+      setAvatarFeedback(null);
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleCancelAvatarPreview = () => {
+    setAvatarPreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    setAvatarFeedback(null);
   };
 
   const handleUploadAvatar = async () => {
@@ -285,14 +304,21 @@ export default function HqSettingsPage() {
       const result = await uploadProfileAvatarClient(file, mimeType);
 
       if (result.success && result.avatarUrl) {
+        // cache busting은 이제 filename에 포함됨 (avatar-{timestamp}.jpg)
+        // 따라서 query string 불필요, 원본 URL만 사용
         setAccount((prev) =>
-          prev ? { ...prev, avatarUrl: result.avatarUrl! } : prev
+          prev ? { ...prev, avatarUrl: result.avatarUrl || null } : prev
         );
         setAvatarPreview(null);
         if (fileInputRef.current) fileInputRef.current.value = "";
         setAvatarFeedback({ type: "success", message: "프로필 사진이 저장되었습니다." });
-        // 헤더/프로필 메뉴 즉시 반영용 새로고침
-        void createClient().auth.refreshSession();
+
+        // Header에 avatar 변경 이벤트 전송
+        window.dispatchEvent(
+          new CustomEvent("hqAvatarUpdated", {
+            detail: { avatarUrl: result.avatarUrl },
+          })
+        );
       } else {
         setAvatarFeedback({
           type: "error",
@@ -325,8 +351,13 @@ export default function HqSettingsPage() {
         setAvatarPreview(null);
         if (fileInputRef.current) fileInputRef.current.value = "";
         setAvatarFeedback({ type: "success", message: "프로필 사진이 삭제되었습니다." });
-        // 헤더/프로필 메뉴 즉시 반영용 새로고침
-        void createClient().auth.refreshSession();
+
+        // Header에 avatar 변경 이벤트 전송
+        window.dispatchEvent(
+          new CustomEvent("hqAvatarUpdated", {
+            detail: { avatarUrl: null },
+          })
+        );
       } else {
         setAvatarFeedback({
           type: "error",
@@ -425,10 +456,7 @@ export default function HqSettingsPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => {
-                            setAvatarPreview(null);
-                            if (fileInputRef.current) fileInputRef.current.value = "";
-                          }}
+                          onClick={handleCancelAvatarPreview}
                           disabled={isUploadingAvatar}
                           className={secondaryButtonClass}
                         >
