@@ -6,7 +6,9 @@ import {
   resolveRagStoreFranchiseForRequest,
 } from "@/lib/rag/authorize-rag-store-access";
 import { finalizeRagQueryResponse } from "@/lib/rag/finalize-rag-query-response";
-import { saveQuestionLog } from "@/lib/rag/save-question-log";
+import { saveQuestionLog, type SaveQuestionLogResult } from "@/lib/rag/save-question-log";
+import { escalateQuestionLogToStoreOwners } from "@/lib/notifications/escalate-question-log";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { searchManualChunks } from "@/lib/rag/search-manual-chunks";
 import { validateQueryRequest } from "@/lib/rag/validate-query-request";
 import type {
@@ -62,6 +64,29 @@ function resolveStatus(similarity: number): RagStatus {
   return "insufficient";
 }
 
+/**
+ * 근거를 못 찾은 질문을 그 매장의 승인 점주에게 한 번만 알린다.
+ *
+ * storeId는 authorizeRagStoreAccessForRequest를 통과한 값만 넘긴다(body의 franchiseId는 쓰지 않는다).
+ * 응답 전에 await하므로 서버리스에서 작업이 잘리지 않고, 실패해도 답변과 HTTP 상태는 그대로다.
+ */
+function escalateInsufficientQuestion(storeId: string) {
+  return async (logResult: SaveQuestionLogResult): Promise<void> => {
+    if (!logResult.saved || !logResult.questionLogId) {
+      return;
+    }
+
+    const result = await escalateQuestionLogToStoreOwners(createAdminClient(), {
+      questionLogId: logResult.questionLogId,
+      storeId,
+    });
+
+    if (result.status === "failed") {
+      console.error("[RAG] QUESTION_ESCALATION_FAILED", { status: result.status });
+    }
+  };
+}
+
 export async function POST(request: Request): Promise<NextResponse<RagQueryResponse>> { // 직원 질문을 받아 매뉴얼 검색 후 GPT-4o 답변을 반환하는 API
   let body: unknown;
 
@@ -100,6 +125,7 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
       const response = await finalizeRagQueryResponse({
         httpStatus: 200,
         question,
+        storeId,
         response: {
           answer: NO_MANUAL_ANSWER,
           similarity: null,
@@ -107,6 +133,7 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
           status: "insufficient",
           matches: [],
         },
+        afterQuestionLogSaved: escalateInsufficientQuestion(storeId),
       }, saveQuestionLog);
       return NextResponse.json(response);
     }
@@ -136,6 +163,7 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
       const response = await finalizeRagQueryResponse({
         httpStatus: 200,
         question,
+        storeId,
         response: {
           answer: NO_MANUAL_ANSWER,
           similarity: topMatch.similarity_score,
@@ -143,6 +171,7 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
           status: "insufficient",
           matches,
         },
+        afterQuestionLogSaved: escalateInsufficientQuestion(storeId),
       }, saveQuestionLog);
       return NextResponse.json(response);
     }
@@ -158,6 +187,7 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
     const response = await finalizeRagQueryResponse({
       httpStatus: 200,
       question,
+      storeId,
       response: {
         answer,
         similarity: topMatch.similarity_score,

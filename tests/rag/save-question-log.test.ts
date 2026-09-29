@@ -9,15 +9,17 @@ import {
 } from "../../lib/rag/save-question-log.ts";
 
 const VALID_MANUAL_ID = "57181130-4449-4299-a864-25a2098147e4";
+const VALID_STORE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const BASE_INPUT: SaveQuestionLogInput = {
   question: "환불 절차를 알려주세요.",
   answer: "결제 내역을 확인한 뒤 처리합니다.",
   similarityScore: 0.82,
   status: "answered",
   sourceManualId: VALID_MANUAL_ID,
+  storeId: VALID_STORE_ID,
 };
 
-function createWriter(result: { error: unknown | null } = { error: null }) {
+function createWriter(result: { error: unknown | null; id?: string | null } = { error: null, id: "log-1" }) {
   const payloads: QuestionLogPayload[] = [];
   const writer: QuestionLogWriter = async (payload) => {
     payloads.push(payload);
@@ -43,6 +45,7 @@ describe("saveQuestionLog", () => {
       similarity_score: BASE_INPUT.similarityScore,
       status: BASE_INPUT.status,
       source_manual_id: BASE_INPUT.sourceManualId,
+      store_id: VALID_STORE_ID,
     }]);
   });
 
@@ -51,7 +54,7 @@ describe("saveQuestionLog", () => {
 
     const result = await saveQuestionLog({ ...BASE_INPUT, status: "cautious" }, writer);
 
-    assert.deepEqual(result, { saved: true });
+    assert.deepEqual(result, { saved: true, questionLogId: "log-1" });
     assert.equal(payloads[0].status, "cautious");
   });
 
@@ -65,7 +68,7 @@ describe("saveQuestionLog", () => {
       sourceManualId: null,
     }, writer);
 
-    assert.deepEqual(result, { saved: true });
+    assert.deepEqual(result, { saved: true, questionLogId: "log-1" });
     assert.equal(payloads[0].similarity_score, null);
     assert.equal(payloads[0].source_manual_id, null);
   });
@@ -159,7 +162,7 @@ describe("saveQuestionLog", () => {
   test("returns saved true when the writer succeeds", async () => {
     const { writer } = createWriter();
 
-    assert.deepEqual(await saveQuestionLog(BASE_INPUT, writer), { saved: true });
+    assert.deepEqual(await saveQuestionLog(BASE_INPUT, writer), { saved: true, questionLogId: "log-1" });
   });
 
   test("returns a safe failure when the writer returns an error", async () => {
@@ -248,7 +251,7 @@ describe("saveQuestionLog", () => {
     const { writer } = createWriter();
 
     try {
-      assert.deepEqual(await saveQuestionLog(BASE_INPUT, writer), { saved: true });
+      assert.deepEqual(await saveQuestionLog(BASE_INPUT, writer), { saved: true, questionLogId: "log-1" });
     } finally {
       globalThis.fetch = originalFetch;
     }
