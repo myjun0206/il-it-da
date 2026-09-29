@@ -108,7 +108,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   let membershipQuery = adminClient
     .from("store_memberships")
     .select("id, user_id, store_id, franchise_id, role, status, requested_at, approved_at, approved_by, rejected_at, rejected_by")
-    .in("role", ["owner", "staff"]);
+    .eq("role", "owner");
 
   if (isApprovalStatus(status)) {
     membershipQuery = isPendingStatus(status)
@@ -234,7 +234,16 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
   if (!membership) {
     return NextResponse.json({ success: false, error: "Membership not found" }, { status: 404 });
   }
-  if (membership.role !== "owner" && membership.role !== "staff") {
+  if (membership.role === "staff") {
+    console.warn("[HQ_APPROVALS] Staff approval attempt blocked", {
+      membershipId: membership.id,
+      userId: membership.user_id,
+      storeId: membership.store_id,
+      action: body.action,
+    });
+    return forbiddenResponse();
+  }
+  if (membership.role !== "owner") {
     return forbiddenResponse();
   }
   const { data: membershipStore, error: membershipStoreError } = await adminClient
