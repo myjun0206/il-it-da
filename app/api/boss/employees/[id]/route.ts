@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { createNotification } from "@/lib/notifications";
-import { ensureBrandProfileForApprovedMembership } from "@/lib/signup/store-membership-service";
+import { ensureBrandProfileForApprovedMembership, MembershipAuthNotReadyError, requireConfirmedMembershipAuthUser } from "@/lib/signup/store-membership-service";
 
 export const runtime = "nodejs";
 
@@ -145,6 +145,18 @@ export async function PUT(
       );
     }
 
+    if (newStatus === "approved") {
+      try {
+        await requireConfirmedMembershipAuthUser(adminClient, membership.user_id);
+      } catch (authError) {
+        if (authError instanceof MembershipAuthNotReadyError) {
+          return NextResponse.json({ success: false, error: authError.message }, { status: 409 });
+        }
+        console.error("[PUT /api/boss/employees/[id]] Auth user lookup failed");
+        return NextResponse.json({ success: false, error: "승인 대상 계정을 확인하지 못했습니다." }, { status: 500 });
+      }
+    }
+
     // 5. membership 상태 업데이트
     const updateData: Record<string, unknown> = {
       status: newStatus,
@@ -196,6 +208,12 @@ export async function PUT(
         }
       }
     } catch (profileUpdateError) {
+      if (profileUpdateError instanceof MembershipAuthNotReadyError) {
+        return NextResponse.json(
+          { success: false, error: profileUpdateError.message },
+          { status: 409 },
+        );
+      }
       console.error("[PUT /api/boss/employees/[id]] Profile approval sync error:", profileUpdateError);
       return NextResponse.json(
         { success: false, error: "프로필 승인 상태 변경 중 오류가 발생했습니다." },
