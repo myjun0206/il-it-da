@@ -48,8 +48,8 @@ export function StoreMenu({ actions, ariaLabel = "매장 관리 메뉴" }: Store
       // 아래쪽에 충분한 공간이 있으면 아래로, 아니면 위로
       const direction: "down" | "up" = spaceBelow >= menuHeight ? "down" : "up";
 
-      const top = direction === "down" 
-        ? rect.bottom + gap 
+      const top = direction === "down"
+        ? rect.bottom + gap
         : rect.top - menuHeight - gap;
 
       const right = window.innerWidth - rect.right;
