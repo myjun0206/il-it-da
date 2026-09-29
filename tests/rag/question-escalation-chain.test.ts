@@ -256,7 +256,7 @@ describe("insufficient 질문 -> 매장 점주 알림 (실제 함수 조합)", (
     for (const leak of [QUESTION, "폐기", STORE_A, LOG_ID, OWNER_A, "0.12", "insufficient"]) {
       assert.equal(text.includes(leak), false, `leaks ${leak}`);
     }
-    assert.equal(notifications[0].target_url, null);
+    assert.equal(notifications[0].target_url, `/boss/questions?storeId=${STORE_A}`);
   });
 });
 

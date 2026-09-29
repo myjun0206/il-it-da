@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { Bell } from "lucide-react";
 import { formatNotificationTime } from "@/lib/notifications";
+import { resolveNotificationHref } from "@/lib/notifications/notification-href";
 
 interface Notification {
   id: string;
@@ -108,8 +109,9 @@ export default function NotificationCenter({ className = "" }: NotificationCente
     }
 
     // Navigate if targetUrl exists
-    if (notification.targetUrl) {
-      setNavigationTarget({ targetUrl: notification.targetUrl });
+    const href = resolveNotificationHref(notification);
+    if (href) {
+      setNavigationTarget({ targetUrl: href });
     }
   };
 

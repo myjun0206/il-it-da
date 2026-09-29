@@ -12,6 +12,7 @@ import {
   ESCALATION_NOTIFICATION_TYPE,
   escalateQuestionLogToStoreOwners,
 } from "../../lib/notifications/escalate-question-log.ts";
+import { resolveNotificationHref } from "../../lib/notifications/notification-href.ts";
 
 const LOG_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_LOG_ID = "22222222-2222-4222-8222-222222222222";
@@ -382,11 +383,11 @@ describe("알림 내용 (질문 본문 비노출)", () => {
     assert.equal(ESCALATION_NOTIFICATION_TITLE, "확인이 필요한 직원 질문이 있습니다");
   });
 
-  test("점주 화면이 아직 없으므로 임의의 target_url을 만들지 않는다", async () => {
+  test("target_url은 검증된 매장의 점주 질문 화면을 가리킨다", async () => {
     const { client, notifications } = fakeClient();
     await escalateQuestionLogToStoreOwners(client, { questionLogId: LOG_ID, storeId: STORE_A });
 
-    assert.equal(notifications[0].target_url, null);
+    assert.equal(notifications[0].target_url, `/boss/questions?storeId=${STORE_A}`);
   });
 
   test("기존 013 notifications 컬럼만 사용한다", async () => {
@@ -411,6 +412,44 @@ describe("알림 내용 (질문 본문 비노출)", () => {
     assert.equal(notifications[0].related_id, LOG_ID);
     assert.equal(notifications[0].type, ESCALATION_NOTIFICATION_TYPE);
     assert.equal(notifications[0].is_read, false);
+  });
+});
+
+describe("resolveNotificationHref (related_id 강조 링크)", () => {
+  test("에스컬레이션 알림은 매장 링크를 유지하고 질문 로그 id를 덧붙인다", () => {
+    const href = resolveNotificationHref({
+      type: ESCALATION_NOTIFICATION_TYPE,
+      targetUrl: `/boss/questions?storeId=${STORE_A}`,
+      relatedId: LOG_ID,
+    });
+
+    assert.equal(href, `/boss/questions?storeId=${STORE_A}&questionId=${LOG_ID}`);
+  });
+
+  test("과거 target_url=null 알림은 이동하지 않는다", () => {
+    assert.equal(
+      resolveNotificationHref({ type: ESCALATION_NOTIFICATION_TYPE, targetUrl: null, relatedId: LOG_ID }),
+      null,
+    );
+  });
+
+  test("다른 알림 유형이나 다른 경로·외부 주소는 그대로 둔다", () => {
+    assert.equal(
+      resolveNotificationHref({ type: "notice", targetUrl: "/boss/notices", relatedId: LOG_ID }),
+      "/boss/notices",
+    );
+    assert.equal(
+      resolveNotificationHref({ type: ESCALATION_NOTIFICATION_TYPE, targetUrl: "/boss/notices", relatedId: LOG_ID }),
+      "/boss/notices",
+    );
+    assert.equal(
+      resolveNotificationHref({
+        type: ESCALATION_NOTIFICATION_TYPE,
+        targetUrl: "https://example.com/boss/questions",
+        relatedId: LOG_ID,
+      }),
+      "https://example.com/boss/questions",
+    );
   });
 });
 
