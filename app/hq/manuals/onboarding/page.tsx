@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { UploadCloud, Loader2, ArrowLeft, Download, Check } from "lucide-react";
+import { UploadCloud, Loader2, ArrowLeft, Download, Check, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { ManualPreviewEditor, type ManualEditState } from "@/components/manuals/ManualPreviewEditor";
 import { createClient } from "@/lib/supabase/client";
@@ -276,9 +276,6 @@ export default function ManualOnboardingPage() {
   };
 
   const currentStepIndex = step === "upload" ? 0 : 1;
-  const includedManualCount = preview
-    ? preview.manuals.filter((manual) => !(manualEdits[manual.tempId]?.excluded ?? false)).length
-    : 0;
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-default)]">
@@ -355,7 +352,7 @@ export default function ManualOnboardingPage() {
             })}
           </ol>
 
-          {step === "upload" ? (
+          {step === "upload" && (
             <>
               <div className="text-center mb-8 break-keep">
                 {!fromManuals && (
@@ -460,72 +457,77 @@ export default function ManualOnboardingPage() {
                 </a>
               </p>
             </>
-          ) : (
-            <>
-              <div className="text-center mb-8 break-keep">
-                <h1 className="text-2xl sm:text-3xl font-bold text-[var(--color-text-primary)] mb-3">
-                  파일 내용을 정리했어요. 저장하기 전에 확인해 주세요.
-                </h1>
-                {preview && (
-                  <div className="text-[var(--color-text-secondary)] space-y-1">
-                    <p>세부 매뉴얼 {preview.totalDetailManualCount}개를 찾았습니다.</p>
-                    <p>{preview.topCategoryCount}개의 항목으로 정리했습니다.</p>
-                    <p className="font-semibold text-[var(--color-text-primary)]">
-                      제목이나 분류가 다르면 여기서 바꿀 수 있어요.
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              <p role="status" aria-live="polite" className="sr-only">
-                {isSaving ? "매뉴얼을 저장하고 있어요." : ""}
-              </p>
-
-              {preview && (
-                <ManualPreviewEditor
-                  preview={preview}
-                  categoryLabels={categoryLabels}
-                  manualEdits={manualEdits}
-                  collapsedCategories={collapsedCategories}
-                  onCategoryLabelChange={handleCategoryLabelChange}
-                  onManualTitleChange={handleManualTitleChange}
-                  onManualCategoryMove={handleManualCategoryMove}
-                  onManualExcludeToggle={handleManualExcludeToggle}
-                  onToggleCategoryCollapsed={toggleCategoryCollapsed}
-                />
-              )}
-
-              {error && (
-                <p role="alert" className="mt-4 text-center text-sm text-[var(--color-status-error)] break-keep">
-                  {error}
-                </p>
-              )}
-
-              <div className="flex flex-col-reverse sm:flex-row justify-center gap-3 mt-8">
-                <Button
-                  variant="outline"
-                  size="lg"
-                  onClick={handleReupload}
-                  disabled={isSaving}
-                  className="w-full sm:w-auto px-8"
-                >
-                  다시 올리기
-                </Button>
-                <Button
-                  variant="primary"
-                  size="lg"
-                  isLoading={isSaving}
-                  disabled={isSaving}
-                  onClick={handleSave}
-                  className="w-full sm:w-auto px-12"
-                >
-                  세부 매뉴얼 {includedManualCount}개 저장하기
-                </Button>
-              </div>
-            </>
           )}
         </div>
       </main>
+
+      {step === "review" && preview && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-4 sm:px-6"
+          onClick={() => handleReupload()}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="manual-preview-title"
+            className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={handleReupload}
+              disabled={isSaving}
+              aria-label="미리보기 닫기"
+              className="absolute right-4 top-4 z-10 rounded-md p-1 text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-default)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+            >
+              <X size={20} aria-hidden="true" />
+            </button>
+
+            <div className="shrink-0 border-b border-[var(--color-border)] px-5 py-4 pr-14 sm:px-6">
+              <h2 id="manual-preview-title" className="mb-1 text-lg font-bold text-[var(--color-text-primary)]">
+                AI 분석 결과 미리보기
+              </h2>
+              <p className="text-sm text-[var(--color-text-secondary)]">
+                세부 매뉴얼 {preview.totalDetailManualCount}개 · 카테고리 {preview.topCategoryCount}개
+              </p>
+            </div>
+
+            <p role="status" aria-live="polite" className="sr-only">
+              {isSaving ? "매뉴얼을 저장하고 있어요." : ""}
+            </p>
+
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 overscroll-contain sm:px-6 sm:py-5">
+              <ManualPreviewEditor
+                preview={preview}
+                categoryLabels={categoryLabels}
+                manualEdits={manualEdits}
+                collapsedCategories={collapsedCategories}
+                onCategoryLabelChange={handleCategoryLabelChange}
+                onManualTitleChange={handleManualTitleChange}
+                onManualCategoryMove={handleManualCategoryMove}
+                onManualExcludeToggle={handleManualExcludeToggle}
+                onToggleCategoryCollapsed={toggleCategoryCollapsed}
+              />
+              {error && (
+                <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-[var(--color-status-error)] break-keep">
+                  {error}
+                </p>
+              )}
+            </div>
+
+            <div className="shrink-0 border-t border-[var(--color-border)] bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:px-6 sm:py-4">
+              <div className="flex gap-3">
+                <Button variant="ghost" className="flex-1" onClick={handleReupload} disabled={isSaving}>
+                  취소
+                </Button>
+                <Button variant="primary" className="flex-1" isLoading={isSaving} disabled={isSaving} onClick={handleSave}>
+                  일괄 등록
+                </Button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
 
       {/* 승인 전 정리 결과를 버리고 나갈 때 확인 모달 */}
       {pendingLeave && (
