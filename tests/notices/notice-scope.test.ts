@@ -9,6 +9,7 @@ import {
   type NoticeMembership,
   type NoticeScope,
 } from "../../lib/notices/notice-authorization.ts";
+import { buildHqNoticeTarget } from "../../lib/notices/build-hq-notice-target.ts";
 
 // 공지 라우트는 next/server, cookies(), Supabase 클라이언트에 묶여 Next 런타임 밖에서 실행되지
 // 않는다(다른 route 테스트와 동일 관행). 여기서는 021 마이그레이션과 라우트가 같은 테이블·컬럼·
@@ -24,6 +25,7 @@ const audienceMigration = readSource("supabase/migrations/029_notice_audience.sq
 const hqRoute = readSource("app/api/hq/notices/route.ts");
 const bossRoute = readSource("app/api/boss/notices/route.ts");
 const staffRoute = readSource("app/api/staff/notices/route.ts");
+const hqCreatePage = readSource("app/hq/communication/new/page.tsx");
 
 describe("021_hq_notices.sql (DB 계약)", () => {
   test("021 번호를 쓰고 020(매뉴얼 업로드 batch)과 겹치지 않는다", () => {
@@ -280,5 +282,51 @@ describe("notice routes enforce the shared policy", () => {
     assert.match(staffRoute, /\.select\("role"\)/);
     assert.equal(/select\("role, franchise_id"\)/.test(staffRoute), false);
     assert.match(staffRoute, /canReadNotice\("staff"/);
+  });
+});
+
+describe("HQ notice creation form audience payload", () => {
+  test("whole franchise + owners only keeps the existing all target", () => {
+    assert.deepEqual(buildHqNoticeTarget("all", "store-ignored", "owner"), {
+      targetType: "all",
+      audience: "owner",
+    });
+  });
+
+  test("whole franchise + owners and staff", () => {
+    assert.deepEqual(buildHqNoticeTarget("all", "store-ignored", "all_members"), {
+      targetType: "all",
+      audience: "all_members",
+    });
+  });
+
+  test("one store + owners only", () => {
+    assert.deepEqual(buildHqNoticeTarget("store", STORE_A, "owner"), {
+      targetType: "store",
+      targetStoreId: STORE_A,
+      audience: "owner",
+    });
+  });
+
+  test("one store + owners and staff", () => {
+    assert.deepEqual(buildHqNoticeTarget("store", STORE_A, "all_members"), {
+      targetType: "store",
+      targetStoreId: STORE_A,
+      audience: "all_members",
+    });
+  });
+
+  test("form defaults to all_members and only renders the two HQ audiences", () => {
+    assert.match(hqCreatePage, /useState<HqNoticeAudience>\("all_members"\)/);
+    assert.match(hqCreatePage, /label: "점주만"/);
+    assert.match(hqCreatePage, /label: "점주 \+ 직원"/);
+    assert.equal(/value: "staff"/.test(hqCreatePage), false);
+    assert.match(hqCreatePage, /buildHqNoticeTarget\(targetType, targetStoreId, audience\)/);
+  });
+
+  test("API continues to reject staff audience and verify HQ franchise/store scope", () => {
+    assert.match(hqRoute, /audience !== "owner" && audience !== "all_members"/);
+    assert.match(hqRoute, /canCreateNotice\(/);
+    assert.match(hqRoute, /\.eq\("franchise_id", hqUser\.franchiseId\)/);
   });
 });
