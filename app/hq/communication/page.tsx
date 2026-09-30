@@ -44,7 +44,9 @@ function CreateNoticeButton({ label }: { label: string }) {
 function toNoticeRow(notice: HqNoticeItem): HqNotice {
   return {
     id: notice.id,
-    target: notice.targetType === "all" ? "전체 지점" : notice.targetStoreName ?? "삭제된 지점",
+    target: notice.targetType === "all" || notice.targetType === "franchise"
+      ? "전체 지점"
+      : notice.targetStoreName ?? "삭제된 지점",
     title: notice.title,
     createdAt: notice.createdAt,
   };

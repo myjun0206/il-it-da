@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { canReadNotice, type NoticeAudience, type NoticeMembership, type NoticeTargetType } from "@/lib/notices/notice-authorization";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -7,7 +8,7 @@ export const runtime = "nodejs";
 
 export interface StaffNoticeItem {
   id: string;
-  targetType: "all" | "store";
+  targetType: NoticeTargetType;
   targetStoreName: string | null; // "본사 전체" (all일 때) 또는 매장명 (store일 때)
   title: string;
   content: string;
@@ -16,8 +17,10 @@ export interface StaffNoticeItem {
 
 type NoticeRow = {
   id: string;
-  target_type: "all" | "store";
+  franchise_id: string;
+  target_type: NoticeTargetType;
   target_store_id: string | null;
+  audience: NoticeAudience;
   title: string;
   content: string;
   created_at: string;
@@ -39,13 +42,13 @@ export async function GET(): Promise<NextResponse> {
 
     const userId = data.user.id;
 
-    // 2. Staff 권한 확인 및 franchise_id 조회
+    // 2. Role은 profiles, 공지 범위는 승인된 store membership에서 확인한다.
     const adminClient = createAdminClient();
     const { data: profile, error: profileError } = await adminClient
       .from("profiles")
-      .select("role, franchise_id")
+      .select("role")
       .eq("id", userId)
-      .maybeSingle<{ role: string; franchise_id: string }>();
+      .maybeSingle<{ role: string }>();
 
     if (profileError || !profile) {
       return NextResponse.json({ error: "사용자 정보를 찾을 수 없습니다." }, { status: 403 });
@@ -55,87 +58,92 @@ export async function GET(): Promise<NextResponse> {
       return NextResponse.json({ error: "접근 권한이 없습니다." }, { status: 403 });
     }
 
-    if (!profile.franchise_id) {
-      return NextResponse.json({ notices: [] });
-    }
-
-    // 3. 사용자의 approved store IDs 조회
+    // 3. 이 직원의 승인된 STAFF membership만 대상 store로 사용한다.
     const { data: memberships, error: membershipError } = await adminClient
       .from("store_memberships")
-      .select("store_id")
+      .select("store_id, franchise_id")
       .eq("user_id", userId)
+      .eq("role", "staff")
       .eq("status", "approved")
-      .eq("franchise_id", profile.franchise_id);
 
     if (membershipError) {
       console.error("Error fetching memberships:", membershipError);
       return NextResponse.json({ error: "매장 정보를 불러오지 못했습니다." }, { status: 500 });
     }
 
-    const approvedStoreIds = (memberships ?? []).map((m: { store_id: string }) => m.store_id);
-
-    // 4. 공지 조회
-    // - target_type = 'all' (본사 공지)
-    // - target_type = 'store' AND target_store_id IN (approvedStoreIds)
-    const baseQuery = adminClient
-      .from("notices")
-      .select("id, target_type, target_store_id, title, content, created_at")
-      .eq("franchise_id", profile.franchise_id)
-      .order("created_at", { ascending: false });
-
-    let noticesData: NoticeRow[] = [];
-
-    // 본사 공지
-    const { data: hqNotices, error: hqError } = await baseQuery.eq("target_type", "all");
-
-    if (hqError && !isMissingTableError(hqError)) {
-      console.error("Error fetching HQ notices:", hqError);
-      return NextResponse.json({ error: "공지사항을 불러오지 못했습니다." }, { status: 500 });
+    const requestedStoreIds = [...new Set((memberships ?? []).map((membership) => membership.store_id))];
+    if (requestedStoreIds.length === 0) {
+      return NextResponse.json({ notices: [] });
     }
 
-    noticesData = (hqNotices ?? []) as NoticeRow[];
+    const { data: stores, error: storesError } = await adminClient
+      .from("stores")
+      .select("id, store_name, franchise_id")
+      .in("id", requestedStoreIds);
+    if (storesError) {
+      console.error("Error fetching membership stores:", storesError);
+      return NextResponse.json({ error: "매장 정보를 불러오지 못했습니다." }, { status: 500 });
+    }
 
-    // 매장 공지
-    if (approvedStoreIds.length > 0) {
-      const { data: storeNotices, error: storeError } = await adminClient
+    const storesById = new Map((stores ?? []).map((store) => [store.id, store]));
+    const approvedMemberships: NoticeMembership[] = (memberships ?? []).flatMap((membership) => {
+      const store = storesById.get(membership.store_id);
+      if (!store?.franchise_id || (membership.franchise_id && membership.franchise_id !== store.franchise_id)) {
+        return [];
+      }
+      return [{
+        storeId: membership.store_id,
+        franchiseId: store.franchise_id,
+        role: "staff",
+        status: "approved",
+      }];
+    });
+    const approvedStoreIds = [...new Set(approvedMemberships.map((membership) => membership.storeId))];
+    const franchiseIds = [...new Set(approvedMemberships.map((membership) => membership.franchiseId).filter(
+      (franchiseId): franchiseId is string => franchiseId !== null,
+    ))];
+    if (approvedStoreIds.length === 0 || franchiseIds.length === 0) {
+      return NextResponse.json({ notices: [] });
+    }
+
+    // Read both franchise-wide notices (including the legacy "all" value)
+    // and notices targeted to this employee's approved stores.
+    const [franchiseResult, storeResult] = await Promise.all([
+      adminClient
         .from("notices")
-        .select("id, target_type, target_store_id, title, content, created_at")
-        .eq("franchise_id", profile.franchise_id)
-        .eq("target_type", "store")
+        .select("id, franchise_id, target_type, target_store_id, audience, title, content, created_at")
+        .in("franchise_id", franchiseIds)
+        .in("target_type", ["all", "franchise"])
+        .in("audience", ["all_members", "staff"])
+        .order("created_at", { ascending: false }),
+      adminClient
+        .from("notices")
+        .select("id, franchise_id, target_type, target_store_id, audience, title, content, created_at")
         .in("target_store_id", approvedStoreIds)
-        .order("created_at", { ascending: false });
+        .eq("target_type", "store")
+        .in("audience", ["all_members", "staff"])
+        .order("created_at", { ascending: false }),
+    ]);
 
-      if (storeError && !isMissingTableError(storeError)) {
-        console.error("Error fetching store notices:", storeError);
+    for (const result of [franchiseResult, storeResult]) {
+      if (result.error && !isMissingTableError(result.error)) {
+        console.error("Error fetching notices:", result.error);
         return NextResponse.json({ error: "공지사항을 불러오지 못했습니다." }, { status: 500 });
       }
-
-      noticesData = [...noticesData, ...(storeNotices ?? [])]
-        .sort((a: NoticeRow, b: NoticeRow) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-        .slice(0, 1000) as NoticeRow[];
     }
 
-    // 5. Store 이름 조회 (metadata)
-    const storeIds = [
-      ...new Set(
-        (noticesData ?? [])
-          .filter((row: NoticeRow) => row.target_type === "store" && row.target_store_id)
-          .map((row: NoticeRow) => row.target_store_id)
-      ),
-    ].filter((id): id is string => Boolean(id));
-
-    const storeNames = new Map<string, string>();
-    if (storeIds.length > 0) {
-      const { data: stores } = await adminClient
-        .from("stores")
-        .select("id, store_name")
-        .in("id", storeIds)
-        .eq("franchise_id", profile.franchise_id);
-
-      for (const store of stores ?? []) {
-        storeNames.set(store.id, store.store_name);
-      }
-    }
+    const noticesData = [
+      ...((franchiseResult.data ?? []) as NoticeRow[]),
+      ...((storeResult.data ?? []) as NoticeRow[]),
+    ]
+      .filter((row) => canReadNotice("staff", approvedMemberships, {
+        franchiseId: row.franchise_id,
+        targetType: row.target_type,
+        targetStoreId: row.target_store_id,
+        audience: row.audience,
+      }))
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, 1000);
 
     // 7. 응답 구성
     const notices: StaffNoticeItem[] = (noticesData ?? []).map((row: NoticeRow) => ({
@@ -143,9 +151,9 @@ export async function GET(): Promise<NextResponse> {
       targetType: row.target_type,
       targetStoreName:
         row.target_type === "all"
-          ? "본사 전체"
+          ? "프랜차이즈 전체"
           : row.target_store_id
-            ? storeNames.get(row.target_store_id) ?? null
+            ? storesById.get(row.target_store_id)?.store_name ?? null
             : null,
       title: row.title,
       content: row.content,

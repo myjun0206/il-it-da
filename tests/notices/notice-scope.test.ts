@@ -3,6 +3,12 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import {
+  canCreateNotice,
+  canReadNotice,
+  type NoticeMembership,
+  type NoticeScope,
+} from "../../lib/notices/notice-authorization.ts";
 
 // 공지 라우트는 next/server, cookies(), Supabase 클라이언트에 묶여 Next 런타임 밖에서 실행되지
 // 않는다(다른 route 테스트와 동일 관행). 여기서는 021 마이그레이션과 라우트가 같은 테이블·컬럼·
@@ -14,8 +20,10 @@ function readSource(relativePath: string): string {
 }
 
 const migration = readSource("supabase/migrations/021_hq_notices.sql");
+const audienceMigration = readSource("supabase/migrations/029_notice_audience.sql");
 const hqRoute = readSource("app/api/hq/notices/route.ts");
 const bossRoute = readSource("app/api/boss/notices/route.ts");
+const staffRoute = readSource("app/api/staff/notices/route.ts");
 
 describe("021_hq_notices.sql (DB 계약)", () => {
   test("021 번호를 쓰고 020(매뉴얼 업로드 batch)과 겹치지 않는다", () => {
@@ -54,6 +62,22 @@ describe("021_hq_notices.sql (DB 계약)", () => {
   test("RLS만 켜고 anon/authenticated 직접 접근 정책은 만들지 않는다", () => {
     assert.match(migration, /alter table public\.notices enable row level security/);
     assert.equal(/create policy/i.test(migration), false);
+  });
+
+  test("029는 기존 공지를 all_members로 보존하고 기본 audience를 설정한다", () => {
+    assert.match(audienceMigration, /add column if not exists audience text/);
+    assert.match(audienceMigration, /set audience = 'all_members'[\s\S]*?where audience is null/);
+    assert.match(audienceMigration, /alter column audience set default 'all_members'/);
+    assert.match(audienceMigration, /alter column audience set not null/);
+  });
+
+  test("audience는 owner/all_members/staff만 허용한다", () => {
+    assert.match(audienceMigration, /check \(audience in \('owner', 'all_members', 'staff'\)\)/);
+  });
+
+  test("franchise 타입을 추가하면서 legacy all/store의 target_store_id 규칙을 유지한다", () => {
+    assert.match(audienceMigration, /target_type in \('all', 'franchise'\) and target_store_id is null/);
+    assert.match(audienceMigration, /target_type = 'store' and target_store_id is not null/);
   });
 });
 
@@ -108,7 +132,9 @@ describe("app/api/boss/notices/route.ts (점주 조회 범위)", () => {
 
   test("같은 franchise의 전체 공지 또는 이 매장 대상 공지만 조회한다", () => {
     assert.match(bossRoute, /\.eq\("franchise_id", store\.franchise_id\)/);
-    assert.match(bossRoute, /\.or\(`target_type\.eq\.all,target_store_id\.eq\.\$\{storeId\}`\)/);
+    assert.match(bossRoute, /\.or\(`target_type\.eq\.all,target_type\.eq\.franchise,target_store_id\.eq\.\$\{storeId\}`\)/);
+    assert.match(bossRoute, /\.in\("audience", \["owner", "all_members"\]\)/);
+    assert.match(bossRoute, /canReadNotice\("owner"/);
   });
 
   test("franchise가 없는 매장은 공지를 하나도 노출하지 않는다", () => {
@@ -120,7 +146,139 @@ describe("app/api/boss/notices/route.ts (점주 조회 범위)", () => {
   });
 
   test("응답에 author_id 같은 내부 식별자를 내보내지 않는다", () => {
-    assert.match(bossRoute, /\.select\("id, title, content, created_at, updated_at"\)/);
-    assert.equal(/author_id/.test(bossRoute), false);
+    assert.match(
+      bossRoute,
+      /\.select\("id, target_type, target_store_id, audience, title, content, created_at, updated_at"\)/,
+    );
+    assert.equal(/\.select\([^)]*author_id/.test(bossRoute), false);
+  });
+});
+
+const FRANCHISE_A = "franchise-a";
+const FRANCHISE_B = "franchise-b";
+const STORE_A = "store-a";
+const STORE_B = "store-b";
+
+function scope(overrides: Partial<NoticeScope> = {}): NoticeScope {
+  return {
+    franchiseId: FRANCHISE_A,
+    targetType: "franchise",
+    targetStoreId: null,
+    audience: "all_members",
+    ...overrides,
+  };
+}
+
+function membership(
+  overrides: Partial<NoticeMembership> = {},
+): NoticeMembership {
+  return {
+    storeId: STORE_A,
+    franchiseId: FRANCHISE_A,
+    role: "owner",
+    status: "approved",
+    ...overrides,
+  };
+}
+
+function hqCanCreate(noticeScope: NoticeScope, targetStoreFranchiseId: string | null = null) {
+  return canCreateNotice({
+    role: "hq",
+    franchiseId: FRANCHISE_A,
+    memberships: [],
+    scope: noticeScope,
+    targetStoreFranchiseId,
+  });
+}
+
+describe("notice authorization policy", () => {
+  test("HQ can target franchise owners only", () => {
+    assert.equal(hqCanCreate(scope({ audience: "owner" })), true);
+  });
+
+  test("HQ can target all franchise members", () => {
+    assert.equal(hqCanCreate(scope({ audience: "all_members" })), true);
+  });
+
+  test("HQ can target a store's owners", () => {
+    assert.equal(hqCanCreate(scope({ targetType: "store", targetStoreId: STORE_A, audience: "owner" }), FRANCHISE_A), true);
+  });
+
+  test("HQ can target all members of one store", () => {
+    assert.equal(hqCanCreate(scope({ targetType: "store", targetStoreId: STORE_A, audience: "all_members" }), FRANCHISE_A), true);
+  });
+
+  test("OWNER can target STAFF at an approved own store", () => {
+    assert.equal(canCreateNotice({
+      role: "owner",
+      franchiseId: FRANCHISE_A,
+      memberships: [membership()],
+      scope: scope({ targetType: "store", targetStoreId: STORE_A, audience: "staff" }),
+      targetStoreFranchiseId: FRANCHISE_A,
+    }), true);
+  });
+
+  test("OWNER cannot target another store", () => {
+    assert.equal(canCreateNotice({
+      role: "owner",
+      franchiseId: FRANCHISE_A,
+      memberships: [membership()],
+      scope: scope({ targetType: "store", targetStoreId: STORE_B, audience: "staff" }),
+      targetStoreFranchiseId: FRANCHISE_A,
+    }), false);
+  });
+
+  test("STAFF cannot create notices", () => {
+    assert.equal(canCreateNotice({
+      role: "staff",
+      franchiseId: FRANCHISE_A,
+      memberships: [membership({ role: "staff" })],
+      scope: scope({ targetType: "store", targetStoreId: STORE_A, audience: "staff" }),
+      targetStoreFranchiseId: FRANCHISE_A,
+    }), false);
+  });
+
+  test("HQ cannot write to another franchise", () => {
+    assert.equal(hqCanCreate(scope({ franchiseId: FRANCHISE_B })), false);
+  });
+
+  test("members cannot read another franchise's notice", () => {
+    assert.equal(canReadNotice("staff", [membership({ role: "staff" })], scope({ franchiseId: FRANCHISE_B })), false);
+  });
+
+  test("unapproved memberships cannot create or read notices", () => {
+    const pendingMembership = membership({ status: "pending" });
+    const storeScope = scope({ targetType: "store", targetStoreId: STORE_A, audience: "staff" });
+    assert.equal(canCreateNotice({
+      role: "owner",
+      franchiseId: FRANCHISE_A,
+      memberships: [pendingMembership],
+      scope: storeScope,
+      targetStoreFranchiseId: FRANCHISE_A,
+    }), false);
+    assert.equal(canReadNotice("owner", [pendingMembership], scope({ audience: "owner" })), false);
+  });
+});
+
+describe("notice routes enforce the shared policy", () => {
+  test("HQ create accepts audience but limits HQ audiences and target franchise", () => {
+    assert.match(hqRoute, /canCreateNotice\(/);
+    assert.match(hqRoute, /audience !== "owner" && audience !== "all_members"/);
+    assert.match(hqRoute, /\.eq\("franchise_id", hqUser\.franchiseId\)/);
+  });
+
+  test("OWNER has a server-side POST and STAFF has no write handler", () => {
+    assert.match(bossRoute, /export async function POST\(/);
+    assert.match(bossRoute, /\.eq\("role", "owner"\)[\s\S]*?\.eq\("status", "approved"\)/);
+    assert.match(bossRoute, /audience: "staff"/);
+    assert.match(staffRoute, /export async function GET\(/);
+    assert.equal(/export async function (POST|PATCH|DELETE)\(/.test(staffRoute), false);
+  });
+
+  test("STAFF reads only approved staff memberships and server-filtered audiences", () => {
+    assert.match(staffRoute, /\.eq\("role", "staff"\)[\s\S]*?\.eq\("status", "approved"\)/);
+    assert.match(staffRoute, /\.select\("role"\)/);
+    assert.equal(/select\("role, franchise_id"\)/.test(staffRoute), false);
+    assert.match(staffRoute, /canReadNotice\("staff"/);
   });
 });

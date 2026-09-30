@@ -9,7 +9,7 @@ import { formatStoreDisplayName } from "@/lib/stores/search-stores";
 
 interface StaffNotice {
   id: string;
-  targetType: "all" | "store";
+  targetType: "all" | "franchise" | "store";
   targetStoreName: string | null;
   title: string;
   content: string;
@@ -63,7 +63,7 @@ export default function StaffNoticesPage() {
   const filteredNotices = notices.filter((notice) => {
     // 범위 필터
     if (selectedFilter === "hq") {
-      if (notice.targetType !== "all") return false;
+      if (notice.targetType !== "all" && notice.targetType !== "franchise") return false;
     } else if (selectedFilter !== "all") {
       // 특정 매장
       const selectedStore = stores.find((s) => s.id === selectedFilter);

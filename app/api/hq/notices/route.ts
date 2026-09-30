@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireHqUser } from "@/lib/supabase/hq-auth";
+import { canCreateNotice, type NoticeAudience, type NoticeTargetType } from "@/lib/notices/notice-authorization";
 import type { HqNoticeItem } from "@/lib/types/notice";
 
 export const runtime = "nodejs";
@@ -11,8 +12,9 @@ const CONTENT_MAX_LENGTH = 5000;
 
 type NoticeRow = {
   id: string;
-  target_type: "all" | "store";
+  target_type: NoticeTargetType;
   target_store_id: string | null;
+  audience: NoticeAudience;
   title: string;
   content: string;
   created_at: string;
@@ -21,6 +23,7 @@ type NoticeRow = {
 type CreateNoticeBody = {
   targetType?: unknown;
   targetStoreId?: unknown;
+  audience?: unknown;
   title?: unknown;
   content?: unknown;
 };
@@ -45,7 +48,7 @@ export async function GET(): Promise<NextResponse> {
     const adminClient = createAdminClient();
     const { data, error } = await adminClient
       .from("notices")
-      .select("id, target_type, target_store_id, title, content, created_at")
+      .select("id, target_type, target_store_id, audience, title, content, created_at")
       .eq("franchise_id", hqUser.franchiseId)
       .order("created_at", { ascending: false });
 
@@ -77,6 +80,7 @@ export async function GET(): Promise<NextResponse> {
       targetType: row.target_type,
       targetStoreId: row.target_store_id,
       targetStoreName: row.target_store_id ? storeNames.get(row.target_store_id) ?? null : null,
+      audience: row.audience,
       title: row.title,
       content: row.content,
       createdAt: row.created_at,
@@ -113,12 +117,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const targetType = body.targetType;
+    const audience = body.audience ?? "all_members";
     const title = typeof body.title === "string" ? body.title.trim() : "";
     const content = typeof body.content === "string" ? body.content.trim() : "";
     const targetStoreId = typeof body.targetStoreId === "string" ? body.targetStoreId.trim() : "";
 
-    if (targetType !== "all" && targetType !== "store") {
+    if (targetType !== "all" && targetType !== "franchise" && targetType !== "store") {
       return NextResponse.json({ error: "공지 대상을 선택해주세요." }, { status: 400 });
+    }
+    if (audience !== "owner" && audience !== "all_members") {
+      return NextResponse.json({ error: "본사 공지 대상을 확인해주세요." }, { status: 400 });
     }
     if (!title) {
       return NextResponse.json({ error: "제목을 입력해주세요." }, { status: 400 });
@@ -135,14 +143,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (targetType === "store" && !targetStoreId) {
       return NextResponse.json({ error: "공지를 받을 지점을 선택해주세요." }, { status: 400 });
     }
+    if (targetType !== "store" && targetStoreId) {
+      return NextResponse.json({ error: "전체 프랜차이즈 공지에는 지점을 지정할 수 없습니다." }, { status: 400 });
+    }
 
     const adminClient = createAdminClient();
+    let targetStoreFranchiseId: string | null = null;
 
     // 4) 특정 지점 공지는 그 지점이 HQ의 franchise 소속일 때만 허용한다.
     if (targetType === "store") {
       const { data: store, error: storeError } = await adminClient
         .from("stores")
-        .select("id")
+        .select("id, franchise_id")
         .eq("id", targetStoreId)
         .eq("franchise_id", hqUser.franchiseId)
         .maybeSingle();
@@ -153,6 +165,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       if (!store) {
         return NextResponse.json({ error: "선택한 지점을 찾을 수 없습니다." }, { status: 404 });
       }
+      targetStoreFranchiseId = store.franchise_id;
+    }
+
+    const scope = {
+      franchiseId: hqUser.franchiseId,
+      targetType: targetType as NoticeTargetType,
+      targetStoreId: targetType === "store" ? targetStoreId : null,
+      audience: audience as NoticeAudience,
+    };
+    if (!canCreateNotice({
+      role: "hq",
+      franchiseId: hqUser.franchiseId,
+      memberships: [],
+      scope,
+      targetStoreFranchiseId,
+    })) {
+      return NextResponse.json({ error: "공지 대상 범위가 올바르지 않습니다." }, { status: 403 });
     }
 
     const { data: created, error: insertError } = await adminClient
@@ -162,6 +191,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         author_id: hqUser.userId,
         target_type: targetType,
         target_store_id: targetType === "store" ? targetStoreId : null,
+        audience,
         title,
         content,
       })
