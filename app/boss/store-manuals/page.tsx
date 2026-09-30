@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, ArrowLeft, FileText, Pencil, Plus, RefreshCw, Search, Sparkles, Store, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, ArrowRight, BookOpen, FileText, Pencil, Plus, RefreshCw, Search, Sparkles, Store, Trash2, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
@@ -889,7 +890,7 @@ export default function StoreManualsManagementPage() {
       <div className="lg:ml-[240px]">
         <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
 
-        <main className="p-6 lg:p-8 max-w-7xl mx-auto">
+        <main className="p-6 pb-32 lg:p-8 lg:pb-28 max-w-7xl mx-auto">
           {detailHeader ? (
             <div className="mb-8 flex items-start gap-3">
               <button
@@ -1272,6 +1273,19 @@ export default function StoreManualsManagementPage() {
             </section>
           )}
         </main>
+      </div>
+
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--color-border)] bg-white/95 px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.10)] backdrop-blur supports-[backdrop-filter]:bg-white/85 lg:left-[240px]">
+        <div className="mx-auto flex max-w-7xl justify-end">
+          <Link
+            href="/boss/manuals"
+            className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-[var(--color-border)] bg-[var(--color-bg-surface)] py-4 text-sm font-bold text-[var(--color-text-secondary)] shadow-sm transition-colors hover:border-[var(--color-primary)] hover:bg-white hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+          >
+            <BookOpen size={18} aria-hidden="true" />
+            <span>본사 공통 매뉴얼 확인</span>
+            <ArrowRight size={16} aria-hidden="true" />
+          </Link>
+        </div>
       </div>
 
       {/* Delete All Manuals Confirm Modal */}

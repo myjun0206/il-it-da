@@ -61,6 +61,69 @@ describe("app/api/manuals/search-readiness/route.ts (HQ 상태 조회)", () => {
   });
 });
 
+describe("app/api/manuals/route.ts (HQ 전체 삭제 범위)", () => {
+  const source = readSource("app/api/manuals/route.ts");
+  const deleteHandler = source.slice(source.indexOf("export async function DELETE()"));
+
+  test("삭제 전에 같은 HQ 범위의 store_id NULL 대상 ID만 조회한다", () => {
+    assert.match(deleteHandler, /\.select\("id"\)\s*\.is\("store_id", null\)/);
+    assert.match(deleteHandler, /targetQuery\.eq\("franchise_id", hqUser\.franchiseId\)/);
+    assert.match(deleteHandler, /targetQuery\.eq\("brand_name", hqUser\.brandName\)/);
+  });
+
+  test("삭제 대상 ID를 로그로 남기고 같은 ID 및 store_id NULL 조건을 삭제에 재적용한다", () => {
+    const logIndex = deleteHandler.indexOf("target_ids: targetIds");
+    const deleteIndex = deleteHandler.indexOf('.from("manuals")\n    .delete()');
+    assert.ok(logIndex >= 0 && deleteIndex > logIndex, "target IDs must be logged before deletion");
+    assert.match(deleteHandler, /\.in\("id", targetIds\)\s*\.is\("store_id", null\)/);
+  });
+
+  test("삭제 직후 동일한 HQ 조건으로 잔존 행을 확인하고 결과 수를 로그/응답한다", () => {
+    assert.match(deleteHandler, /remainingQuery[\s\S]*?\.in\("id", targetIds\)[\s\S]*?\.is\("store_id", null\)/);
+    assert.match(deleteHandler, /deleted_count: deletedCount/);
+    assert.match(deleteHandler, /remaining_count: remainingCount/);
+    assert.match(deleteHandler, /remainingCount,\s*verified/);
+  });
+
+  test("공통 부모를 참조하는 지점 행은 cascade 삭제 전에 parent 연결을 분리한다", () => {
+    assert.match(deleteHandler, /\.in\("parent_manual_id", targetIds\)/);
+    assert.match(deleteHandler, /\.filter\(\(id\) => !targetIdSet\.has\(id\)\)/);
+    assert.match(deleteHandler, /\.update\(\{ parent_manual_id: null/);
+    assert.match(deleteHandler, /\.in\("id", branchChildIds\)/);
+  });
+});
+
+describe("app/api/manuals/route.ts (점주 공통 매뉴얼 브랜드 범위)", () => {
+  const source = readSource("app/api/manuals/route.ts");
+  const getHandler = source.slice(source.indexOf("export async function GET"), source.indexOf("export async function POST"));
+  const ownerPage = readSource("app/boss/manuals/page.tsx");
+
+  test("점주 조회는 storeId를 필수로 받고 해당 승인 membership의 단일 franchise로 제한한다", () => {
+    assert.match(getHandler, /profile\.role === "owner" && !storeIdParam/);
+    assert.match(getHandler, /membership\.store_id === storeIdParam/);
+    assert.match(getHandler, /franchiseIdByStoreId\.get\(storeIdParam\) !== selectedFranchiseId/);
+    assert.match(getHandler, /ownerFranchiseIds = \[selectedFranchiseId\]/);
+    assert.match(getHandler, /query\.in\("franchise_id", ownerFranchiseIds\)/);
+  });
+
+  test("점주 공통 매뉴얼 화면은 선택된 운영 storeId를 API에 보낸다", () => {
+    assert.match(ownerPage, /resolveOwnerCurrentStore\(\)/);
+    assert.match(ownerPage, /setSelectedStoreId\(storeResolution\.current\.storeId\)/);
+    assert.match(ownerPage, /fetch\(`\/api\/manuals\?storeId=\$\{encodeURIComponent\(selectedStoreId\)\}`\)/);
+    assert.match(ownerPage, /\}, \[isReady, selectedStoreId\]\);/);
+  });
+});
+
+describe("app/hq/manuals/common/page.tsx (HQ 전체 삭제 결과 확인)", () => {
+  const source = readSource("app/hq/manuals/common/page.tsx");
+  const deleteHandler = source.slice(source.indexOf("const handleDeleteAll = async () =>"));
+
+  test("UI는 API의 DB 검증 성공과 잔존 0건을 확인한 경우에만 완료 처리한다", () => {
+    assert.match(deleteHandler, /if \(!data\.verified \|\| data\.remainingCount !== 0\)/);
+    assert.match(deleteHandler, /showToast\(`본사 공통 매뉴얼 \$\{data\.deletedCount \?\? 0\}건이 삭제되었습니다\.\`\)/);
+  });
+});
+
 describe("app/api/store-manuals/search-readiness/route.ts (점주 상태 조회)", () => {
   const source = readSource("app/api/store-manuals/search-readiness/route.ts");
 
