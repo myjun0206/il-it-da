@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { Bell, Info } from "lucide-react";
 import { formatNotificationTime } from "@/lib/notifications";
+import { NOTIFICATIONS_CHANGED_EVENT } from "@/lib/notifications/escalation-popup";
 import { resolveNotificationClick } from "@/lib/notifications/notification-href";
 
 interface Notification {
@@ -52,18 +53,26 @@ export default function NotificationCenter({ className = "" }: NotificationCente
   // 종 아이콘 badge: 패널을 열기 전에도 실제 읽지 않은 알림 수로 표시한다. (없으면 badge 없음)
   useEffect(() => {
     let isCancelled = false;
-    fetch("/api/notifications?limit=1")
-      .then(async (response) => {
-        const data = (await response.json()) as { success?: boolean; data?: { unreadCount?: number } };
-        if (!isCancelled && response.ok && data.success && typeof data.data?.unreadCount === "number") {
-          setUnreadCount(data.data.unreadCount);
-        }
-      })
-      .catch(() => {
-        // badge만 생략한다. 패널을 열면 다시 조회한다.
-      });
+
+    const loadUnreadCount = () => {
+      fetch("/api/notifications?limit=1")
+        .then(async (response) => {
+          const data = (await response.json()) as { success?: boolean; data?: { unreadCount?: number } };
+          if (!isCancelled && response.ok && data.success && typeof data.data?.unreadCount === "number") {
+            setUnreadCount(data.data.unreadCount);
+          }
+        })
+        .catch(() => {
+          // badge만 생략한다. 패널을 열면 다시 조회한다.
+        });
+    };
+
+    loadUnreadCount();
+    // 팝업 등 다른 화면에서 읽음 처리하면 배지를 다시 맞춘다.
+    window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, loadUnreadCount);
     return () => {
       isCancelled = true;
+      window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, loadUnreadCount);
     };
   }, []);
 

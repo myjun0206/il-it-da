@@ -11,6 +11,7 @@ import {
   isEscalationPopupCandidate,
   mergePopupQueue,
   popupStorageKey,
+  pruneReadFromQueue,
   readSeenIds,
   reduceNotificationPoll,
   storeIdFromTargetUrl,
@@ -177,6 +178,20 @@ describe("여러 알림 묶기", () => {
     );
     assert.equal(merged[0].relatedId, "log-original");
   });
+
+  test("다른 곳에서 읽음 처리된 알림은 열린 팝업에서 내려간다", () => {
+    const queue = [escalation("a"), escalation("b")];
+    const pruned = pruneReadFromQueue(queue, [escalation("a", { isRead: true }), escalation("b")]);
+
+    assert.deepEqual(pruned.map((item) => item.id), ["b"]);
+  });
+
+  test("이번 조회 창에 없는 항목은 읽혔다고 단정하지 않는다", () => {
+    const queue = [escalation("a"), escalation("out-of-window")];
+    const pruned = pruneReadFromQueue(queue, [escalation("a")]);
+
+    assert.deepEqual(pruned.map((item) => item.id), ["a", "out-of-window"]);
+  });
 });
 
 describe("매장 식별", () => {
@@ -296,4 +311,16 @@ describe("팝업 컴포넌트 연결 계약", () => {
     assert.match(source, /\}, \[isOpen\]\);/);
     assert.match(source, /previouslyFocusedRef\.current\?\.focus\?\.\(\)/);
   });
-});
+  test("읽음 처리 뒤 종 알림 배지를 갱신하도록 알린다", () => {
+    const center = readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "../../components/common/NotificationCenter.tsx"),
+      "utf8",
+    );
+    assert.match(source, /window\.dispatchEvent\(new CustomEvent\(NOTIFICATIONS_CHANGED_EVENT\)\)/);
+    assert.match(center, /addEventListener\(NOTIFICATIONS_CHANGED_EVENT, loadUnreadCount\)/);
+    assert.match(center, /removeEventListener\(NOTIFICATIONS_CHANGED_EVENT, loadUnreadCount\)/);
+  });
+
+  test("조회마다 읽힌 항목을 팝업에서 내린다", () => {
+    assert.match(source, /pruneReadFromQueue\(current, notifications\)/);
+  });});

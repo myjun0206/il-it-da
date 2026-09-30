@@ -7,8 +7,10 @@ import { createClient } from "@/lib/supabase/client";
 import {
   type EscalationPopupState,
   type PopupNotification,
+  NOTIFICATIONS_CHANGED_EVENT,
   createInitialPopupState,
   mergePopupQueue,
+  pruneReadFromQueue,
   readSeenIds,
   reduceNotificationPoll,
   storeIdFromTargetUrl,
@@ -77,9 +79,10 @@ export default function EscalationNotificationPopup() {
     stateRef.current = state;
     writeSeenIds(safeSessionStorage(), userIdRef.current ?? "", state.seenIds);
 
-    if (newNotifications.length > 0) {
-      setQueue((current) => mergePopupQueue(current, newNotifications));
-    }
+    setQueue((current) => {
+      const remaining = pruneReadFromQueue(current, notifications);
+      return newNotifications.length > 0 ? mergePopupQueue(remaining, newNotifications) : remaining;
+    });
   }, []);
 
   useEffect(() => {
@@ -194,6 +197,10 @@ export default function EscalationNotificationPopup() {
     } finally {
       setBusyId(null);
     }
+
+    // 이동 없이 끝나는 경우에도 종 알림 배지가 낡지 않도록 알린다.
+    window.dispatchEvent(new CustomEvent(NOTIFICATIONS_CHANGED_EVENT));
+    setQueue((current) => current.filter((item) => item.id !== notification.id));
 
     const action = resolveNotificationClick(notification);
     if (action.kind === "navigate") {

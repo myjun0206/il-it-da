@@ -1,20 +1,21 @@
--- 029: 018 hybrid RPC의 keyword_boost 0.60 바닥을 걷어낸다.
+-- 030: 018 hybrid RPC의 keyword_boost 0.60 바닥을 걷어낸다.
 --
 -- 배경: 018은 keyword_boost가 0.35(환불/규정/결제/취소 계열)일 때
 --   greatest(0.60, raw_similarity_score + keyword_boost)
 -- 로 최종 점수를 계산한다. 원래 의미 유사도가 0에 가까워도 단어만 겹치면 0.60이 되어,
--- 랭킹에서 진짜 근거(예: raw 0.55)보다 무관한 청크가 위로 올라올 수 있다.
+-- 럭킹에서 진짜 근거(예: raw 0.55)보다 무관한 청크가 위로 올라올 수 있다.
 --
--- 이 마이그레이션은 함수 이름·인자·반환 컬럼을 018과 완전히 동일하게 유지하고,
--- 점수 계산에서 바닥값만 제거한다(랭킹 순서만 바뀌고 계약은 그대로다).
+-- 이 마이그레이션은 함수 이름·인자·반환 컴럼을 018과 완전히 동일하게 유지하고,
+-- 점수 계산에서 바닥값만 제거한다(럭킹 순서만 바뀜고 계약은 그대로다).
 -- 기존 데이터/임베딩은 읽지도 바꾸지도 않는다.
 --
 -- 적용 순서와 호환성:
 --   - 앱 코드는 이미 raw_similarity_score 기준으로 답변 가능 여부를 판정하므로
---     (lib/rag/evidence-gate.ts), 029 적용 전에도 후에도 동작한다.
---   - 029는 similarity_score를 낮출 수 있으나 앱의 answered/cautious 판정에는 쓰이지 않는다.
+--     (lib/rag/evidence-gate.ts), 030 적용 전에도 후에도 동작한다.
+--   - 030은 similarity_score를 낮출 수 있으나 앱의 answered/cautious 판정에는 쓰이지 않는다.
 --     similarity_score는 RPC 내부 정렬과 응답의 matches 표시용으로만 남는다.
---   - 018을 아직 적용하지 않았다면 018 → 029 순서로 적용한다.
+--   - 018을 아직 적용하지 않았다면 018 → 030 순서로 적용한다.
+--   - 029(staff HQ 읽기 정책)와는 건드리는 대상이 달라 순서 제약이 없다.
 
 create or replace function public.match_manual_chunks_hybrid_scoped(
   query_embedding extensions.vector(1536),

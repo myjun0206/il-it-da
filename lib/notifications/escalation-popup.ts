@@ -9,6 +9,9 @@ import { ESCALATION_NOTIFICATION_TYPE } from "@/lib/notifications/notification-h
 
 export const ESCALATION_POPUP_STORAGE_PREFIX = "ilitda.escalationPopupSeen";
 
+/** 팝업에서 읽음 처리했을 때 종 알림 배지를 갱신하도록 알리는 이벤트(OwnerHeader의 avatar 이벤트와 같은 방식). */
+export const NOTIFICATIONS_CHANGED_EVENT = "ilitdaNotificationsChanged";
+
 export type PopupNotification = {
   id: string;
   type: string;
@@ -121,7 +124,21 @@ export function mergePopupQueue(
   }
   return [...byId.values()];
 }
-
+/**
+ * 다른 탭·종 알림에서 읽음 처리된 항목을 열린 팝업에서 내린다.
+ * 이번 조회 창(limit)에 없는 항목은 읽혔다고 단정할 수 없으므로 그대로 둔다.
+ */
+export function pruneReadFromQueue(
+  queue: readonly PopupNotification[],
+  notifications: readonly PopupNotification[],
+): PopupNotification[] {
+  const readIds = new Set(
+    notifications
+      .filter((notification) => notification.isRead === true)
+      .map((notification) => notification.id),
+  );
+  return queue.filter((notification) => !readIds.has(notification.id));
+}
 /** 서버가 만든 target_url에서만 매장 id를 읽는다. 알림 문구로 매장을 추측하지 않는다. */
 export function storeIdFromTargetUrl(targetUrl: string | null | undefined): string | null {
   if (typeof targetUrl !== "string" || !targetUrl.trim()) return null;
