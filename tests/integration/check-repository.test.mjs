@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, test } from "node:test";
@@ -7,6 +8,7 @@ import { afterEach, describe, test } from "node:test";
 import {
   analyzeMigrationNames,
   checkPackageScripts,
+  checkReadinessSqlSafety,
   checkRepository,
   checkTrackedEnvironmentFiles,
   determineExitCode,
@@ -28,6 +30,20 @@ function writeFixtureFile(rootDir, relativePath, content = "") {
   mkdirSync(path.dirname(absolutePath), { recursive: true });
   writeFileSync(absolutePath, content, "utf8");
 }
+
+function readinessDoc(sql) {
+  return `# readiness\n\n\`\`\`sql\n${sql}\n\`\`\`\n`;
+}
+
+const READINESS_SQL = [
+  "-- rpc",
+  "select exists (",
+  "  select 1 from pg_catalog.pg_proc p",
+  "  join pg_catalog.pg_namespace n on n.oid = p.pronamespace",
+  "  where n.nspname = 'public' and p.proname = 'match_manual_chunks_hybrid_scoped'",
+  ") as scoped_rpc_exists;",
+  "select count(*) as stores_missing_franchise_id from public.stores where franchise_id is null;",
+].join("\n");
 
 function createFixture() {
   const rootDir = mkdtempSync(path.join(tmpdir(), "integration-check-"));
@@ -78,6 +94,7 @@ function createFixture() {
     + "language sql\n"
     + "as $$ select 1 $$;\n",
   );
+  writeFixtureFile(rootDir, "docs/rag-runtime-readiness.md", readinessDoc(READINESS_SQL));
   return rootDir;
 }
 
@@ -287,6 +304,72 @@ describe("repository integration checks", () => {
     const report = await runFixture(rootDir);
     assert.equal(hasCode(report, "RAW_ERROR_OBJECT_LOGGED"), false);
     assert.equal(hasCode(report, "SENSITIVE_LOG_ARGUMENT_FOUND"), false);
+  });
+
+  test("accepts the read-only readiness SQL in the fixture document", async () => {
+    const report = await runFixture(createFixture());
+    for (const code of [
+      "READINESS_DOC_MISSING",
+      "READINESS_SQL_MISSING",
+      "READINESS_SQL_NOT_READ_ONLY",
+      "READINESS_SQL_WRITE_STATEMENT_FOUND",
+      "READINESS_SQL_IDENTIFIER_LITERAL_FOUND",
+    ]) {
+      assert.equal(hasCode(report, code), false, code);
+    }
+  });
+
+  test("detects a deleted readiness document", async () => {
+    const rootDir = createFixture();
+    unlinkSync(path.join(rootDir, "docs/rag-runtime-readiness.md"));
+    assert.equal(hasCode(await runFixture(rootDir), "READINESS_DOC_MISSING"), true);
+  });
+
+  test("detects a readiness document with no SQL block", () => {
+    assert.equal(
+      checkReadinessSqlSafety("# readiness\n\nno sql here\n").some(
+        (item) => item.code === "READINESS_SQL_MISSING",
+      ),
+      true,
+    );
+  });
+
+  test("rejects a readiness statement that writes to the database", () => {
+    for (const statement of [
+      "update public.stores set franchise_id = null;",
+      "delete from public.manual_chunks;",
+      "truncate public.question_logs;",
+      "alter table public.manuals add column x text;",
+      "drop function public.match_manual_chunks_hybrid_scoped;",
+      "insert into public.manuals (id) values (gen_random_uuid());",
+    ]) {
+      const codes = checkReadinessSqlSafety(readinessDoc(statement)).map((item) => item.code);
+      assert.equal(
+        codes.includes("READINESS_SQL_WRITE_STATEMENT_FOUND") || codes.includes("READINESS_SQL_NOT_READ_ONLY"),
+        true,
+        statement,
+      );
+    }
+  });
+
+  test("rejects a readiness statement that embeds a raw uuid or email", () => {
+    const uuidCodes = checkReadinessSqlSafety(
+      readinessDoc("select count(*) from public.stores where id = '00000000-0000-4000-8000-000000000000';"),
+    ).map((item) => item.code);
+    assert.equal(uuidCodes.includes("READINESS_SQL_IDENTIFIER_LITERAL_FOUND"), true);
+
+    const emailCodes = checkReadinessSqlSafety(
+      readinessDoc("select count(*) from public.profiles where email = 'someone@example.com';"),
+    ).map((item) => item.code);
+    assert.equal(emailCodes.includes("READINESS_SQL_IDENTIFIER_LITERAL_FOUND"), true);
+  });
+
+  test("the shipped readiness document stays read-only", async () => {
+    const markdown = await readFile(
+      path.join(process.cwd(), "docs/rag-runtime-readiness.md"),
+      "utf8",
+    );
+    assert.deepEqual(checkReadinessSqlSafety(markdown), []);
   });
 
   test("summarizes result levels accurately", () => {
