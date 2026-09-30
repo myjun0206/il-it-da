@@ -140,4 +140,23 @@ describe("알림 링크와 화면 연결", () => {
     assert.match(viewSource, /pickQuestionsStore\(resolution\.stores, resolution\.current, requestedStoreId\)/);
     assert.equal(/question-logs\?storeId=\$\{encodeURIComponent\(requestedStoreId/.test(viewSource), false);
   });
+
+  test("사이드바 '보류 질문' 메뉴가 /boss/questions를 가리키고 화면의 활성 id와 일치한다", () => {
+    const sidebarSource = readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "../../components/owner/OwnerSidebar.tsx"),
+      "utf8",
+    );
+    assert.match(
+      sidebarSource,
+      /\{ id: "questions", label: "보류 질문", icon: \w+, href: "\/boss\/questions" \}/,
+    );
+    assert.match(viewSource, /<OwnerSidebar activeMenu="questions"/);
+  });
+
+  test("알림 없이 들어오면 현재 선택한 승인 매장을 쓴다", () => {
+    assert.deepEqual(pickQuestionsStore([STORE_A, STORE_B], STORE_B, null), {
+      store: STORE_B,
+      requestedStoreRejected: false,
+    });
+  });
 });

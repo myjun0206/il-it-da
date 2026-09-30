@@ -1,11 +1,12 @@
 ﻿import { NextResponse } from "next/server";
 
-import { buildAnswerPromptMessages, buildManualContext } from "@/lib/rag/answer-prompt";
+import { buildGroundedAnswerMessages } from "@/lib/rag/answer-prompt";
 import {
   authorizeRagStoreAccessForRequest,
   resolveRagStoreFranchiseForRequest,
 } from "@/lib/rag/authorize-rag-store-access";
 import { finalizeRagQueryResponse } from "@/lib/rag/finalize-rag-query-response";
+import { resolveRagAnswer } from "@/lib/rag/resolve-rag-answer";
 import { saveQuestionLog, type SaveQuestionLogResult } from "@/lib/rag/save-question-log";
 import { escalateQuestionLogToStoreOwners } from "@/lib/notifications/escalate-question-log";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -14,8 +15,6 @@ import { validateQueryRequest } from "@/lib/rag/validate-query-request";
 import type {
   ManualChunkMatch,
   RagQueryResponse,
-  RagSource,
-  RagStatus,
 } from "@/lib/rag/types";
 
 export const runtime = "nodejs";
@@ -53,16 +52,8 @@ function getOpenAiApiKey() { // OPENAI_API_KEY 환경변수 존재 여부 확인
   return value;
 }
 
-// 최고 유사도 점수를 3단계 상태로 판정
-function resolveStatus(similarity: number): RagStatus {
-  if (similarity >= ANSWERED_THRESHOLD) {
-    return "answered";
-  }
-  if (similarity >= CAUTIOUS_THRESHOLD) {
-    return "cautious";
-  }
-  return "insufficient";
-}
+// 최고 유사도 점수를 3단계 상태로 판정 (applyEvidenceGate가 같은 임계값을 쓴다)
+const GATE_THRESHOLDS = { answered: ANSWERED_THRESHOLD, cautious: CAUTIOUS_THRESHOLD };
 
 /**
  * 근거를 못 찾은 질문을 그 매장의 승인 점주에게 한 번만 알린다.
@@ -119,82 +110,40 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
       throw new Error("Unable to resolve store franchise scope.");
     }
 
-    const searchResults = await searchManualChunks(question, storeId, franchiseScope.franchiseId); // Supabase Pgvector 기반 매뉴얼 청크 검색
-
-    if (searchResults.length === 0) {
-      const response = await finalizeRagQueryResponse({
-        httpStatus: 200,
+    const outcome = await resolveRagAnswer(
+      {
         question,
-        storeId,
-        response: {
-          answer: NO_MANUAL_ANSWER,
-          similarity: null,
-          source: null,
-          status: "insufficient",
-          matches: [],
-        },
-        afterQuestionLogSaved: escalateInsufficientQuestion(storeId),
-      }, saveQuestionLog);
-      return NextResponse.json(response);
+        thresholds: GATE_THRESHOLDS,
+        noManualAnswer: NO_MANUAL_ANSWER,
+        cautionNotice: CAUTION_NOTICE,
+      },
+      {
+        search: (userQuestion) =>
+          searchManualChunks(userQuestion, storeId, franchiseScope.franchiseId),
+        generate: createGroundedAnswer,
+      },
+    );
+
+    // 검색·생성 장애는 근거 부족이 아니다. 로그·점주 알림 없이 기존 500 계약을 그대로 쓴다.
+    if (outcome.kind === "system_error") {
+      console.error("RAG query failed:", { code: outcome.code });
+      return NextResponse.json({ error: "Unable to answer the question." }, { status: 500 });
     }
 
-    const topMatch = searchResults[0];
-    const matches = searchResults.map((match) => ({
-      title: match.title,
-      category: match.category,
-      similarity: match.similarity_score,
-      rawSimilarity: match.raw_similarity_score,
-      keywordBoost: match.keyword_boost,
-    }));
-
-    const status = resolveStatus(topMatch.similarity_score);
-
-    console.info("RAG search result", {
+    console.info("RAG answer decision", {
       questionLength: question.length,
-      status,
-      matchCount: matches.length,
-      rawSimilarity: topMatch.raw_similarity_score,
-      keywordBoost: topMatch.keyword_boost,
-      finalSimilarity: topMatch.similarity_score,
+      status: outcome.response.status,
+      matchCount: outcome.response.matches.length,
+      usedSourceCount: outcome.response.sources?.length ?? 0,
+      finalSimilarity: outcome.response.similarity,
     });
-
-    if (status === "insufficient") {
-      // 유사도가 낮으면 추측 답변을 막기 위해 GPT를 호출하지 않음
-      const response = await finalizeRagQueryResponse({
-        httpStatus: 200,
-        question,
-        storeId,
-        response: {
-          answer: NO_MANUAL_ANSWER,
-          similarity: topMatch.similarity_score,
-          source: null,
-          status: "insufficient",
-          matches,
-        },
-        afterQuestionLogSaved: escalateInsufficientQuestion(storeId),
-      }, saveQuestionLog);
-      return NextResponse.json(response);
-    }
-
-    const context = buildManualContext(searchResults); // 검색된 청크들을 GPT 프롬프트용 컨텍스트 문자열로 조합
-
-    let answer = await createAnswer(question, context); // GPT-4o 호출로 근거 기반 답변 생성
-
-    if (status === "cautious") {
-      answer += CAUTION_NOTICE;
-    }
 
     const response = await finalizeRagQueryResponse({
       httpStatus: 200,
       question,
       storeId,
-      response: {
-        answer,
-        similarity: topMatch.similarity_score,
-        source: toRagSource(topMatch), // searchManualChunks() 스네이크 필드명 -> 응답 규격 필드명 명시적 매핑
-        status,
-        matches,
-      },
+      response: outcome.response,
+      afterQuestionLogSaved: outcome.escalate ? escalateInsufficientQuestion(storeId) : undefined,
     }, saveQuestionLog);
     return NextResponse.json(response);
   } catch (error) {
@@ -203,16 +152,7 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
   }
 }
 
-// searchManualChunks()의 snake_case 필드를 응답 규격의 camelCase RagSource로 변환
-function toRagSource(match: ManualChunkMatch): RagSource {
-  return {
-    manualId: match.manual_id,
-    title: match.title,
-    category: match.category,
-  };
-}
-
-async function createAnswer(question: string, context: string): Promise<string> { // OpenAI Chat Completions API로 매뉴얼 근거 답변 생성
+async function createGroundedAnswer(question: string, chunks: ManualChunkMatch[]): Promise<string> { // OpenAI Chat Completions API로 매뉴얼 근거 답변 생성
   const apiKey = getOpenAiApiKey();
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), GPT_TIMEOUT_MS);
@@ -228,7 +168,8 @@ async function createAnswer(question: string, context: string): Promise<string> 
         model: "gpt-4o",
         temperature: 0.2,
         max_tokens: GPT_MAX_OUTPUT_TOKENS,
-        messages: buildAnswerPromptMessages(question, context),
+        response_format: { type: "json_object" },
+        messages: buildGroundedAnswerMessages(question, chunks),
       }),
       signal: controller.signal,
     });

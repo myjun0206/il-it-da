@@ -10,6 +10,7 @@ import {
   Users,
   Store,
   Bell,
+  MessageCircleQuestionMark,
   Settings,
   LogOut,
   Menu,
@@ -32,6 +33,7 @@ export default function OwnerSidebar({
     { id: "manual-common", label: "공통 매뉴얼", icon: BookOpen, href: "/boss/manuals" },
     { id: "manual-store", label: "지점 매뉴얼 관리", icon: FileText, href: "/boss/store-manuals" },
     { id: "staff", label: "직원 관리", icon: Users, href: "/boss/employees" },
+    { id: "questions", label: "보류 질문", icon: MessageCircleQuestionMark, href: "/boss/questions" },
     { id: "stores", label: "운영 매장", icon: Store, href: "/boss/stores" },
     { id: "notice", label: "공지사항", icon: Bell, href: "/boss/notices" },
   ];

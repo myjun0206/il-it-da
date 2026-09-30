@@ -1,9 +1,9 @@
 "use client";
 
 import React, { useEffect, useState, useRef } from "react";
-import { Bell } from "lucide-react";
+import { Bell, Info } from "lucide-react";
 import { formatNotificationTime } from "@/lib/notifications";
-import { resolveNotificationHref } from "@/lib/notifications/notification-href";
+import { resolveNotificationClick } from "@/lib/notifications/notification-href";
 
 interface Notification {
   id: string;
@@ -32,6 +32,7 @@ export default function NotificationCenter({ className = "" }: NotificationCente
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [navigationTarget, setNavigationTarget] = useState<NavigationState>({ targetUrl: null });
+  const [toastMessage, setToastMessage] = useState("");
   const panelRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
@@ -41,6 +42,12 @@ export default function NotificationCenter({ className = "" }: NotificationCente
       window.location.href = navigationTarget.targetUrl;
     }
   }, [navigationTarget]);
+
+  useEffect(() => {
+    if (!toastMessage) return;
+    const timer = setTimeout(() => setToastMessage(""), 2500);
+    return () => clearTimeout(timer);
+  }, [toastMessage]);
 
   // 종 아이콘 badge: 패널을 열기 전에도 실제 읽지 않은 알림 수로 표시한다. (없으면 badge 없음)
   useEffect(() => {
@@ -108,10 +115,11 @@ export default function NotificationCenter({ className = "" }: NotificationCente
       setUnreadCount((count) => Math.max(0, count - 1));
     }
 
-    // Navigate if targetUrl exists
-    const href = resolveNotificationHref(notification);
-    if (href) {
-      setNavigationTarget({ targetUrl: href });
+    const action = resolveNotificationClick(notification);
+    if (action.kind === "navigate") {
+      setNavigationTarget({ targetUrl: action.href });
+    } else if (action.kind === "notice") {
+      setToastMessage(action.message);
     }
   };
 
@@ -254,6 +262,16 @@ export default function NotificationCenter({ className = "" }: NotificationCente
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      {toastMessage && (
+        <div
+          role="status"
+          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-lg bg-[var(--color-text-primary)] px-4 py-3 text-sm font-medium text-[var(--color-bg-surface)] shadow-md lg:left-[calc(50%+120px)]"
+        >
+          <Info size={16} aria-hidden="true" />
+          {toastMessage}
         </div>
       )}
     </div>
