@@ -5,38 +5,19 @@ export const dynamic = "force-dynamic";
 import React, { useState, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronLeft, Check, Copy } from "lucide-react";
+import { ChevronLeft, Check, Copy, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 
 type TabType = "id" | "password";
-type IdFindMethod = "email" | "phone";
-
 // Find ID states
 interface FindIdState {
-  method: IdFindMethod;
-  
-  // Email method
-  emailInput: string;
-  isEmailVerificationSent: boolean;
-  emailVerificationCode: string;
-  isEmailVerified: boolean;
-  foundId: string;
-  
-  // Phone method
   name: string;
   phone: string;
-  isPhoneVerificationSent: boolean;
-  phoneVerificationCode: string;
-  isPhoneVerified: boolean;
-  
-  // Loading states
-  isSendingVerification: boolean;
-  isVerifying: boolean;
-  
-  // Errors
-  emailError: string;
-  verificationError: string;
+  isSearching: boolean;
+  isFound: boolean;
+  foundId: string;
+  error: string;
 }
 
 // Find Password states
@@ -45,10 +26,9 @@ interface FindPasswordState {
   email: string;
   isCheckingInfo: boolean;
   infoError: string;
-  
-  // After verification
   isInfoVerified: boolean;
   tempPassword: string;
+  isPasswordVisible: boolean;
   isCopied: boolean;
 }
 
@@ -63,21 +43,12 @@ function FindAccountContent() {
 
   // Find ID state
   const [findIdState, setFindIdState] = useState<FindIdState>({
-    method: "email",
-    emailInput: "",
-    isEmailVerificationSent: false,
-    emailVerificationCode: "",
-    isEmailVerified: false,
-    foundId: "",
     name: "",
     phone: "",
-    isPhoneVerificationSent: false,
-    phoneVerificationCode: "",
-    isPhoneVerified: false,
-    isSendingVerification: false,
-    isVerifying: false,
-    emailError: "",
-    verificationError: "",
+    isSearching: false,
+    isFound: false,
+    foundId: "",
+    error: "",
   });
 
   // Find Password state
@@ -87,86 +58,10 @@ function FindAccountContent() {
     isCheckingInfo: false,
     infoError: "",
     isInfoVerified: false,
-    tempPassword: "A8x2Jk9mL",
+    tempPassword: "",
+    isPasswordVisible: false,
     isCopied: false,
   });
-
-  const handleSendEmailVerification = async () => {
-    if (!findIdState.emailInput.includes("@")) {
-      setFindIdState({
-        ...findIdState,
-        emailError: "올바른 이메일을 입력해주세요.",
-      });
-      return;
-    }
-
-    setFindIdState({
-      ...findIdState,
-      isSendingVerification: true,
-      emailError: "",
-    });
-
-    try {
-      // TODO: Connect to real API
-      // POST /api/auth/send-find-id-verification
-      // Body: { email: string, method: 'email' }
-      // Response: { success: boolean, message?: string }
-
-      await new Promise((resolve) => setTimeout(resolve, 600));
-
-      setFindIdState({
-        ...findIdState,
-        isEmailVerificationSent: true,
-        isSendingVerification: false,
-      });
-    } catch {
-      setFindIdState({
-        ...findIdState,
-        isSendingVerification: false,
-        emailError: "인증번호 발송 중 오류가 발생했습니다.",
-      });
-    }
-  };
-
-  const handleVerifyEmailCode = async () => {
-    if (!findIdState.emailVerificationCode || findIdState.emailVerificationCode.length < 6) {
-      setFindIdState({
-        ...findIdState,
-        verificationError: "인증번호를 정확히 입력해주세요.",
-      });
-      return;
-    }
-
-    setFindIdState({
-      ...findIdState,
-      isVerifying: true,
-      verificationError: "",
-    });
-
-    try {
-      // TODO: Connect to real API
-      // POST /api/auth/verify-find-id-code
-      // Body: { email: string, code: string }
-      // Response: { success: boolean, id?: string, message?: string }
-
-      await new Promise((resolve) => setTimeout(resolve, 600));
-
-      setFindIdState({
-        ...findIdState,
-        isEmailVerified: true,
-        foundId: "sch***@naver.com",
-        isVerifying: false,
-      });
-    } catch {
-      setFindIdState({
-        ...findIdState,
-        isVerifying: false,
-        verificationError: "인증 중 오류가 발생했습니다.",
-      });
-    }
-  };
-
-  // ==================== FIND ID: Phone Method ====================
 
   const formatPhone = (value: string): string => {
     const cleaned = value.replace(/\D/g, "");
@@ -177,154 +72,129 @@ function FindAccountContent() {
 
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const formatted = formatPhone(e.target.value);
-    setFindIdState({
-      ...findIdState,
+    setFindIdState((previous) => ({
+      ...previous,
       phone: formatted,
-      emailError: "",
-    });
+      error: "",
+      isFound: false,
+      foundId: "",
+    }));
   };
 
   const isValidPhone = (phone: string): boolean => {
-    return /^\d{10,11}$/.test(phone.replace(/[-]/g, ""));
+    return /^\d{10,11}$/.test(phone.replace(/\D/g, ""));
   };
 
-  const handleSendPhoneVerification = async () => {
-    if (!findIdState.name.trim()) {
-      setFindIdState({
-        ...findIdState,
-        emailError: "이름을 입력해주세요.",
-      });
+  const handleFindId = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (findIdState.isSearching) return;
+
+    const fullName = findIdState.name.trim();
+    const phone = findIdState.phone.replace(/\D/g, "");
+
+    if (!fullName) {
+      setFindIdState((previous) => ({ ...previous, error: "이름을 입력해주세요." }));
       return;
     }
 
-    if (!isValidPhone(findIdState.phone)) {
-      setFindIdState({
-        ...findIdState,
-        emailError: "올바른 휴대폰 번호를 입력해주세요.",
-      });
+    if (!isValidPhone(phone)) {
+      setFindIdState((previous) => ({ ...previous, error: "올바른 휴대폰 번호를 입력해주세요." }));
       return;
     }
 
-    setFindIdState({
-      ...findIdState,
-      isSendingVerification: true,
-      emailError: "",
-    });
+    setFindIdState((previous) => ({ ...previous, isSearching: true, error: "" }));
 
     try {
-      // TODO: Connect to real API
-      // POST /api/auth/send-find-id-verification
-      // Body: { name: string, phone: string, method: 'phone' }
-
-      await new Promise((resolve) => setTimeout(resolve, 600));
-
-      setFindIdState({
-        ...findIdState,
-        isPhoneVerificationSent: true,
-        isSendingVerification: false,
+      const response = await fetch("/api/auth/find-id", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fullName, phone }),
       });
+      const result: { success?: boolean; email?: string; message?: string } = await response.json();
+
+      if (!response.ok || !result.success || !result.email) {
+        setFindIdState((previous) => ({
+          ...previous,
+          isSearching: false,
+          error: result.message || "일치하는 계정을 찾을 수 없습니다.",
+        }));
+        return;
+      }
+
+      setFindIdState((previous) => ({
+        ...previous,
+        isSearching: false,
+        isFound: true,
+        foundId: result.email ?? "",
+      }));
     } catch {
-      setFindIdState({
-        ...findIdState,
-        isSendingVerification: false,
-        emailError: "인증번호 발송 중 오류가 발생했습니다.",
-      });
-    }
-  };
-
-  const handleVerifyPhoneCode = async () => {
-    if (!findIdState.phoneVerificationCode || findIdState.phoneVerificationCode.length < 6) {
-      setFindIdState({
-        ...findIdState,
-        verificationError: "인증번호를 정확히 입력해주세요.",
-      });
-      return;
-    }
-
-    setFindIdState({
-      ...findIdState,
-      isVerifying: true,
-      verificationError: "",
-    });
-
-    try {
-      // TODO: Connect to real API
-      // POST /api/auth/verify-find-id-code
-      // Body: { name: string, phone: string, code: string }
-
-      await new Promise((resolve) => setTimeout(resolve, 600));
-
-      setFindIdState({
-        ...findIdState,
-        isPhoneVerified: true,
-        foundId: "schsch050802",
-        isVerifying: false,
-      });
-    } catch {
-      setFindIdState({
-        ...findIdState,
-        isVerifying: false,
-        verificationError: "인증 중 오류가 발생했습니다.",
-      });
+      setFindIdState((previous) => ({
+        ...previous,
+        isSearching: false,
+        error: "계정을 확인하는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+      }));
     }
   };
 
   // ==================== FIND PASSWORD ====================
 
   const handleCheckInfo = async () => {
-    const errors: string[] = [];
+    if (findPasswordState.isCheckingInfo) return;
 
-    if (!findPasswordState.name.trim()) {
-      errors.push("이름을 입력해주세요.");
-    }
+    const fullName = findPasswordState.name.trim();
+    const email = findPasswordState.email.trim();
 
-    if (!findPasswordState.email.includes("@")) {
-      errors.push("올바른 이메일을 입력해주세요.");
-    }
-
-    if (errors.length > 0) {
-      setFindPasswordState({
-        ...findPasswordState,
-        infoError: errors[0],
-      });
+    if (!fullName || !email) {
+      setFindPasswordState((previous) => ({
+        ...previous,
+        infoError: "이름과 이메일을 입력해주세요.",
+      }));
       return;
     }
 
-    setFindPasswordState({
-      ...findPasswordState,
+    setFindPasswordState((previous) => ({
+      ...previous,
       isCheckingInfo: true,
       infoError: "",
-    });
+    }));
 
     try {
-      // TODO: Connect to real API
-      // POST /api/auth/verify-account-info
-      // Body: { name: string, email: string }
-      // Response: { success: boolean, tempPassword?: string, message?: string }
+      const response = await fetch("/api/auth/find-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fullName, email }),
+      });
+      const result: { success?: boolean; temporaryPassword?: string; message?: string } = await response.json();
 
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      if (!response.ok || !result.success || !result.temporaryPassword) {
+        setFindPasswordState((previous) => ({
+          ...previous,
+          isCheckingInfo: false,
+          infoError: result.message || "비밀번호 재설정 중 오류가 발생했습니다.",
+        }));
+        return;
+      }
 
-      setFindPasswordState({
-        ...findPasswordState,
+      setFindPasswordState((previous) => ({
+        ...previous,
         isInfoVerified: true,
         isCheckingInfo: false,
-      });
+        tempPassword: result.temporaryPassword ?? "",
+        isPasswordVisible: false,
+      }));
     } catch {
-      setFindPasswordState({
-        ...findPasswordState,
+      setFindPasswordState((previous) => ({
+        ...previous,
         isCheckingInfo: false,
-        infoError: "정보 확인 중 오류가 발생했습니다.",
-      });
+        infoError: "비밀번호 재설정 중 오류가 발생했습니다.",
+      }));
     }
   };
 
   const handleCopyPassword = async () => {
     try {
       await navigator.clipboard.writeText(findPasswordState.tempPassword);
-      setFindPasswordState({
-        ...findPasswordState,
-        isCopied: true,
-      });
+      setFindPasswordState((previous) => ({ ...previous, isCopied: true, infoError: "" }));
       setTimeout(() => {
         setFindPasswordState((prev) => ({
           ...prev,
@@ -332,7 +202,7 @@ function FindAccountContent() {
         }));
       }, 2000);
     } catch {
-      console.error("클립보드 복사 실패");
+      setFindPasswordState((previous) => ({ ...previous, infoError: "복사하지 못했습니다." }));
     }
   };
 
@@ -426,246 +296,66 @@ function FindAccountContent() {
           {/* Tab Content */}
           {activeTab === "id" && (
             <div>
-              {!findIdState.isEmailVerified && !findIdState.isPhoneVerified && (
-                <div>
-                  {/* Method Selection */}
-                  <div className="mb-10">
-                    <p className="text-base font-semibold text-[var(--color-text-primary)] mb-4">
-                      아이디를 어떻게 찾으시겠어요?
-                    </p>
-                    <div className="flex items-center gap-6">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="radio"
-                          name="idMethod"
-                          value="email"
-                          checked={findIdState.method === "email"}
-                          onChange={(e) =>
-                            setFindIdState({
-                              ...findIdState,
-                              method: e.target.value as IdFindMethod,
-                              emailError: "",
-                              verificationError: "",
-                            })
-                          }
-                          className="w-4 h-4 accent-[var(--color-primary)]"
-                        />
-                        <span className="text-sm sm:text-base text-[var(--color-text-primary)]">
-                          이메일 인증
-                        </span>
-                      </label>
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="radio"
-                          name="idMethod"
-                          value="phone"
-                          checked={findIdState.method === "phone"}
-                          onChange={(e) =>
-                            setFindIdState({
-                              ...findIdState,
-                              method: e.target.value as IdFindMethod,
-                              emailError: "",
-                              verificationError: "",
-                            })
-                          }
-                          className="w-4 h-4 accent-[var(--color-primary)]"
-                        />
-                        <span className="text-sm sm:text-base text-[var(--color-text-primary)]">
-                          휴대폰 본인인증
-                        </span>
-                      </label>
-                    </div>
+              {!findIdState.isFound ? (
+                <form onSubmit={handleFindId} className="space-y-6">
+                  <p className="text-sm sm:text-base text-[var(--color-text-secondary)] text-center mb-8">
+                    가입할 때 입력한 이름과 휴대폰 번호를 입력해주세요.
+                  </p>
+
+                  <div>
+                    <label className="block text-base font-semibold text-[var(--color-text-primary)] mb-2.5">
+                      이름
+                    </label>
+                    <Input
+                      type="text"
+                      placeholder="이름을 입력해주세요"
+                      value={findIdState.name}
+                      onChange={(e) =>
+                        setFindIdState((previous) => ({
+                          ...previous,
+                          name: e.target.value,
+                          error: "",
+                          isFound: false,
+                          foundId: "",
+                        }))
+                      }
+                      error={findIdState.error && !findIdState.name.trim() ? findIdState.error : undefined}
+                      className="h-[56px]"
+                    />
                   </div>
 
-                  {/* Email Method */}
-                  {findIdState.method === "email" && (
-                    <div className="space-y-6">
-                      <div>
-                        <label className="block text-base font-semibold text-[var(--color-text-primary)] mb-2.5">
-                          이메일
-                        </label>
-                        <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_140px] gap-3 w-full">
-                          <Input
-                            type="email"
-                            placeholder="example@naver.com"
-                            value={findIdState.emailInput}
-                            onChange={(e) =>
-                              setFindIdState({
-                                ...findIdState,
-                                emailInput: e.target.value,
-                                emailError: "",
-                              })
-                            }
-                            error={findIdState.emailError}
-                            className="h-[56px]"
-                          />
-                          <button
-                            type="button"
-                            onClick={handleSendEmailVerification}
-                            disabled={
-                              findIdState.isSendingVerification ||
-                              !findIdState.emailInput.includes("@")
-                            }
-                            className={`h-[56px] rounded-lg border-2 font-semibold text-sm sm:text-base transition-all flex items-center justify-center whitespace-nowrap ${
-                              findIdState.isSendingVerification ||
-                              !findIdState.emailInput.includes("@")
-                                ? "border-[var(--color-border-light)] text-[var(--color-text-secondary)] bg-white cursor-not-allowed opacity-60"
-                                : "border-[var(--color-primary)] text-[var(--color-primary)] bg-white hover:bg-[var(--color-primary-light)]/20"
-                            }`}
-                          >
-                            {findIdState.isSendingVerification ? "발송 중..." : "인증번호 받기"}
-                          </button>
-                        </div>
-                      </div>
+                  <div>
+                    <label className="block text-base font-semibold text-[var(--color-text-primary)] mb-2.5">
+                      휴대폰 번호
+                    </label>
+                    <Input
+                      type="tel"
+                      placeholder="010-0000-0000"
+                      value={findIdState.phone}
+                      onChange={handlePhoneChange}
+                      error={findIdState.name.trim() && !isValidPhone(findIdState.phone) ? findIdState.error || undefined : undefined}
+                      className="h-[56px]"
+                    />
+                  </div>
 
-                      {findIdState.isEmailVerificationSent && (
-                        <div>
-                          <label className="block text-base font-semibold text-[var(--color-text-primary)] mb-2.5">
-                            인증번호
-                          </label>
-                          <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_140px] gap-3 w-full">
-                            <Input
-                              type="text"
-                              placeholder="6자리 인증번호"
-                              value={findIdState.emailVerificationCode}
-                              onChange={(e) =>
-                                setFindIdState({
-                                  ...findIdState,
-                                  emailVerificationCode: e.target.value.slice(0, 6),
-                                  verificationError: "",
-                                })
-                              }
-                              error={findIdState.verificationError}
-                              className="h-[56px]"
-                            />
-                            <button
-                              type="button"
-                              onClick={handleVerifyEmailCode}
-                              disabled={
-                                findIdState.isVerifying ||
-                                !findIdState.emailVerificationCode ||
-                                findIdState.emailVerificationCode.length < 6
-                              }
-                              className={`h-[56px] rounded-lg border-2 font-semibold text-sm sm:text-base transition-all flex items-center justify-center whitespace-nowrap ${
-                                findIdState.isVerifying ||
-                                !findIdState.emailVerificationCode ||
-                                findIdState.emailVerificationCode.length < 6
-                                  ? "border-[var(--color-border-light)] text-[var(--color-text-secondary)] bg-white cursor-not-allowed opacity-60"
-                                  : "border-[var(--color-primary)] text-[var(--color-primary)] bg-white hover:bg-[var(--color-primary-light)]/20"
-                              }`}
-                            >
-                              {findIdState.isVerifying ? "확인 중..." : "인증 확인"}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                  {findIdState.error && findIdState.name.trim() && isValidPhone(findIdState.phone) && (
+                    <p role="alert" className="text-sm text-[var(--color-status-error)]">
+                      {findIdState.error}
+                    </p>
                   )}
 
-                  {/* Phone Method */}
-                  {findIdState.method === "phone" && (
-                    <div className="space-y-6">
-                      <div>
-                        <label className="block text-base font-semibold text-[var(--color-text-primary)] mb-2.5">
-                          이름
-                        </label>
-                        <Input
-                          type="text"
-                          placeholder="이름을 입력해주세요"
-                          value={findIdState.name}
-                          onChange={(e) =>
-                            setFindIdState({
-                              ...findIdState,
-                              name: e.target.value,
-                              emailError: "",
-                            })
-                          }
-                          className="h-[56px]"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-base font-semibold text-[var(--color-text-primary)] mb-2.5">
-                          휴대폰 번호
-                        </label>
-                        <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_140px] gap-3 w-full">
-                          <Input
-                            type="tel"
-                            placeholder="010-0000-0000"
-                            value={findIdState.phone}
-                            onChange={handlePhoneChange}
-                            error={findIdState.emailError}
-                            className="h-[56px]"
-                          />
-                          <button
-                            type="button"
-                            onClick={handleSendPhoneVerification}
-                            disabled={
-                              findIdState.isSendingVerification ||
-                              !findIdState.name.trim() ||
-                              !isValidPhone(findIdState.phone)
-                            }
-                            className={`h-[56px] rounded-lg border-2 font-semibold text-sm sm:text-base transition-all flex items-center justify-center whitespace-nowrap ${
-                              findIdState.isSendingVerification ||
-                              !findIdState.name.trim() ||
-                              !isValidPhone(findIdState.phone)
-                                ? "border-[var(--color-border-light)] text-[var(--color-text-secondary)] bg-white cursor-not-allowed opacity-60"
-                                : "border-[var(--color-primary)] text-[var(--color-primary)] bg-white hover:bg-[var(--color-primary-light)]/20"
-                            }`}
-                          >
-                            {findIdState.isSendingVerification ? "발송 중..." : "인증번호 받기"}
-                          </button>
-                        </div>
-                      </div>
-
-                      {findIdState.isPhoneVerificationSent && (
-                        <div>
-                          <label className="block text-base font-semibold text-[var(--color-text-primary)] mb-2.5">
-                            인증번호
-                          </label>
-                          <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_140px] gap-3 w-full">
-                            <Input
-                              type="text"
-                              placeholder="6자리 인증번호"
-                              value={findIdState.phoneVerificationCode}
-                              onChange={(e) =>
-                                setFindIdState({
-                                  ...findIdState,
-                                  phoneVerificationCode: e.target.value.slice(0, 6),
-                                  verificationError: "",
-                                })
-                              }
-                              error={findIdState.verificationError}
-                              className="h-[56px]"
-                            />
-                            <button
-                              type="button"
-                              onClick={handleVerifyPhoneCode}
-                              disabled={
-                                findIdState.isVerifying ||
-                                !findIdState.phoneVerificationCode ||
-                                findIdState.phoneVerificationCode.length < 6
-                              }
-                              className={`h-[56px] rounded-lg border-2 font-semibold text-sm sm:text-base transition-all flex items-center justify-center whitespace-nowrap ${
-                                findIdState.isVerifying ||
-                                !findIdState.phoneVerificationCode ||
-                                findIdState.phoneVerificationCode.length < 6
-                                  ? "border-[var(--color-border-light)] text-[var(--color-text-secondary)] bg-white cursor-not-allowed opacity-60"
-                                  : "border-[var(--color-primary)] text-[var(--color-primary)] bg-white hover:bg-[var(--color-primary-light)]/20"
-                              }`}
-                            >
-                              {findIdState.isVerifying ? "확인 중..." : "인증 확인"}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Result Screen */}
-              {(findIdState.isEmailVerified || findIdState.isPhoneVerified) && (
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    size="md"
+                    isLoading={findIdState.isSearching}
+                    disabled={findIdState.isSearching}
+                    className="w-full mt-8"
+                  >
+                    아이디 찾기
+                  </Button>
+                </form>
+              ) : (
                 <div className="text-center">
                   <div className="mb-8 flex justify-center">
                     <div className="w-12 h-12 rounded-full bg-[var(--color-primary)] flex items-center justify-center">
@@ -698,26 +388,7 @@ function FindAccountContent() {
                   <p className="text-sm text-[var(--color-text-secondary)]">
                     비밀번호를 잊으셨나요?{" "}
                     <button
-                      onClick={() => {
-                        router.push('?tab=password');
-                        setFindIdState({
-                          method: "email",
-                          emailInput: "",
-                          isEmailVerificationSent: false,
-                          emailVerificationCode: "",
-                          isEmailVerified: false,
-                          foundId: "",
-                          name: "",
-                          phone: "",
-                          isPhoneVerificationSent: false,
-                          phoneVerificationCode: "",
-                          isPhoneVerified: false,
-                          isSendingVerification: false,
-                          isVerifying: false,
-                          emailError: "",
-                          verificationError: "",
-                        });
-                      }}
+                      onClick={() => router.push('?tab=password')}
                       className="font-semibold text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] transition-colors"
                     >
                       비밀번호 찾기
@@ -752,7 +423,6 @@ function FindAccountContent() {
                           infoError: "",
                         })
                       }
-                      error={findPasswordState.infoError}
                       className="h-[56px]"
                     />
                   </div>
@@ -776,14 +446,21 @@ function FindAccountContent() {
                     />
                   </div>
 
+                  {findPasswordState.infoError && (
+                    <p role="alert" className="text-sm text-[var(--color-status-error)]">
+                      {findPasswordState.infoError}
+                    </p>
+                  )}
+
                   <Button
                     variant="primary"
                     size="md"
                     onClick={handleCheckInfo}
                     isLoading={findPasswordState.isCheckingInfo}
+                    disabled={findPasswordState.isCheckingInfo}
                     className="w-full mt-8"
                   >
-                    본인 인증하기
+                    임시 비밀번호 발급
                   </Button>
                 </div>
               )}
@@ -801,11 +478,11 @@ function FindAccountContent() {
                       </div>
 
                       <h2 className="text-[22px] sm:text-[24px] font-bold text-[var(--color-text-primary)] mb-1">
-                        본인 인증이 완료되었습니다.
+                        임시 비밀번호가 발급되었습니다.
                       </h2>
 
                       <p className="text-[15px] sm:text-[16px] text-[var(--color-text-secondary)]">
-                        1회용 비밀번호가 발급되었습니다.
+                        로그인 후 새로운 비밀번호로 변경해주세요.
                       </p>
                     </div>
 
@@ -814,25 +491,51 @@ function FindAccountContent() {
                       <p className="text-sm text-[var(--color-text-secondary)] font-medium mb-3">
                         1회용 비밀번호
                       </p>
-                      <div className="relative h-[72px] sm:h-[76px] w-full bg-white border border-[var(--color-primary)]/30 rounded-[10px] flex items-center px-4 sm:px-5">
-                        <p className="absolute left-1/2 -translate-x-1/2 text-[24px] sm:text-[26px] font-mono font-bold text-[var(--color-text-primary)] tracking-wider">
-                          {findPasswordState.tempPassword}
+                      <div className="relative min-h-[72px] sm:min-h-[76px] w-full bg-white border border-[var(--color-primary)]/30 rounded-[10px] flex items-center px-3 sm:px-4">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setFindPasswordState((previous) => ({
+                              ...previous,
+                              isPasswordVisible: !previous.isPasswordVisible,
+                            }))
+                          }
+                          className="h-[44px] w-[44px] shrink-0 flex items-center justify-center rounded-lg text-[var(--color-text-secondary)] hover:bg-[var(--color-primary)]/5 hover:text-[var(--color-primary)] transition-colors"
+                          title={findPasswordState.isPasswordVisible ? "비밀번호 숨기기" : "비밀번호 보기"}
+                          aria-label={findPasswordState.isPasswordVisible ? "비밀번호 숨기기" : "비밀번호 보기"}
+                          aria-pressed={findPasswordState.isPasswordVisible}
+                        >
+                          {findPasswordState.isPasswordVisible ? <EyeOff size={20} /> : <Eye size={20} />}
+                        </button>
+                        <p className="min-w-0 flex-1 px-1 text-center text-base sm:text-xl font-mono font-bold text-[var(--color-text-primary)] break-all">
+                          {findPasswordState.isPasswordVisible ? findPasswordState.tempPassword : "••••••••••••"}
                         </p>
                         <button
+                          type="button"
                           onClick={handleCopyPassword}
-                          className="absolute right-4 sm:right-5 top-1/2 -translate-y-1/2 h-[44px] px-4 border border-[var(--color-primary)] rounded-lg bg-white text-[var(--color-primary)] hover:bg-[var(--color-primary)]/5 transition-colors flex items-center gap-2 font-semibold text-sm sm:text-base whitespace-nowrap"
+                          className="h-[44px] shrink-0 px-3 border border-[var(--color-primary)] rounded-lg bg-white text-[var(--color-primary)] hover:bg-[var(--color-primary)]/5 transition-colors flex items-center gap-2 font-semibold text-sm sm:text-base whitespace-nowrap"
                           title="비밀번호 복사"
                         >
                           <Copy size={18} />
-                          <span>{findPasswordState.isCopied ? "복사됨" : "복사"}</span>
+                          <span>복사</span>
                         </button>
                       </div>
+                      {findPasswordState.isCopied && (
+                        <p role="status" className="mt-2 text-sm text-[var(--color-primary)]">
+                          복사되었습니다.
+                        </p>
+                      )}
+                      {findPasswordState.infoError && (
+                        <p role="alert" className="mt-2 text-sm text-[var(--color-status-error)]">
+                          {findPasswordState.infoError}
+                        </p>
+                      )}
                     </div>
 
                     {/* Info Section */}
                     <div className="bg-[var(--color-primary)]/5 border border-[var(--color-primary)]/20 rounded-lg px-4 sm:px-5 py-3.5 mb-6">
                       <p className="text-[14px] sm:text-[15px] text-[var(--color-text-secondary)] leading-relaxed">
-                        1회용 비밀번호로 로그인한 후,<br />
+                        임시 비밀번호로 로그인한 후,<br />
                         보안을 위해 새 비밀번호로 변경해주세요.
                       </p>
                     </div>

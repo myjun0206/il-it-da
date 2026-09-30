@@ -8,6 +8,7 @@ export const runtime = "nodejs";
 interface StaffMemberResponse {
   membershipId: string;
   userId: string;
+  storeId: string;
   name: string;
   email: string;
   status: "pending" | "approved" | "rejected";
@@ -81,7 +82,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EmployeesL
     // 4. 해당 store의 role=staff 멤버십 조회 (pending + approved + rejected)
     const { data: staffMemberships, error: staffError } = await adminClient
       .from("store_memberships")
-      .select("*")
+      .select("id, user_id, store_id, role, status, requested_at, approved_at")
       .eq("store_id", storeId)
       .eq("role", "staff");
 
@@ -93,46 +94,47 @@ export async function GET(request: NextRequest): Promise<NextResponse<EmployeesL
       );
     }
 
-    // 5. 각 staff의 user_id로 auth.users에서 이름과 이메일 조회
-    const staffMembers: StaffMemberResponse[] = [];
+    const staffUserIds = [...new Set((staffMemberships ?? []).map((membership) => membership.user_id))];
+    const { data: profiles, error: profileError } = staffUserIds.length
+      ? await adminClient
+          .from("profiles")
+          .select("user_id, full_name, email")
+          .in("user_id", staffUserIds)
+          .is("brand_id", null)
+      : { data: [], error: null };
 
-    if (staffMemberships && staffMemberships.length > 0) {
-      for (const membership of staffMemberships) {
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: userList, error: userLookupError } = await adminClient.auth.admin.listUsers();
-
-          if (userLookupError) {
-            console.error(`[GET /api/boss/employees] Failed to fetch user info for ${membership.user_id}:`, userLookupError);
-            continue;
-          }
-
-          // Find the specific user
-          const staffUser = userList?.users?.find((u) => u.id === membership.user_id);
-
-          if (!staffUser) {
-            console.warn(`[GET /api/boss/employees] User not found: ${membership.user_id}`);
-            continue;
-          }
-
-          const name = (staffUser.user_metadata as Record<string, unknown>)?.name as string | undefined || "알 수 없음";
-          const email = staffUser.email || "";
-
-          staffMembers.push({
-            membershipId: membership.id,
-            userId: membership.user_id,
-            name,
-            email,
-            status: membership.status,
-            requestedAt: membership.requested_at,
-            approvedAt: membership.approved_at || undefined,
-          });
-        } catch (e) {
-          console.error(`[GET /api/boss/employees] Error processing user ${membership.user_id}:`, e);
-          // Continue processing other staff members
-        }
-      }
+    if (profileError) {
+      console.error("[GET /api/boss/employees] Staff profile query error:", profileError);
+      return NextResponse.json(
+        { success: false, error: "직원 프로필 조회 중 오류가 발생했습니다." },
+        { status: 500 },
+      );
     }
+
+    const profilesByUserId = new Map(
+      (profiles ?? []).map((profile) => [profile.user_id, { name: profile.full_name, email: profile.email }]),
+    );
+    const staffMembers: StaffMemberResponse[] = (staffMemberships ?? []).map((membership) => {
+      const profile = profilesByUserId.get(membership.user_id);
+      return {
+        membershipId: membership.id,
+        userId: membership.user_id,
+        storeId: membership.store_id,
+        name: profile?.name || "이름 미등록",
+        email: profile?.email || "",
+        status: membership.status,
+        requestedAt: membership.requested_at,
+        approvedAt: membership.approved_at || undefined,
+      };
+    });
+
+    console.info("[GET /api/boss/employees] Staff memberships loaded", {
+      ownerUserId: user.id,
+      storeId,
+      count: staffMembers.length,
+      pending: staffMembers.filter((member) => member.status === "pending").length,
+      approved: staffMembers.filter((member) => member.status === "approved").length,
+    });
 
     // 6. pending과 approved로 분류
     const pending = staffMembers.filter((m) => m.status === "pending");

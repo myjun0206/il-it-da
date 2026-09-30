@@ -199,8 +199,8 @@ export default function OwnerStoresPage() {
                           {state.approved.map((store) => (
                             <ApprovedStoreRow
                               key={store.storeId}
+                              storeId={store.storeId}
                               storeName={store.storeName}
-                              approvedLabel="승인 완료"
                               isCurrent={store.storeId === state.currentId}
                             />
                           ))}
@@ -222,9 +222,7 @@ export default function OwnerStoresPage() {
                               storeName={request.storeName}
                               waitingLabel="본사 승인 대기"
                               requestedAt={request.requestedAt}
-                              isCanceling={cancelingId === request.membershipId}
-                              cancelDisabled={cancelingId !== null}
-                              onCancel={() => cancelRequest(request)}
+                              onCancelStart={() => cancelRequest(request)}
                             />
                           ))}
                         </StoreMembershipList>

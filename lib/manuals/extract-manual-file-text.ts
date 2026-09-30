@@ -21,6 +21,12 @@ export async function extractDocxManualText(file: File): Promise<string> {
 // 엑셀(.xlsx/.xls)을 시트별 원본 행렬(string[][])로 읽는다. 표 구조를 그대로 보존해야 하는
 // parseExcelTableGroups(카테고리/타이틀 열 인식)에서 사용하고, 텍스트 평탄화도 이 위에서 만든다.
 export async function extractSpreadsheetRows(file: File): Promise<string[][]> {
+  const sheets = await extractSpreadsheetSheets(file);
+  return sheets.flatMap((sheet) => sheet.rows);
+}
+
+/** 시트 경계를 유지한 채 읽는다. 여러 시트가 한 범위로 합쳐지면 안 되는 호출부(지점 업로드)가 쓴다. */
+export async function extractSpreadsheetSheets(file: File): Promise<{ name: string; rows: string[][] }[]> {
   const mod = await import("xlsx");
   const XLSX = mod.default ?? mod;
   const workbook = XLSX.read(Buffer.from(await file.arrayBuffer()), { type: "buffer" });
@@ -29,7 +35,7 @@ export async function extractSpreadsheetRows(file: File): Promise<string[][]> {
     throw new Error("엑셀 파일의 시트 수가 허용 개수를 초과했습니다.");
   }
 
-  const allRows: string[][] = [];
+  const sheets: { name: string; rows: string[][] }[] = [];
 
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
@@ -39,12 +45,10 @@ export async function extractSpreadsheetRows(file: File): Promise<string[][]> {
       throw new Error("엑셀 시트의 행 수가 허용 개수를 초과했습니다.");
     }
 
-    for (const row of rows) {
-      allRows.push((row ?? []).map((cell) => String(cell ?? "").trim()));
-    }
+    sheets.push({ name: sheetName, rows: rows.map((row) => (row ?? []).map((cell) => String(cell ?? "").trim())) });
   }
 
-  return allRows;
+  return sheets;
 }
 
 // 엑셀(.xlsx/.xls)의 각 행을 "셀1 - 셀2 - ..." 한 줄 텍스트로 펼쳐 텍스트 분석 입력으로 사용한다.

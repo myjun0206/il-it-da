@@ -14,6 +14,7 @@ export type StoreRow = {
 
 export type StaffStore = {
   id: string;
+  membershipId?: string;
   name: string;
 };
 

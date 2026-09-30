@@ -153,9 +153,14 @@ export default function SettingsPage() {
         const user = data.session.user;
         const { data: profile } = await supabase
           .from("profiles")
-          .select("full_name, brand_id, avatar_url")
+          .select("full_name, brand_id, avatar_url, avatar_updated_at")
           .eq("id", user.id)
-          .maybeSingle<{ full_name: string | null; brand_id: string | null; avatar_url: string | null }>();
+          .maybeSingle<{
+            full_name: string | null;
+            brand_id: string | null;
+            avatar_url: string | null;
+            avatar_updated_at: string | null;
+          }>();
 
         // 소속 프랜차이즈는 profiles.brand_id와 기존 franchises 목록 API로만 확인한다.
         let franchiseName: string | null = null;
@@ -167,11 +172,18 @@ export default function SettingsPage() {
           }
         }
 
+        let finalAvatarUrl: string | null = null;
+        if (profile?.avatar_url) {
+          // cache busting은 이제 filename에 포함됨 (avatar-{timestamp}.jpg)
+          // 따라서 query string 불필요, 원본 URL만 사용
+          finalAvatarUrl = profile.avatar_url;
+        }
+
         setUserInfo({
           name: profile?.full_name || user.user_metadata?.name || "",
           email: user.email || "",
           franchiseName,
-          avatarUrl: profile?.avatar_url || null,
+          avatarUrl: finalAvatarUrl,
           userId: user.id,
         });
 
@@ -304,8 +316,15 @@ export default function SettingsPage() {
     const reader = new FileReader();
     reader.onload = () => {
       setAvatarPreview(reader.result as string);
+      setAvatarFeedback(null);
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleCancelAvatarPreview = () => {
+    setAvatarPreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    setAvatarFeedback(null);
   };
 
   const handleUploadAvatar = async () => {
@@ -322,11 +341,19 @@ export default function SettingsPage() {
       const result = await uploadProfileAvatarClient(file, mimeType);
 
       if (result.success && result.avatarUrl) {
-        setUserInfo((prev) => ({ ...prev, avatarUrl: result.avatarUrl! }));
+        // cache busting은 이제 filename에 포함됨 (avatar-{timestamp}.jpg)
+        // 따라서 query string 불필요, 원본 URL만 사용
+        setUserInfo((prev) => ({ ...prev, avatarUrl: result.avatarUrl || null }));
         setAvatarPreview(null);
         if (fileInputRef.current) fileInputRef.current.value = "";
         setAvatarFeedback({ type: "success", message: "프로필 사진이 저장되었습니다." });
-        void createClient().auth.refreshSession();
+
+        // Header에 avatar 변경 이벤트 전송
+        window.dispatchEvent(
+          new CustomEvent("ownerAvatarUpdated", {
+            detail: { avatarUrl: result.avatarUrl },
+          })
+        );
       } else {
         setAvatarFeedback({
           type: "error",
@@ -357,7 +384,13 @@ export default function SettingsPage() {
         setAvatarPreview(null);
         if (fileInputRef.current) fileInputRef.current.value = "";
         setAvatarFeedback({ type: "success", message: "프로필 사진이 삭제되었습니다." });
-        void createClient().auth.refreshSession();
+
+        // Header에 avatar 변경 이벤트 전송
+        window.dispatchEvent(
+          new CustomEvent("ownerAvatarUpdated", {
+            detail: { avatarUrl: null },
+          })
+        );
       } else {
         setAvatarFeedback({
           type: "error",
@@ -451,10 +484,7 @@ export default function SettingsPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => {
-                            setAvatarPreview(null);
-                            if (fileInputRef.current) fileInputRef.current.value = "";
-                          }}
+                          onClick={handleCancelAvatarPreview}
                           disabled={isUploadingAvatar}
                           className={secondaryButtonClass}
                         >

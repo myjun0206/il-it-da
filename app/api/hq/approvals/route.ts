@@ -2,8 +2,9 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireHqUser } from "@/lib/supabase/hq-auth";
+import { isMembershipInHqFranchise, isUuid } from "@/lib/hq/approval-scope";
 import { createNotification } from "@/lib/notifications";
-import { ensureBrandProfileForApprovedMembership } from "@/lib/signup/store-membership-service";
+import { ensureBrandProfileForApprovedMembership, MembershipAuthNotReadyError, requireConfirmedMembershipAuthUser } from "@/lib/signup/store-membership-service";
 
 export const runtime = "nodejs";
 
@@ -99,7 +100,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   // 011이 도입한 franchise_id 없이 다른 브랜드 요청을 보여주지 않도록 fail closed 한다.
-  if (!hqUser.franchiseId) {
+  if (!hqUser.franchiseId || !isUuid(hqUser.franchiseId)) {
     return NextResponse.json({ success: true, data: [] });
   }
 
@@ -108,9 +109,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   let membershipQuery = adminClient
     .from("store_memberships")
     .select("id, user_id, store_id, franchise_id, role, status, requested_at, approved_at, approved_by, rejected_at, rejected_by")
-    // HQ는 같은 franchise의 점주(owner) 요청만 조회한다.
+    // HQ는 점주(owner) 요청만 본다. franchise_id가 NULL인 기존 행은 아래에서 stores.franchise_id로 검증한다.
     .eq("role", "owner")
-    .eq("franchise_id", hqUser.franchiseId);
+    .or(`franchise_id.eq.${hqUser.franchiseId},franchise_id.is.null`);
+
   if (isApprovalStatus(status)) {
     membershipQuery = isPendingStatus(status)
       ? membershipQuery.in("status", ["pending", "requested"])
@@ -140,10 +142,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   const storesById = new Map((stores ?? []).map((store) => [store.id, store]));
-  const scopedMemberships = memberships.filter((membership) => {
-    const store = storesById.get(membership.store_id);
-    return membership.franchise_id === hqUser.franchiseId || store?.franchise_id === hqUser.franchiseId;
-  });
+  const scopedMemberships = memberships.filter((membership) =>
+    isMembershipInHqFranchise(
+      membership.franchise_id,
+      storesById.get(membership.store_id)?.franchise_id,
+      hqUser.franchiseId,
+    ));
 
   if (scopedMemberships.length === 0) {
     return NextResponse.json({ success: true, data: [] });
@@ -236,6 +240,11 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ success: false, error: "Membership not found" }, { status: 404 });
   }
   // 직원(staff) 승인은 점주 권한이므로 HQ에서 처리하지 않는다.
+  if (membership.role === "staff") {
+    // 사용자·매장·멤버십 UUID는 남기지 않는다.
+    console.warn("[HQ_APPROVALS] STAFF_APPROVAL_BLOCKED", { action: body.action });
+    return forbiddenResponse();
+  }
   if (membership.role !== "owner") {
     return forbiddenResponse();
   }
@@ -248,8 +257,26 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
   if (membershipStoreError) {
     return NextResponse.json({ success: false, error: "Failed to update membership" }, { status: 500 });
   }
-  if (membership.franchise_id !== hqUser.franchiseId && membershipStore?.franchise_id !== hqUser.franchiseId) {
+  if (!isMembershipInHqFranchise(membership.franchise_id, membershipStore?.franchise_id, hqUser.franchiseId)) {
     return forbiddenResponse();
+  }
+  if (body.action === "approve") {
+    try {
+      const authUser = await requireConfirmedMembershipAuthUser(adminClient, membership.user_id);
+      if (process.env.DEBUG_PROFILE_INSERT === "true") {
+        console.info("[HQ_APPROVALS] ID_FLOW", {
+          membershipId: membership.id,
+          membershipUserId: membership.user_id,
+          authUserId: authUser.id,
+        });
+      }
+    } catch (authError) {
+      if (authError instanceof MembershipAuthNotReadyError) {
+        return NextResponse.json({ success: false, error: authError.message }, { status: 409 });
+      }
+      console.error("[HQ_APPROVALS] Auth user lookup failed");
+      return NextResponse.json({ success: false, error: "승인 대상 계정을 확인하지 못했습니다." }, { status: 500 });
+    }
   }
   const allowedCurrentStatuses = body.action === "approve"
     ? ["pending", "requested", "rejected"]
@@ -327,6 +354,12 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       }
     }
   } catch (profileUpdateError) {
+    if (profileUpdateError instanceof MembershipAuthNotReadyError) {
+      return NextResponse.json(
+        { success: false, error: profileUpdateError.message, membershipApproved: true },
+        { status: 409 },
+      );
+    }
     console.error("Failed to sync profile approval status:", profileUpdateError);
     return NextResponse.json(
       { success: false, error: "Failed to sync profile approval status" },

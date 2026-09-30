@@ -31,7 +31,7 @@ export default function StaffSidebar({
     { id: "manual-common", label: "공통 매뉴얼", icon: BookOpen, href: "/staff/manuals" },
     { id: "manual-store", label: "지점 매뉴얼", icon: FileText, href: "/staff/store-manuals" },
     { id: "stores", label: "근무 매장", icon: Store, href: "/staff/stores" },
-    { id: "notice", label: "공지사항", icon: Megaphone, href: "#" },
+    { id: "notice", label: "공지사항", icon: Megaphone, href: "/staff/notices" },
   ];
 
   const bottomMenuItems = [

@@ -5,6 +5,56 @@ import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
 import { resolveFranchiseIdForStoreName } from "@/lib/supabase/resolve-store-franchise";
 
 const DATABASE_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const AUTH_USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export class MembershipAuthNotReadyError extends Error {
+  constructor() {
+    super("이메일 인증 또는 계정 생성이 완료되지 않은 사용자입니다.");
+    this.name = "MembershipAuthNotReadyError";
+  }
+}
+
+export async function requireConfirmedMembershipAuthUser(adminClient: SupabaseClient, userId: string) {
+  if (!AUTH_USER_ID_PATTERN.test(userId)) {
+    console.warn("[AUTH] STORE_MEMBERSHIP_USER_ID_INVALID", { reason: userId ? "not_uuid" : "missing" });
+    throw new MembershipAuthNotReadyError();
+  }
+  const { data, error } = await adminClient.auth.admin.getUserById(userId);
+  if (error || !data.user || data.user.id !== userId) {
+    if (error && error.status !== 404) {
+      throw error;
+    }
+    console.warn("[AUTH] STORE_MEMBERSHIP_AUTH_USER_MISSING");
+    throw new MembershipAuthNotReadyError();
+  }
+  if (!data.user.email_confirmed_at && !data.user.phone_confirmed_at && !data.user.confirmed_at) {
+    throw new MembershipAuthNotReadyError();
+  }
+  return data.user;
+}
+
+function logBrandProfileWriteError(
+  stage: string,
+  error: { code?: string; message?: string; details?: string; hint?: string; stack?: string },
+  profileIdSource?: "generated_brand_profile" | "existing_brand_profile",
+): void {
+  const redact = (text: string | undefined) => text
+    ?.replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[email]")
+    .replace(/\b[0-9a-f]{8}-[0-9a-f-]{27,}\b/gi, "[redacted-uuid]")
+    .slice(0, 500);
+  console.error(`[AUTH] ${stage}`, {
+    code: error.code,
+    profileIdSource,
+    authUserReference: "store_memberships.user_id -> auth.users.id -> profiles.user_id",
+    ...(error.code === "23503" && error.message?.includes("profiles_id_fkey")
+      ? { schemaIssue: "legacy profiles.id FK; apply 028_repair_brand_profile_auth_user_fk.sql" }
+      : {}),
+    message: redact(error.message),
+    details: redact(error.details),
+    hint: redact(error.hint),
+    stack: redact(error.stack),
+  });
+}
 
 export interface SignupProfileInput {
   userId: string;
@@ -25,9 +75,13 @@ export async function ensureBrandProfileForApprovedMembership(
   userId: string,
   storeId: string,
 ): Promise<boolean> {
+  if (!AUTH_USER_ID_PATTERN.test(userId)) {
+    console.warn("[AUTH] STORE_MEMBERSHIP_USER_ID_INVALID", { reason: userId ? "not_uuid" : "missing" });
+    throw new MembershipAuthNotReadyError();
+  }
   const { data: membership, error: membershipError } = await adminClient
     .from("store_memberships")
-    .select("role, status, franchise_id")
+    .select("role, status, franchise_id, approved_at, approved_by")
     .eq("user_id", userId)
     .eq("store_id", storeId)
     .eq("status", "approved")
@@ -83,6 +137,8 @@ export async function ensureBrandProfileForApprovedMembership(
     return false;
   }
 
+  const authUser = await requireConfirmedMembershipAuthUser(adminClient, userId);
+
   const brandId = membership.franchise_id || store.franchise_id;
   if (!membership.franchise_id) {
     const { error: membershipBrandUpdateError } = await adminClient
@@ -107,7 +163,7 @@ export async function ensureBrandProfileForApprovedMembership(
     }
   }
 
-  const { data: masterProfile, error: profileError } = await adminClient
+  const { data: existingMasterProfile, error: profileError } = await adminClient
     .from("profiles")
     .select("email, full_name, role, phone, company_email, approval_status, approved_at, approved_by, user_id")
     .eq("id", userId)
@@ -127,6 +183,48 @@ export async function ensureBrandProfileForApprovedMembership(
     return false;
   }
 
+  let masterProfile = existingMasterProfile;
+  if (!masterProfile && (membership.role === "owner" || membership.role === "staff")) {
+    const metadata = authUser.user_metadata;
+    const newMasterProfile = {
+      id: authUser.id,
+      user_id: authUser.id,
+      brand_id: null,
+      role: membership.role,
+      email: authUser.email?.trim().toLowerCase() || null,
+      full_name: typeof metadata?.name === "string" ? metadata.name : authUser.email || null,
+      phone: typeof metadata?.phone === "string" ? metadata.phone : null,
+      company_email: null,
+      approval_status: "approved",
+      approved_at: membership.approved_at ?? new Date().toISOString(),
+      approved_by: membership.approved_by,
+    };
+    if (process.env.DEBUG_PROFILE_INSERT === "true") {
+      console.info("[AUTH] Inserting master profile for user_id:", authUser.id, { profileId: newMasterProfile.id });
+    }
+    const { error: insertError } = await adminClient.from("profiles").insert(newMasterProfile);
+    if (insertError?.code === "23505") {
+      const { data: concurrentProfile, error: concurrentError } = await adminClient
+        .from("profiles")
+        .select("email, full_name, role, phone, company_email, approval_status, approved_at, approved_by, user_id")
+        .eq("id", userId)
+        .is("brand_id", null)
+        .maybeSingle();
+      if (concurrentError || !concurrentProfile) {
+        console.error("[AUTH] STORE_MEMBERSHIP_MASTER_PROFILE_INSERT_FAILED", {
+          code: concurrentError?.code || insertError.code,
+        });
+        return false;
+      }
+      masterProfile = concurrentProfile;
+    } else if (insertError) {
+      console.error("[AUTH] STORE_MEMBERSHIP_MASTER_PROFILE_INSERT_FAILED", { code: insertError.code });
+      return false;
+    } else {
+      masterProfile = newMasterProfile;
+    }
+  }
+
   if (
     !masterProfile ||
     (masterProfile.role !== "owner" && masterProfile.role !== "staff") ||
@@ -143,7 +241,7 @@ export async function ensureBrandProfileForApprovedMembership(
   }
 
   const brandProfileFields = {
-    user_id: userId,
+    user_id: authUser.id,
     email: masterProfile.email,
     full_name: masterProfile.full_name,
     role: masterProfile.role,
@@ -179,9 +277,20 @@ export async function ensureBrandProfileForApprovedMembership(
     return false;
   }
 
-  const saveResult = existingBrandProfile
-    ? await adminClient.from("profiles").update(brandProfileFields).eq("id", existingBrandProfile.id)
-    : await adminClient.from("profiles").insert(brandProfileValues);
+  let saveResult;
+  try {
+    if (!existingBrandProfile && process.env.DEBUG_PROFILE_INSERT === "true") {
+      console.info("[AUTH] Inserting brand profile for user_id:", authUser.id, { profileId: brandProfileValues.id });
+    }
+    saveResult = existingBrandProfile
+      ? await adminClient.from("profiles").update(brandProfileFields).eq("id", existingBrandProfile.id)
+      : await adminClient.from("profiles").insert(brandProfileValues);
+  } catch (error) {
+    logBrandProfileWriteError("STORE_MEMBERSHIP_BRAND_PROFILE_SYNC_FAILED",
+      error instanceof Error ? error : { message: "Unexpected profile write exception" },
+      existingBrandProfile ? "existing_brand_profile" : "generated_brand_profile");
+    return false;
+  }
 
   if (saveResult.error?.code === "23505" && !existingBrandProfile) {
     const { data: concurrentBrandProfile, error: concurrentLookupError } = await adminClient
@@ -192,15 +301,7 @@ export async function ensureBrandProfileForApprovedMembership(
       .maybeSingle();
 
     if (concurrentLookupError || !concurrentBrandProfile) {
-      console.error("[AUTH] STORE_MEMBERSHIP_BRAND_PROFILE_DUPLICATE_RECOVERY_FAILED", {
-        userId,
-        brandId,
-        message: concurrentLookupError?.message || saveResult.error.message,
-        code: concurrentLookupError?.code || saveResult.error.code,
-        details: concurrentLookupError?.details || saveResult.error.details,
-        hint: concurrentLookupError?.hint || saveResult.error.hint,
-      });
-      logSafeAuthError(
+      logBrandProfileWriteError(
         "STORE_MEMBERSHIP_BRAND_PROFILE_DUPLICATE_RECOVERY_FAILED",
         concurrentLookupError || saveResult.error,
       );
@@ -213,29 +314,12 @@ export async function ensureBrandProfileForApprovedMembership(
       .eq("id", concurrentBrandProfile.id);
 
     if (concurrentUpdate.error) {
-      console.error("[AUTH] STORE_MEMBERSHIP_BRAND_PROFILE_DUPLICATE_UPDATE_FAILED", {
-        userId,
-        brandId,
-        profileId: concurrentBrandProfile.id,
-        message: concurrentUpdate.error.message,
-        code: concurrentUpdate.error.code,
-        details: concurrentUpdate.error.details,
-        hint: concurrentUpdate.error.hint,
-      });
-      logSafeAuthError("STORE_MEMBERSHIP_BRAND_PROFILE_DUPLICATE_UPDATE_FAILED", concurrentUpdate.error);
+      logBrandProfileWriteError("STORE_MEMBERSHIP_BRAND_PROFILE_DUPLICATE_UPDATE_FAILED", concurrentUpdate.error);
       return false;
     }
   } else if (saveResult.error) {
-    console.error("[AUTH] STORE_MEMBERSHIP_BRAND_PROFILE_SYNC_FAILED", {
-      userId,
-      brandId,
-      profileId: existingBrandProfile?.id || brandProfileValues.id,
-      message: saveResult.error.message,
-      code: saveResult.error.code,
-      details: saveResult.error.details,
-      hint: saveResult.error.hint,
-    });
-    logSafeAuthError("STORE_MEMBERSHIP_BRAND_PROFILE_SYNC_FAILED", saveResult.error);
+    logBrandProfileWriteError("STORE_MEMBERSHIP_BRAND_PROFILE_SYNC_FAILED", saveResult.error,
+      existingBrandProfile ? "existing_brand_profile" : "generated_brand_profile");
     return false;
   }
 
@@ -275,6 +359,7 @@ export async function upsertSignupProfile(
           id: userId,
           // 023: 마스터 프로필도 user_id로 같은 auth 사용자를 가리킨다(브랜드 프로필과 동일 규칙).
           user_id: userId,
+          brand_id: null,
           email,
           role,
           full_name: name,
@@ -706,9 +791,53 @@ export async function submitStoreMembershipRequest(
 }
 
 /**
+ * 점주 신청 알림 수신자: 신청 매장의 stores.franchise_id(서버 조회)에 속한 HQ auth 사용자만 돌려준다.
+ * 브랜드를 확인할 수 없으면 빈 배열이다(전체 HQ에 보내지 않는다).
+ */
+export async function resolveOwnerRequestHqRecipientIds(
+  adminClient: SupabaseClient,
+  storeId: string,
+): Promise<string[]> {
+  const { data: store, error: storeError } = await adminClient
+    .from("stores")
+    .select("franchise_id")
+    .eq("id", storeId)
+    .maybeSingle<{ franchise_id: string | null }>();
+
+  if (storeError) {
+    logSafeAuthError("OWNER_REQUEST_NOTIFY_STORE_LOOKUP_FAILED", storeError);
+    return [];
+  }
+  if (!store?.franchise_id) {
+    logSafeAuthError("OWNER_REQUEST_NOTIFY_BRAND_UNRESOLVED", new Error("store franchise is missing"));
+    return [];
+  }
+
+  const { data: hqProfiles, error: hqError } = await adminClient
+    .from("profiles")
+    .select("id, user_id")
+    .eq("role", "hq")
+    .eq("brand_id", store.franchise_id);
+
+  if (hqError) {
+    logSafeAuthError("OWNER_REQUEST_NOTIFY_HQ_LOOKUP_FAILED", hqError);
+    return [];
+  }
+
+  // 한 HQ 사용자의 프로필 행이 여럿이어도 auth 사용자(user_id, 없으면 마스터 id) 기준으로 한 번만 보낸다.
+  return [
+    ...new Set(
+      ((hqProfiles ?? []) as { id?: unknown; user_id?: unknown }[])
+        .map((profile) => profile.user_id ?? profile.id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0),
+    ),
+  ];
+}
+
+/**
  * Generate notifications for new membership requests
  * - Staff request: notify store owners
- * - Owner request: notify all HQ users
+ * - Owner request: notify HQ users of the store's franchise only
  */
 async function generateMembershipNotifications(
   userId: string,
@@ -746,27 +875,17 @@ async function generateMembershipNotifications(
         }
       }
     } else if (role === "owner") {
-      const { data: hqUsers, error: queryError } = await adminClient
-        .from("profiles")
-        .select("id")
-        .eq("role", "hq");
+      const hqRecipientIds = await resolveOwnerRequestHqRecipientIds(adminClient, storeId);
 
-      if (queryError) {
-        console.error("Failed to find HQ users:", queryError);
-        return;
-      }
-
-      if (hqUsers && hqUsers.length > 0) {
-        for (const profile of hqUsers) {
-          await createNotification({
-            recipientUserId: profile.id,
-            type: "owner_pending_approval",
-            title: "새로운 점주 승인 요청",
-            message: `${storeName} 점주 가입 요청이 있습니다. (${userName})`,
-            targetUrl: "/hq/approvals",
-            relatedId: userId,
-          });
-        }
+      for (const recipientUserId of hqRecipientIds) {
+        await createNotification({
+          recipientUserId,
+          type: "owner_pending_approval",
+          title: "새로운 점주 승인 요청",
+          message: `${storeName} 점주 가입 요청이 있습니다. (${userName})`,
+          targetUrl: "/hq/approvals",
+          relatedId: userId,
+        });
       }
     }
   } catch (e) {
