@@ -56,7 +56,13 @@ type PendingQuestionsBody = {
 function isPendingQuestion(value: unknown): value is PendingQuestion {
   if (!value || typeof value !== "object") return false;
   const row = value as Record<string, unknown>;
-  return typeof row.id === "string" && typeof row.question === "string" && typeof row.createdAt === "string";
+  return typeof row.id === "string"
+    && typeof row.question === "string"
+    && typeof row.createdAt === "string"
+    && (row.originReason === "manual_gap" || row.originReason === "frequent_question")
+    && typeof row.repeatCount === "number"
+    && Number.isInteger(row.repeatCount)
+    && row.repeatCount >= 1;
 }
 
 /** GET /api/boss/question-logs 응답을 화면 상태로 분류한다. 401/403은 권한 오류로 구분한다. */

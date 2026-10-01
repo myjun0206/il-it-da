@@ -8,6 +8,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { requireStoreOwner } from "@/lib/manuals/store-manual-auth";
+import { normalizeRepeatedQuestionKey, REPEATED_QUESTION_MIN_COUNT, REPEATED_QUESTION_WINDOW_DAYS } from "@/lib/owner/repeated-questions";
 
 /** 022의 에스컬레이션 대상과 같은 상태값. answered/cautious는 점주에게 보여주지 않는다. */
 export const PENDING_QUESTION_STATUS = "insufficient";
@@ -30,6 +31,8 @@ export type PendingQuestion = {
   question: string;
   status: typeof PENDING_QUESTION_STATUS;
   createdAt: string;
+  originReason: "manual_gap" | "frequent_question";
+  repeatCount: number;
 };
 
 export type PendingQuestionsResult =
@@ -84,6 +87,7 @@ export function parsePendingQuestionLimit(raw: string | null | undefined): numbe
 export function toPendingQuestions(
   rows: readonly QuestionLogRow[],
   verifiedStoreId: string,
+  repeatCounts: ReadonlyMap<string, number> = new Map(),
 ): PendingQuestion[] {
   if (!verifiedStoreId) {
     return [];
@@ -106,12 +110,16 @@ export function toPendingQuestions(
       return [];
     }
 
+    const repeatCount = repeatCounts.get(normalizeRepeatedQuestionKey(question)) ?? 1;
+
     return [
       {
         id: row.id,
         question,
         status: PENDING_QUESTION_STATUS,
         createdAt: row.created_at,
+        originReason: repeatCount >= REPEATED_QUESTION_MIN_COUNT ? "frequent_question" : "manual_gap",
+        repeatCount,
       },
     ];
   });
@@ -152,7 +160,7 @@ export async function fetchPendingQuestionsForOwner(
   }
 
   try {
-    // store_id = 검증된 매장으로 좁히므로 store_id가 NULL인 022 이전 행은 조회되지 않는다.
+    // Pending questions are unbounded by age for backwards compatibility with the existing inbox.
     const { data, error } = await adminClient
       .from("question_logs")
       .select("id, question, status, store_id, created_at")
@@ -166,8 +174,30 @@ export async function fetchPendingQuestionsForOwner(
       return failedPendingQuestionsResult();
     }
 
+    const windowStart = new Date(Date.now() - REPEATED_QUESTION_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    const { data: recentLogs, error: repeatQueryError } = await adminClient
+      .from("question_logs")
+      .select("id, question, status, store_id, source_manual_id, created_at")
+      .eq("store_id", storeAuth.storeId)
+      .gte("created_at", windowStart.toISOString())
+      .order("created_at", { ascending: false })
+      .limit(500);
+
+    if (repeatQueryError) {
+      logSafePendingQuestionError("QUESTION_REPEAT_QUERY_FAILED", repeatQueryError);
+      return failedPendingQuestionsResult();
+    }
+
+    const repeatCounts = new Map<string, number>();
+    for (const row of recentLogs ?? []) {
+      if (row.store_id !== storeAuth.storeId || typeof row.question !== "string") continue;
+      const key = normalizeRepeatedQuestionKey(row.question);
+      if (!key) continue;
+      repeatCounts.set(key, (repeatCounts.get(key) ?? 0) + 1);
+    }
+
     return successfulPendingQuestionsResult(
-      toPendingQuestions((data ?? []) as QuestionLogRow[], storeAuth.storeId),
+      toPendingQuestions((data ?? []) as QuestionLogRow[], storeAuth.storeId, repeatCounts),
       limit,
     );
   } catch (e) {
