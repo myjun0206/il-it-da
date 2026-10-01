@@ -1,56 +1,71 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, ArrowLeft, Check, ChevronDown, Megaphone, RefreshCw, Search, Store as StoreIcon } from "lucide-react";
+import { AlertCircle, Check, ChevronDown, Megaphone, RefreshCw, Search, Store as StoreIcon } from "lucide-react";
 
 import { useStaffShell } from "@/components/staff/StaffShellContext";
+import { NoticeCard } from "@/components/notices/NoticeCard";
+import { NoticeDetailDialog } from "@/components/notices/NoticeDetailDialog";
+import { NoticeFilter, type NoticeFilterOption } from "@/components/notices/NoticeFilter";
+import { NoticePageHeader } from "@/components/notices/NoticePageHeader";
 import { formatStoreDisplayName } from "@/lib/stores/search-stores";
+import { getNoticeViewCountIncrement, markNoticeAsRead } from "@/lib/notices/mark-notice-read";
 
 // 직원 공지사항: 조회·검색·필터·상세 보기만 있다 (작성/수정/삭제 없음).
 // 데이터는 /api/staff/notices가 approved staff membership을 검증한 "현재 근무 매장" 범위로만 내려준다.
 
 interface StaffNotice {
   id: string;
-  targetType: "all" | "store";
+  isRead: boolean;
+  viewCount: number;
+  sourceType: "hq" | "owner";
+  targetType: "all" | "franchise" | "store";
+  sourceLabel: string;
+  targetStoreName: string | null;
   title: string;
   content: string;
   authorName: string;
   createdAt: string;
 }
 
+type StaffNoticeResponse = Omit<StaffNotice, "sourceType">;
+type StaffSourceFilter = "all" | "hq" | "owner";
+
+const ALL_TARGETS = "all";
+const FRANCHISE_TARGETS = "franchise";
+const DEFAULT_LOAD_ERROR = "공지사항을 불러오지 못했습니다.";
+const STAFF_SOURCE_FILTERS: readonly NoticeFilterOption<StaffSourceFilter>[] = [
+  { value: "all", label: "전체" },
+  { value: "hq", label: "본사 공지" },
+  { value: "owner", label: "점주 공지" },
+];
+
+function toStaffNotice(notice: StaffNoticeResponse): StaffNotice {
+  return {
+    ...notice,
+    sourceType: notice.sourceLabel === "점주 공지" ? "owner" : "hq",
+  };
+}
+
+function formatNoticeSource(notice: StaffNotice): string {
+  return `${notice.sourceLabel} · ${notice.targetStoreName ?? "대상 지점"}`;
+}
+
+function isSameStoreName(targetStoreName: string | null, storeName: string): boolean {
+  return targetStoreName !== null && formatStoreDisplayName(targetStoreName) === formatStoreDisplayName(storeName);
+}
+
 type LoadResult =
-  | { key: string; status: "ready"; notices: StaffNotice[] }
+  | { key: string; status: "ready"; notices: StaffNotice[]; storeIdsByNoticeId: Record<string, string[]> }
   | { key: string; status: "error"; message: string };
 
 // 공지 필터: "all" (전체 소속 매장) 또는 특정 storeId
 type NoticeFilterValue = "all" | string; // "all" or storeId
-const TARGET_LABELS: Record<StaffNotice["targetType"], string> = { all: "전체 지점", store: "현재 매장" };
 
-function formatDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, "0")}.${String(date.getDate()).padStart(2, "0")}`;
-}
-
-function authorLabel(notice: StaffNotice): string {
-  return notice.authorName ? `${notice.authorName} 본사` : "본사";
-}
-
-function TargetBadge({ targetType }: { targetType: StaffNotice["targetType"] }) {
-  return (
-    <span
-      className={`inline-flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-        targetType === "store"
-          ? "bg-[var(--color-primary-light)]/40 text-[var(--color-primary)]"
-          : "bg-[var(--color-bg-surface)] text-[var(--color-text-secondary)]"
-      }`}
-    >
-      {TARGET_LABELS[targetType]}
-    </span>
-  );
-}
+class UnauthorizedError extends Error {}
+class NoticeLoadError extends Error {}
 
 function StateBox({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "error" }) {
   return (
@@ -166,48 +181,67 @@ export default function StaffNoticesPage() {
   const [reloadToken, setReloadToken] = useState(0);
   const [query, setQuery] = useState("");
   const [noticeFilter, setNoticeFilter] = useState<NoticeFilterValue>("all");
+  const [sourceFilter, setSourceFilter] = useState<StaffSourceFilter>("all");
+  const [targetFilter, setTargetFilter] = useState<string>(ALL_TARGETS);
   // 상세 보기: 특정 매장의 공지를 선택했을 때 그 매장 ID와 공지 ID를 기억한다.
   const [detail, setDetail] = useState<{ storeId: string; noticeId: string } | null>(null);
 
-  // 필터 선택에 따라 조회할 매장 결정
-  const storeIdsToFetch: string[] = noticeFilter === "all" ? stores.map((s) => s.id) : [noticeFilter];
+  // 승인 매장 목록에서 빠진 매장이 선택돼 있으면 전체로 되돌린다.
+  const activeStoreFilter: NoticeFilterValue =
+    noticeFilter !== "all" && stores.some((store) => store.id === noticeFilter) ? noticeFilter : "all";
+  // 매 렌더마다 새 배열이 생기면 effect가 무한 재실행되므로 memo로 고정한다.
+  const storeIdsToFetch = useMemo(
+    () => (activeStoreFilter === "all" ? stores.map((store) => store.id) : [activeStoreFilter]),
+    [activeStoreFilter, stores],
+  );
   const requestKey = storeIdsToFetch.length > 0 ? `${storeIdsToFetch.join(",")}:${reloadToken}` : null;
 
   useEffect(() => {
-    if (storeIdsToFetch.length === 0 || !requestKey) return;
+    if (!requestKey) return;
     const controller = new AbortController();
 
-    // 모든 매장의 공지를 병렬로 조회
+    // 선택된 매장(전체면 승인된 모든 매장)의 공지를 병렬로 조회
     Promise.all(
-      storeIdsToFetch.map((storeId) =>
-        fetch(`/api/staff/notices?storeId=${encodeURIComponent(storeId)}`, {
+      storeIdsToFetch.map(async (storeId) => {
+        const response = await fetch(`/api/staff/notices?storeId=${encodeURIComponent(storeId)}`, {
           credentials: "include",
           signal: controller.signal,
-        })
-          .then(async (response) => {
-            if (response.status === 401) {
-              router.push("/");
-              return { storeId, notices: [] };
-            }
-            const payload = (await response.json()) as { notices?: StaffNotice[] };
-            if (!response.ok || !Array.isArray(payload.notices)) {
-              return { storeId, notices: [] };
-            }
-            return { storeId, notices: payload.notices };
-          })
-          .catch(() => ({ storeId, notices: [] })),
-      ),
+        });
+        if (response.status === 401) throw new UnauthorizedError();
+        const payload = (await response.json()) as { notices?: StaffNoticeResponse[]; error?: string };
+        if (!response.ok || !Array.isArray(payload.notices)) {
+          throw new NoticeLoadError(payload.error || DEFAULT_LOAD_ERROR);
+        }
+        return { storeId, notices: payload.notices };
+      }),
     )
       .then((results) => {
-        // 모든 결과를 합쳐서 createdAt 기준으로 정렬
-        const allNotices = results.flatMap((r) => r.notices);
-        allNotices.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        setResult({ key: requestKey, status: "ready", notices: allNotices });
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) {
-          setResult({ key: requestKey, status: "error", message: "공지사항을 불러오지 못했습니다." });
+        // 전체 지점 공지는 여러 매장 응답에 중복으로 포함되므로 id 기준으로 합친다.
+        const noticesById = new Map<string, StaffNotice>();
+        const storeIdsByNoticeId: Record<string, string[]> = {};
+        for (const { storeId, notices } of results) {
+          for (const notice of notices) {
+            if (!noticesById.has(notice.id)) noticesById.set(notice.id, toStaffNotice(notice));
+            if (!storeIdsByNoticeId[notice.id]) storeIdsByNoticeId[notice.id] = [];
+            storeIdsByNoticeId[notice.id].push(storeId);
+          }
         }
+        const mergedNotices = [...noticesById.values()].sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+        );
+        setResult({ key: requestKey, status: "ready", notices: mergedNotices, storeIdsByNoticeId });
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        if (error instanceof UnauthorizedError) {
+          router.push("/");
+          return;
+        }
+        setResult({
+          key: requestKey,
+          status: "error",
+          message: error instanceof NoticeLoadError ? error.message : DEFAULT_LOAD_ERROR,
+        });
       });
 
     return () => controller.abort();
@@ -217,53 +251,85 @@ export default function StaffNoticesPage() {
   const notices = currentResult?.status === "ready" ? currentResult.notices : [];
   const trimmedQuery = query.trim();
   const normalizedQuery = trimmedQuery.toLowerCase();
-  const visibleNotices = notices.filter(
-    (notice) =>
-      !normalizedQuery ||
-      notice.title.toLowerCase().includes(normalizedQuery) ||
-      notice.content.toLowerCase().includes(normalizedQuery),
-  );
 
-  // 상세 보기 시 해당 공지 찾기
-  const openNotice = detail ? notices.find((notice) => notice.id === detail.noticeId) ?? null : null;
+  // 대상 필터의 개별 매장 옵션은 현재 조회 범위의 매장으로 제한한다.
+  const scopeStores = activeStoreFilter === "all" ? stores : stores.filter((store) => store.id === activeStoreFilter);
+  const activeTargetFilter =
+    targetFilter === ALL_TARGETS || targetFilter === FRANCHISE_TARGETS || scopeStores.some((store) => store.id === targetFilter)
+      ? targetFilter
+      : ALL_TARGETS;
+  const targetFilterOptions: readonly NoticeFilterOption<string>[] = [
+    { value: ALL_TARGETS, label: "전체 대상" },
+    { value: FRANCHISE_TARGETS, label: "전체 지점" },
+    ...scopeStores.map((store) => ({
+      value: store.id,
+      label: formatStoreDisplayName(store.name),
+    })),
+  ];
 
-  // ── 상세 보기 ──────────────────────────────────────
-  if (openNotice) {
-    return (
-      <div className="p-6 lg:p-8">
-        <div className="max-w-7xl mx-auto">
-          <button
-            type="button"
-            onClick={() => setDetail(null)}
-            className="-ml-2 mb-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
-          >
-            <ArrowLeft size={16} aria-hidden="true" />
-            공지사항
-          </button>
+  // 출처·대상·검색 필터를 함께 적용한 공지 목록
+  const visibleNotices = notices.filter((notice) => {
+    if (sourceFilter !== "all" && notice.sourceType !== sourceFilter) return false;
 
-          <article className="rounded-xl border border-[var(--color-border)] bg-white p-6 lg:p-8">
-            <TargetBadge targetType={openNotice.targetType} />
-            <h1 className="mt-3 text-2xl font-bold text-[var(--color-text-primary)] break-keep">{openNotice.title}</h1>
-            <p className="mt-2 border-b border-[var(--color-border)] pb-5 text-sm text-[var(--color-text-secondary)]">
-              {authorLabel(openNotice)} · {formatDate(openNotice.createdAt)}
-            </p>
-            <p className="mt-5 whitespace-pre-wrap break-words text-base leading-7 text-[var(--color-text-primary)]">
-              {openNotice.content}
-            </p>
-          </article>
-        </div>
-      </div>
-    );
-  }
+    // 대상 범위와 개별 매장 필터는 출처 필터와 독립적으로 적용한다.
+    if (activeTargetFilter === FRANCHISE_TARGETS) {
+      if (notice.targetType !== "all" && notice.targetType !== "franchise") return false;
+    } else if (activeTargetFilter !== ALL_TARGETS) {
+      const targetStore = stores.find((store) => store.id === activeTargetFilter);
+      if (!targetStore) return false;
+      if (!isSameStoreName(notice.targetStoreName, targetStore.name)) return false;
+    }
 
-  // ── 목록 보기 ──────────────────────────────────────
+    if (
+      normalizedQuery &&
+      !notice.title.toLowerCase().includes(normalizedQuery) &&
+      !notice.content.toLowerCase().includes(normalizedQuery)
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+
+  // 상세 보기 시 해당 공지 찾기 (읽음/조회수 갱신이 그대로 반영된다)
+  const selectedNotice = detail ? notices.find((notice) => notice.id === detail.noticeId) ?? null : null;
+
+  const openNotice = (notice: StaffNotice) => {
+    const noticeStoreIds = currentResult?.status === "ready" ? currentResult.storeIdsByNoticeId[notice.id] ?? [] : [];
+    const detailStoreId =
+      activeStoreFilter !== "all"
+        ? activeStoreFilter
+        : selectedStore && noticeStoreIds.includes(selectedStore.id)
+          ? selectedStore.id
+          : noticeStoreIds[0] ?? selectedStore?.id ?? "";
+    setDetail({ storeId: detailStoreId, noticeId: notice.id });
+    if (notice.isRead) return;
+
+    void markNoticeAsRead(notice.id).then((result) => {
+      if (!result.succeeded) return;
+      const viewCountIncrement = getNoticeViewCountIncrement(result);
+      setResult((current) =>
+        current?.status === "ready"
+          ? {
+              ...current,
+              notices: current.notices.map((currentNotice) =>
+                currentNotice.id === notice.id
+                  ? { ...currentNotice, isRead: true, viewCount: currentNotice.viewCount + viewCountIncrement }
+                  : currentNotice,
+              ),
+            }
+          : current,
+      );
+    });
+  };
+
   return (
     <div className="p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">공지사항</h1>
-          <p className="text-base text-[var(--color-text-secondary)]">매장 운영에 필요한 새로운 소식과 안내를 확인하세요.</p>
-        </div>
+        <NoticePageHeader
+          title="공지사항"
+          description="본사와 근무 매장에서 전달한 공지사항을 확인할 수 있습니다."
+        />
 
         {isStoresLoading ? (
           <StateBox>
@@ -334,7 +400,23 @@ export default function StaffNoticesPage() {
                   className="h-12 w-full rounded-lg border border-[var(--color-border)] bg-white pl-11 pr-4 text-sm font-normal text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 transition-colors"
                 />
               </div>
-              <FilterDropdown value={noticeFilter} onChange={setNoticeFilter} stores={stores} />
+              <FilterDropdown value={activeStoreFilter} onChange={setNoticeFilter} stores={stores} />
+            </div>
+
+            {/* 출처 + 대상 필터 */}
+            <div className="mb-6 space-y-3">
+              <NoticeFilter
+                ariaLabel="공지 출처"
+                value={sourceFilter}
+                options={STAFF_SOURCE_FILTERS}
+                onChange={setSourceFilter}
+              />
+              <NoticeFilter
+                ariaLabel="공지 대상"
+                value={activeTargetFilter}
+                options={targetFilterOptions}
+                onChange={setTargetFilter}
+              />
             </div>
 
             {/* 공지 목록 헤더 */}
@@ -357,37 +439,28 @@ export default function StaffNoticesPage() {
             ) : (
               <div className="space-y-3">
                 {visibleNotices.map((notice) => (
-                  <button
+                  <NoticeCard
                     key={notice.id}
-                    type="button"
-                    onClick={() => {
-                      setDetail({ storeId: noticeFilter === "all" ? stores[0]?.id ?? "" : noticeFilter, noticeId: notice.id });
-                      document.querySelector("main")?.scrollTo({ top: 0 });
-                    }}
-                    className="w-full rounded-lg border border-[var(--color-border)] bg-white p-4 sm:p-5 text-left transition-all hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-primary-light)]/5 hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
-                  >
-                    <div className="flex items-start justify-between gap-3 mb-3">
-                      <TargetBadge targetType={notice.targetType} />
-                      <p className="text-xs text-[var(--color-text-tertiary)] whitespace-nowrap">
-                        {formatDate(notice.createdAt)}
-                      </p>
-                    </div>
-                    <h3 className="text-sm font-semibold text-[var(--color-text-primary)] line-clamp-2 break-keep mb-2">
-                      {notice.title}
-                    </h3>
-                    <p className="text-xs text-[var(--color-text-secondary)] line-clamp-1 break-words mb-3">
-                      {notice.content}
-                    </p>
-                    <p className="text-xs text-[var(--color-text-tertiary)]">
-                      {authorLabel(notice)}
-                    </p>
-                  </button>
+                    title={notice.title}
+                    content={notice.content}
+                    sourceLabel={formatNoticeSource(notice)}
+                    createdAt={notice.createdAt}
+                    viewCount={notice.viewCount}
+                    isRead={notice.isRead}
+                    onOpen={() => openNotice(notice)}
+                  />
                 ))}
               </div>
             )}
           </>
         )}
       </div>
+      {selectedNotice && (
+        <NoticeDetailDialog
+          notice={{ ...selectedNotice, sourceLabel: formatNoticeSource(selectedNotice) }}
+          onClose={() => setDetail(null)}
+        />
+      )}
     </div>
   );
 }
