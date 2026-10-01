@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import {
+  expectedMasterApprovalStatus,
+  groupMembershipStatusesByUser,
+  needsApprovalCompletion,
+} from "@/lib/signup/approval-recovery";
 
 export const runtime = "nodejs";
 
@@ -98,13 +103,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<EmployeesL
     const { data: profiles, error: profileError } = staffUserIds.length
       ? await adminClient
           .from("profiles")
-          .select("user_id, full_name, email")
+          .select("user_id, full_name, email, approval_status")
           .in("user_id", staffUserIds)
           .is("brand_id", null)
       : { data: [], error: null };
 
     if (profileError) {
-      console.error("[GET /api/boss/employees] Staff profile query error:", profileError);
+      console.error("[GET /api/boss/employees] Staff profile query failed", { code: profileError.code });
       return NextResponse.json(
         { success: false, error: "직원 프로필 조회 중 오류가 발생했습니다." },
         { status: 500 },
@@ -113,6 +118,66 @@ export async function GET(request: NextRequest): Promise<NextResponse<EmployeesL
 
     const profilesByUserId = new Map(
       (profiles ?? []).map((profile) => [profile.user_id, { name: profile.full_name, email: profile.email }]),
+    );
+    const masterStatusByUserId = new Map(
+      (profiles ?? []).map((profile) => [profile.user_id, profile.approval_status ?? null]),
+    );
+
+    // 승인은 됐지만 후속 단계(브랜드 프로필, 마스터 승인 상태)가 끝나지 않은 "부분 승인"을 구분한다.
+    // 조회가 실패하면 복구 불필요로 위장하지 않고 고정 오류로 끊는다.
+    const { data: storeRow, error: storeRowError } = await adminClient
+      .from("stores")
+      .select("franchise_id")
+      .eq("id", storeId)
+      .maybeSingle<{ franchise_id: string | null }>();
+
+    if (storeRowError) {
+      console.error("[GET /api/boss/employees] Store brand query failed", { code: storeRowError.code });
+      return NextResponse.json(
+        { success: false, error: "직원 목록 조회 중 오류가 발생했습니다." },
+        { status: 500 },
+      );
+    }
+
+    const storeBrandId = storeRow?.franchise_id ?? null;
+
+    const { data: brandProfiles, error: brandProfileError } = storeBrandId && staffUserIds.length
+      ? await adminClient
+          .from("profiles")
+          .select("user_id")
+          .in("user_id", staffUserIds)
+          .eq("brand_id", storeBrandId)
+      : { data: [], error: null };
+
+    if (brandProfileError) {
+      console.error("[GET /api/boss/employees] Brand profile query failed", { code: brandProfileError.code });
+      return NextResponse.json(
+        { success: false, error: "직원 목록 조회 중 오류가 발생했습니다." },
+        { status: 500 },
+      );
+    }
+
+    const { data: allStaffMemberships, error: allStaffMembershipError } = staffUserIds.length
+      ? await adminClient
+          .from("store_memberships")
+          .select("user_id, status")
+          .in("user_id", staffUserIds)
+      : { data: [], error: null };
+
+    if (allStaffMembershipError) {
+      console.error("[GET /api/boss/employees] Membership status query failed", {
+        code: allStaffMembershipError.code,
+      });
+      return NextResponse.json(
+        { success: false, error: "직원 목록 조회 중 오류가 발생했습니다." },
+        { status: 500 },
+      );
+    }
+
+    const membershipsByUser = groupMembershipStatusesByUser(allStaffMemberships ?? []);
+
+    const brandProfileUserIds = new Set(
+      ((brandProfiles ?? []) as { user_id: string }[]).map((profile) => profile.user_id),
     );
     const staffMembers: StaffMemberResponse[] = (staffMemberships ?? []).map((membership) => {
       const profile = profilesByUserId.get(membership.user_id);
@@ -125,6 +190,14 @@ export async function GET(request: NextRequest): Promise<NextResponse<EmployeesL
         status: membership.status,
         requestedAt: membership.requested_at,
         approvedAt: membership.approved_at || undefined,
+        needsBrandProfileRecovery: needsApprovalCompletion({
+          membershipStatus: membership.status,
+          hasBrandProfile: storeBrandId ? brandProfileUserIds.has(membership.user_id) : null,
+          masterApprovalStatus: masterStatusByUserId.get(membership.user_id) ?? null,
+          expectedMasterStatus: expectedMasterApprovalStatus(
+            membershipsByUser.get(membership.user_id) ?? [],
+          ),
+        }),
       };
     });
 

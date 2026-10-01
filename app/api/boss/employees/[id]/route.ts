@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { createNotification } from "@/lib/notifications";
+import { buildMasterApprovalUpdate } from "@/lib/signup/approval-recovery";
 import { ensureBrandProfileForApprovedMembership, MembershipAuthNotReadyError, requireConfirmedMembershipAuthUser } from "@/lib/signup/store-membership-service";
 
 export const runtime = "nodejs";
@@ -23,22 +24,14 @@ async function syncProfileApprovalStatus(adminClient: ReturnType<typeof createAd
     .select("status, approved_at, approved_by")
     .eq("user_id", userId);
 
+  // 조회 실패는 빈 목록으로 바꾸지 않는다(그대로 두면 rejected를 잘못 기록하게 된다).
   if (error) {
     throw error;
   }
 
-  const hasApproved = (memberships ?? []).some((membership) => membership.status === "approved");
-  const hasPending = (memberships ?? []).some((membership) => membership.status === "pending");
-  const firstApproved = (memberships ?? []).find((membership) => membership.status === "approved");
-  const approvalStatus = hasApproved ? "approved" : hasPending ? "pending" : "rejected";
-
   const { error: profileUpdateError } = await adminClient
     .from("profiles")
-    .update({
-      approval_status: approvalStatus,
-      approved_at: approvalStatus === "approved" ? firstApproved?.approved_at ?? new Date().toISOString() : null,
-      approved_by: approvalStatus === "approved" ? firstApproved?.approved_by ?? null : null,
-    })
+    .update(buildMasterApprovalUpdate(memberships ?? []))
     .eq("id", userId);
 
   if (profileUpdateError) {

@@ -89,11 +89,11 @@ export default function OwnerAddStorePage() {
       if (response.status === 401) {
         return { kind: "error", message: "로그인 정보를 확인할 수 없습니다. 다시 로그인한 뒤 신청해 주세요." };
       }
-      if (result.code === "BRAND_MISMATCH") {
-        return { kind: "error", message: "소속 브랜드의 매장만 운영 신청할 수 있습니다." };
-      }
-      if (result.code === "NO_BRAND") {
-        return { kind: "error", message: "소속 브랜드 정보가 없어 운영 매장을 추가할 수 없습니다. 본사에 문의해 주세요." };
+      if (result.code === "STORE_BRAND_UNKNOWN") {
+        return {
+          kind: "error",
+          message: "이 매장의 브랜드 정보가 연결되어 있지 않아 신청할 수 없습니다. 본사에 문의해 주세요.",
+        };
       }
       if (response.status === 403) {
         return { kind: "error", message: "운영 매장을 추가할 권한이 없습니다." };

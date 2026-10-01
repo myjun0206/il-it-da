@@ -18,6 +18,8 @@ interface StaffMember {
   status: "pending" | "approved" | "rejected";
   requestedAt: string;
   approvedAt?: string;
+  /** 승인됐지만 브랜드 프로필이 없어 승인 마무리가 필요한 상태. */
+  needsBrandProfileRecovery?: boolean;
 }
 
 interface EmployeesData {
@@ -426,10 +428,24 @@ export default function EmployeesPage() {
                       </div>
 
                       <div className="flex items-center gap-2 text-sm">
-                        <div className="flex items-center gap-1">
-                          <div className="w-2 h-2 rounded-full bg-green-500" />
-                          <span className="text-[var(--color-text-secondary)]">근무 중</span>
-                        </div>
+                        {staff.needsBrandProfileRecovery ? (
+                          <div className="flex flex-col items-start gap-1 lg:items-end">
+                            <button
+                              type="button"
+                              disabled={processingId === staff.membershipId}
+                              onClick={() => handleChangeStatus(staff.membershipId, "approved")}
+                              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-amber-300 bg-amber-50 px-4 text-sm font-medium text-amber-800 transition-colors hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-600 focus-visible:ring-offset-2 disabled:opacity-60"
+                            >
+                              {processingId === staff.membershipId ? "처리 중..." : "승인 마무리"}
+                            </button>
+                            <span className="text-xs text-amber-700">승인 후처리가 끝나지 않았어요.</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <div className="w-2 h-2 rounded-full bg-green-500" />
+                            <span className="text-[var(--color-text-secondary)]">근무 중</span>
+                          </div>
+                        )}
                         <span className="text-xs text-[var(--color-text-secondary)]">
                           {formatDate(staff.approvedAt || staff.requestedAt)}
                         </span>
