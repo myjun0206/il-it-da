@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { canReadNotice, type NoticeAudience, type NoticeMembership, type NoticeTargetType } from "@/lib/notices/notice-authorization";
+import { withNoticeReadStats } from "@/lib/notices/with-read-status";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -9,10 +10,13 @@ export const runtime = "nodejs";
 export interface StaffNoticeItem {
   id: string;
   targetType: NoticeTargetType;
+  sourceLabel: string;
   targetStoreName: string | null; // "본사 전체" (all일 때) 또는 매장명 (store일 때)
   title: string;
   content: string;
   createdAt: string;
+  isRead: boolean;
+  viewCount: number;
 }
 
 type NoticeRow = {
@@ -145,10 +149,25 @@ export async function GET(): Promise<NextResponse> {
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
       .slice(0, 1000);
 
+    let readRecords: Array<{ notice_id: string; user_id: string }> = [];
+    if (noticesData.length > 0) {
+      const { data: readRows, error: readError } = await adminClient
+        .from("notice_reads")
+        .select("notice_id,user_id")
+        .in("notice_id", noticesData.map((row) => row.id));
+
+      if (readError) {
+        console.error("Error fetching STAFF notice read status:", readError);
+        return NextResponse.json({ error: "읽음 상태를 불러오지 못했습니다." }, { status: 500 });
+      }
+      readRecords = readRows ?? [];
+    }
+
     // 7. 응답 구성
-    const notices: StaffNoticeItem[] = (noticesData ?? []).map((row: NoticeRow) => ({
+    const noticeItems = (noticesData ?? []).map((row: NoticeRow) => ({
       id: row.id,
       targetType: row.target_type,
+      sourceLabel: row.audience === "staff" ? "점주 공지" : "본사 공지",
       targetStoreName:
         row.target_type === "all"
           ? "프랜차이즈 전체"
@@ -159,6 +178,7 @@ export async function GET(): Promise<NextResponse> {
       content: row.content,
       createdAt: row.created_at,
     }));
+    const notices: StaffNoticeItem[] = withNoticeReadStats(noticeItems, readRecords, userId);
 
     return NextResponse.json({ notices });
   } catch (error) {

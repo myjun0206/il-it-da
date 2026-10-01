@@ -5,6 +5,8 @@ export interface HqNoticeItem {
   targetStoreId: string | null;
   targetStoreName: string | null;
   audience: "owner" | "all_members" | "staff";
+  isMine: boolean;
+  viewCount: number;
   title: string;
   content: string;
   createdAt: string;

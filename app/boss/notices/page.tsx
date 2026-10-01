@@ -1,17 +1,27 @@
 "use client";
 
 import React, { useEffect, useLayoutEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Search, X } from "lucide-react";
+import { Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
+import { NoticeCard } from "@/components/notices/NoticeCard";
+import { NoticeDetailDialog } from "@/components/notices/NoticeDetailDialog";
+import { NoticeEditDialog } from "@/components/notices/NoticeEditDialog";
+import { NoticeFilter, type NoticeFilterOption } from "@/components/notices/NoticeFilter";
+import { NoticePageHeader } from "@/components/notices/NoticePageHeader";
+import { getNoticeViewCountIncrement, markNoticeAsRead } from "@/lib/notices/mark-notice-read";
 import { resolveOwnerCurrentStore } from "@/lib/owner/current-store";
 import { Input } from "@/components/common/Input";
-import { Button } from "@/components/common/Button";
 
 interface Notice {
   id: string;
+  isMine: boolean;
+  isRead: boolean;
+  viewCount: number;
   title: string;
   content: string;
   category: "운영 안내" | "매뉴얼" | "교육" | "시스템" | "기타";
@@ -29,35 +39,13 @@ interface NoticesData {
   };
 }
 
-interface ModalState {
-  isOpen: boolean;
-  notice: Notice | null;
-}
+type OwnerNoticeFilter = "all" | "hq" | "mine";
 
-// 날짜 포맷팅
-function formatDate(dateString: string): string {
-  try {
-    const date = new Date(dateString);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${year}.${month}.${day}`;
-  } catch {
-    return "";
-  }
-}
-
-// 카테고리별 색상
-function getCategoryColor(category: string): string {
-  const colors: Record<string, string> = {
-    "운영 안내": "bg-blue-50 text-blue-700 border border-blue-200",
-    "매뉴얼": "bg-green-50 text-green-700 border border-green-200",
-    "교육": "bg-purple-50 text-purple-700 border border-purple-200",
-    "시스템": "bg-orange-50 text-orange-700 border border-orange-200",
-    "기타": "bg-gray-50 text-gray-700 border border-gray-200",
-  };
-  return colors[category] || colors["기타"];
-}
+const OWNER_NOTICE_FILTERS: readonly NoticeFilterOption<OwnerNoticeFilter>[] = [
+  { value: "all", label: "전체" },
+  { value: "hq", label: "본사 공지" },
+  { value: "mine", label: "내 공지" },
+];
 
 export default function NoticesPage() {
   const router = useRouter();
@@ -71,9 +59,13 @@ export default function NoticesPage() {
   });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
+  const [sourceFilter, setSourceFilter] = useState<OwnerNoticeFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("전체");
-  const [modal, setModal] = useState<ModalState>({ isOpen: false, notice: null });
+  const [selectedNotice, setSelectedNotice] = useState<Notice | null>(null);
+  const [editingNotice, setEditingNotice] = useState<Notice | null>(null);
+  const [deletingNotice, setDeletingNotice] = useState<Notice | null>(null);
+  const [isDeletingNotice, setIsDeletingNotice] = useState(false);
 
   // Categories available
   const categories = ["전체", "운영 안내", "매뉴얼", "교육", "시스템", "기타"];
@@ -168,6 +160,56 @@ export default function NoticesPage() {
     fetchNotices();
   }, [selectedStoreId]);
 
+  const updateNotice = async (title: string, content: string) => {
+    if (!editingNotice) return;
+    const response = await fetch("/api/boss/notices", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ id: editingNotice.id, title, content }),
+    });
+    const result = (await response.json()) as { error?: string };
+    if (!response.ok) throw new Error(result.error || "공지를 수정하지 못했습니다.");
+
+    setNotices((current) => ({
+      ...current,
+      notices: current.notices.map((notice) =>
+        notice.id === editingNotice.id ? { ...notice, title, content } : notice,
+      ),
+    }));
+    setEditingNotice(null);
+  };
+
+  const deleteNotice = async () => {
+    if (!deletingNotice || isDeletingNotice) return;
+    setIsDeletingNotice(true);
+    try {
+      const response = await fetch("/api/boss/notices", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ id: deletingNotice.id }),
+      });
+      const result = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(result.error || "공지를 삭제하지 못했습니다.");
+
+      setNotices((current) => ({
+        summary: {
+          total: Math.max(0, current.summary.total - 1),
+          important: Math.max(0, current.summary.important - Number(deletingNotice.isImportant)),
+        },
+        notices: current.notices.filter((notice) => notice.id !== deletingNotice.id),
+      }));
+      setSelectedNotice(null);
+      setDeletingNotice(null);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "공지를 삭제하지 못했습니다.");
+      setDeletingNotice(null);
+    } finally {
+      setIsDeletingNotice(false);
+    }
+  };
+
   // 로그아웃
   const handleLogout = async () => {
     try {
@@ -182,6 +224,9 @@ export default function NoticesPage() {
 
   // 검색 및 필터링
   const filteredNotices = notices.notices.filter((notice) => {
+    if (sourceFilter === "hq" && notice.isMine) return false;
+    if (sourceFilter === "mine" && !notice.isMine) return false;
+
     // 카테고리 필터
     if (categoryFilter !== "전체" && notice.category !== categoryFilter) {
       return false;
@@ -197,18 +242,32 @@ export default function NoticesPage() {
     );
   });
 
-  // 중요 공지와 일반 공지 분리
-  const importantNotices = filteredNotices.filter((n) => n.isImportant);
-  const regularNotices = filteredNotices.filter((n) => !n.isImportant);
-
   // 모달 열기
   const handleOpenModal = (notice: Notice) => {
-    setModal({ isOpen: true, notice });
+    setSelectedNotice(notice);
+    if (notice.isRead) return;
+
+    void markNoticeAsRead(notice.id).then((result) => {
+      if (!result.succeeded) return;
+      const viewCountIncrement = getNoticeViewCountIncrement(result);
+      setNotices((current) => ({
+        ...current,
+        notices: current.notices.map((currentNotice) =>
+          currentNotice.id === notice.id
+            ? { ...currentNotice, isRead: true, viewCount: currentNotice.viewCount + viewCountIncrement }
+            : currentNotice,
+        ),
+      }));
+      setSelectedNotice((current) => current?.id === notice.id
+        ? { ...current, isRead: true, viewCount: current.viewCount + viewCountIncrement }
+        : current,
+      );
+    });
   };
 
   // 모달 닫기
   const handleCloseModal = () => {
-    setModal({ isOpen: false, notice: null });
+    setSelectedNotice(null);
   };
 
   if (!isReady || isLoading) {
@@ -217,7 +276,7 @@ export default function NoticesPage() {
         <OwnerSidebar activeMenu="notice" onLogout={handleLogout} />
         <div className="flex-1 ml-0 lg:ml-[240px] flex flex-col">
           <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
-          <main className="flex-1 p-8">
+          <main className="flex-1 overflow-y-auto p-6 lg:p-8">
             <div className="text-center">로딩 중...</div>
           </main>
         </div>
@@ -233,17 +292,20 @@ export default function NoticesPage() {
         <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
 
         {/* Main Content */}
-        <main className="flex-1 overflow-y-auto">
-          <div className="px-5 sm:px-8 lg:px-12 xl:px-16 py-8 lg:py-12">
-            {/* 페이지 제목 */}
-            <div className="mb-8">
-              <h1 className="text-3xl lg:text-4xl font-bold text-[var(--color-text-primary)] mb-2">
-                공지사항
-              </h1>
-              <p className="text-lg text-[var(--color-text-secondary)]">
-                본사에서 전달한 공지사항과 운영 안내를 확인하세요.
-              </p>
-            </div>
+        <main className="flex-1 overflow-y-auto p-6 lg:p-8">
+          <div className="mx-auto max-w-7xl">
+            <NoticePageHeader
+              title="공지사항"
+              description="본사 공지와 현재 매장의 직원 공지를 확인하세요."
+              action={selectedStoreId ? (
+                <Link
+                  href="/boss/notices/new"
+                  className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg bg-[var(--color-primary)] px-4 text-sm font-semibold text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2"
+                >
+                  <Plus size={18} aria-hidden="true" /> 직원 공지 작성
+                </Link>
+              ) : undefined}
+            />
 
             {/* 현재 매장 */}
             <div className="mb-8">
@@ -255,44 +317,22 @@ export default function NoticesPage() {
               </p>
             </div>
 
+            {notices.notices.length > 0 && (
+              <div className="mb-6">
+                <NoticeFilter
+                  ariaLabel="공지 출처"
+                  value={sourceFilter}
+                  options={OWNER_NOTICE_FILTERS}
+                  onChange={setSourceFilter}
+                />
+              </div>
+            )}
+
             {/* 에러 메시지 */}
             {error && (
               <div className="mb-8 p-4 bg-red-50 border border-red-200 rounded-lg">
                 <p className="text-sm text-red-700">{error}</p>
               </div>
-            )}
-
-            {/* 중요 공지 */}
-            {importantNotices.length > 0 && (
-              <section className="mb-12">
-                <h2 className="text-xl lg:text-2xl font-bold text-[var(--color-text-primary)] mb-6">
-                  중요 공지
-                </h2>
-                <div className="space-y-3">
-                  {importantNotices.map((notice) => (
-                    <div
-                      key={notice.id}
-                      onClick={() => handleOpenModal(notice)}
-                      className="bg-white border border-[var(--color-border)] rounded-lg p-4 lg:p-6 cursor-pointer hover:shadow-md hover:border-[var(--color-primary)] transition-all group"
-                    >
-                      <div className="flex items-start gap-3 mb-3">
-                        <span className="text-xs font-bold text-[var(--color-primary)] bg-[var(--color-primary-light)]/20 px-2 py-1 rounded flex-shrink-0">
-                          중요
-                        </span>
-                        <span className={`text-xs font-medium px-2 py-1 rounded flex-shrink-0 ${getCategoryColor(notice.category)}`}>
-                          {notice.category}
-                        </span>
-                      </div>
-                      <h3 className="text-base lg:text-lg font-semibold text-[var(--color-text-primary)] mb-2 group-hover:text-[var(--color-primary)] transition-colors line-clamp-2">
-                        {notice.title}
-                      </h3>
-                      <p className="text-sm text-[var(--color-text-secondary)]">
-                        {formatDate(notice.createdAt)}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </section>
             )}
 
             {/* 공지사항 목록 */}
@@ -357,37 +397,24 @@ export default function NoticesPage() {
                         검색 결과가 없습니다.
                       </p>
                       <p className="text-sm text-[var(--color-text-secondary)]">
-                        다른 검색어를 입력해보세요.
+                        필터 또는 검색 조건을 바꿔보세요.
                       </p>
                     </>
                   )}
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {regularNotices.map((notice) => (
-                    <div
+                  {filteredNotices.map((notice) => (
+                    <NoticeCard
                       key={notice.id}
-                      onClick={() => handleOpenModal(notice)}
-                      className="bg-white border border-[var(--color-border)] rounded-lg p-4 lg:p-6 cursor-pointer hover:shadow-md hover:border-[var(--color-primary)] transition-all group"
-                    >
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-2">
-                            <span className={`text-xs font-medium px-2 py-1 rounded flex-shrink-0 ${getCategoryColor(notice.category)}`}>
-                              {notice.category}
-                            </span>
-                          </div>
-                          <h3 className="text-base lg:text-lg font-semibold text-[var(--color-text-primary)] group-hover:text-[var(--color-primary)] transition-colors line-clamp-2 mb-2">
-                            {notice.title}
-                          </h3>
-                        </div>
-                        <div className="flex-shrink-0 text-right">
-                          <p className="text-sm text-[var(--color-text-secondary)] whitespace-nowrap">
-                            {formatDate(notice.createdAt)}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
+                      title={notice.title}
+                      content={notice.content}
+                      sourceLabel={notice.isMine ? `점주 공지 · ${storeName} · ${notice.category}` : `본사 공지 · ${storeName} · ${notice.category}`}
+                      createdAt={notice.createdAt}
+                      viewCount={notice.viewCount}
+                      isRead={notice.isRead}
+                      onOpen={() => handleOpenModal(notice)}
+                    />
                   ))}
                 </div>
               )}
@@ -396,61 +423,60 @@ export default function NoticesPage() {
         </main>
       </div>
 
-      {/* Detail Modal */}
-      {modal.isOpen && modal.notice && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end lg:items-center justify-center p-0">
-          <div className="bg-white w-full lg:max-w-2xl lg:rounded-lg rounded-t-2xl max-h-[90vh] lg:max-h-[80vh] flex flex-col overflow-hidden">
-            {/* Sticky Header */}
-            <div className="sticky top-0 border-b border-[var(--color-border)] bg-white p-6 flex items-center justify-between">
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  {modal.notice.isImportant && (
-                    <span className="text-xs font-bold text-[var(--color-primary)] bg-[var(--color-primary-light)]/20 px-2 py-1 rounded">
-                      중요
-                    </span>
-                  )}
-                  <span className={`text-xs font-medium px-2 py-1 rounded ${getCategoryColor(modal.notice.category)}`}>
-                    {modal.notice.category}
-                  </span>
-                </div>
-                <h2 className="text-xl lg:text-2xl font-bold text-[var(--color-text-primary)]">
-                  {modal.notice.title}
-                </h2>
-              </div>
+      {selectedNotice && (
+        <NoticeDetailDialog
+          notice={{
+            ...selectedNotice,
+            sourceLabel: selectedNotice.isMine
+              ? `점주 공지 · ${storeName} · ${selectedNotice.category}`
+              : `본사 공지 · ${storeName} · ${selectedNotice.category}`,
+          }}
+          onClose={handleCloseModal}
+          actions={selectedNotice.isMine ? (
+            <>
               <button
-                onClick={handleCloseModal}
-                className="flex-shrink-0 p-2 hover:bg-[var(--color-bg-surface)] rounded-lg transition-colors"
-                aria-label="닫기"
+                type="button"
+                onClick={() => {
+                  setEditingNotice(selectedNotice);
+                  handleCloseModal();
+                }}
+                className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg border border-[var(--color-border)] px-4 text-sm font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-bg-default)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
               >
-                <X size={24} className="text-[var(--color-text-secondary)]" />
+                <Pencil size={16} aria-hidden="true" /> 수정
               </button>
-            </div>
-
-            {/* Scrollable Content */}
-            <div className="flex-1 overflow-y-auto p-6">
-              <p className="text-sm text-[var(--color-text-secondary)] mb-6 pb-6 border-b border-[var(--color-border)]">
-                {formatDate(modal.notice.createdAt)}
-              </p>
-
-              <div className="prose prose-sm max-w-none text-[var(--color-text-primary)]">
-                <div className="whitespace-pre-wrap text-base leading-relaxed">
-                  {modal.notice.content}
-                </div>
-              </div>
-            </div>
-
-            {/* Sticky Footer */}
-            <div className="sticky bottom-0 border-t border-[var(--color-border)] bg-white p-6">
-              <Button
-                onClick={handleCloseModal}
-                className="w-full h-12"
+              <button
+                type="button"
+                onClick={() => {
+                  setDeletingNotice(selectedNotice);
+                  handleCloseModal();
+                }}
+                className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg border border-red-200 px-4 text-sm font-medium text-red-700 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600"
               >
-                닫기
-              </Button>
-            </div>
-          </div>
-        </div>
+                <Trash2 size={16} aria-hidden="true" /> 삭제
+              </button>
+            </>
+          ) : undefined}
+        />
       )}
+      {editingNotice && (
+        <NoticeEditDialog
+          key={editingNotice.id}
+          notice={editingNotice}
+          onClose={() => setEditingNotice(null)}
+          onSave={updateNotice}
+        />
+      )}
+      <ConfirmDialog
+        isOpen={Boolean(deletingNotice)}
+        title="공지 삭제"
+        description="이 공지를 삭제하시겠습니까? 삭제한 공지는 복구할 수 없습니다."
+        confirmText="삭제"
+        cancelText="취소"
+        isDangerous
+        isLoading={isDeletingNotice}
+        onConfirm={() => void deleteNotice()}
+        onCancel={() => setDeletingNotice(null)}
+      />
     </div>
   );
 }

@@ -1,27 +1,45 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
-import { AlertCircle, CheckCircle2, Megaphone, Plus, RefreshCw } from "lucide-react";
+import { AlertCircle, Megaphone, RefreshCw } from "lucide-react";
 
 import { useStaffShell } from "@/components/staff/StaffShellContext";
+import { NoticeCard } from "@/components/notices/NoticeCard";
+import { NoticeDetailDialog } from "@/components/notices/NoticeDetailDialog";
+import { NoticeFilter, type NoticeFilterOption } from "@/components/notices/NoticeFilter";
+import { NoticePageHeader } from "@/components/notices/NoticePageHeader";
 import { formatStoreDisplayName } from "@/lib/stores/search-stores";
+import { getNoticeViewCountIncrement, markNoticeAsRead } from "@/lib/notices/mark-notice-read";
 
 interface StaffNotice {
   id: string;
+  isRead: boolean;
+  viewCount: number;
+  sourceType: "hq" | "owner";
   targetType: "all" | "franchise" | "store";
+  sourceLabel: string;
   targetStoreName: string | null;
   title: string;
   content: string;
   createdAt: string;
 }
 
-function formatDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${date.getFullYear()}.${month}.${day}`;
+type StaffNoticeResponse = Omit<StaffNotice, "sourceType">;
+type StaffSourceFilter = "all" | "hq" | "owner";
+
+const ALL_TARGETS = "all";
+const FRANCHISE_TARGETS = "franchise";
+const STAFF_SOURCE_FILTERS: readonly NoticeFilterOption<StaffSourceFilter>[] = [
+  { value: "all", label: "전체" },
+  { value: "hq", label: "본사 공지" },
+  { value: "owner", label: "점주 공지" },
+];
+
+function toStaffNotice(notice: StaffNoticeResponse): StaffNotice {
+  return {
+    ...notice,
+    sourceType: notice.sourceLabel === "점주 공지" ? "owner" : "hq",
+  };
 }
 
 export default function StaffNoticesPage() {
@@ -29,8 +47,19 @@ export default function StaffNoticesPage() {
   const [notices, setNotices] = useState<StaffNotice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
-  const [selectedFilter, setSelectedFilter] = useState<"all" | "hq" | string>("all");
+  const [sourceFilter, setSourceFilter] = useState<StaffSourceFilter>("all");
+  const [targetFilter, setTargetFilter] = useState<string>(ALL_TARGETS);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedNotice, setSelectedNotice] = useState<StaffNotice | null>(null);
+
+  const targetFilterOptions: readonly NoticeFilterOption<string>[] = [
+    { value: ALL_TARGETS, label: "전체 대상" },
+    { value: FRANCHISE_TARGETS, label: "전체 지점" },
+    ...stores.map((store) => ({
+      value: store.id,
+      label: formatStoreDisplayName(store.name),
+    })),
+  ];
 
   useEffect(() => {
     const fetchNotices = async () => {
@@ -39,7 +68,7 @@ export default function StaffNoticesPage() {
 
       try {
         const response = await fetch("/api/staff/notices");
-        const result = (await response.json()) as { notices?: StaffNotice[]; error?: string };
+        const result = (await response.json()) as { notices?: StaffNoticeResponse[]; error?: string };
 
         if (!response.ok || result.error) {
           setError(result.error || "공지사항을 불러오지 못했습니다.");
@@ -47,7 +76,7 @@ export default function StaffNoticesPage() {
           return;
         }
 
-        setNotices(result.notices ?? []);
+        setNotices((result.notices ?? []).map(toStaffNotice));
       } catch {
         setError("공지사항을 불러오지 못했습니다.");
         setNotices([]);
@@ -61,12 +90,13 @@ export default function StaffNoticesPage() {
 
   // 필터링된 공지 목록
   const filteredNotices = notices.filter((notice) => {
-    // 범위 필터
-    if (selectedFilter === "hq") {
+    if (sourceFilter !== "all" && notice.sourceType !== sourceFilter) return false;
+
+    // 대상 범위와 개별 매장 필터는 출처 필터와 독립적으로 적용한다.
+    if (targetFilter === FRANCHISE_TARGETS) {
       if (notice.targetType !== "all" && notice.targetType !== "franchise") return false;
-    } else if (selectedFilter !== "all") {
-      // 특정 매장
-      const selectedStore = stores.find((s) => s.id === selectedFilter);
+    } else if (targetFilter !== ALL_TARGETS) {
+      const selectedStore = stores.find((store) => store.id === targetFilter);
       if (!selectedStore) return false;
       if (notice.targetStoreName !== formatStoreDisplayName(selectedStore.name)) return false;
     }
@@ -91,12 +121,12 @@ export default function StaffNoticesPage() {
       setError("");
       try {
         const response = await fetch("/api/staff/notices");
-        const result = (await response.json()) as { notices?: StaffNotice[]; error?: string };
+        const result = (await response.json()) as { notices?: StaffNoticeResponse[]; error?: string };
         if (!response.ok || result.error) {
           setError(result.error || "공지사항을 불러오지 못했습니다.");
           setNotices([]);
         } else {
-          setNotices(result.notices ?? []);
+          setNotices((result.notices ?? []).map(toStaffNotice));
         }
       } catch {
         setError("공지사항을 불러오지 못했습니다.");
@@ -106,16 +136,32 @@ export default function StaffNoticesPage() {
     })();
   };
 
+  const openNotice = (notice: StaffNotice) => {
+    setSelectedNotice(notice);
+    if (notice.isRead) return;
+
+    void markNoticeAsRead(notice.id).then((result) => {
+      if (!result.succeeded) return;
+      const viewCountIncrement = getNoticeViewCountIncrement(result);
+      setNotices((current) => current.map((currentNotice) =>
+        currentNotice.id === notice.id
+          ? { ...currentNotice, isRead: true, viewCount: currentNotice.viewCount + viewCountIncrement }
+          : currentNotice,
+      ));
+      setSelectedNotice((current) => current?.id === notice.id
+        ? { ...current, isRead: true, viewCount: current.viewCount + viewCountIncrement }
+        : current,
+      );
+    });
+  };
+
   return (
     <div className="p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
-          {/* 페이지 상단 */}
-          <div className="mb-6">
-            <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">공지사항</h1>
-            <p className="text-base text-[var(--color-text-secondary)]">
-              본사와 근무 매장에서 전달한 공지사항을 확인할 수 있습니다.
-            </p>
-          </div>
+          <NoticePageHeader
+            title="공지사항"
+            description="본사와 근무 매장에서 전달한 공지사항을 확인할 수 있습니다."
+          />
 
           {/* 공지 요약 */}
           {!isLoading && !error && (
@@ -165,45 +211,19 @@ export default function StaffNoticesPage() {
 
           {/* 필터 */}
           {!isLoading && !error && notices.length > 0 && (
-            <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-3">
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSelectedFilter("all")}
-                  className={`inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${
-                    selectedFilter === "all"
-                      ? "bg-[var(--color-primary)] text-white focus-visible:ring-[var(--color-primary)]"
-                      : "bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] hover:bg-[var(--color-border)] focus-visible:ring-[var(--color-primary)]"
-                  }`}
-                >
-                  전체 공지
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedFilter("hq")}
-                  className={`inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${
-                    selectedFilter === "hq"
-                      ? "bg-[var(--color-primary)] text-white focus-visible:ring-[var(--color-primary)]"
-                      : "bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] hover:bg-[var(--color-border)] focus-visible:ring-[var(--color-primary)]"
-                  }`}
-                >
-                  본사
-                </button>
-                {stores.map((store) => (
-                  <button
-                    key={store.id}
-                    type="button"
-                    onClick={() => setSelectedFilter(store.id)}
-                    className={`inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${
-                      selectedFilter === store.id
-                        ? "bg-[var(--color-primary)] text-white focus-visible:ring-[var(--color-primary)]"
-                        : "bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] hover:bg-[var(--color-border)] focus-visible:ring-[var(--color-primary)]"
-                    }`}
-                  >
-                    {formatStoreDisplayName(store.name)}
-                  </button>
-                ))}
-              </div>
+            <div className="mb-6 space-y-3">
+              <NoticeFilter
+                ariaLabel="공지 출처"
+                value={sourceFilter}
+                options={STAFF_SOURCE_FILTERS}
+                onChange={setSourceFilter}
+              />
+              <NoticeFilter
+                ariaLabel="공지 대상"
+                value={targetFilter}
+                options={targetFilterOptions}
+                onChange={setTargetFilter}
+              />
             </div>
           )}
 
@@ -225,32 +245,16 @@ export default function StaffNoticesPage() {
           {!isLoading && !error && filteredNotices.length > 0 && (
             <div className="space-y-3">
               {filteredNotices.map((notice) => (
-                <Link
+                <NoticeCard
                   key={notice.id}
-                  href={`/staff/notices/${notice.id}`}
-                  className="block rounded-lg border border-[var(--color-border)] bg-white p-4 transition-colors hover:bg-[var(--color-bg-secondary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="mb-1 flex items-center gap-2">
-                        <span className="inline-flex items-center rounded-full bg-[var(--color-primary-light)]/30 px-2.5 py-0.5 text-xs font-semibold text-[var(--color-primary)]">
-                          {notice.targetStoreName}
-                        </span>
-                      </div>
-                      <h3 className="text-base font-semibold text-[var(--color-text-primary)] mb-1 truncate">
-                        {notice.title}
-                      </h3>
-                      <p className="text-sm text-[var(--color-text-secondary)] line-clamp-2">
-                        {notice.content}
-                      </p>
-                    </div>
-                    <div className="shrink-0 text-right">
-                      <p className="text-xs text-[var(--color-text-tertiary)]">
-                        {formatDate(notice.createdAt)}
-                      </p>
-                    </div>
-                  </div>
-                </Link>
+                  title={notice.title}
+                  content={notice.content}
+                  sourceLabel={`${notice.sourceLabel} · ${notice.targetStoreName ?? "대상 지점"}`}
+                  createdAt={notice.createdAt}
+                  viewCount={notice.viewCount}
+                  isRead={notice.isRead}
+                  onOpen={() => openNotice(notice)}
+                />
               ))}
             </div>
           )}
@@ -259,11 +263,20 @@ export default function StaffNoticesPage() {
           {!isLoading && !error && notices.length > 0 && filteredNotices.length === 0 && (
             <div className="rounded-lg border border-[var(--color-border)] bg-white p-8 text-center">
               <p className="text-base text-[var(--color-text-secondary)]">
-                검색 결과가 없습니다.
+                선택한 조건에 해당하는 공지가 없습니다.
               </p>
             </div>
           )}
         </div>
+        {selectedNotice && (
+          <NoticeDetailDialog
+            notice={{
+              ...selectedNotice,
+              sourceLabel: `${selectedNotice.sourceLabel} · ${selectedNotice.targetStoreName ?? "대상 지점"}`,
+            }}
+            onClose={() => setSelectedNotice(null)}
+          />
+        )}
       </div>
   );
 }

@@ -16,6 +16,10 @@ export interface NoticeScope {
   audience: NoticeAudience;
 }
 
+export interface NoticeReadCandidate extends NoticeScope {
+  authorId: string | null;
+}
+
 interface NoticeWriteAuthorization {
   role: NoticeRole;
   franchiseId: string | null;
@@ -94,5 +98,34 @@ export function canReadNotice(
     && membership.role === role
     && membership.franchiseId === scope.franchiseId
     && (scope.targetType !== "store" || membership.storeId === scope.targetStoreId),
+  );
+}
+
+export function canRecordNoticeRead(
+  userId: string,
+  role: NoticeRole,
+  notice: NoticeReadCandidate,
+  memberships: NoticeMembership[],
+): boolean {
+  if (role === "hq") return false;
+
+  const { authorId, ...scope } = notice;
+  if (canReadNotice(role, memberships, scope)) return true;
+
+  if (
+    role !== "owner"
+    || authorId !== userId
+    || notice.targetType !== "store"
+    || notice.audience !== "staff"
+    || !notice.targetStoreId
+  ) {
+    return false;
+  }
+
+  return memberships.some((membership) =>
+    membership.role === "owner"
+    && membership.status === "approved"
+    && membership.storeId === notice.targetStoreId
+    && membership.franchiseId === notice.franchiseId,
   );
 }
