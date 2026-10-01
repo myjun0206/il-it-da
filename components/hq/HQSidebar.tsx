@@ -66,7 +66,7 @@ export default function HQSidebar({
         { id: "store-request", label: "문의 · 요청", href: "/hq/stores/requests" },
       ],
     },
-    { id: "notice", label: "소통", icon: Megaphone, href: "/hq/communication" },
+    { id: "notice", label: "공지사항", icon: Megaphone, href: "/hq/communication" },
   ];
 
   const bottomMenuItems: HQSidebarMenuItem[] = [
@@ -92,13 +92,15 @@ export default function HQSidebar({
       >
         {/* Logo Section - aligned with header */}
         <div className="flex items-center px-6 h-16 border-b border-[var(--color-border)]">
-          <Image
-            src="/logo/ilitda-wordmark.png"
-            alt="일잉다"
-            width={687}
-            height={253}
-            className="h-8 w-auto object-contain"
-          />
+          <Link href="/hq" aria-label="홈으로 이동" onClick={() => setIsOpen(false)}>
+            <Image
+              src="/logo/ilitda-wordmark.png"
+              alt="일잉다"
+              width={687}
+              height={253}
+              className="h-8 w-auto object-contain"
+            />
+          </Link>
         </div>
 
         {/* Menu Section */}
