@@ -515,8 +515,11 @@ describe("notice source and target filters", () => {
     assert.match(staffNoticesPage, /useState<StaffSourceFilter>\("all"\)/);
     assert.match(staffNoticesPage, /sourceFilter !== "all" && notice\.sourceType !== sourceFilter/);
     assert.match(staffNoticesPage, /useState<string>\(ALL_TARGETS\)/);
-    assert.match(staffNoticesPage, /targetFilter === FRANCHISE_TARGETS/);
-    assert.match(staffNoticesPage, /setNotices\(\(result\.notices \?\? \[\]\)\.map\(toStaffNotice\)\)/);
+    assert.match(staffNoticesPage, /activeTargetFilter === FRANCHISE_TARGETS/);
+    // 여러 매장 응답을 공지 id 기준으로 한 번만 toStaffNotice로 변환해 합친다.
+    assert.match(staffNoticesPage, /const noticesById = new Map<string, StaffNotice>\(\)/);
+    assert.match(staffNoticesPage, /if \(!noticesById\.has\(notice\.id\)\) noticesById\.set\(notice\.id, toStaffNotice\(notice\)\)/);
+    assert.match(staffNoticesPage, /setResult\(\{ key: requestKey, status: "ready", notices: mergedNotices/);
     assert.match(staffRoute, /sourceLabel: row\.audience === "staff" \? "점주 공지" : "본사 공지"/);
     assert.match(staffNoticesPage, /label: "본사 공지"/);
     assert.match(staffNoticesPage, /label: "점주 공지"/);
@@ -525,10 +528,18 @@ describe("notice source and target filters", () => {
   test("role filters are local state and compose with existing search", () => {
     assert.match(hqNoticesPage, /\.filter\(\(notice\) => !query \|\| notice\.title\.toLowerCase\(\)\.includes\(query\)\)/);
     assert.match(ownerNoticesPage, /const query = searchQuery\.toLowerCase\(\)\.trim\(\)/);
-    assert.match(staffNoticesPage, /const query = searchQuery\.toLowerCase\(\)/);
+    assert.match(staffNoticesPage, /const normalizedQuery = trimmedQuery\.toLowerCase\(\)/);
+    assert.match(
+      staffNoticesPage,
+      /const visibleNotices = notices\.filter\(\(notice\) => \{[\s\S]*?sourceFilter !== "all"[\s\S]*?FRANCHISE_TARGETS[\s\S]*?notice\.title\.toLowerCase\(\)\.includes\(normalizedQuery\)/,
+    );
     assert.match(hqNoticesPage, /void loadNotices\(\);\s*\}, \[isReady\]\)/);
     assert.match(ownerNoticesPage, /fetchNotices\(\);\s*\}, \[selectedStoreId\]\)/);
-    assert.match(staffNoticesPage, /void fetchNotices\(\);\s*\}, \[\]\)/);
+    // STAFF는 선택 매장(전체면 승인된 모든 매장)별로 storeId를 붙여 조회하고, 조회 대상 배열은 memo로 고정한다.
+    assert.match(staffNoticesPage, /const storeIdsToFetch = useMemo\(/);
+    assert.match(staffNoticesPage, /activeStoreFilter === "all" \? stores\.map\(\(store\) => store\.id\) : \[activeStoreFilter\]/);
+    assert.match(staffNoticesPage, /fetch\(`\/api\/staff\/notices\?storeId=\$\{encodeURIComponent\(storeId\)\}`/);
+    assert.match(staffNoticesPage, /\}, \[storeIdsToFetch, requestKey, router\]\)/);
   });
 });
 
@@ -649,9 +660,18 @@ describe("notice routes enforce the shared policy", () => {
   });
 
   test("STAFF reads only approved staff memberships and server-filtered audiences", () => {
-    assert.match(staffRoute, /\.eq\("role", "staff"\)[\s\S]*?\.eq\("status", "approved"\)/);
-    assert.match(staffRoute, /\.select\("role"\)/);
+    assert.match(staffRoute, /requireServerRole\("staff"\)/);
+    assert.match(staffRoute, /searchParams\.get\("storeId"\)/);
+    assert.match(staffRoute, /code: "STORE_REQUIRED" \}, \{ status: 400 \}/);
+    assert.match(
+      staffRoute,
+      /\.eq\("user_id", userId\)[\s\S]*?\.eq\("store_id", storeId\)[\s\S]*?\.eq\("role", "staff"\)[\s\S]*?\.eq\("status", "approved"\)/,
+    );
+    assert.match(staffRoute, /code: "STORE_FORBIDDEN" \}, \{ status: 403 \}/);
+    assert.match(staffRoute, /membership\.franchise_id !== store\.franchise_id/);
     assert.equal(/select\("role, franchise_id"\)/.test(staffRoute), false);
+    assert.match(staffRoute, /fetchNoticesForStore\(adminClient, storeId\)/);
+    assert.match(staffRoute, /\.eq\("franchise_id", store\.franchise_id\)[\s\S]*?\.in\("audience", \["all_members", "staff"\]\)/);
     assert.match(staffRoute, /canReadNotice\("staff"/);
   });
 });
@@ -757,8 +777,10 @@ describe("STAFF notice detail interaction", () => {
   test("opens a dialog from the list without navigating to a missing id route", () => {
     assert.equal(/href=\{`\/staff\/notices\/\$\{notice\.id\}`\}/.test(staffNoticesPage), false);
     assert.match(staffNoticesPage, /onOpen=\{\(\) => openNotice\(notice\)\}/);
-    assert.match(staffNoticesPage, /const openNotice = \(notice: StaffNotice\) => \{[\s\S]*?setSelectedNotice\(notice\);[\s\S]*?markNoticeAsRead\(notice\.id\)\.then/);
-    assert.match(staffNoticesPage, /<NoticeDetailDialog/);
+    assert.match(staffNoticesPage, /useState<\{ storeId: string; noticeId: string \} \| null>\(null\)/);
+    assert.match(staffNoticesPage, /const openNotice = \(notice: StaffNotice\) => \{[\s\S]*?setDetail\(\{ storeId: detailStoreId, noticeId: notice\.id \}\);[\s\S]*?if \(notice\.isRead\) return;[\s\S]*?markNoticeAsRead\(notice\.id\)\.then/);
+    assert.match(staffNoticesPage, /const selectedNotice = detail \? notices\.find\(\(notice\) => notice\.id === detail\.noticeId\)/);
+    assert.match(staffNoticesPage, /<NoticeDetailDialog[\s\S]*?onClose=\{\(\) => setDetail\(null\)\}/);
     assert.match(noticeDetailDialog, /role="dialog"/);
     assert.match(noticeDetailDialog, /aria-modal="true"/);
     assert.match(noticeDetailDialog, /\{notice\.title\}/);
