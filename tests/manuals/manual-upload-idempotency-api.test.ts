@@ -190,11 +190,11 @@ describe("confirm 라우트의 중복 방지 계약", () => {
   });
 });
 
-describe("preview -> confirm key 연결", () => {
+describe("분석 결과 -> 확정 저장 key 연결", () => {
   const hqPreview = readSource("app/api/manuals/preview/route.ts");
   const storePreview = readSource("app/api/store-manuals/preview/route.ts");
   const hqPage = readSource("app/hq/manuals/onboarding/page.tsx");
-  const storePage = readSource("app/boss/store-manuals/upload/page.tsx");
+  const storePage = readSource("app/boss/store-manuals/page.tsx");
 
   test("미리보기 성공 시 서버가 key를 발급한다", () => {
     for (const source of [hqPreview, storePreview]) {
@@ -213,7 +213,7 @@ describe("preview -> confirm key 연결", () => {
 
   test("같은 미리보기 세션은 같은 key를 저장 요청에 함께 보낸다", () => {
     assert.match(hqPage, /body: JSON\.stringify\(\{ manuals: payloadManuals, idempotencyKey \}\)/);
-    assert.match(storePage, /body: JSON\.stringify\(\{ storeId, manuals: payloadManuals, idempotencyKey \}\)/);
+    assert.match(storePage, /body: JSON\.stringify\(\{ storeId: selectedStoreId, manuals: payloadManuals, idempotencyKey \}\)/);
   });
 
   test("새 파일을 올리면 key가 초기화돼 새 key를 받는다", () => {
@@ -225,33 +225,34 @@ describe("preview -> confirm key 연결", () => {
 
   test("key가 없으면 저장을 시작하지 않는다 (중복 클릭 가드는 그대로 유지)", () => {
     assert.match(hqPage, /if \(!preview \|\| !idempotencyKey \|\| isSubmittingRef\.current\) return;/);
-    assert.match(storePage, /if \(!preview \|\| !storeId \|\| !idempotencyKey \|\| isSubmittingRef\.current\) return;/);
+    assert.match(storePage, /if \(!preview \|\| !selectedStoreId \|\| !idempotencyKey \|\| isSubmittingRef\.current\) return;/);
   });
 
   test("저장 중 버튼 비활성화와 접근성 안내가 유지된다", () => {
-    for (const source of [hqPage, storePage]) {
-      assert.match(source, /disabled=\{isSaving\}/);
-      assert.match(source, /isLoading=\{isSaving\}/);
-      assert.match(source, /role="alert"/);
-    }
+    assert.match(hqPage, /disabled=\{isSaving\}/);
+    assert.match(hqPage, /isLoading=\{isSaving\}/);
+    assert.match(storePage, /disabled=\{isSavingAnalysis\}/);
+    assert.match(storePage, /isLoading=\{isSavingAnalysis\}/);
+    assert.match(storePage, /role="alert"/);
   });
 
   test("서버가 돌려준 안내 문구를 그대로 보여주고 기술 용어를 쓰지 않는다", () => {
-    for (const source of [hqPage, storePage]) {
-      assert.match(source, /setError\(e instanceof Error \? e\.message/);
-      // 사용자에게 보이는 문구는 한글이 들어있는 문자열 리터럴뿐이다.
-      const koreanLiterals = (source.match(/["'`][^"'`\n]*[가-힣][^"'`\n]*["'`]/g) ?? []).join(" ");
-      for (const term of ["hash", "idempotency", "batch"]) {
-        assert.equal(koreanLiterals.toLowerCase().includes(term), false, `shows ${term}`);
-      }
+    assert.match(hqPage, /setError\(e instanceof Error \? e\.message/);
+    assert.match(storePage, /setAnalysisSaveError\(e instanceof Error \? e\.message/);
+    // 사용자에게 보이는 문구는 한글이 들어있는 문자열 리터럴뿐이다.
+    const koreanLiterals = (storePage.match(/["'`][^"'`\n]*[가-힣][^"'`\n]*["'`]/g) ?? []).join(" ");
+    for (const term of ["hash", "idempotency", "batch"]) {
+      assert.equal(koreanLiterals.toLowerCase().includes(term), false, `shows ${term}`);
     }
   });
 
   test("중복이라고 기존 데이터를 자동으로 덮어쓰거나 지우지 않는다", () => {
-    for (const source of [hqPage, storePage]) {
-      assert.equal(/method: "DELETE"/.test(source), false);
-      assert.equal(/method: "PATCH"/.test(source), false);
-    }
+    const storeSaveHandler = storePage.slice(
+      storePage.indexOf("const handleSaveAnalysis"),
+      storePage.indexOf("const includedAnalysisCount"),
+    );
+    assert.equal(/method: "DELETE"/.test(storeSaveHandler), false);
+    assert.equal(/method: "PATCH"/.test(storeSaveHandler), false);
   });
 });
 
@@ -270,7 +271,7 @@ describe("기존 계약 회귀 없음", () => {
   });
 
   test("미리보기 편집 UI는 HQ/점주가 계속 공유한다", () => {
-    for (const relative of ["app/hq/manuals/onboarding/page.tsx", "app/boss/store-manuals/upload/page.tsx"]) {
+    for (const relative of ["app/hq/manuals/onboarding/page.tsx", "app/boss/store-manuals/page.tsx"]) {
       assert.match(readSource(relative), /<ManualPreviewEditor/);
     }
   });

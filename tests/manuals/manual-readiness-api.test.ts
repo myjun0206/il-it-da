@@ -320,9 +320,49 @@ describe("기존 화면/계약 회귀 없음", () => {
   });
 
   test("저장 완료 문구가 검색 준비 완료를 뜻하지 않도록 안내한다", () => {
-    for (const relative of ["app/hq/manuals/onboarding/page.tsx", "app/boss/store-manuals/upload/page.tsx"]) {
+    for (const relative of ["app/hq/manuals/onboarding/page.tsx", "app/boss/store-manuals/page.tsx"]) {
       assert.match(readSource(relative), /저장했어요\. 검색 준비 상태를 확인해 주세요\./);
     }
+  });
+
+  test("HQ 지점 매뉴얼 화면은 프랜차이즈별 지점 요약과 선택 지점 ID를 사용한다", () => {
+    const page = readSource("app/hq/manuals/stores/page.tsx");
+    assert.match(page, /fetch\("\/api\/hq\/stores"\)/);
+    assert.match(page, /new URLSearchParams\(window\.location\.search\)\.get\("storeId"\)/);
+    assert.match(page, /fetch\(`\/api\/manuals\?storeId=\$\{encodeURIComponent\(selectedStoreId\)\}&scope=store`/);
+    assert.match(page, /onClick=\{\(\) => openStoreManuals\(store\.id\)\}/);
+    assert.equal(page.includes('fetch("/api/manuals")'), false);
+  });
+
+  test("HQ의 지점 매뉴얼 조회는 동일 franchise 소속을 검증하고 store_id만 반환한다", () => {
+    const route = readSource("app/api/manuals/route.ts");
+    assert.match(route, /const storeOnly = profile\.role === "hq" && searchParams\.get\("scope"\) === "store"/);
+    assert.match(route, /\.from\("stores"\)[\s\S]*?\.eq\("id", storeIdParam\)[\s\S]*?\.eq\("franchise_id", franchiseId\)/);
+    assert.match(route, /if \(!selectedStore\)[\s\S]*?status: 403/);
+    assert.match(route, /query\.eq\("store_id", storeId as string\)/);
+  });
+
+  test("manuals RLS는 클라이언트 직접 접근을 계속 제한하고 HQ 서비스 API가 권한을 검사한다", () => {
+    const schema = readSource("supabase/migrations/001_initial_rag_schema.sql");
+    const staffPolicy = readSource("supabase/migrations/029_staff_hq_manual_read_access.sql");
+    const adminClient = readSource("lib/supabase/admin.ts");
+    const hqStoresRoute = readSource("app/api/hq/stores/route.ts");
+    assert.match(schema, /alter table public\.manuals enable row level security/);
+    assert.match(staffPolicy, /store_id is null/);
+    assert.match(adminClient, /SUPABASE_SERVICE_ROLE_KEY/);
+    assert.match(hqStoresRoute, /requireHqUser\(\)/);
+  });
+
+  test("HQ brand_id 누락은 고유 franchise 이름으로만 복구하고, 조회 실패를 빈 지점 목록으로 숨기지 않는다", () => {
+    const route = readSource("app/api/hq/stores/route.ts");
+    const page = readSource("app/hq/manuals/stores/page.tsx");
+    assert.match(route, /normalizeFranchiseName\(franchise\.name\) === normalizedBrandName/);
+    assert.match(route, /matchingFranchises\.length !== 1/);
+    assert.match(route, /\.eq\("franchise_id", franchiseId\)/);
+    assert.equal(route.includes("if (!hqUser.franchiseId)"), false);
+    assert.match(page, /setStoreListError\(e instanceof Error \? e\.message/);
+    assert.match(page, /\) : storeListError \?/);
+    assert.match(page, /setReloadStoreList\(\(current\) => current \+ 1\)/);
   });
 
   test("확정 저장 API의 성공 응답 shape({ manuals })는 바뀌지 않았다", () => {

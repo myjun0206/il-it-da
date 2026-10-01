@@ -107,8 +107,12 @@ export async function GET(request: Request): Promise<NextResponse<ManualsListRes
 
     const { searchParams } = new URL(request.url);
     const storeIdParam = getString(searchParams.get("storeId") ?? undefined);
+    const storeOnly = profile.role === "hq" && searchParams.get("scope") === "store";
     if (profile.role === "owner" && !storeIdParam) {
       return NextResponse.json({ error: "공통 매뉴얼을 조회할 운영 매장을 선택해주세요." }, { status: 400 });
+    }
+    if (storeOnly && !storeIdParam) {
+      return NextResponse.json({ error: "조회할 지점을 선택해주세요." }, { status: 400 });
     }
 
     // HQ는 master profile의 franchise를 사용하고, owner는 브랜드별 profile과
@@ -189,6 +193,26 @@ export async function GET(request: Request): Promise<NextResponse<ManualsListRes
       }
     }
 
+    if (profile.role === "hq" && storeIdParam) {
+      if (!franchiseId) {
+        return NextResponse.json({ error: "본사 브랜드를 확인할 수 없습니다." }, { status: 403 });
+      }
+
+      const { data: selectedStore, error: selectedStoreError } = await adminClient
+        .from("stores")
+        .select("id")
+        .eq("id", storeIdParam)
+        .eq("franchise_id", franchiseId)
+        .maybeSingle<{ id: string }>();
+
+      if (selectedStoreError) {
+        return NextResponse.json({ error: "지점 권한을 확인하지 못했습니다." }, { status: 500 });
+      }
+      if (!selectedStore) {
+        return NextResponse.json({ error: "선택한 지점을 조회할 권한이 없습니다." }, { status: 403 });
+      }
+    }
+
     // Owner는 공통 매뉴얼(store_id = null)만 조회 가능
     const storeId = profile.role === "owner" ? null : storeIdParam;
     const includeCategoryPlaceholders = profile.role === "hq" && searchParams.get("includeCategoryPlaceholders") === "1";
@@ -211,8 +235,12 @@ export async function GET(request: Request): Promise<NextResponse<ManualsListRes
       query = franchiseId ? query.eq("franchise_id", franchiseId) : query.eq("brand_name", brandName);
     }
 
-    // 매뉴얼 범위 제한
-    query = storeId ? query.or(`store_id.eq.${storeId},store_id.is.null`) : query.is("store_id", null);
+    // Owner common-manual views include HQ rows; HQ store detail can request that store only.
+    query = storeOnly
+      ? query.eq("store_id", storeId as string)
+      : storeId
+        ? query.or(`store_id.eq.${storeId},store_id.is.null`)
+        : query.is("store_id", null);
 
     const { data, error } = await query;
 

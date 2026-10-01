@@ -12,6 +12,10 @@ type HqStoresResponse = {
   error?: string;
 };
 
+function normalizeFranchiseName(value: string): string {
+  return value.trim().toLocaleLowerCase().replace(/\s+/g, " ");
+}
+
 export async function GET(): Promise<NextResponse<HqStoresResponse>> {
   try {
     // 1~2) 로그인 + profiles.role = 'hq' 확인
@@ -20,17 +24,39 @@ export async function GET(): Promise<NextResponse<HqStoresResponse>> {
       return NextResponse.json({ error: "본사 관리자만 접근할 수 있습니다." }, { status: 403 });
     }
 
-    // 3) franchise_id가 없는 레거시 HQ 계정은 다른 브랜드 지점이 섞이지 않도록 fail closed 한다.
-    if (!hqUser.franchiseId) {
-      return NextResponse.json({ stores: [] });
+    const adminClient = createAdminClient();
+    let franchiseId = hqUser.franchiseId;
+
+    // brand_id가 빠진 레거시 HQ는 브랜드명이 프랜차이즈 디렉터리에서 유일하게 확인될 때만 복구한다.
+    if (!franchiseId) {
+      const { data: franchises, error: franchiseError } = await adminClient
+        .from("franchises")
+        .select("id, name");
+
+      if (franchiseError) {
+        return NextResponse.json({ error: "본사 브랜드 정보를 확인하지 못했습니다." }, { status: 500 });
+      }
+
+      const normalizedBrandName = normalizeFranchiseName(hqUser.brandName);
+      const matchingFranchises = (franchises ?? []).filter(
+        (franchise) => normalizeFranchiseName(franchise.name) === normalizedBrandName,
+      );
+
+      if (matchingFranchises.length !== 1) {
+        return NextResponse.json(
+          { error: "본사 브랜드 연결을 확인할 수 없습니다. 관리자에게 문의해 주세요." },
+          { status: 403 },
+        );
+      }
+
+      franchiseId = matchingFranchises[0].id;
     }
 
-    // 4) 이 HQ의 franchise에 속한 지점만 조회
-    const adminClient = createAdminClient();
+    // 해당 프랜차이즈에 속한 지점만 조회한다.
     const { data: stores, error: storeError } = await adminClient
       .from("stores")
       .select("id, store_name, created_at")
-      .eq("franchise_id", hqUser.franchiseId)
+      .eq("franchise_id", franchiseId)
       .order("store_name", { ascending: true });
 
     if (storeError) {

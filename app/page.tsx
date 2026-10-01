@@ -24,6 +24,7 @@ function LoginPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const verificationError = searchParams.get("error") === "verification_failed";
+  const sessionExpired = searchParams.get("session") === "expired";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
@@ -261,6 +262,11 @@ function LoginPageContent() {
             </div>
 
             <form onSubmit={handleLogin} className="space-y-5">
+              {sessionExpired && (
+                <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  로그인 세션이 만료되었습니다. 다시 로그인해 주세요.
+                </p>
+              )}
               {verificationError && (
                 <p className="rounded-lg border border-[var(--color-status-error)]/20 bg-red-50 px-4 py-3 text-sm text-[var(--color-status-error)]">
                   이메일 인증 확인에 실패했습니다. 다시 시도하거나 재가입해 주세요.
@@ -470,6 +476,11 @@ function LoginPageContent() {
             </div>
 
             <form onSubmit={handleLogin} className="space-y-4">
+              {sessionExpired && (
+                <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  로그인 세션이 만료되었습니다. 다시 로그인해 주세요.
+                </p>
+              )}
               {verificationError && (
                 <p className="rounded-lg border border-[var(--color-status-error)]/20 bg-red-50 px-4 py-3 text-sm text-[var(--color-status-error)]">
                   이메일 인증 확인에 실패했습니다. 다시 시도하거나 재가입해 주세요.
