@@ -84,6 +84,8 @@ export default function OwnerAddStorePage() {
         created?: boolean;
         membershipStatus?: string;
         code?: string;
+        requestId?: string;
+        error?: string;
       };
 
       if (response.status === 401) {
@@ -99,7 +101,11 @@ export default function OwnerAddStorePage() {
         return { kind: "error", message: "운영 매장을 추가할 권한이 없습니다." };
       }
       if (!response.ok || !result.success || !result.membershipId) {
-        return { kind: "error", message: "일시적인 서버 오류로 신청하지 못했습니다. 잠시 후 다시 시도해 주세요." };
+        const requestReference = result.requestId ? ` (문의 ID: ${result.requestId})` : "";
+        return {
+          kind: "error",
+          message: `일시적인 서버 오류로 신청하지 못했습니다. 잠시 후 다시 시도해 주세요.${requestReference}`,
+        };
       }
 
       const refreshed = await loadOwnerMemberships();

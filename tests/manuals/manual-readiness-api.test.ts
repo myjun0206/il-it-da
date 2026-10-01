@@ -353,6 +353,24 @@ describe("기존 화면/계약 회귀 없음", () => {
     assert.match(hqStoresRoute, /requireHqUser\(\)/);
   });
 
+  test("HQ 공통 매뉴얼 조회는 no-store이며 요청별 진단과 오류 재시도 UI를 제공한다", () => {
+    const route = readSource("app/api/manuals/route.ts");
+    const page = readSource("app/hq/manuals/common/page.tsx");
+    const proxy = readSource("lib/supabase/middleware.ts");
+    assert.match(route, /"Cache-Control": "private, no-store, max-age=0"/);
+    assert.match(route, /Vary: "Cookie"/);
+    assert.match(route, /"X-Request-Id": requestId/);
+    assert.match(route, /logDiagnosticError\("MANUALS_GET"/);
+    assert.match(route, /request\.headers\.get\("x-proxy-request-id"\)/);
+    assert.match(route, /franchiseError \|\| !franchise/);
+    assert.match(proxy, /request\.headers\.set\("x-proxy-request-id", proxyRequestId\)/);
+    assert.match(proxy, /refreshedCookieCount/);
+    assert.match(proxy, /logDiagnosticError\("SUPABASE_PROXY_SESSION"/);
+    assert.match(page, /cache: "no-store"/);
+    assert.match(page, /manualsLoadError/);
+    assert.match(page, /다시 시도/);
+  });
+
   test("HQ brand_id 누락은 고유 franchise 이름으로만 복구하고, 조회 실패를 빈 지점 목록으로 숨기지 않는다", () => {
     const route = readSource("app/api/hq/stores/route.ts");
     const page = readSource("app/hq/manuals/stores/page.tsx");

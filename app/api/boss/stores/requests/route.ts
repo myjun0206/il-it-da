@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
+import { createDiagnosticRequestId, logDiagnosticError } from "@/lib/auth/diagnostic-error-log";
 import { submitStoreMembershipRequest } from "@/lib/signup/store-membership-service";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveFranchiseIdForStoreName } from "@/lib/supabase/resolve-store-franchise";
@@ -17,6 +17,7 @@ type OwnerStoreRequestResponse = {
   membershipStatus?: string;
   code?: OwnerStoreRequestCode;
   error?: string;
+  requestId?: string;
 };
 
 export const STORE_BRAND_UNKNOWN_MESSAGE =
@@ -33,25 +34,57 @@ export const STORE_BRAND_UNKNOWN_MESSAGE =
  *   (중복이면 기존 membership을 그대로 반환하고, 승인은 기존 HQ 승인 화면/API에서만 한다)
  */
 export async function POST(request: NextRequest): Promise<NextResponse<OwnerStoreRequestResponse>> {
-  const serverClient = await createClient();
-  const { data: userData, error: userError } = await serverClient.auth.getUser();
-  if (userError || !userData.user) {
-    return NextResponse.json({ success: false, error: "로그인이 필요합니다." }, { status: 401 });
-  }
-
-  let body: { storeId?: unknown; storeName?: unknown };
-  try {
-    body = (await request.json()) as { storeId?: unknown; storeName?: unknown };
-  } catch {
-    return NextResponse.json({ success: false, error: "요청 형식이 올바르지 않습니다." }, { status: 400 });
-  }
-
-  const storeName = typeof body.storeName === "string" ? body.storeName.trim() : "";
-  if (!storeName) {
-    return NextResponse.json({ success: false, error: "매장을 선택해 주세요." }, { status: 400 });
-  }
+  const requestId = createDiagnosticRequestId();
+  let stage = "session.get_user";
+  let userId: string | null = null;
+  let requestedStoreId: string | null = null;
+  let hasStoreName = false;
+  const hasSessionCookie = request.cookies.getAll().some(({ name }) => name === "il-it-da-auth-session" || name.startsWith("il-it-da-auth-session."));
+  const proxyRequestId = request.headers.get("x-proxy-request-id") ?? undefined;
+  const respond = (body: OwnerStoreRequestResponse, status: number) =>
+    NextResponse.json(status >= 500 ? { ...body, requestId } : body, {
+      status,
+      headers: { "Cache-Control": "private, no-store, max-age=0", "X-Request-Id": requestId },
+    });
 
   try {
+    const serverClient = await createClient();
+    const { data: userData, error: userError } = await serverClient.auth.getUser();
+    if (userError || !userData.user) {
+      logDiagnosticError("OWNER_STORE_REQUEST", stage, userError ?? new Error("Supabase returned no authenticated user"), {
+        requestId,
+        path: "/api/boss/stores/requests",
+        hasSessionCookie,
+        proxyRequestId,
+        sessionPresent: false,
+      });
+      return respond({ success: false, error: "로그인 정보를 확인할 수 없습니다. 다시 로그인해 주세요." }, 401);
+    }
+    userId = userData.user.id;
+
+    stage = "request.parse";
+    let body: { storeId?: unknown; storeName?: unknown };
+    try {
+      body = (await request.json()) as { storeId?: unknown; storeName?: unknown };
+    } catch (error) {
+      logDiagnosticError("OWNER_STORE_REQUEST", stage, error, {
+        requestId,
+        proxyRequestId,
+        userId,
+        hasSessionCookie,
+        sessionPresent: true,
+      });
+      return respond({ success: false, error: "요청 형식이 올바르지 않습니다." }, 400);
+    }
+
+    const storeName = typeof body.storeName === "string" ? body.storeName.trim() : "";
+    requestedStoreId = typeof body.storeId === "string" && body.storeId.trim() ? body.storeId.trim() : null;
+    hasStoreName = Boolean(storeName);
+    if (!storeName) {
+      return respond({ success: false, error: "매장을 선택해 주세요." }, 400);
+    }
+
+    stage = "profile.lookup";
     const adminClient = createAdminClient();
     const { data: profile, error: profileError } = await adminClient
       .from("profiles")
@@ -69,10 +102,10 @@ export async function POST(request: NextRequest): Promise<NextResponse<OwnerStor
 
     // 대상 매장의 브랜드는 서버에서만 정한다. storeId가 있으면 그 매장 행의 franchise_id가 기준이고,
     // 없을 때만 기존 가입 경로와 같은 매장명 resolver를 쓴다.
-    const requestedStoreId = typeof body.storeId === "string" && body.storeId.trim() ? body.storeId.trim() : undefined;
     let storeFranchiseId: string | null = null;
 
     if (requestedStoreId) {
+      stage = "store.brand_lookup";
       const { data: store, error: storeError } = await adminClient
         .from("stores")
         .select("franchise_id")
@@ -82,7 +115,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<OwnerStor
       if (storeError) throw storeError;
       storeFranchiseId = store?.franchise_id ?? null;
     } else {
-      storeFranchiseId = await resolveFranchiseIdForStoreName(adminClient, storeName);
+      stage = "store.franchise_resolve";
+      storeFranchiseId = await resolveFranchiseIdForStoreName(adminClient, storeName, { requestId, userId });
     }
 
     if (!storeFranchiseId) {
@@ -92,17 +126,33 @@ export async function POST(request: NextRequest): Promise<NextResponse<OwnerStor
       );
     }
 
+    stage = "membership.submit";
     const result = await submitStoreMembershipRequest(adminClient, {
       userId: userData.user.id,
       userName: profile.full_name || userData.user.user_metadata?.name || userData.user.email || "점주",
       role: "owner",
-      storeId: requestedStoreId,
+      storeId: requestedStoreId ?? undefined,
       storeName,
       franchiseId: storeFranchiseId,
       currentApprovalStatus: profile.approval_status,
+      diagnosticRequestId: requestId,
     });
 
-    return NextResponse.json(
+    if (result.status >= 500) {
+      logDiagnosticError("OWNER_STORE_REQUEST", stage, new Error(result.error || "Membership request failed"), {
+        requestId,
+        userId,
+        role: "owner",
+        storeId: requestedStoreId,
+        franchiseId: storeFranchiseId,
+        storeName,
+        hasSessionCookie,
+        proxyRequestId,
+        sessionPresent: true,
+      });
+    }
+
+    return respond(
       {
         success: result.success,
         membershipId: result.membershipId,
@@ -112,10 +162,19 @@ export async function POST(request: NextRequest): Promise<NextResponse<OwnerStor
         code: result.code === "STORE_NOT_FOUND" || result.code === "STORE_BRAND_UNKNOWN" ? result.code : undefined,
         error: result.success ? undefined : "운영 신청을 처리하지 못했습니다.",
       },
-      { status: result.status },
+      result.status,
     );
   } catch (error) {
-    logSafeAuthError("OWNER_STORE_REQUEST_FAILED", error);
-    return NextResponse.json({ success: false, error: "운영 신청을 처리하지 못했습니다." }, { status: 500 });
+    logDiagnosticError("OWNER_STORE_REQUEST", stage, error, {
+      requestId,
+      proxyRequestId,
+      userId,
+      role: "owner",
+      storeId: requestedStoreId,
+      hasStoreName,
+      hasSessionCookie,
+      sessionPresent: Boolean(userId),
+    });
+    return respond({ success: false, error: "일시적인 서버 오류로 운영 신청을 처리하지 못했습니다." }, 500);
   }
 }

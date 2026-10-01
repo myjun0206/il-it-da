@@ -3,12 +3,14 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { requireHqUser } from "@/lib/supabase/hq-auth";
+import { createDiagnosticRequestId, logDiagnosticError } from "@/lib/auth/diagnostic-error-log";
 import { HQ_MANUAL_CATEGORY_PLACEHOLDER_CONTENT } from "@/lib/manuals/constants";
 import { type ManualItemInput } from "@/lib/rag/save-manual-sections";
 import { saveManualGroupsWithBatchGuard } from "@/lib/manuals/save-manuals-with-batch";
 import type { ManualRecord } from "@/lib/types/manual";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type CreateManualGroupRequestBody = {
   category?: unknown;
@@ -84,16 +86,48 @@ function parseItems(items: unknown): ManualItemInput[] | null {
 }
 
 export async function GET(request: Request): Promise<NextResponse<ManualsListResponse>> {
+  const requestId = createDiagnosticRequestId();
+  const startedAt = Date.now();
+  const searchParams = new URL(request.url).searchParams;
+  const storeIdParam = getString(searchParams.get("storeId") ?? undefined);
+  const scope = searchParams.get("scope") === "store" ? "store" : "common";
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  const hasSessionCookie = cookieHeader.split(";").some((cookie) => /^il-it-da-auth-session(?:\.\d+)?=/.test(cookie.trim()));
+  const proxyRequestId = request.headers.get("x-proxy-request-id") ?? undefined;
+  let userId: string | null = null;
+  let role: string | undefined;
+  let stage = "auth.get_user";
+  const response = (body: ManualsListResponse, status = 200) =>
+    NextResponse.json(body, {
+      status,
+      headers: {
+        "Cache-Control": "private, no-store, max-age=0",
+        Vary: "Cookie",
+        "X-Request-Id": requestId,
+      },
+    });
+
   try {
     // 세션에서 사용자 정보 조회
     const serverClient = await createClient();
     const { data: userData, error: userError } = await serverClient.auth.getUser();
 
     if (userError || !userData.user) {
-      return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
+      logDiagnosticError("MANUALS_GET", stage, userError ?? new Error("Supabase returned no authenticated user"), {
+        requestId,
+        path: "/api/manuals",
+        scope,
+        hasStoreId: Boolean(storeIdParam),
+        hasSessionCookie,
+        proxyRequestId,
+        sessionPresent: Boolean(userData.user),
+      });
+      return response({ error: "로그인이 필요합니다." }, 401);
     }
+    userId = userData.user.id;
 
     // 권한 확인 (HQ 또는 Owner만 접근 가능)
+    stage = "profile.lookup";
     const adminClient = createAdminClient();
     const { data: profile, error: profileError } = await adminClient
       .from("profiles")
@@ -101,18 +135,27 @@ export async function GET(request: Request): Promise<NextResponse<ManualsListRes
       .eq("id", userData.user.id)
       .maybeSingle<{ role: string; brand_id: string | null }>();
 
-    if (profileError || !profile || (profile.role !== "hq" && profile.role !== "owner")) {
-      return NextResponse.json({ error: "매뉴얼 열람 권한이 없습니다." }, { status: 403 });
+    if (profileError) {
+      logDiagnosticError("MANUALS_GET", stage, profileError, {
+        requestId,
+        userId,
+        hasSessionCookie,
+        proxyRequestId,
+        sessionPresent: true,
+      });
+      return response({ error: "매뉴얼 권한을 확인하지 못했습니다." }, 500);
     }
+    if (!profile || (profile.role !== "hq" && profile.role !== "owner")) {
+      return response({ error: "매뉴얼 열람 권한이 없습니다." }, 403);
+    }
+    role = profile.role;
 
-    const { searchParams } = new URL(request.url);
-    const storeIdParam = getString(searchParams.get("storeId") ?? undefined);
     const storeOnly = profile.role === "hq" && searchParams.get("scope") === "store";
     if (profile.role === "owner" && !storeIdParam) {
-      return NextResponse.json({ error: "공통 매뉴얼을 조회할 운영 매장을 선택해주세요." }, { status: 400 });
+      return response({ error: "공통 매뉴얼을 조회할 운영 매장을 선택해주세요." }, 400);
     }
     if (storeOnly && !storeIdParam) {
-      return NextResponse.json({ error: "조회할 지점을 선택해주세요." }, { status: 400 });
+      return response({ error: "조회할 지점을 선택해주세요." }, 400);
     }
 
     // HQ는 master profile의 franchise를 사용하고, owner는 브랜드별 profile과
@@ -140,7 +183,16 @@ export async function GET(request: Request): Promise<NextResponse<ManualsListRes
         ]);
 
       if (brandProfileError || membershipError) {
-        return NextResponse.json({ error: "브랜드 매뉴얼 범위를 확인하지 못했습니다." }, { status: 500 });
+        const error = brandProfileError ?? membershipError;
+        logDiagnosticError("MANUALS_GET", "owner.scope_lookup", error, {
+          requestId,
+          userId,
+          role,
+          hasSessionCookie,
+          proxyRequestId,
+          sessionPresent: true,
+        });
+        return response({ error: "브랜드 매뉴얼 범위를 확인하지 못했습니다." }, 500);
       }
 
       const storeIds = [...new Set((memberships ?? []).map((membership) => membership.store_id))];
@@ -152,7 +204,15 @@ export async function GET(request: Request): Promise<NextResponse<ManualsListRes
         : { data: [], error: null };
 
       if (storesError) {
-        return NextResponse.json({ error: "매장 브랜드 범위를 확인하지 못했습니다." }, { status: 500 });
+        logDiagnosticError("MANUALS_GET", "owner.store_scope_lookup", storesError, {
+          requestId,
+          userId,
+          role,
+          hasSessionCookie,
+          proxyRequestId,
+          sessionPresent: true,
+        });
+        return response({ error: "매장 브랜드 범위를 확인하지 못했습니다." }, 500);
       }
 
       const profileBrandIds = new Set(
@@ -169,21 +229,33 @@ export async function GET(request: Request): Promise<NextResponse<ManualsListRes
         !profileBrandIds.has(selectedFranchiseId) ||
         franchiseIdByStoreId.get(storeIdParam) !== selectedFranchiseId
       ) {
-        return NextResponse.json({ error: "선택한 매장의 브랜드를 확인할 수 없습니다." }, { status: 403 });
+        return response({ error: "선택한 매장의 브랜드를 확인할 수 없습니다." }, 403);
       }
 
       ownerFranchiseIds = [selectedFranchiseId];
     } else if (profile.brand_id) {
-      const { data: franchise } = await adminClient
+      stage = "franchise.lookup";
+      const { data: franchise, error: franchiseError } = await adminClient
         .from("franchises")
         .select("id, name")
         .eq("id", profile.brand_id)
         .maybeSingle<{ id: string; name: string }>();
 
-      if (franchise) {
-        franchiseId = franchise.id;
-        brandName = franchise.name;
+      if (franchiseError || !franchise) {
+        const error = franchiseError ?? new Error("HQ profile brand_id did not resolve to a franchise");
+        logDiagnosticError("MANUALS_GET", stage, error, {
+          requestId,
+          userId,
+          role,
+          hasSessionCookie,
+          proxyRequestId,
+          sessionPresent: true,
+        });
+        return response({ error: "본사 브랜드 정보를 확인하지 못했습니다." }, 500);
       }
+
+      franchiseId = franchise.id;
+      brandName = franchise.name;
     } else {
       // 레거시 계정: user_metadata에서 이름 파싱
       const name = userData.user.user_metadata?.name as string | undefined;
@@ -195,9 +267,10 @@ export async function GET(request: Request): Promise<NextResponse<ManualsListRes
 
     if (profile.role === "hq" && storeIdParam) {
       if (!franchiseId) {
-        return NextResponse.json({ error: "본사 브랜드를 확인할 수 없습니다." }, { status: 403 });
+        return response({ error: "본사 브랜드를 확인할 수 없습니다." }, 403);
       }
 
+      stage = "hq.store_authorization";
       const { data: selectedStore, error: selectedStoreError } = await adminClient
         .from("stores")
         .select("id")
@@ -206,10 +279,20 @@ export async function GET(request: Request): Promise<NextResponse<ManualsListRes
         .maybeSingle<{ id: string }>();
 
       if (selectedStoreError) {
-        return NextResponse.json({ error: "지점 권한을 확인하지 못했습니다." }, { status: 500 });
+        logDiagnosticError("MANUALS_GET", stage, selectedStoreError, {
+          requestId,
+          userId,
+          role,
+          storeId: storeIdParam,
+          franchiseId,
+          hasSessionCookie,
+          proxyRequestId,
+          sessionPresent: true,
+        });
+        return response({ error: "지점 권한을 확인하지 못했습니다." }, 500);
       }
       if (!selectedStore) {
-        return NextResponse.json({ error: "선택한 지점을 조회할 권한이 없습니다." }, { status: 403 });
+        return response({ error: "선택한 지점을 조회할 권한이 없습니다." }, 403);
       }
     }
 
@@ -228,7 +311,7 @@ export async function GET(request: Request): Promise<NextResponse<ManualsListRes
     // 프랜차이즈별 스코핑
     if (profile.role === "owner") {
       if (ownerFranchiseIds.length === 0) {
-        return NextResponse.json({ manuals: [] });
+        return response({ manuals: [] });
       }
       query = query.in("franchise_id", ownerFranchiseIds);
     } else {
@@ -242,20 +325,48 @@ export async function GET(request: Request): Promise<NextResponse<ManualsListRes
         ? query.or(`store_id.eq.${storeId},store_id.is.null`)
         : query.is("store_id", null);
 
+    stage = "manuals.query";
     const { data, error } = await query;
 
     if (error) {
-      return NextResponse.json({ error: "매뉴얼 목록을 불러오지 못했습니다." }, { status: 500 });
+      logDiagnosticError("MANUALS_GET", stage, error, {
+        requestId,
+        userId,
+        role,
+        scope: storeOnly ? "store" : storeId ? "store+common" : "common",
+        hasStoreId: Boolean(storeId),
+        hasSessionCookie,
+        proxyRequestId,
+        sessionPresent: true,
+      });
+      return response({ error: "매뉴얼 목록을 불러오지 못했습니다." }, 500);
     }
 
     const manuals = ((data ?? []) as ManualRecord[]).filter(
       (manual) => includeCategoryPlaceholders || manual.content !== CATEGORY_PLACEHOLDER_CONTENT,
     );
 
-    return NextResponse.json({ manuals });
+    console.info("[MANUALS_GET] complete", {
+      requestId,
+      role,
+      scope: storeOnly ? "store" : storeId ? "store+common" : "common",
+      resultCount: manuals.length,
+      durationMs: Date.now() - startedAt,
+      sessionPresent: true,
+    });
+    return response({ manuals });
   } catch (e) {
-    console.error("GET /api/manuals error:", e);
-    return NextResponse.json({ error: "서버 오류가 발생했습니다." }, { status: 500 });
+    logDiagnosticError("MANUALS_GET", stage, e, {
+      requestId,
+      userId,
+      role,
+      scope,
+      hasStoreId: Boolean(storeIdParam),
+      hasSessionCookie,
+      proxyRequestId,
+      sessionPresent: Boolean(userId),
+    });
+    return response({ error: "서버 오류가 발생했습니다." }, 500);
   }
 }
 
