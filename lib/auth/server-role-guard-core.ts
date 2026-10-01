@@ -54,7 +54,13 @@ export async function requireServerRole(
   const sessionClient = await deps.getSessionClient();
   const { data: userData, error: userError } = await sessionClient.auth.getUser();
 
-  if (userError) {
+  const isMissingSession =
+    userError !== null &&
+    typeof userError === "object" &&
+    "name" in userError &&
+    userError.name === "AuthSessionMissingError";
+
+  if (userError && !isMissingSession) {
     deps.logAuthError?.("REQUIRE_SERVER_ROLE_AUTH_FAILED", userError);
   }
 

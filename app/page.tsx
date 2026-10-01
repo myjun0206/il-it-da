@@ -264,7 +264,7 @@ function LoginPageContent() {
             <form onSubmit={handleLogin} className="space-y-5">
               {sessionExpired && (
                 <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                  다른 기기에서 로그인하여 세션이 만료되었습니다. 다시 로그인해 주세요.
+                  로그인 세션이 만료되었습니다. 다시 로그인해 주세요.
                 </p>
               )}
               {verificationError && (
@@ -478,7 +478,7 @@ function LoginPageContent() {
             <form onSubmit={handleLogin} className="space-y-4">
               {sessionExpired && (
                 <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                  다른 기기에서 로그인하여 세션이 만료되었습니다. 다시 로그인해 주세요.
+                  로그인 세션이 만료되었습니다. 다시 로그인해 주세요.
                 </p>
               )}
               {verificationError && (

@@ -31,8 +31,14 @@ describe("server-side role-protected layouts", () => {
         assert.match(source, new RegExp(`requireServerRole\\(\\s*["']${role}["']\\s*\\)`));
       });
 
-      test("redirects to \"/\" on any non-AUTHORIZED result via next/navigation redirect()", () => {
+      test("redirects unauthenticated requests to login and forbidden roles to home", () => {
         assert.match(source, /import\s*\{\s*redirect\s*\}\s*from\s*["']next\/navigation["']/);
+        if (role === "hq") {
+          assert.match(source, /status === "UNAUTHENTICATED"/);
+          assert.match(source, /redirect\("\/\?session=expired"\)/);
+          assert.match(source, /status === "FORBIDDEN"[\s\S]*?redirect\("\/"\)/);
+          return;
+        }
         assert.match(source, /status\s*!==\s*["']AUTHORIZED["']/);
         assert.match(source, /redirect\(\s*["']\/["']\s*\)/);
       });
@@ -101,6 +107,6 @@ describe("Supabase single-session expiration handling", () => {
 
   test("login page displays the session-replaced message for the expiry query", () => {
     assert.match(loginPage, /searchParams\.get\("session"\) === "expired"/);
-    assert.equal((loginPage.match(/다른 기기에서 로그인하여 세션이 만료되었습니다/g) ?? []).length, 2);
+    assert.equal((loginPage.match(/로그인 세션이 만료되었습니다\. 다시 로그인해 주세요\./g) ?? []).length, 2);
   });
 });
