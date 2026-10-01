@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { AlertCircle, ArrowLeft, Check, CheckCircle2, Clock3, Loader2, MapPin, Search, Store as StoreIcon, UserCheck } from "lucide-react";
+import { AlertCircle, ArrowLeft, Check, CheckCircle2, ChevronRight, ClipboardList, Clock3, Loader2, MapPin, Plus, Search, Store as StoreIcon } from "lucide-react";
+
+import ResultPanel, { RequestStatusBadge } from "@/components/common/ResultPanel";
 
 import StoreMap from "@/components/signup/StoreMap";
 import { formatStoreDisplayName, searchStores } from "@/lib/stores/search-stores";
@@ -16,13 +18,12 @@ export interface StoreRequestCopy {
   backLabel: string;
   title: string;
   description: string;
-  successDescription: string;
   successTitle: string;
+  /** 신청한 매장 카드의 상태 문구 (예: "점주 승인 대기") */
   pendingLabel: string;
-  approvalStepLabel: string;
-  startStepLabel: string;
+  /** 완료 화면의 승인 대기 안내 한 줄 */
   successGuide: string;
-  successSubGuide: string;
+  /** "신청 현황 확인"이 이동할 실제 페이지 */
   statusHref: string;
   searchIdleText: string;
   activeBadge: string;
@@ -178,30 +179,60 @@ export default function StoreRequestFlow({ copy, memberships, onSubmit }: StoreR
 
       <div className="mb-5">
         <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-1.5">{copy.title}</h1>
-        <p className="text-base text-[var(--color-text-secondary)]">
-          {submit.status === "requested"
-            ? copy.successDescription
-            : copy.description}
-        </p>
+        {submit.status !== "requested" && <p className="text-base text-[var(--color-text-secondary)]">{copy.description}</p>}
       </div>
 
       {submit.status === "requested" ? (
-        <section
-          role="status"
-          aria-labelledby="request-done-title"
-          className="w-full rounded-xl border border-[var(--color-border)] bg-white p-6 sm:p-8 lg:px-12 lg:py-10"
+        // 신청 완료: 아이콘·제목 → 승인 대기 안내 → 신청한 매장 → 다음 행동 → 돌아가기
+        <ResultPanel
+          tone="success"
+          titleId="request-done-title"
+          title={copy.successTitle}
+          description={copy.successGuide}
+          actions={
+            <>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Link
+                  href={copy.statusHref}
+                  className="group flex min-h-[64px] items-center gap-3 rounded-lg border border-[var(--color-border)] bg-white px-4 py-3 text-left transition-colors hover:border-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                >
+                  <ClipboardList size={20} className="shrink-0 text-[var(--color-primary)]" aria-hidden="true" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold text-[var(--color-text-primary)]">신청 현황 확인</span>
+                    <span className="block text-xs text-[var(--color-text-secondary)]">매장별 승인 상태를 확인합니다.</span>
+                  </span>
+                  <ChevronRight size={16} className="shrink-0 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => {
+                    // 결과 화면만 닫고 검색 화면으로 돌아간다. 방금 만든 pending 신청은 그대로 유지된다.
+                    setSubmit({ status: "idle" });
+                    setSelectedStoreId(null);
+                  }}
+                  className="group flex min-h-[64px] items-center gap-3 rounded-lg border border-[var(--color-border)] bg-white px-4 py-3 text-left transition-colors hover:border-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                >
+                  <Plus size={20} className="shrink-0 text-[var(--color-primary)]" aria-hidden="true" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold text-[var(--color-text-primary)]">다른 매장 추가</span>
+                    <span className="block text-xs text-[var(--color-text-secondary)]">다른 매장에도 이어서 신청합니다.</span>
+                  </span>
+                  <ChevronRight size={16} className="shrink-0 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+                </button>
+              </div>
+              <Link
+                href={copy.backHref}
+                className="mt-4 flex min-h-[48px] w-full items-center justify-center rounded-lg bg-[var(--color-primary)] px-5 text-base font-semibold text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2"
+              >
+                {copy.backLabel}
+              </Link>
+            </>
+          }
         >
-          <h2 id="request-done-title" className="flex items-center gap-2 text-lg font-bold text-[var(--color-primary)]">
-            <CheckCircle2 size={24} aria-hidden="true" />
-            {copy.successTitle}
-          </h2>
-
-          {/* 신청한 매장 (신청 시 선택한 매장 데이터) */}
-          <div className="mt-6 flex flex-col gap-3 rounded-lg bg-[var(--color-bg-default)] px-5 py-4 sm:flex-row lg:px-6 sm:items-center sm:justify-between sm:gap-6">
+          {/* 신청한 매장 (신청 시 선택한 매장 데이터 + 서버가 만든 pending 상태) */}
+          <div className="flex flex-col gap-3 rounded-lg bg-[var(--color-bg-default)] px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
             <div className="min-w-0">
-              <p className="text-base font-bold text-[var(--color-text-primary)]">
-                {formatStoreDisplayName(submit.storeName)}
-              </p>
+              <p className="text-base font-bold text-[var(--color-text-primary)] break-keep">{formatStoreDisplayName(submit.storeName)}</p>
               {submit.address && (
                 <p className="mt-1 flex items-start gap-1.5 text-sm text-[var(--color-text-secondary)]">
                   <MapPin size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
@@ -209,86 +240,11 @@ export default function StoreRequestFlow({ copy, memberships, onSubmit }: StoreR
                 </p>
               )}
             </div>
-            <span className="inline-flex shrink-0 items-center gap-1 self-start rounded-full bg-amber-50 px-2.5 py-1 text-sm font-medium text-amber-800 sm:self-auto">
-              <Clock3 size={14} aria-hidden="true" /> {copy.pendingLabel}
+            <span className="self-start sm:self-auto">
+              <RequestStatusBadge status="pending" label={copy.pendingLabel} />
             </span>
           </div>
-
-          {/* 진행 단계: 신청 완료(완료) → 승인(현재) → 시작(예정) */}
-          <ol aria-label="승인 진행 단계" className="mx-auto mt-10 grid w-full max-w-[52rem] grid-cols-3">
-            {[
-              { label: "신청 완료", state: "done" as const, Icon: Check, caption: "완료" },
-              { label: copy.approvalStepLabel, state: "current" as const, Icon: UserCheck, caption: "승인 대기" },
-              { label: copy.startStepLabel, state: "upcoming" as const, Icon: StoreIcon, caption: "예정" },
-            ].map((step, index) => (
-              <li
-                key={step.label}
-                aria-current={step.state === "current" ? "step" : undefined}
-                className="relative flex flex-col items-center text-center"
-              >
-                {index > 0 && (
-                  <span
-                    aria-hidden="true"
-                    className={`absolute right-1/2 top-4 h-0.5 w-full -translate-y-1/2 ${
-                      step.state === "upcoming" ? "bg-[var(--color-border)]" : "bg-[var(--color-primary)]"
-                    }`}
-                  />
-                )}
-                <span
-                  className={`relative z-10 flex h-8 w-8 items-center justify-center rounded-full border-2 ${
-                    step.state === "done"
-                      ? "border-[var(--color-primary)] bg-[var(--color-primary)] text-white"
-                      : step.state === "current"
-                        ? "border-amber-400 bg-amber-50 text-amber-800"
-                        : "border-[var(--color-border)] bg-white text-[var(--color-text-tertiary)]"
-                  }`}
-                >
-                  <step.Icon size={16} aria-hidden="true" />
-                </span>
-                <span
-                  className={`mt-2 text-sm font-semibold ${
-                    step.state === "upcoming" ? "text-[var(--color-text-tertiary)]" : "text-[var(--color-text-primary)]"
-                  }`}
-                >
-                  {step.label}
-                </span>
-                <span
-                  className={`text-xs ${
-                    step.state === "current" ? "font-medium text-amber-800" : "text-[var(--color-text-tertiary)]"
-                  }`}
-                >
-                  {step.caption}
-                </span>
-              </li>
-            ))}
-          </ol>
-
-          <div className="mt-10 space-y-1 border-t border-[var(--color-border)] pt-6">
-            <p className="text-base text-[var(--color-text-primary)]">{copy.successGuide}</p>
-            <p className="text-sm text-[var(--color-text-tertiary)]">{copy.successSubGuide}</p>
-          </div>
-
-          <div className="mt-5 flex flex-col gap-2 sm:flex-row">
-            <Link
-              href={copy.statusHref}
-              className="inline-flex min-h-[44px] items-center justify-center rounded-lg bg-[var(--color-primary)] px-5 text-sm font-semibold text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2"
-            >
-              신청 현황 보기
-            </Link>
-            <button
-              type="button"
-              onClick={() => {
-                // 결과 화면만 닫고 검색 화면으로 돌아간다. 방금 만든 pending 신청은 그대로 유지된다.
-                setSubmit({ status: "idle" });
-                setSelectedStoreId(null);
-              }}
-              className="inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-[var(--color-border)] bg-white px-5 text-sm font-medium text-[var(--color-text-primary)] hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-bg-default)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
-            >
-              다른 매장 추가
-            </button>
-          </div>
-
-        </section>
+        </ResultPanel>
       ) : (
         <>
           {/* STEP 1 — Search */}

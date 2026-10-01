@@ -26,6 +26,10 @@ export async function GET(): Promise<NextResponse> {
     if (isMissingConversationTable(error)) {
       return NextResponse.json({ conversations: [], historyAvailable: false });
     }
+    console.error("[GET /api/staff/conversations] Failed to fetch conversations:", {
+      userId: userData.user.id,
+      error: { code: error.code, message: error.message },
+    });
     return NextResponse.json({ error: "대화 기록을 불러오지 못했습니다." }, { status: 500 });
   }
 

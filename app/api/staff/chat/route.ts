@@ -80,15 +80,19 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   // 대화 저장 (실패해도 답변은 돌려준다)
   let saveError: string | null = null;
+  let isNewConversation = false;
   try {
     const now = new Date().toISOString();
     if (!conversationId) {
+      isNewConversation = true;
       const { data: created, error: createError } = await adminClient
         .from("conversations")
         .insert({ user_id: userId, store_id: storeId, title: buildConversationTitle(question), created_at: now, updated_at: now })
         .select("id")
         .single<{ id: string }>();
-      if (createError) throw createError;
+      if (createError) {
+        throw new Error(`Failed to create conversation: ${JSON.stringify({ code: createError.code, message: createError.message })}`);
+      }
       conversationId = created.id;
     }
 
@@ -105,18 +109,35 @@ export async function POST(request: Request): Promise<NextResponse> {
         created_at: new Date(Date.now() + 1).toISOString(),
       },
     ]);
-    if (messageError) throw messageError;
+    if (messageError) {
+      throw new Error(`Failed to insert messages: ${JSON.stringify({ code: messageError.code, message: messageError.message })}`);
+    }
 
-    await adminClient.from("conversations").update({ updated_at: now }).eq("id", conversationId).eq("user_id", userId);
+    const { error: updateError } = await adminClient
+      .from("conversations")
+      .update({ updated_at: now })
+      .eq("id", conversationId)
+      .eq("user_id", userId);
+    if (updateError) {
+      throw new Error(`Failed to update conversation: ${JSON.stringify({ code: updateError.code, message: updateError.message })}`);
+    }
   } catch (error) {
     historyAvailable = false;
-    // 새 대화 생성 실패 시 에러 기록
-    if (!body.conversationId) {
+    // 새 대화 생성 중 실패했다면 conversationId 초기화
+    if (isNewConversation) {
       conversationId = null;
-      saveError = "대화 기록 저장에 실패했습니다. 다시 시도해 주세요.";
     }
-    if (!isMissingConversationTable(error as { code?: string })) {
-      console.error("POST /api/staff/chat save error:", error);
+    // 모든 경우에 saveError 설정 (새 대화든 기존 대화든)
+    saveError = "대화 기록 저장에 실패했습니다. 다시 시도해 주세요.";
+    const isMissing = isMissingConversationTable(error as { code?: string });
+    if (!isMissing) {
+      console.error("[POST /api/staff/chat] Save error:", {
+        userId,
+        storeId,
+        conversationId,
+        isNewConversation,
+        error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+      });
     }
   }
 

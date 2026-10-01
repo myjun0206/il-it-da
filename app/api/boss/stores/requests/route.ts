@@ -92,7 +92,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<OwnerStor
         membershipId: result.membershipId,
         created: result.created,
         membershipStatus: result.membershipStatus,
-        code: result.code,
+        // STORE_NO_OWNER는 직원 신청에서만 나오는 코드라 점주 신청 응답에는 싣지 않는다.
+        code: result.code === "STORE_NOT_FOUND" ? result.code : undefined,
         error: result.success ? undefined : "운영 신청을 처리하지 못했습니다.",
       },
       { status: result.status },
