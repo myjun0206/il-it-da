@@ -2,27 +2,36 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { withdrawStaffMembership } from "@/lib/staff/staff-membership-service";
 
 export const runtime = "nodejs";
 
 type CancelResponse = {
   success: boolean;
   error?: string;
-  code?: "NOT_FOUND" | "NOT_PENDING" | "NOT_APPROVED" | "INVALID_STATUS";
+  code?: "NOT_FOUND" | "NOT_PENDING" | "NOT_APPROVED" | "INVALID_STATUS" | "AMBIGUOUS_IDENTIFIER";
 };
 
 /**
- * 직원 본인의 근무 매장 신청을 취소하거나 근무 매장에서 해제한다.
+ * 직원 본인의 근무 매장 신청을 취소하거나 근무 매장에서 해제(탈퇴)한다.
  * - 로그인 사용자 본인의 membership이어야 하고 (user_id = auth user)
  * - role = staff
  * - status = pending (신청 취소) 또는 status = approved (근무 매장 해제)
+ * - id 파라미터는 membershipId가 계약이다. storeId는 구 클라이언트 호환용이며 모호하면 400으로 거절한다.
  * 거절(rejected)된 membership은 이 API로 지울 수 없다.
  */
 export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse<CancelResponse>> {
-  const { id: membershipId } = await params;
+  const { id: identifier } = await params;
+
+  if (!identifier || typeof identifier !== "string" || !identifier.trim()) {
+    return NextResponse.json(
+      { success: false, error: "매장 식별자가 올바르지 않습니다.", code: "NOT_FOUND" },
+      { status: 400 },
+    );
+  }
 
   const serverClient = await createClient();
   const { data: userData, error: userError } = await serverClient.auth.getUser();
@@ -32,62 +41,19 @@ export async function DELETE(
 
   try {
     const adminClient = createAdminClient();
-    const { data: membership, error: lookupError } = await adminClient
-      .from("store_memberships")
-      .select("id, user_id, role, status")
-      .eq("id", membershipId)
-      .eq("user_id", userData.user.id)
-      .eq("role", "staff")
-      .maybeSingle<{ id: string; user_id: string; role: string; status: string }>();
+    const result = await withdrawStaffMembership(adminClient, {
+      userId: userData.user.id,
+      identifier: identifier.trim(),
+    });
 
-    if (lookupError) throw lookupError;
-    if (!membership) {
+    if (!result.success) {
       return NextResponse.json(
-        { success: false, error: "신청 내역을 찾을 수 없습니다.", code: "NOT_FOUND" },
-        { status: 404 },
+        { success: false, error: result.error, code: result.code },
+        { status: result.status },
       );
     }
 
-    // pending 또는 approved만 삭제 가능
-    if (membership.status !== "pending" && membership.status !== "approved") {
-      const errorCode =
-        membership.status === "approved" ? "NOT_APPROVED" : ("INVALID_STATUS" as const);
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            membership.status === "pending"
-              ? "승인 대기 중인 신청만 취소할 수 있습니다."
-              : "이 근무 매장을 해제할 수 없습니다.",
-          code: errorCode,
-        },
-        { status: 409 },
-      );
-    }
-
-    // double-check: 삭제 시점에 상태가 변경되지 않았는지 확인
-    const { data: deleted, error: deleteError } = await adminClient
-      .from("store_memberships")
-      .delete()
-      .eq("id", membership.id)
-      .eq("user_id", userData.user.id)
-      .eq("role", "staff")
-      .in("status", ["pending", "approved"])
-      .select("id");
-
-    if (deleteError) throw deleteError;
-    if (!deleted || deleted.length === 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "이 매장을 더 이상 해제할 수 없습니다. (상태 변경됨)",
-          code: "INVALID_STATUS",
-        },
-        { status: 409 },
-      );
-    }
-
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true }, { status: 200 });
   } catch (error) {
     console.error("DELETE /api/staff/memberships/[id] error:", error);
     return NextResponse.json(

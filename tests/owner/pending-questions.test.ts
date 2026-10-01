@@ -32,6 +32,9 @@ type LogRow = {
   status: string;
   store_id: string | null;
   created_at: string;
+  resolution_status?: string | null;
+  resolved_at?: string | null;
+  resolved_by?: string | null;
 };
 
 type FailurePoint = "store_memberships" | "question_logs";
@@ -140,9 +143,14 @@ function fakeClient(options: {
         select(columns: string) {
           selectedColumns.push(columns);
           const filters: Record<string, unknown> = {};
+          const inFilters: Record<string, unknown[]> = {};
           const query = {
             eq(column: string, value: unknown) {
               filters[column] = value;
+              return query;
+            },
+            in(column: string, values: unknown[]) {
+              inFilters[column] = values;
               return query;
             },
             order(column: string, opts: { ascending: boolean }) {
@@ -155,7 +163,13 @@ function fakeClient(options: {
                 return Promise.resolve({ data: null, error: dbError });
               }
               const rows = logs
-                .filter((row) => row.store_id === filters.store_id && row.status === filters.status)
+                .filter((row) => {
+                  if (filters.store_id && row.store_id !== filters.store_id) return false;
+                  if (filters.status && row.status !== filters.status) return false;
+                  if (filters.resolution_status && (row.resolution_status ?? "open") !== filters.resolution_status) return false;
+                  if (inFilters.resolution_status && !inFilters.resolution_status.includes(row.resolution_status ?? "open")) return false;
+                  return true;
+                })
                 .sort((a, b) => b.created_at.localeCompare(a.created_at))
                 .slice(0, value);
               return Promise.resolve({ data: rows, error: null });
@@ -299,14 +313,27 @@ describe("fetchPendingQuestionsForOwner (가짜 DB로 실제 함수 실행)", ()
     const result = await fetchPendingQuestionsForOwner(client, { userId: OWNER_A, storeId: STORE_A });
 
     const questions = result.status === 200 ? result.body.data.questions : [];
-    assert.deepEqual(Object.keys(questions[0]).sort(), ["createdAt", "id", "question", "status"]);
+    assert.deepEqual(Object.keys(questions[0]).sort(), [
+      "createdAt",
+      "id",
+      "question",
+      "resolutionRevision",
+      "resolutionStatus",
+      "resolutionUpdatedAt",
+      "resolutionUpdatedBy",
+      "resolvedAt",
+      "resolvedBy",
+      "status",
+    ]);
 
     const serialized = JSON.stringify(result.body);
     for (const leak of ["내부 답변", "similarity", "source_manual_id", "manual-1", "0.91", "store_id"]) {
       assert.equal(serialized.includes(leak), false, `leaks ${leak}`);
     }
     // 애초에 필요한 컬럼만 select 한다.
-    assert.deepEqual(inspect().selectedColumns, ["id, question, status, store_id, created_at"]);
+    assert.deepEqual(inspect().selectedColumns, [
+      "id, question, status, store_id, created_at, resolution_status, resolution_revision, resolution_updated_at, resolution_updated_by, resolved_at, resolved_by",
+    ]);
   });
 });
 

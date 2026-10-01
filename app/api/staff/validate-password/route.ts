@@ -1,5 +1,5 @@
+import { createPasswordVerificationClient, verifyPasswordWithIsolatedClient } from "@/lib/auth/verify-password";
 import { createClient as createServerClient } from "@/lib/supabase/server";
-import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 
 /**
@@ -47,9 +47,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4. 현재 비밀번호 검증
-    // 새로운 클라이언트를 생성하여 현재 비밀번호로 인증 시도
-    // 서버에서는 로컬 스토리지가 없으므로 세션이 변경되지 않음
+    // 4. 현재 비밀번호 검증 (쿠키 세션과 분리된 일회용 client, 검증 세션은 즉시 폐기)
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -61,14 +59,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 현재 비밀번호 검증용 클라이언트
-    const validationClient = createServiceClient(supabaseUrl, supabaseAnonKey);
-    const { error: signInError } = await validationClient.auth.signInWithPassword({
-      email: userEmail,
-      password: password,
-    });
+    const isValid = await verifyPasswordWithIsolatedClient(
+      createPasswordVerificationClient(supabaseUrl, supabaseAnonKey),
+      userEmail,
+      password,
+    );
 
-    if (signInError) {
+    if (!isValid) {
       return NextResponse.json(
         { success: false, code: "INVALID_PASSWORD", message: "현재 비밀번호가 일치하지 않습니다." },
         { status: 401 }

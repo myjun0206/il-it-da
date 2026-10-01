@@ -7,8 +7,8 @@ import {
 } from "@/lib/rag/authorize-rag-store-access";
 import { finalizeRagQueryResponse } from "@/lib/rag/finalize-rag-query-response";
 import { resolveRagAnswer } from "@/lib/rag/resolve-rag-answer";
-import { saveQuestionLog, type SaveQuestionLogResult } from "@/lib/rag/save-question-log";
-import { escalateQuestionLogToStoreOwners } from "@/lib/notifications/escalate-question-log";
+import { saveQuestionLog } from "@/lib/rag/save-question-log";
+import { createQuestionLogFollowUp } from "@/lib/notifications/notify-repeated-question";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { searchManualChunks } from "@/lib/rag/search-manual-chunks";
 import { validateQueryRequest } from "@/lib/rag/validate-query-request";
@@ -54,29 +54,6 @@ function getOpenAiApiKey() { // OPENAI_API_KEY 환경변수 존재 여부 확인
 
 // 최고 유사도 점수를 3단계 상태로 판정 (applyEvidenceGate가 같은 임계값을 쓴다)
 const GATE_THRESHOLDS = { answered: ANSWERED_THRESHOLD, cautious: CAUTIOUS_THRESHOLD };
-
-/**
- * 근거를 못 찾은 질문을 그 매장의 승인 점주에게 한 번만 알린다.
- *
- * storeId는 authorizeRagStoreAccessForRequest를 통과한 값만 넘긴다(body의 franchiseId는 쓰지 않는다).
- * 응답 전에 await하므로 서버리스에서 작업이 잘리지 않고, 실패해도 답변과 HTTP 상태는 그대로다.
- */
-function escalateInsufficientQuestion(storeId: string) {
-  return async (logResult: SaveQuestionLogResult): Promise<void> => {
-    if (!logResult.saved || !logResult.questionLogId) {
-      return;
-    }
-
-    const result = await escalateQuestionLogToStoreOwners(createAdminClient(), {
-      questionLogId: logResult.questionLogId,
-      storeId,
-    });
-
-    if (result.status === "failed") {
-      console.error("[RAG] QUESTION_ESCALATION_FAILED", { status: result.status });
-    }
-  };
-}
 
 export async function POST(request: Request): Promise<NextResponse<RagQueryResponse>> { // 직원 질문을 받아 매뉴얼 검색 후 GPT-4o 답변을 반환하는 API
   let body: unknown;
@@ -143,7 +120,12 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
       question,
       storeId,
       response: outcome.response,
-      afterQuestionLogSaved: outcome.escalate ? escalateInsufficientQuestion(storeId) : undefined,
+      // 단건 보류 알림은 insufficient일 때만, 반복 질문 알림은 모든 status에서 검사한다(응답 전 await, 실패해도 답변 유지).
+      afterQuestionLogSaved: createQuestionLogFollowUp({
+        storeId,
+        escalate: outcome.escalate,
+        getClient: createAdminClient,
+      }),
     }, saveQuestionLog);
     return NextResponse.json(response);
   } catch (error) {

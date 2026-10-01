@@ -3,7 +3,8 @@
  *
  * "답변 불가(insufficient) 1건 -> 점주 확인 요청"은 lib/notifications/escalate-question-log.ts가
  * 담당한다. 이 모듈은 그것과 별개로 "같은 매장에서 같은 질문이 반복된다"를 찾아 집계만 한다.
- * 답변 가능한 질문도 반복될 수 있으므로 상태별 건수를 나눠 담고, 알림은 보내지 않는다.
+ * 답변 가능한 질문도 반복될 수 있으므로 상태별 건수를 나눠 담는다. 이 모듈은 알림을 보내지 않으며,
+ * 반복 알림 발송은 lib/notifications/notify-repeated-question.ts가 이 집계를 재사용해 담당한다.
  *
  * client는 항상 호출부에서 주입한다 - 실제 Supabase 없이 가짜 client로 단위 테스트할 수 있다.
  */
@@ -21,8 +22,12 @@ export const REPEATED_QUESTION_WINDOW_DAYS = 7;
 export const REPEATED_QUESTION_MIN_COUNT = 3;
 export const REPEATED_QUESTION_THRESHOLDS_VALIDATED = false;
 
-/** 한 번에 훑는 로그 상한. 매장 하나의 최근 7일 분량으로 충분하다. */
-export const MAX_ANALYZED_QUESTION_LOGS = 500;
+/**
+ * 한 번에 훑는 로그 상한. 7일 창 전체를 페이지 단위로 끝까지 읽되, 이 상한에 닿으면
+ * truncated=true로 알린다(최신순으로 읽으므로 과소 집계만 가능하고 과대 집계는 없다).
+ */
+export const MAX_ANALYZED_QUESTION_LOGS = 10_000;
+export const QUESTION_LOG_PAGE_SIZE = 1000;
 
 export const QUESTION_LOG_STATUSES = ["answered", "cautious", "insufficient"] as const;
 export type QuestionLogStatus = (typeof QUESTION_LOG_STATUSES)[number];
@@ -287,7 +292,7 @@ export function buildRepeatedQuestionReport(
 }
 
 export type FetchRepeatedQuestionsResult =
-  | { status: "ok"; report: RepeatedQuestionReport }
+  | { status: "ok"; report: RepeatedQuestionReport; truncated: boolean }
   | { status: "invalid_store" }
   | { status: "failed" };
 
@@ -314,22 +319,50 @@ export async function fetchRepeatedQuestionsForStore(
   const windowStart = new Date(windowEnd.getTime() - windowDays * 24 * 60 * 60 * 1000);
 
   try {
-    const { data, error } = await client
-      .from("question_logs")
-      .select("id, question, status, store_id, source_manual_id, created_at")
-      .eq("store_id", storeId)
-      .gte("created_at", windowStart.toISOString())
-      .order("created_at", { ascending: false })
-      .limit(MAX_ANALYZED_QUESTION_LOGS);
+    const rowsById = new Map<string, QuestionLogRow>();
+    let truncated = false;
 
-    if (error) {
-      logSafeRepeatedQuestionError("QUESTION_LOG_QUERY_FAILED", error);
-      return { status: "failed" };
+    // 서버 max-rows가 페이지 크기보다 작을 수 있으므로 "빈 페이지"가 나올 때까지 읽는다.
+    // 상한(lte windowEnd)을 고정해 조회 중 새로 들어온 로그가 페이지를 밀지 않게 한다.
+    // 상한보다 1건 더 읽어, 정확히 상한만큼 있을 때는 truncated로 오판하지 않는다.
+    for (let offset = 0; offset <= MAX_ANALYZED_QUESTION_LOGS; ) {
+      const { data, error } = await client
+        .from("question_logs")
+        .select("id, question, status, store_id, source_manual_id, created_at")
+        .eq("store_id", storeId)
+        .gte("created_at", windowStart.toISOString())
+        .lte("created_at", windowEnd.toISOString())
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(offset, Math.min(offset + QUESTION_LOG_PAGE_SIZE - 1, MAX_ANALYZED_QUESTION_LOGS));
+
+      if (error) {
+        logSafeRepeatedQuestionError("QUESTION_LOG_QUERY_FAILED", error);
+        return { status: "failed" };
+      }
+
+      const page = (data ?? []) as QuestionLogRow[];
+      if (page.length === 0) break;
+
+      for (const item of page) {
+        rowsById.set(String(item.id), item);
+      }
+      offset += page.length;
+    }
+
+    // 최신순으로 읽었으므로 상한을 넘은 가장 오래된 쪽만 버린다(과소 집계만 가능).
+    let analyzedRows = [...rowsById.values()];
+    if (analyzedRows.length > MAX_ANALYZED_QUESTION_LOGS) {
+      truncated = true;
+      analyzedRows = analyzedRows
+        .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || String(a.id).localeCompare(String(b.id)))
+        .slice(0, MAX_ANALYZED_QUESTION_LOGS);
     }
 
     return {
       status: "ok",
-      report: buildRepeatedQuestionReport((data ?? []) as QuestionLogRow[], {
+      truncated,
+      report: buildRepeatedQuestionReport(analyzedRows, {
         storeId,
         windowDays,
         minCount: input.minCount,

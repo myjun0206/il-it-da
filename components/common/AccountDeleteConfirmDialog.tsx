@@ -12,6 +12,8 @@ interface AccountDeleteConfirmDialogProps {
   isAuthenticated: boolean;
   isAuthenticating: boolean;
   isDeleting: boolean;
+  isOAuthUser?: boolean;
+  errorMessage?: string | null;
   onPasswordChange: (password: string) => void;
   onAuthenticate: () => void;
   onConfirmDelete: () => void;
@@ -26,6 +28,8 @@ export function AccountDeleteConfirmDialog({
   isAuthenticated,
   isAuthenticating,
   isDeleting,
+  isOAuthUser = false,
+  errorMessage,
   onPasswordChange,
   onAuthenticate,
   onConfirmDelete,
@@ -95,8 +99,8 @@ export function AccountDeleteConfirmDialog({
 
           <div className="mb-6 text-sm text-[var(--color-text-secondary)]">{description}</div>
 
-          {isAuthenticated ? (
-            // Step 2: 최종 확인
+          {isAuthenticated || isOAuthUser ? (
+            // Step 2: 최종 확인 (OAuth 계정이거나 비밀번호 인증 완료 시)
             <div className="mb-6 space-y-3">
               <div className="p-4 rounded-lg bg-red-50 border border-red-200">
                 <p className="text-sm text-red-700 font-medium">
@@ -115,7 +119,7 @@ export function AccountDeleteConfirmDialog({
               </div>
             </div>
           ) : (
-            // Step 1: 비밀번호 입력
+            // Step 1: 비밀번호 입력 (이메일/비밀번호 가입자만)
             <div className="mb-6">
               <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
                 현재 비밀번호
@@ -131,6 +135,12 @@ export function AccountDeleteConfirmDialog({
             </div>
           )}
 
+          {errorMessage && (
+            <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 font-medium">
+              {errorMessage}
+            </div>
+          )}
+
           <div className="flex gap-3 justify-end">
             <button
               type="button"
@@ -140,7 +150,7 @@ export function AccountDeleteConfirmDialog({
             >
               취소
             </button>
-            {isAuthenticated ? (
+            {isAuthenticated || isOAuthUser ? (
               <button
                 type="button"
                 onClick={onConfirmDelete}

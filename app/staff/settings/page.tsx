@@ -10,6 +10,12 @@ import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { AccountDeleteConfirmDialog } from "@/components/common/AccountDeleteConfirmDialog";
 import { useStaffShell } from "@/components/staff/StaffShellContext";
 import { formatStoreDisplayName } from "@/lib/stores/search-stores";
+import {
+  readSelectedStaffStoreId,
+  writeSelectedStaffStoreId,
+  writeStaffConversationId,
+} from "@/lib/staff/selected-store";
+import { clearStaffSessionKeys, hasPasswordLogin } from "@/lib/staff/staff-membership-service";
 import { createClient } from "@/lib/supabase/client";
 import { uploadProfileAvatarClient, deleteProfileAvatarClient } from "@/lib/supabase/storage-profile-avatar";
 
@@ -42,7 +48,7 @@ function FeedbackMessage({ feedback }: { feedback: Feedback }) {
 
 export default function StaffSettingsPage() {
   const router = useRouter();
-  const { userName, roleLabel, defaultStoreId, stores, isStoresLoading, logout } = useStaffShell();
+  const { userName, roleLabel, defaultStoreId, stores, isStoresLoading, reloadStores, logout } = useStaffShell();
   const [email, setEmail] = useState("");
   const [userId, setUserId] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
@@ -85,6 +91,8 @@ export default function StaffSettingsPage() {
   const [isAuthenticatingForDelete, setIsAuthenticatingForDelete] = useState(false);
   const [isAccountDeletePasswordAuthenticated, setIsAccountDeletePasswordAuthenticated] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isOAuthUser, setIsOAuthUser] = useState(false);
+  const [accountDeleteError, setAccountDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     let isCancelled = false;
@@ -96,6 +104,9 @@ export default function StaffSettingsPage() {
         if (!isCancelled && userData.user) {
           setUserId(userData.user.id);
           setEmail(userData.user.email ?? "");
+
+          // 소셜 로그인(OAuth) 전용 계정 여부 확인 (비밀번호 없는 계정)
+          setIsOAuthUser(!hasPasswordLogin(userData.user));
 
           // avatar_url 조회 (cache busting은 이제 filename에 포함됨)
           const { data: profile } = await supabase
@@ -387,38 +398,30 @@ export default function StaffSettingsPage() {
   // 회원 탈퇴 비밀번호 인증
   const handleAuthenticateForDelete = async () => {
     if (!accountDeletePassword) {
-      setPasswordFeedback({ type: "error", message: "비밀번호를 입력해주세요." });
+      setAccountDeleteError("비밀번호를 입력해주세요.");
       return;
     }
 
     setIsAuthenticatingForDelete(true);
-    setPasswordFeedback(null);
+    setAccountDeleteError(null);
 
     try {
-      const supabase = createClient();
-      const { data: userData } = await supabase.auth.getUser();
-
-      if (!userData.user?.email) {
-        throw new Error("사용자 정보를 가져올 수 없습니다.");
-      }
-
-      // 현재 비밀번호로 다시 인증 (reauthenticate)
-      const { error } = await supabase.auth.signInWithPassword({
-        email: userData.user.email,
-        password: accountDeletePassword,
+      // 브라우저 client로 재로그인하면 현재 세션이 교체되므로 서버 검증 API만 사용한다.
+      const response = await fetch("/api/staff/validate-password", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: accountDeletePassword }),
       });
+      const result = (await response.json()) as { success?: boolean; message?: string };
 
-      if (error) {
-        throw new Error("비밀번호가 일치하지 않습니다.");
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || "비밀번호가 일치하지 않습니다.");
       }
 
       setIsAccountDeletePasswordAuthenticated(true);
-      setPasswordFeedback({ type: "success", message: "본인 확인이 완료되었습니다. 탈퇴를 진행하시겠습니까?" });
     } catch (e) {
-      setPasswordFeedback({
-        type: "error",
-        message: e instanceof Error ? e.message : "본인 확인에 실패했습니다.",
-      });
+      setAccountDeleteError(e instanceof Error ? e.message : "본인 확인에 실패했습니다.");
     } finally {
       setIsAuthenticatingForDelete(false);
     }
@@ -426,46 +429,54 @@ export default function StaffSettingsPage() {
 
   // 회원 탈퇴 실행
   const handleDeleteAccount = async () => {
-    if (!isAccountDeletePasswordAuthenticated) {
-      setPasswordFeedback({ type: "error", message: "먼저 비밀번호로 본인 확인을 해주세요." });
+    if (!isOAuthUser && !isAccountDeletePasswordAuthenticated) {
+      setAccountDeleteError("먼저 비밀번호로 본인 확인을 해주세요.");
       return;
     }
 
     setIsDeleting(true);
-    setPasswordFeedback(null);
+    setAccountDeleteError(null);
 
     try {
       const response = await fetch("/api/staff/delete-account", {
         method: "POST",
         credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          password: isOAuthUser ? undefined : accountDeletePassword,
+        }),
       });
 
       const result = (await response.json()) as {
         success?: boolean;
         code?: string;
+        error?: string;
         message?: string;
-        stats?: {
-          approvedStoresCount: number;
-          pendingRequestsCount: number;
-        };
       };
 
       if (!response.ok || !result.success) {
-        throw new Error(result.message || "회원 탈퇴 요청 실패");
+        throw new Error(result.error || result.message || "회원 탈퇴 요청에 실패했습니다.");
       }
 
-      setPasswordFeedback({ type: "success", message: "회원 탈퇴 처리 중입니다. 페이지를 이동합니다..." });
+      // 탈퇴 성공: Auth 세션 로그아웃 (실패해도 계정 삭제 실패로 처리하지 않는다)
+      // auth-js signOut은 서버 로그아웃 API가 실패해도 로컬 Auth 세션(쿠키)을 제거하고 error를 반환한다.
+      try {
+        const supabase = createClient();
+        const { error: signOutError } = await supabase.auth.signOut();
+        if (signOutError) {
+          console.warn("[STAFF_SETTINGS] Sign out after account deletion returned error:", signOutError.message);
+        }
+      } catch (signOutError) {
+        console.warn("[STAFF_SETTINGS] Sign out after account deletion failed:", signOutError);
+      }
 
-      // 2초 후 로그인 페이지로 이동
-      setTimeout(() => {
-        router.push("/auth/login");
-      }, 2000);
+      // 앱 sessionStorage 키 정리 (Auth 세션과 별개, sessionStorage 전체 clear 방지)
+      clearStaffSessionKeys(userId);
+
+      // 홈 화면으로 이동
+      router.push("/");
     } catch (e) {
-      setPasswordFeedback({
-        type: "error",
-        message: e instanceof Error ? e.message : "회원 탈퇴에 실패했습니다.",
-      });
-    } finally {
+      setAccountDeleteError(e instanceof Error ? e.message : "회원 탈퇴에 실패했습니다.");
       setIsDeleting(false);
     }
   };
@@ -476,8 +487,14 @@ export default function StaffSettingsPage() {
     setWithdrawFeedback(null);
 
     try {
-      const response = await fetch(`/api/staff/memberships/${storeId}`, {
+      const store = stores.find((s) => s.id === storeId);
+      if (!store?.membershipId) {
+        throw new Error("매장 정보를 확인할 수 없습니다. 화면을 새로고침한 뒤 다시 시도해 주세요.");
+      }
+
+      const response = await fetch(`/api/staff/memberships/${encodeURIComponent(store.membershipId)}`, {
         method: "DELETE",
+        credentials: "include",
       });
 
       const data = (await response.json()) as { success: boolean; error?: string };
@@ -490,10 +507,13 @@ export default function StaffSettingsPage() {
       setSelectedWithdrawStore(null);
       setWithdrawConfirmDialog({ isOpen: false });
 
-      // 페이지 새로고침하여 업데이트
-      setTimeout(() => {
-        window.location.reload();
-      }, 1500);
+      // 탈퇴한 매장이 현재 선택된 매장이었으면 선택값 정리
+      if (readSelectedStaffStoreId() === storeId) {
+        writeSelectedStaffStoreId(null);
+        writeStaffConversationId(null);
+      }
+
+      reloadStores();
     } catch (e) {
       setWithdrawFeedback({
         type: "error",
@@ -1005,11 +1025,17 @@ export default function StaffSettingsPage() {
         <AccountDeleteConfirmDialog
           isOpen={showAccountDeleteConfirm}
           title="회원 탈퇴"
-          description="일잇다 서비스 이용을 종료하고 계정을 삭제합니다. 본인 확인을 위해 비밀번호를 입력해주세요."
+          description={
+            isOAuthUser
+              ? "소셜 로그인 계정으로 등록된 일잇다 서비스 이용을 종료하고 계정을 삭제합니다. 아래 탈퇴 버튼을 누르면 즉시 계정이 삭제됩니다."
+              : "일잇다 서비스 이용을 종료하고 계정을 삭제합니다. 본인 확인을 위해 비밀번호를 입력해주세요."
+          }
           passwordValue={accountDeletePassword}
           isAuthenticated={isAccountDeletePasswordAuthenticated}
           isAuthenticating={isAuthenticatingForDelete}
           isDeleting={isDeleting}
+          isOAuthUser={isOAuthUser}
+          errorMessage={accountDeleteError}
           onPasswordChange={setAccountDeletePassword}
           onAuthenticate={handleAuthenticateForDelete}
           onConfirmDelete={handleDeleteAccount}
@@ -1017,7 +1043,7 @@ export default function StaffSettingsPage() {
             setShowAccountDeleteConfirm(false);
             setAccountDeletePassword("");
             setIsAccountDeletePasswordAuthenticated(false);
-            setPasswordFeedback(null);
+            setAccountDeleteError(null);
           }}
         />
       </div>
