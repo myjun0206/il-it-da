@@ -1,5 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { ESCALATION_NOTIFICATION_TYPE } from "@/lib/notifications/notification-href";
+import { buildBossQuestionsUrl } from "@/lib/owner/boss-questions-view";
+
+export { ESCALATION_NOTIFICATION_TYPE };
+
 /**
  * 근거 부족으로 보류된(status='insufficient') 직원 질문을 그 매장의 승인된 점주에게만 알린다.
  *
@@ -10,8 +15,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  *
  * client는 항상 호출부에서 주입한다 - 실제 Supabase 없이 가짜 client로 단위 테스트할 수 있다.
  */
-
-export const ESCALATION_NOTIFICATION_TYPE = "manual_question_escalation";
 
 // 질문 본문·유사도·매장/사용자 UUID를 문구에 담지 않는다. 어떤 질문인지는 related_id로만 잇는다.
 export const ESCALATION_NOTIFICATION_TITLE = "확인이 필요한 직원 질문이 있습니다";
@@ -153,8 +156,8 @@ export async function escalateQuestionLogToStoreOwners(
         type: ESCALATION_NOTIFICATION_TYPE,
         title: ESCALATION_NOTIFICATION_TITLE,
         message: ESCALATION_NOTIFICATION_MESSAGE,
-        // 점주가 보류 질문을 확인할 화면이 아직 없어 target_url은 비워 둔다.
-        target_url: null,
+        // log.store_id와 대조를 마친 storeId만 링크에 담는다. 화면에서도 승인 매장 목록과 다시 대조한다.
+        target_url: buildBossQuestionsUrl(storeId),
         related_id: questionLogId,
         is_read: false,
       });

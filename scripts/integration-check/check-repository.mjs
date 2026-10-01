@@ -374,6 +374,67 @@ function checkScopedRpcMigrationContract(migrationContent, callSiteContent) {
   return results;
 }
 
+const READINESS_DOC_FILE = "docs/rag-runtime-readiness.md";
+const WRITE_STATEMENT_PATTERN =
+  /\b(insert\s+into|update\s+\w|delete\s+from|truncate|alter\s+table|drop\s+(table|function|index|policy)|create\s+(or\s+replace\s+)?(table|function|index|policy)|grant|revoke)\b/i;
+const SQL_UUID_LITERAL_PATTERN = /'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'/i;
+const SQL_EMAIL_LITERAL_PATTERN = /'[^'\s@]+@[^'\s@]+\.[a-z]{2,}'/i;
+
+function extractSqlBlocks(markdown) {
+  return [...markdown.replace(/\r\n/g, "\n").matchAll(/```sql\n([\s\S]*?)```/g)].map((match) => match[1]);
+}
+
+// 점검 SQL은 운영 DB에서 사람이 그대로 붙여넣어 실행한다. 쓰기 문장이나 식별자 원문이
+// 섞이지 않도록 문서를 정적으로 검사한다(DB에 접속하지 않는다).
+function checkReadinessSqlSafety(markdown, file = READINESS_DOC_FILE) {
+  if (!markdown) {
+    return [result("error", "READINESS_DOC_MISSING", "The RAG runtime readiness document is missing.", file)];
+  }
+
+  const blocks = extractSqlBlocks(markdown);
+  const results = [];
+
+  if (blocks.length === 0) {
+    results.push(result("error", "READINESS_SQL_MISSING", "The readiness document contains no SQL block.", file));
+    return results;
+  }
+
+  for (const block of blocks) {
+    const statements = block
+      .replace(/^\s*--.*$/gm, "")
+      .split(";")
+      .map((statement) => statement.trim())
+      .filter(Boolean);
+
+    if (statements.some((statement) => !/^(select|with)\b/i.test(statement))) {
+      results.push(result(
+        "error",
+        "READINESS_SQL_NOT_READ_ONLY",
+        "A readiness check statement is not a plain SELECT.",
+        file,
+      ));
+    }
+    if (statements.some((statement) => WRITE_STATEMENT_PATTERN.test(statement))) {
+      results.push(result(
+        "error",
+        "READINESS_SQL_WRITE_STATEMENT_FOUND",
+        "A readiness check statement would modify the database.",
+        file,
+      ));
+    }
+    if (statements.some((statement) => SQL_UUID_LITERAL_PATTERN.test(statement) || SQL_EMAIL_LITERAL_PATTERN.test(statement))) {
+      results.push(result(
+        "error",
+        "READINESS_SQL_IDENTIFIER_LITERAL_FOUND",
+        "A readiness check statement embeds a raw identifier literal.",
+        file,
+      ));
+    }
+  }
+
+  return results;
+}
+
 function stripComments(content) {
   return content
     .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -435,7 +496,7 @@ function checkSensitiveLogging(files) {
   return results;
 }
 
-function summarizeResults(results, checksRun = 8) {
+function summarizeResults(results, checksRun = 9) {
   const summary = { checks: checksRun, errors: 0, warnings: 0, info: 0 };
   for (const item of results) {
     if (item.level === "error") summary.errors += 1;
@@ -527,6 +588,7 @@ async function checkRepository({ rootDir = process.cwd(), gitRunner = defaultGit
       files.find(({ file }) => file === SEARCH_MANUAL_CHUNKS_FILE)?.content ?? "",
     ),
     ...checkSensitiveLogging(files),
+    ...checkReadinessSqlSafety(files.find(({ file }) => file === READINESS_DOC_FILE)?.content ?? ""),
   ];
 
   try {
@@ -551,6 +613,7 @@ export {
   checkConflictMarkers,
   checkPackageScripts,
   checkRagThresholds,
+  checkReadinessSqlSafety,
   checkRepository,
   checkRequiredFiles,
   checkScopedRpcMigrationContract,

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, LogOut, Settings } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import ProfileAvatar from "@/components/common/ProfileAvatar";
 
@@ -107,28 +107,7 @@ export default function ProfileMenu({
               {roleLabel}
             </span>
           </div>
-          <div className="my-1 border-t border-[var(--color-border)]" role="separator" />
-          <Link
-            href={settingsHref}
-            role="menuitem"
-            onClick={() => setIsOpen(false)}
-            className="flex min-h-[44px] items-center gap-3 rounded-lg px-3 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-primary-light)]/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
-          >
-            <Settings size={18} aria-hidden="true" className="text-[var(--color-text-secondary)]" />
-            환경설정
-          </Link>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setIsOpen(false);
-              onLogout();
-            }}
-            className="flex min-h-[44px] w-full items-center gap-3 rounded-lg px-3 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:bg-red-50 hover:text-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600"
-          >
-            <LogOut size={18} aria-hidden="true" />
-            로그아웃
-          </button>
+
         </div>
       )}
     </div>

@@ -19,13 +19,9 @@ const OWNER_COPY: StoreRequestCopy = {
   backLabel: "운영 매장으로 돌아가기",
   title: "운영 매장 추가",
   description: "새로 운영할 매장을 검색하고 신청하세요. 본사가 승인하면 운영 매장에 추가됩니다.",
-  successDescription: "운영 신청이 접수되었습니다. 본사의 승인을 기다려 주세요.",
   successTitle: "운영 신청이 완료되었습니다.",
   pendingLabel: "본사 승인 대기",
-  approvalStepLabel: "본사 승인",
-  startStepLabel: "운영 시작",
   successGuide: "본사에서 승인하면 운영 매장으로 선택할 수 있습니다.",
-  successSubGuide: "승인 상태는 운영 매장에서 확인할 수 있습니다.",
   statusHref: "/boss/stores",
   searchIdleText: "운영할 매장을 검색해 주세요.",
   activeBadge: "운영 중",
@@ -93,11 +89,11 @@ export default function OwnerAddStorePage() {
       if (response.status === 401) {
         return { kind: "error", message: "로그인 정보를 확인할 수 없습니다. 다시 로그인한 뒤 신청해 주세요." };
       }
-      if (result.code === "BRAND_MISMATCH") {
-        return { kind: "error", message: "소속 브랜드의 매장만 운영 신청할 수 있습니다." };
-      }
-      if (result.code === "NO_BRAND") {
-        return { kind: "error", message: "소속 브랜드 정보가 없어 운영 매장을 추가할 수 없습니다. 본사에 문의해 주세요." };
+      if (result.code === "STORE_BRAND_UNKNOWN") {
+        return {
+          kind: "error",
+          message: "이 매장의 브랜드 정보가 연결되어 있지 않아 신청할 수 없습니다. 본사에 문의해 주세요.",
+        };
       }
       if (response.status === 403) {
         return { kind: "error", message: "운영 매장을 추가할 권한이 없습니다." };

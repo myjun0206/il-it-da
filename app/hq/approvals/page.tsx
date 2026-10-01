@@ -22,6 +22,7 @@ interface Membership {
   rejected_by: string | null;
   user_name?: string;
   store_name?: string;
+  needs_brand_profile_recovery?: boolean;
   has_owner_conflict?: boolean;
   existing_owner_names?: string[];
 }
@@ -483,6 +484,27 @@ export default function HQApprovalsPage() {
                                   <X size={16} aria-hidden="true" />
                                   거절
                                 </button>
+                              </div>
+                            ) : membership.needs_brand_profile_recovery ? (
+                              <div className="flex flex-col items-end gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleApprove(
+                                      membership.id,
+                                      storeName,
+                                      applicantName,
+                                      membership.role || "owner",
+                                      membership.has_owner_conflict,
+                                      membership.existing_owner_names,
+                                    )
+                                  }
+                                  aria-label={`${applicantName} 승인 마무리`}
+                                  className="inline-flex min-h-[44px] items-center gap-1 rounded-lg border-2 border-amber-300 bg-amber-50 px-4 text-sm font-medium text-amber-800 transition-colors hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-600 focus-visible:ring-offset-2"
+                                >
+                                  승인 마무리
+                                </button>
+                                <span className="text-xs text-amber-700">승인 후처리가 끝나지 않았어요.</span>
                               </div>
                             ) : (
                               <span className="text-sm text-[var(--color-text-secondary)]">-</span>

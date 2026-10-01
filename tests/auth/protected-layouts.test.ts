@@ -12,13 +12,13 @@ function readSource(relativePath: string): string {
 }
 
 describe("server-side role-protected layouts", () => {
-  const cases: Array<{ file: string; role: "hq" | "owner" | "staff"; expectsWrapper?: string }> = [
+  const cases: Array<{ file: string; role: "hq" | "owner" | "staff"; expectsWrapper?: string; expectsSibling?: string }> = [
     { file: "app/hq/layout.tsx", role: "hq" },
-    { file: "app/boss/layout.tsx", role: "owner" },
+    { file: "app/boss/layout.tsx", role: "owner", expectsSibling: "EscalationNotificationPopup" },
     { file: "app/staff/layout.tsx", role: "staff", expectsWrapper: "StaffShell" },
   ];
 
-  for (const { file, role, expectsWrapper } of cases) {
+  for (const { file, role, expectsWrapper, expectsSibling } of cases) {
     describe(file, () => {
       const source = readSource(file);
 
@@ -37,13 +37,28 @@ describe("server-side role-protected layouts", () => {
         assert.match(source, /redirect\(\s*["']\/["']\s*\)/);
       });
 
-      test(expectsWrapper ? `wraps children in ${expectsWrapper}` : "renders children unchanged (no UI restructuring)", () => {
-        if (expectsWrapper) {
-          assert.match(source, new RegExp(`return\\s*<${expectsWrapper}>\\{children\\}</${expectsWrapper}>`));
-        } else {
+      test(
+        expectsWrapper
+          ? `wraps children in ${expectsWrapper}`
+          : expectsSibling
+            ? `renders children with only the ${expectsSibling} sibling`
+            : "renders children unchanged (no UI restructuring)",
+        () => {
+          if (expectsWrapper) {
+            assert.match(source, new RegExp(`return\\s*<${expectsWrapper}>\\{children\\}</${expectsWrapper}>`));
+            return;
+          }
+          if (expectsSibling) {
+            // children은 그대로 두고 알림 팝업만 형제로 덧붙인다(레이아웃 구조는 바꾸지 않는다).
+            assert.match(
+              source,
+              new RegExp(`return\\s*\\(\\s*<>\\s*\\{children\\}\\s*<${expectsSibling} />\\s*</>\\s*\\);`),
+            );
+            return;
+          }
           assert.match(source, /return\s*<>\{children\}<\/>/);
-        }
-      });
+        },
+      );
 
       test('opts out of static prerendering via export const dynamic = "force-dynamic"', () => {
         assert.match(source, /export\s+const\s+dynamic\s*=\s*["']force-dynamic["']\s*;/);

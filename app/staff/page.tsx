@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, Bot, CheckCircle2, Clock3, History, Info, Lock, Paperclip, Plus, Send, UserRound } from "lucide-react";
+import { AlertCircle, Bot, CheckCircle2, Clock3, History, Info, Lock, Mic, Plus, Send, UserRound } from "lucide-react";
 
 import { useStaffShell } from "@/components/staff/StaffShellContext";
 import ConversationHistoryDrawer from "@/components/staff/ConversationHistoryDrawer";
@@ -431,7 +431,7 @@ export default function StaffPage() {
             {/* Store Selector: 승인된 매장만 선택 가능, 승인 대기 매장은 안내만, 근무 매장 추가 신청 */}
             <div className="mb-4 flex-shrink-0">
               <StoreSwitcher
-                label="기본 매장"
+                label="현재 근무 매장"
                 manageLabel="근무 매장 관리"
                 stores={stores}
                 pendingCount={pendingStores.length}
@@ -527,23 +527,8 @@ export default function StaffPage() {
               )}
             </div>
 
-            {/* Quick Questions - Fixed at bottom, horizontal scroll */}
-            <div className="border-t border-[var(--color-border)] bg-white px-6 py-4 flex-shrink-0">
-              <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-                {quickQuestions.map(question => (
-                  <button
-                    key={question}
-                    type="button"
-                    aria-label={`질문: ${question}`}
-                    disabled={!canAsk}
-                    onClick={() => void submitQuestion(question)}
-                    className="shrink-0 whitespace-nowrap rounded-full border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-4 py-2.5 text-sm font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-primary-light)]/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
-                  >
-                    {question}
-                  </button>
-                ))}
-              </div>
-            </div>
+            {/* Quick Questions - Scrollable with drag support */}
+            <QuickQuestionsScroller questions={quickQuestions} canAsk={canAsk} onSelectQuestion={submitQuestion} />
 
             {/* Input Area - Fixed at bottom */}
             <div className="border-t border-[var(--color-border)] bg-white p-4 flex-shrink-0">
@@ -567,10 +552,12 @@ export default function StaffPage() {
               <form onSubmit={sendMessage} className="flex items-center gap-3">
                 <button
                   type="button"
-                  aria-label="파일 첨부"
-                  className="flex h-11 w-11 items-center justify-center rounded-lg text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-surface)] transition-colors flex-shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
+                  disabled
+                  title="음성 입력 준비 중"
+                  aria-label="음성 입력 (준비 중)"
+                  className="flex h-11 w-11 items-center justify-center rounded-lg text-[var(--color-text-tertiary)] hover:bg-[var(--color-bg-surface)] transition-colors flex-shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <Paperclip size={20} />
+                  <Mic size={20} />
                 </button>
 
                 <input
@@ -694,6 +681,153 @@ function TypingIndicator() {
           <i className="h-2 w-2 animate-bounce rounded-full bg-[var(--color-primary)] [animation-delay:240ms]" />
         </span>
         <span className="text-sm font-medium text-[#1a1a1a]">매뉴얼을 확인하고 있어요</span>
+      </div>
+    </div>
+  );
+}
+
+type QuickQuestionsScrollerProps = {
+  questions: string[];
+  canAsk: boolean;
+  onSelectQuestion: (question: string) => void;
+};
+
+function QuickQuestionsScroller({ questions, canAsk, onSelectQuestion }: QuickQuestionsScrollerProps) {
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const dragStateRef = useRef({ isDragging: false, startX: 0, startScrollLeft: 0, hasMoved: false });
+  const [showLeftFade, setShowLeftFade] = useState(false);
+  const [showRightFade, setShowRightFade] = useState(true);
+
+  function updateFadeState() {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const hasScroll = container.scrollWidth > container.clientWidth;
+    setShowLeftFade(hasScroll && container.scrollLeft > 0);
+    setShowRightFade(hasScroll && container.scrollLeft < container.scrollWidth - container.clientWidth - 10);
+  }
+
+  function handleMouseDown(e: React.MouseEvent<HTMLDivElement>) {
+    dragStateRef.current.isDragging = true;
+    dragStateRef.current.startX = e.clientX;
+    dragStateRef.current.startScrollLeft = scrollContainerRef.current?.scrollLeft ?? 0;
+    dragStateRef.current.hasMoved = false;
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.style.cursor = "grabbing";
+      scrollContainerRef.current.style.scrollBehavior = "auto";
+    }
+  }
+
+  function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
+    if (!dragStateRef.current.isDragging) return;
+
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const movementX = e.clientX - dragStateRef.current.startX;
+    if (Math.abs(movementX) > 5) {
+      dragStateRef.current.hasMoved = true;
+    }
+
+    container.scrollLeft = dragStateRef.current.startScrollLeft - movementX;
+  }
+
+  function handleMouseUp() {
+    dragStateRef.current.isDragging = false;
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.style.cursor = "grab";
+      scrollContainerRef.current.style.scrollBehavior = "smooth";
+    }
+    updateFadeState();
+  }
+
+  function handleTouchStart(e: React.TouchEvent<HTMLDivElement>) {
+    dragStateRef.current.isDragging = true;
+    dragStateRef.current.startX = e.touches[0]?.clientX ?? 0;
+    dragStateRef.current.startScrollLeft = scrollContainerRef.current?.scrollLeft ?? 0;
+    dragStateRef.current.hasMoved = false;
+  }
+
+  function handleTouchMove(e: React.TouchEvent<HTMLDivElement>) {
+    if (!dragStateRef.current.isDragging) return;
+
+    const container = scrollContainerRef.current;
+    if (!container || !e.touches[0]) return;
+
+    const movementX = e.touches[0].clientX - dragStateRef.current.startX;
+    if (Math.abs(movementX) > 5) {
+      dragStateRef.current.hasMoved = true;
+    }
+
+    container.scrollLeft = dragStateRef.current.startScrollLeft - movementX;
+  }
+
+  function handleTouchEnd() {
+    dragStateRef.current.isDragging = false;
+    updateFadeState();
+  }
+
+  function handleScroll() {
+    updateFadeState();
+  }
+
+  function handleButtonClick(e: React.MouseEvent<HTMLButtonElement>, question: string) {
+    if (dragStateRef.current.hasMoved) {
+      e.preventDefault();
+      return;
+    }
+    onSelectQuestion(question);
+  }
+
+  useEffect(() => {
+    updateFadeState();
+  }, [questions]);
+
+  return (
+    <div className="border-t border-[var(--color-border)] bg-white px-5 py-3 flex-shrink-0 relative overflow-hidden">
+      {/* Left Fade */}
+      {showLeftFade && (
+        <div className="absolute left-5 top-0 bottom-0 w-12 pointer-events-none z-10" style={{
+          background: "linear-gradient(to right, rgb(255, 255, 255) 0%, rgba(255, 255, 255, 0) 100%)",
+        }} />
+      )}
+
+      {/* Right Fade */}
+      {showRightFade && (
+        <div className="absolute right-5 top-0 bottom-0 w-12 pointer-events-none z-10" style={{
+          background: "linear-gradient(to left, rgb(255, 255, 255) 0%, rgba(255, 255, 255, 0) 100%)",
+        }} />
+      )}
+
+      {/* Scrollable Container */}
+      <div
+        ref={scrollContainerRef}
+        className="flex items-center gap-2 overflow-x-auto p-1 scrollbar-hide"
+        style={{
+          scrollBehavior: "smooth",
+          cursor: "grab",
+        }}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onScroll={handleScroll}
+      >
+        {questions.map(question => (
+          <button
+            key={question}
+            type="button"
+            aria-label={`질문: ${question}`}
+            disabled={!canAsk}
+            onClick={(e) => handleButtonClick(e, question)}
+            className="shrink-0 whitespace-nowrap rounded-full border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-4 py-2.5 text-sm font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-primary-light)]/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)] select-none"
+          >
+            {question}
+          </button>
+        ))}
       </div>
     </div>
   );

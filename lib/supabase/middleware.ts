@@ -5,11 +5,24 @@ import {
   SESSION_EXPIRED_QUERY_PARAM,
   SESSION_EXPIRED_QUERY_VALUE,
 } from "@/lib/auth/session-expiration";
+import {
+  isLegacySupabaseAuthCookie,
+  SUPABASE_SESSION_COOKIE_OPTIONS,
+  toSessionCookieOptions,
+} from "@/lib/supabase/session-cookies";
 
 function copyCookies(source: NextResponse, target: NextResponse): void {
   for (const cookie of source.cookies.getAll()) {
     target.cookies.set(cookie);
   }
+}
+
+function expireLegacySupabaseCookies(request: NextRequest, response: NextResponse): void {
+  request.cookies.getAll().forEach(({ name }) => {
+    if (isLegacySupabaseAuthCookie(name)) {
+      response.cookies.set(name, "", { path: "/", maxAge: 0, sameSite: "lax" });
+    }
+  });
 }
 
 /**
@@ -27,14 +40,18 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
   }
 
   const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
+    cookieOptions: SUPABASE_SESSION_COOKIE_OPTIONS,
     cookies: {
       getAll() {
         return request.cookies.getAll();
       },
-      setAll(cookiesToSet) {
+      setAll(cookiesToSet, headers) {
         cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
         response = NextResponse.next({ request });
-        cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
+        cookiesToSet.forEach(({ name, value, options }) => {
+          response.cookies.set(name, value, toSessionCookieOptions(value, options));
+        });
+        Object.entries(headers).forEach(([name, value]) => response.headers.set(name, value));
       },
     },
   });
@@ -56,6 +73,7 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
         { status: 401 },
       );
       copyCookies(response, expiredResponse);
+      expireLegacySupabaseCookies(request, expiredResponse);
       return expiredResponse;
     }
 
@@ -65,8 +83,10 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
     loginUrl.searchParams.set(SESSION_EXPIRED_QUERY_PARAM, SESSION_EXPIRED_QUERY_VALUE);
     const redirectResponse = NextResponse.redirect(loginUrl);
     copyCookies(response, redirectResponse);
+    expireLegacySupabaseCookies(request, redirectResponse);
     return redirectResponse;
   }
 
+  expireLegacySupabaseCookies(request, response);
   return response;
 }

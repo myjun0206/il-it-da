@@ -76,6 +76,10 @@ function fakeClient(options: {
           found ? { data: { ...found }, error: null } : { data: null, error: NOT_FOUND },
         );
       },
+      limit(count: number) {
+        const rows = tables[table].filter((row) => matches(row, filters)).slice(0, count);
+        return Promise.resolve({ data: rows.map((row) => ({ ...row })), error: null });
+      },
     };
     return builder;
   }
@@ -579,8 +583,31 @@ describe("submitStoreMembershipRequest - 중복 요청", () => {
 });
 
 describe("submitStoreMembershipRequest - 신규 요청", () => {
+  // 직원 신청은 그 매장의 승인된 점주가 받는다.
+  const approvedOwnerMembership = {
+    id: "99999999-9999-4999-8999-999999999999",
+    user_id: "88888888-8888-4888-8888-888888888888",
+    store_id: STORE_ID,
+    role: "owner",
+    status: "approved",
+    franchise_id: FRANCHISE_ID,
+  };
+
+  test("승인된 점주가 없는 매장은 직원 신청을 만들지 않는다 (STORE_NO_OWNER)", async () => {
+    const db = fakeClient({
+      stores: [STORE_ROW],
+      memberships: [{ ...approvedOwnerMembership, status: "pending" }],
+    });
+    const result = await submitStoreMembershipRequest(db.client, MEMBERSHIP_INPUT);
+
+    assert.equal(result.success, false);
+    assert.equal(result.code, "STORE_NO_OWNER");
+    assert.equal(result.status, 409);
+    assert.equal(db.callsFor("store_memberships", "insert").length, 0);
+  });
+
   test("멤버십이 없으면 pending으로 만들고 created:true를 돌려준다", async () => {
-    const db = fakeClient({ stores: [STORE_ROW] });
+    const db = fakeClient({ stores: [STORE_ROW], memberships: [approvedOwnerMembership] });
     const result = await submitStoreMembershipRequest(db.client, MEMBERSHIP_INPUT);
 
     assert.equal(result.success, true);

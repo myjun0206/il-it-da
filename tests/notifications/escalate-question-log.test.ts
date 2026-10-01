@@ -12,6 +12,11 @@ import {
   ESCALATION_NOTIFICATION_TYPE,
   escalateQuestionLogToStoreOwners,
 } from "../../lib/notifications/escalate-question-log.ts";
+import {
+  LEGACY_ESCALATION_NOTICE,
+  resolveNotificationClick,
+  resolveNotificationHref,
+} from "../../lib/notifications/notification-href.ts";
 
 const LOG_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_LOG_ID = "22222222-2222-4222-8222-222222222222";
@@ -382,11 +387,11 @@ describe("알림 내용 (질문 본문 비노출)", () => {
     assert.equal(ESCALATION_NOTIFICATION_TITLE, "확인이 필요한 직원 질문이 있습니다");
   });
 
-  test("점주 화면이 아직 없으므로 임의의 target_url을 만들지 않는다", async () => {
+  test("target_url은 검증된 매장의 점주 질문 화면을 가리킨다", async () => {
     const { client, notifications } = fakeClient();
     await escalateQuestionLogToStoreOwners(client, { questionLogId: LOG_ID, storeId: STORE_A });
 
-    assert.equal(notifications[0].target_url, null);
+    assert.equal(notifications[0].target_url, `/boss/questions?storeId=${STORE_A}`);
   });
 
   test("기존 013 notifications 컬럼만 사용한다", async () => {
@@ -411,6 +416,99 @@ describe("알림 내용 (질문 본문 비노출)", () => {
     assert.equal(notifications[0].related_id, LOG_ID);
     assert.equal(notifications[0].type, ESCALATION_NOTIFICATION_TYPE);
     assert.equal(notifications[0].is_read, false);
+  });
+});
+
+describe("resolveNotificationHref (related_id 강조 링크)", () => {
+  test("에스컬레이션 알림은 매장 링크를 유지하고 질문 로그 id를 덧붙인다", () => {
+    const href = resolveNotificationHref({
+      type: ESCALATION_NOTIFICATION_TYPE,
+      targetUrl: `/boss/questions?storeId=${STORE_A}`,
+      relatedId: LOG_ID,
+    });
+
+    assert.equal(href, `/boss/questions?storeId=${STORE_A}&questionId=${LOG_ID}`);
+  });
+
+  test("과거 target_url=null 알림은 이동하지 않는다", () => {
+    assert.equal(
+      resolveNotificationHref({ type: ESCALATION_NOTIFICATION_TYPE, targetUrl: null, relatedId: LOG_ID }),
+      null,
+    );
+  });
+
+  test("다른 알림 유형이나 다른 경로·외부 주소는 그대로 둔다", () => {
+    assert.equal(
+      resolveNotificationHref({ type: "notice", targetUrl: "/boss/notices", relatedId: LOG_ID }),
+      "/boss/notices",
+    );
+    assert.equal(
+      resolveNotificationHref({ type: ESCALATION_NOTIFICATION_TYPE, targetUrl: "/boss/notices", relatedId: LOG_ID }),
+      "/boss/notices",
+    );
+    assert.equal(
+      resolveNotificationHref({
+        type: ESCALATION_NOTIFICATION_TYPE,
+        targetUrl: "https://example.com/boss/questions",
+        relatedId: LOG_ID,
+      }),
+      "https://example.com/boss/questions",
+    );
+  });
+});
+
+describe("resolveNotificationClick (알림 클릭 동작)", () => {
+  test("링크가 없거나 빈 과거 에스컬레이션 알림은 이동하지 않고 메뉴 안내를 보여 준다", () => {
+    for (const targetUrl of [null, undefined, "", "   "]) {
+      assert.deepEqual(
+        resolveNotificationClick({ type: ESCALATION_NOTIFICATION_TYPE, targetUrl, relatedId: LOG_ID }),
+        { kind: "notice", message: LEGACY_ESCALATION_NOTICE },
+        String(targetUrl),
+      );
+    }
+    assert.equal(LEGACY_ESCALATION_NOTICE, "이전 알림입니다. 보류 질문 메뉴에서 확인해 주세요.");
+  });
+
+  test("안내에 related_id나 추측한 매장 링크를 담지 않는다", () => {
+    const action = resolveNotificationClick({ type: ESCALATION_NOTIFICATION_TYPE, targetUrl: null, relatedId: LOG_ID });
+    assert.equal(JSON.stringify(action).includes(LOG_ID), false);
+    assert.equal("href" in action, false);
+  });
+
+  test("새 에스컬레이션 알림은 질문 강조 링크로 이동한다", () => {
+    assert.deepEqual(
+      resolveNotificationClick({
+        type: ESCALATION_NOTIFICATION_TYPE,
+        targetUrl: `/boss/questions?storeId=${STORE_A}`,
+        relatedId: LOG_ID,
+      }),
+      { kind: "navigate", href: `/boss/questions?storeId=${STORE_A}&questionId=${LOG_ID}` },
+    );
+  });
+
+  test("다른 유형의 알림은 기존처럼 링크가 있으면 이동, 없으면 아무것도 하지 않는다", () => {
+    assert.deepEqual(
+      resolveNotificationClick({ type: "owner_pending_approval", targetUrl: "/hq/approvals", relatedId: LOG_ID }),
+      { kind: "navigate", href: "/hq/approvals" },
+    );
+    for (const targetUrl of [null, undefined, ""]) {
+      assert.deepEqual(
+        resolveNotificationClick({ type: "approval_decision", targetUrl, relatedId: null }),
+        { kind: "none" },
+      );
+    }
+  });
+
+  test("NotificationCenter는 읽음 처리 뒤 같은 판정 함수를 쓴다", () => {
+    const source = readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "../../components/common/NotificationCenter.tsx"),
+      "utf8",
+    );
+    const markRead = source.indexOf("/mark-read");
+    const resolve = source.indexOf("resolveNotificationClick(notification)");
+    assert.ok(markRead > 0 && resolve > markRead);
+    assert.match(source, /action\.kind === "notice"[\s\S]*setToastMessage\(action\.message\)/);
+    assert.match(source, /role="status"/);
   });
 });
 

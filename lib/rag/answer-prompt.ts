@@ -40,3 +40,36 @@ export function buildAnswerPromptMessages(question: string, context: string): An
     },
   ];
 }
+
+export const GROUNDED_ANSWER_SYSTEM_PROMPT = [
+  ANSWER_SYSTEM_PROMPT,
+  "응답은 반드시 다음 JSON 객체 하나로만 출력하라(설명·코드펜스 없이):",
+  '{"answerable": boolean, "answer": string, "usedChunkIds": string[]}',
+  "answerable: 제공된 근거만으로 질문에 답할 수 있으면 true, 근거가 없거나 질문과 무관하면 false.",
+  "answer: answerable이 true일 때만 실제 답변을 담고, false면 빈 문자열로 둔다.",
+  "usedChunkIds: 답변에 실제로 사용한 근거의 [근거 id] 값만 담는다. 제공되지 않은 id를 지어내지 마라.",
+  "근거의 단어만 질문과 겹치고 실제로 묻는 내용이 없으면 answerable을 false로 하라.",
+  "매뉴얼이 '점주(매장 관리자)에게 확인하라'는 절차를 명시하고 있으면, 그 절차 자체가 근거이므로 answerable을 true로 두고 그 절차를 안내하라.",
+].join(" ");
+
+/** 모델이 근거를 id로 지목할 수 있도록 청크 id를 함께 넘긴다. */
+export function buildGroundedManualContext(
+  chunks: Pick<ManualChunkMatch, "chunk_id" | "title" | "content">[],
+): string {
+  return chunks
+    .map((chunk, index) => `[근거 ${index + 1} | 근거 id: ${chunk.chunk_id} | 제목: ${chunk.title}]\n${chunk.content}`)
+    .join("\n\n");
+}
+
+export function buildGroundedAnswerMessages(
+  question: string,
+  chunks: Pick<ManualChunkMatch, "chunk_id" | "title" | "content">[],
+): AnswerPromptMessage[] {
+  return [
+    { role: "system", content: GROUNDED_ANSWER_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: `[참고 매뉴얼]\n${buildGroundedManualContext(chunks)}\n\n[직원 질문]\n${question}`,
+    },
+  ];
+}

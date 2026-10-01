@@ -22,21 +22,12 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
     const adminClient = createAdminClient();
     const { data: profile, error: profileError } = await adminClient
       .from("profiles")
-      .select("role, brand_id")
+      .select("role")
       .eq("id", userData.user.id)
-      .maybeSingle<{ role: string; brand_id: string | null }>();
+      .maybeSingle<{ role: string }>();
 
     if (profileError || profile?.role !== "owner") {
       return NextResponse.json({ error: "점주만 변경할 수 있습니다." }, { status: 403 });
-    }
-
-    // brand_id가 없는 레거시 계정은 user_metadata.name의 첫 단어로 브랜드를 추정하므로
-    // (예: /api/manuals) 이름을 바꾸면 조회 범위가 달라질 수 있다. 이 경우 변경을 막는다.
-    if (!profile.brand_id) {
-      return NextResponse.json(
-        { error: "소속 프랜차이즈 정보가 연결되지 않은 계정은 이름을 변경할 수 없습니다. 본사에 문의해주세요." },
-        { status: 403 },
-      );
     }
 
     let body: { name?: unknown };
@@ -54,10 +45,12 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: `이름은 ${NAME_MAX_LENGTH}자 이하로 입력해주세요.` }, { status: 400 });
     }
 
+    // 023 이후 한 사용자가 마스터(brand_id NULL)와 브랜드별 profiles 행을 함께 가지므로,
+    // 세션 사용자의 모든 행을 같은 이름으로 맞춘다. 역할·브랜드·승인 상태는 건드리지 않는다.
     const { error: updateError } = await adminClient
       .from("profiles")
       .update({ full_name: name })
-      .eq("id", userData.user.id);
+      .eq("user_id", userData.user.id);
 
     if (updateError) {
       console.error("PATCH /api/boss/profile profile update error:", updateError);
