@@ -163,10 +163,11 @@ function fakeClient(options: {
               if (options.failAt === "question_logs") {
                 return Promise.resolve({ data: null, error: dbError });
               }
+              const createdAtGte = filters.created_at_gte;
               const rows = logs
                 .filter((row) => row.store_id === filters.store_id)
                 .filter((row) => filters.status === undefined || row.status === filters.status)
-                .filter((row) => filters.created_at_gte === undefined || row.created_at >= filters.created_at_gte)
+                .filter((row) => typeof createdAtGte !== "string" || row.created_at >= createdAtGte)
                 .sort((a, b) => b.created_at.localeCompare(a.created_at))
                 .slice(0, value);
               return Promise.resolve({ data: rows, error: null });
