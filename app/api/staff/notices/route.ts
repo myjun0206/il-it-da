@@ -1,19 +1,23 @@
 import { NextResponse } from "next/server";
 
+import { requireServerRole } from "@/lib/auth/require-server-role";
 import { canReadNotice, type NoticeAudience, type NoticeMembership, type NoticeTargetType } from "@/lib/notices/notice-authorization";
+import { fetchNoticesForStore } from "@/lib/notices/store-notices";
 import { withNoticeReadStats } from "@/lib/notices/with-read-status";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
 export interface StaffNoticeItem {
   id: string;
+  /** all/franchise = 프랜차이즈 전체 지점 대상, store = 현재 매장 대상 */
   targetType: NoticeTargetType;
   sourceLabel: string;
-  targetStoreName: string | null; // "본사 전체" (all일 때) 또는 매장명 (store일 때)
+  targetStoreName: string | null; // "프랜차이즈 전체" (all/franchise일 때) 또는 매장명 (store일 때)
   title: string;
   content: string;
+  /** 작성 주체 (본사 프랜차이즈명). 확인할 수 없으면 빈 문자열 */
+  authorName: string;
   createdAt: string;
   isRead: boolean;
   viewCount: number;
@@ -30,123 +34,103 @@ type NoticeRow = {
   created_at: string;
 };
 
+const NOTICE_ROW_COLUMNS = "id, franchise_id, target_type, target_store_id, audience, title, content, created_at";
+
 function isMissingTableError(error: { code?: string } | null): boolean {
   return error?.code === "42P01" || error?.code === "PGRST205";
 }
 
-export async function GET(): Promise<NextResponse> {
+/**
+ * 직원 공지사항 조회 (읽기 전용 — 이 route에는 쓰기 메서드가 없다).
+ * GET ?storeId=<uuid>
+ *
+ * 1) 로그인 사용자의 profiles.role = staff 확인
+ * 2) 요청 storeId에 대한 본인의 approved staff membership 확인 (pending/rejected/남의 매장 UUID는 403)
+ * 3) 그 매장의 stores.franchise_id(서버 조회값) 범위에서 "전체 지점" 공지 + "이 매장" 대상 공지만 반환
+ *    (점주 공지와 같은 notices 테이블·같은 조회 함수)
+ * 4) audience(점주/본사 공지)와 읽음 상태·조회수를 붙여 반환
+ */
+export async function GET(request: Request): Promise<NextResponse> {
   try {
-    // 1. 로그인 사용자 확인
-    const sessionClient = await createClient();
-    const { data, error: authError } = await sessionClient.auth.getUser();
-
-    if (authError || !data.user) {
+    const auth = await requireServerRole("staff");
+    if (auth.status === "UNAUTHENTICATED") {
       return NextResponse.json({ error: "인증이 필요합니다." }, { status: 401 });
     }
-
-    const userId = data.user.id;
-
-    // 2. Role은 profiles, 공지 범위는 승인된 store membership에서 확인한다.
-    const adminClient = createAdminClient();
-    const { data: profile, error: profileError } = await adminClient
-      .from("profiles")
-      .select("role")
-      .eq("id", userId)
-      .maybeSingle<{ role: string }>();
-
-    if (profileError || !profile) {
-      return NextResponse.json({ error: "사용자 정보를 찾을 수 없습니다." }, { status: 403 });
-    }
-
-    if (profile.role !== "staff") {
+    if (auth.status !== "AUTHORIZED") {
       return NextResponse.json({ error: "접근 권한이 없습니다." }, { status: 403 });
     }
 
-    // 3. 이 직원의 승인된 STAFF membership만 대상 store로 사용한다.
-    const { data: memberships, error: membershipError } = await adminClient
+    const userId = auth.userId;
+    const storeId = new URL(request.url).searchParams.get("storeId")?.trim() ?? "";
+    if (!storeId) {
+      return NextResponse.json({ error: "근무 매장을 선택해 주세요.", code: "STORE_REQUIRED" }, { status: 400 });
+    }
+
+    const adminClient = createAdminClient();
+    const { data: membership, error: membershipError } = await adminClient
       .from("store_memberships")
-      .select("store_id, franchise_id")
+      .select("id, franchise_id")
       .eq("user_id", userId)
+      .eq("store_id", storeId)
       .eq("role", "staff")
       .eq("status", "approved")
+      .maybeSingle<{ id: string; franchise_id: string | null }>();
 
-    if (membershipError) {
-      console.error("Error fetching memberships:", membershipError);
-      return NextResponse.json({ error: "매장 정보를 불러오지 못했습니다." }, { status: 500 });
+    if (membershipError || !membership) {
+      return NextResponse.json({ error: "이 매장의 공지사항을 볼 권한이 없습니다.", code: "STORE_FORBIDDEN" }, { status: 403 });
     }
 
-    const requestedStoreIds = [...new Set((memberships ?? []).map((membership) => membership.store_id))];
-    if (requestedStoreIds.length === 0) {
-      return NextResponse.json({ notices: [] });
-    }
-
-    const { data: stores, error: storesError } = await adminClient
+    // 공지 범위는 요청 storeId가 아니라 서버에서 조회한 매장의 franchise로 검증한다.
+    const { data: store, error: storeError } = await adminClient
       .from("stores")
       .select("id, store_name, franchise_id")
-      .in("id", requestedStoreIds);
-    if (storesError) {
-      console.error("Error fetching membership stores:", storesError);
+      .eq("id", storeId)
+      .maybeSingle<{ id: string; store_name: string; franchise_id: string | null }>();
+    if (storeError) {
+      console.error("Error fetching membership store:", storeError);
       return NextResponse.json({ error: "매장 정보를 불러오지 못했습니다." }, { status: 500 });
     }
-
-    const storesById = new Map((stores ?? []).map((store) => [store.id, store]));
-    const approvedMemberships: NoticeMembership[] = (memberships ?? []).flatMap((membership) => {
-      const store = storesById.get(membership.store_id);
-      if (!store?.franchise_id || (membership.franchise_id && membership.franchise_id !== store.franchise_id)) {
-        return [];
-      }
-      return [{
-        storeId: membership.store_id,
-        franchiseId: store.franchise_id,
-        role: "staff",
-        status: "approved",
-      }];
-    });
-    const approvedStoreIds = [...new Set(approvedMemberships.map((membership) => membership.storeId))];
-    const franchiseIds = [...new Set(approvedMemberships.map((membership) => membership.franchiseId).filter(
-      (franchiseId): franchiseId is string => franchiseId !== null,
-    ))];
-    if (approvedStoreIds.length === 0 || franchiseIds.length === 0) {
+    if (!store?.franchise_id) {
       return NextResponse.json({ notices: [] });
     }
-
-    // Read both franchise-wide notices (including the legacy "all" value)
-    // and notices targeted to this employee's approved stores.
-    const [franchiseResult, storeResult] = await Promise.all([
-      adminClient
-        .from("notices")
-        .select("id, franchise_id, target_type, target_store_id, audience, title, content, created_at")
-        .in("franchise_id", franchiseIds)
-        .in("target_type", ["all", "franchise"])
-        .in("audience", ["all_members", "staff"])
-        .order("created_at", { ascending: false }),
-      adminClient
-        .from("notices")
-        .select("id, franchise_id, target_type, target_store_id, audience, title, content, created_at")
-        .in("target_store_id", approvedStoreIds)
-        .eq("target_type", "store")
-        .in("audience", ["all_members", "staff"])
-        .order("created_at", { ascending: false }),
-    ]);
-
-    for (const result of [franchiseResult, storeResult]) {
-      if (result.error && !isMissingTableError(result.error)) {
-        console.error("Error fetching notices:", result.error);
-        return NextResponse.json({ error: "공지사항을 불러오지 못했습니다." }, { status: 500 });
-      }
+    if (membership.franchise_id && membership.franchise_id !== store.franchise_id) {
+      return NextResponse.json({ error: "이 매장의 공지사항을 볼 권한이 없습니다.", code: "STORE_FORBIDDEN" }, { status: 403 });
     }
 
-    const noticesData = [
-      ...((franchiseResult.data ?? []) as NoticeRow[]),
-      ...((storeResult.data ?? []) as NoticeRow[]),
-    ]
+    const approvedMemberships: NoticeMembership[] = [{
+      storeId: store.id,
+      franchiseId: store.franchise_id,
+      role: "staff",
+      status: "approved",
+    }];
+
+    const { franchiseName, rows: storeNoticeRows } = await fetchNoticesForStore(adminClient, storeId);
+
+    // fetchNoticesForStore는 audience/franchise_id와 target_type="franchise" 공지를 주지 않으므로 한 번에 보강한다.
+    const storeNoticeIds = storeNoticeRows.map((row) => row.id);
+    const scopeFilter = storeNoticeIds.length > 0
+      ? `id.in.(${storeNoticeIds.join(",")}),target_type.eq.franchise`
+      : "target_type.eq.franchise";
+    const { data: scopedRows, error: scopedError } = await adminClient
+      .from("notices")
+      .select(NOTICE_ROW_COLUMNS)
+      .eq("franchise_id", store.franchise_id)
+      .in("audience", ["all_members", "staff"])
+      .or(scopeFilter)
+      .order("created_at", { ascending: false });
+
+    if (scopedError && !isMissingTableError(scopedError)) {
+      console.error("Error fetching notices:", scopedError);
+      return NextResponse.json({ error: "공지사항을 불러오지 못했습니다." }, { status: 500 });
+    }
+
+    const noticesData = ((scopedRows ?? []) as NoticeRow[])
       .filter((row) => canReadNotice("staff", approvedMemberships, {
         franchiseId: row.franchise_id,
         targetType: row.target_type,
         targetStoreId: row.target_store_id,
         audience: row.audience,
       }))
-      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
       .slice(0, 1000);
 
     let readRecords: Array<{ notice_id: string; user_id: string }> = [];
@@ -163,19 +147,14 @@ export async function GET(): Promise<NextResponse> {
       readRecords = readRows ?? [];
     }
 
-    // 7. 응답 구성
-    const noticeItems = (noticesData ?? []).map((row: NoticeRow) => ({
+    const noticeItems = noticesData.map((row: NoticeRow) => ({
       id: row.id,
       targetType: row.target_type,
       sourceLabel: row.audience === "staff" ? "점주 공지" : "본사 공지",
-      targetStoreName:
-        row.target_type === "all"
-          ? "프랜차이즈 전체"
-          : row.target_store_id
-            ? storesById.get(row.target_store_id)?.store_name ?? null
-            : null,
+      targetStoreName: row.target_type === "store" ? store.store_name : "프랜차이즈 전체",
       title: row.title,
       content: row.content,
+      authorName: franchiseName,
       createdAt: row.created_at,
     }));
     const notices: StaffNoticeItem[] = withNoticeReadStats(noticeItems, readRecords, userId);
@@ -183,6 +162,6 @@ export async function GET(): Promise<NextResponse> {
     return NextResponse.json({ notices });
   } catch (error) {
     console.error("GET /api/staff/notices error:", error);
-    return NextResponse.json({ error: "서버 오류가 발생했습니다." }, { status: 500 });
+    return NextResponse.json({ error: "공지사항을 불러오지 못했습니다." }, { status: 500 });
   }
 }

@@ -160,3 +160,42 @@ describe("app/staff/page.tsx 근무 매장 선택 배선", () => {
     assert.match(source, /!isStoresLoading && !storesError && stores\.length === 0/);
   });
 });
+
+describe("직원 공통 매뉴얼 접근 범위", () => {
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const manualsRoute = readFileSync(path.join(repoRoot, "app/api/staff/manuals/route.ts"), "utf8").replace(/\r\n/g, "\n");
+  const migration = readFileSync(
+    path.join(repoRoot, "supabase/migrations/029_staff_hq_manual_read_access.sql"),
+    "utf8",
+  ).replace(/\r\n/g, "\n");
+
+  test("공통 매뉴얼은 검증된 지점의 franchise_id와 store_id NULL 기준으로 조회하고 승인된 행만 반환한다", () => {
+    assert.match(manualsRoute, /\.eq\("franchise_id", franchise\.franchiseId\)\.is\("store_id", null\)/);
+    assert.match(manualsRoute, /\.eq\("status", "approved"\)/);
+  });
+
+  test("구형 HQ 공통 매뉴얼의 franchise_id를 유일하게 일치하는 브랜드명으로 보정한다", () => {
+    assert.match(migration, /m\.franchise_id is null\s+and m\.store_id is null/);
+    assert.match(migration, /select count\(\*[\s\S]*?\) = 1/i);
+    assert.match(migration, /lower\(btrim\(m\.brand_name\)\)/i);
+  });
+
+  test("RLS는 승인된 staff에게 같은 franchise의 승인 HQ 공통 매뉴얼만 허용한다", () => {
+    assert.match(migration, /create policy manuals_select_approved_staff_common/);
+    assert.match(migration, /membership\.role = 'staff'/);
+    assert.match(migration, /membership\.status = 'approved'/);
+    assert.match(migration, /status = 'approved'/);
+    assert.match(migration, /membership\.franchise_id = manuals\.franchise_id/);
+    assert.match(migration, /store_id is null/);
+  });
+
+  test("상세 조회 로그는 명시적으로 활성화했을 때만 원본 매뉴얼 행을 기록한다", () => {
+    assert.match(manualsRoute, /process\.env\.MANUAL_LOOKUP_DEBUG === "1"/);
+    assert.match(manualsRoute, /store_id: storeId/);
+    assert.match(manualsRoute, /franchise_id: franchise\.franchiseId/);
+    assert.match(manualsRoute, /raw_rows: data/);
+    assert.match(manualsRoute, /raw_rows: franchiseRows/);
+    assert.match(manualsRoute, /raw_rows: legacyRows/);
+    assert.match(manualsRoute, /rls_bypassed_by_service_role: true/);
+  });
+});

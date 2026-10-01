@@ -256,7 +256,7 @@ describe("insufficient 질문 -> 매장 점주 알림 (실제 함수 조합)", (
     for (const leak of [QUESTION, "폐기", STORE_A, LOG_ID, OWNER_A, "0.12", "insufficient"]) {
       assert.equal(text.includes(leak), false, `leaks ${leak}`);
     }
-    assert.equal(notifications[0].target_url, null);
+    assert.equal(notifications[0].target_url, `/boss/questions?storeId=${STORE_A}`);
   });
 });
 
@@ -359,12 +359,20 @@ describe("app/api/rag/query/route.ts 연결 계약", () => {
     const finalizeCalls = source.match(/finalizeRagQueryResponse\(\{/g) ?? [];
     // finalize 입력의 question 바로 뒤에 오는 storeId만 센다(에스컬레이션 인자와 구분).
     const storeIdArgs = source.match(/question,\s*\n\s*storeId,/g) ?? [];
-    assert.equal(finalizeCalls.length, 3);
-    assert.equal(storeIdArgs.length, 3);
+    assert.ok(finalizeCalls.length > 0);
+    assert.equal(storeIdArgs.length, finalizeCalls.length);
   });
 
-  test("insufficient 두 경로에서만 에스컬레이션을 건다", () => {
-    assert.equal((source.match(/afterQuestionLogSaved: escalateInsufficientQuestion\(storeId\)/g) ?? []).length, 2);
+  test("최종 insufficient일 때만 에스컬레이션을 건다", () => {
+    assert.match(
+      source,
+      /afterQuestionLogSaved: outcome\.escalate \? escalateInsufficientQuestion\(storeId\) : undefined/,
+    );
+    assert.equal(
+      (source.match(/afterQuestionLogSaved: escalateInsufficientQuestion\(storeId\)/g) ?? []).length,
+      0,
+      "무조건 에스컬레이션하는 경로가 남아 있으면 안 된다",
+    );
   });
 
   test("저장 성공과 로그 id를 확인한 뒤에만 알림을 보낸다", () => {

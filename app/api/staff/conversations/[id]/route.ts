@@ -32,6 +32,11 @@ export async function GET(_request: NextRequest, { params }: Params): Promise<Ne
     .maybeSingle<{ id: string; title: string; store_id: string; updated_at: string }>();
 
   if (error && !isMissingConversationTable(error)) {
+    console.error("[GET /api/staff/conversations/:id] Failed to fetch conversation:", {
+      userId,
+      conversationId: id,
+      error: { code: error.code, message: error.message },
+    });
     return NextResponse.json({ error: "대화를 불러오지 못했습니다." }, { status: 500 });
   }
   if (!conversation) {
@@ -56,6 +61,11 @@ export async function GET(_request: NextRequest, { params }: Params): Promise<Ne
   ]);
 
   if (messageError) {
+    console.error("[GET /api/staff/conversations/:id] Failed to fetch messages:", {
+      userId,
+      conversationId: id,
+      error: { code: messageError.code, message: messageError.message },
+    });
     return NextResponse.json({ error: "대화를 불러오지 못했습니다." }, { status: 500 });
   }
 
@@ -98,6 +108,11 @@ export async function DELETE(_request: NextRequest, { params }: Params): Promise
     .select("id");
 
   if (error) {
+    console.error("[DELETE /api/staff/conversations/:id] Failed to delete conversation:", {
+      userId,
+      conversationId: id,
+      error: { code: error.code, message: error.message },
+    });
     return NextResponse.json({ error: "대화를 삭제하지 못했습니다." }, { status: 500 });
   }
   if (!data || data.length === 0) {

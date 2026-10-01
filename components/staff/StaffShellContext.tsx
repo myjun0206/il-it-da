@@ -9,6 +9,12 @@ import {
   writeSelectedStaffStoreId,
   writeStaffConversationId,
 } from "@/lib/staff/selected-store";
+import {
+  applyStoreOrder,
+  resolveDefaultStoreId,
+  sanitizeStorePreferences,
+  type StaffStorePreferences,
+} from "@/lib/staff/store-preferences";
 import { createClient } from "@/lib/supabase/client";
 
 // 직원 화면 공통 상태 (Header · Sidebar · AI 챗봇 · 매뉴얼 · 근무 매장이 같은 값을 쓴다).
@@ -28,10 +34,18 @@ interface StaffShellValue {
   roleLabel: string;
   stores: StaffStore[];
   pendingStores: StaffPendingStore[];
+  /** 활성 매장: 지금 AI 챗봇·지점 매뉴얼·공지에 적용되는 매장 (탭 단위 선택) */
   selectedStore: StaffStore | null;
+  /** 기본 매장: 사용자가 지정한 대표 근무 매장 (계정에 저장, 로그인 직후 활성 매장의 초깃값) */
+  defaultStoreId: string | null;
   isStoresLoading: boolean;
   storesError: string;
   reloadStores: () => void;
+  /**
+   * 기본 매장/표시 순서를 계정에 저장한다. 기본 매장이 바뀌면 활성 매장도 그 매장으로 전환한다.
+   * 승인 완료된 매장만 지정할 수 있다(서버에서 다시 검증). 성공 여부를 돌려준다.
+   */
+  saveStorePreferences: (preferences: StaffStorePreferences) => Promise<boolean>;
   /** approved 목록 안의 매장만 선택된다. 매장이 바뀌면 이어 보던 AI 대화 ID는 비운다(대화는 매장에 고정). */
   selectStore: (storeId: string) => StaffStore | null;
   logout: () => Promise<void>;
@@ -44,9 +58,11 @@ const StaffShellContext = createContext<StaffShellValue | null>(null);
 type MembershipRow = StaffPendingStore & { role: string; status: string };
 
 type StoresState = {
+  /** 승인 완료 매장 (사용자 지정 순서) */
   stores: StaffStore[];
   pendingStores: StaffPendingStore[];
   selectedStore: StaffStore | null;
+  defaultStoreId: string | null;
   isStoresLoading: boolean;
   storesError: string;
 };
@@ -60,6 +76,7 @@ export function StaffShellProvider({ children }: { children: ReactNode }) {
     stores: [],
     pendingStores: [],
     selectedStore: null,
+    defaultStoreId: null,
     isStoresLoading: true,
     storesError: "",
   });
@@ -112,9 +129,11 @@ export function StaffShellProvider({ children }: { children: ReactNode }) {
 
     void (async () => {
       try {
-        const [approvedResponse, membershipResponse] = await Promise.all([
+        const [approvedResponse, membershipResponse, preferencesResponse] = await Promise.all([
           fetch("/api/staff/stores", { signal: controller.signal, credentials: "include" }),
           fetch("/api/signup/store-membership", { signal: controller.signal, credentials: "include" }),
+          // 기본 매장/표시 순서 (조회 실패 시 기본 규칙으로 동작: 첫 승인 매장, 서버 순서)
+          fetch("/api/staff/store-preferences", { signal: controller.signal, credentials: "include" }).catch(() => null),
         ]);
         if (approvedResponse.status === 401) {
           router.push("/");
@@ -137,19 +156,41 @@ export function StaffShellProvider({ children }: { children: ReactNode }) {
         }
         if (controller.signal.aborted) return;
 
-        const stores = approvedPayload.stores;
+        let rawPreferences: unknown = null;
+        try {
+          if (preferencesResponse?.ok) {
+            rawPreferences = ((await preferencesResponse.json()) as { preferences?: unknown }).preferences ?? null;
+          }
+        } catch {
+          rawPreferences = null;
+        }
+        if (controller.signal.aborted) return;
+
+        const approvedStores = approvedPayload.stores;
+        const preferences = sanitizeStorePreferences(
+          rawPreferences,
+          approvedStores.map((store) => store.id),
+        );
+        const stores = applyStoreOrder(approvedStores, preferences.order);
+        const defaultStoreId = resolveDefaultStoreId(stores, preferences);
+
         const storedStoreId = readSelectedStaffStoreId();
-        // 저장된 선택이 여전히 승인 매장이면 유지, 아니면 첫 승인 매장으로 안전하게 대체한다.
-        const selectedStore = stores.find((store) => store.id === storedStoreId) ?? stores[0] ?? null;
+        // 활성 매장: 이 탭에서 고른 매장이 여전히 승인 매장이면 유지, 아니면 기본 매장(없으면 첫 승인 매장).
+        const selectedStore =
+          stores.find((store) => store.id === storedStoreId) ??
+          stores.find((store) => store.id === defaultStoreId) ??
+          stores[0] ??
+          null;
         writeSelectedStaffStoreId(selectedStore?.id ?? null);
 
-        setStoresState({ stores, pendingStores, selectedStore, isStoresLoading: false, storesError: "" });
+        setStoresState({ stores, pendingStores, selectedStore, defaultStoreId, isStoresLoading: false, storesError: "" });
       } catch {
         if (controller.signal.aborted) return;
         setStoresState({
           stores: [],
           pendingStores: [],
           selectedStore: null,
+          defaultStoreId: null,
           isStoresLoading: false,
           storesError: "승인된 근무 매장을 불러오지 못했습니다. 다시 시도해 주세요.",
         });
@@ -178,6 +219,42 @@ export function StaffShellProvider({ children }: { children: ReactNode }) {
     [storesState.stores, storesState.selectedStore],
   );
 
+  const saveStorePreferences = useCallback(
+    async (preferences: StaffStorePreferences) => {
+      try {
+        const response = await fetch("/api/staff/store-preferences", {
+          method: "PUT",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(preferences),
+        });
+        const payload = (await response.json()) as { preferences?: unknown };
+        if (!response.ok || !payload.preferences) return false;
+
+        setStoresState((current) => {
+          const saved = sanitizeStorePreferences(
+            payload.preferences,
+            current.stores.map((store) => store.id),
+          );
+          const stores = applyStoreOrder(current.stores, saved.order);
+          const defaultStoreId = resolveDefaultStoreId(stores, saved);
+          // 기본 매장을 바꾸면 활성 매장도 함께 전환한다. (대화는 매장에 고정이므로 이어 보던 대화 ID는 비운다)
+          let selectedStore = current.selectedStore;
+          if (defaultStoreId && defaultStoreId !== current.defaultStoreId && defaultStoreId !== selectedStore?.id) {
+            selectedStore = stores.find((store) => store.id === defaultStoreId) ?? selectedStore;
+            writeStaffConversationId(null);
+            writeSelectedStaffStoreId(selectedStore?.id ?? null);
+          }
+          return { ...current, stores, defaultStoreId, selectedStore };
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [],
+  );
+
   // Sidebar 하단 로그아웃과 ProfileMenu 로그아웃이 같은 함수를 쓴다.
   const logout = useCallback(async () => {
     try {
@@ -186,13 +263,15 @@ export function StaffShellProvider({ children }: { children: ReactNode }) {
       console.error("Logout failed:", error);
     } finally {
       writeStaffConversationId(null);
+      // 다음 로그인은 기본 매장에서 시작한다.
+      writeSelectedStaffStoreId(null);
       router.push("/");
     }
   }, [router]);
 
   const value = useMemo<StaffShellValue>(
-    () => ({ userName, roleLabel, ...storesState, reloadStores, selectStore, logout }),
-    [userName, roleLabel, storesState, reloadStores, selectStore, logout],
+    () => ({ userName, roleLabel, ...storesState, reloadStores, selectStore, saveStorePreferences, logout }),
+    [userName, roleLabel, storesState, reloadStores, selectStore, saveStorePreferences, logout],
   );
 
   return <StaffShellContext.Provider value={value}>{children}</StaffShellContext.Provider>;

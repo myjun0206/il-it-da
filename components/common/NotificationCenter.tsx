@@ -1,8 +1,11 @@
 "use client";
 
 import React, { useEffect, useState, useRef } from "react";
-import { Bell } from "lucide-react";
+import { Bell, Info } from "lucide-react";
+import Link from "next/link";
 import { formatNotificationTime } from "@/lib/notifications";
+import { NOTIFICATIONS_CHANGED_EVENT } from "@/lib/notifications/escalation-popup";
+import { resolveNotificationClick } from "@/lib/notifications/notification-href";
 
 interface Notification {
   id: string;
@@ -18,19 +21,21 @@ interface Notification {
 
 interface NotificationCenterProps {
   className?: string;
+  notificationPageUrl?: string;
 }
 
 interface NavigationState {
   targetUrl: string | null;
 }
 
-export default function NotificationCenter({ className = "" }: NotificationCenterProps) {
+export default function NotificationCenter({ className = "", notificationPageUrl = "/notifications" }: NotificationCenterProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [navigationTarget, setNavigationTarget] = useState<NavigationState>({ targetUrl: null });
+  const [toastMessage, setToastMessage] = useState("");
   const panelRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
@@ -41,21 +46,35 @@ export default function NotificationCenter({ className = "" }: NotificationCente
     }
   }, [navigationTarget]);
 
+  useEffect(() => {
+    if (!toastMessage) return;
+    const timer = setTimeout(() => setToastMessage(""), 2500);
+    return () => clearTimeout(timer);
+  }, [toastMessage]);
+
   // 종 아이콘 badge: 패널을 열기 전에도 실제 읽지 않은 알림 수로 표시한다. (없으면 badge 없음)
   useEffect(() => {
     let isCancelled = false;
-    fetch("/api/notifications?limit=1")
-      .then(async (response) => {
-        const data = (await response.json()) as { success?: boolean; data?: { unreadCount?: number } };
-        if (!isCancelled && response.ok && data.success && typeof data.data?.unreadCount === "number") {
-          setUnreadCount(data.data.unreadCount);
-        }
-      })
-      .catch(() => {
-        // badge만 생략한다. 패널을 열면 다시 조회한다.
-      });
+
+    const loadUnreadCount = () => {
+      fetch("/api/notifications?limit=1")
+        .then(async (response) => {
+          const data = (await response.json()) as { success?: boolean; data?: { unreadCount?: number } };
+          if (!isCancelled && response.ok && data.success && typeof data.data?.unreadCount === "number") {
+            setUnreadCount(data.data.unreadCount);
+          }
+        })
+        .catch(() => {
+          // badge만 생략한다. 패널을 열면 다시 조회한다.
+        });
+    };
+
+    loadUnreadCount();
+    // 팝업 등 다른 화면에서 읽음 처리하면 배지를 다시 맞춘다.
+    window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, loadUnreadCount);
     return () => {
       isCancelled = true;
+      window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, loadUnreadCount);
     };
   }, []);
 
@@ -107,9 +126,11 @@ export default function NotificationCenter({ className = "" }: NotificationCente
       setUnreadCount((count) => Math.max(0, count - 1));
     }
 
-    // Navigate if targetUrl exists
-    if (notification.targetUrl) {
-      setNavigationTarget({ targetUrl: notification.targetUrl });
+    const action = resolveNotificationClick(notification);
+    if (action.kind === "navigate") {
+      setNavigationTarget({ targetUrl: action.href });
+    } else if (action.kind === "notice") {
+      setToastMessage(action.message);
     }
   };
 
@@ -163,13 +184,18 @@ export default function NotificationCenter({ className = "" }: NotificationCente
         ref={buttonRef}
         onClick={() => setIsOpen(!isOpen)}
         className="relative p-2 rounded-lg hover:bg-[var(--color-bg-surface)] transition-colors"
-        aria-label="알림"
+        aria-label={unreadCount > 0 ? `알림 (읽지 않은 알림 ${unreadCount}개)` : "알림"}
         aria-expanded={isOpen}
         aria-haspopup="dialog"
       >
         <Bell size={20} className="text-[var(--color-text-secondary)]" />
         {unreadCount > 0 && (
-          <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
+          <span
+            className="absolute -top-0.5 -right-0.5 min-w-[20px] h-5 bg-red-500 text-white text-xs font-semibold rounded-full flex items-center justify-center"
+            aria-label={`${unreadCount > 99 ? '99+' : unreadCount}개의 읽지 않은 알림`}
+          >
+            {unreadCount > 99 ? '99+' : unreadCount}
+          </span>
         )}
       </button>
 
@@ -247,11 +273,24 @@ export default function NotificationCenter({ className = "" }: NotificationCente
           {/* Footer */}
           {notifications.length > 0 && (
             <div className="sticky bottom-0 px-4 py-3 border-t border-[var(--color-border)] bg-white rounded-b-lg text-center">
-              <button className="text-sm font-medium text-[var(--color-primary)] hover:opacity-80 transition-opacity">
+              <Link
+                href={notificationPageUrl}
+                className="text-sm font-medium text-[var(--color-primary)] hover:opacity-80 transition-opacity inline-block"
+              >
                 알림 전체보기
-              </button>
+              </Link>
             </div>
           )}
+        </div>
+      )}
+
+      {toastMessage && (
+        <div
+          role="status"
+          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-lg bg-[var(--color-text-primary)] px-4 py-3 text-sm font-medium text-[var(--color-bg-surface)] shadow-md lg:left-[calc(50%+120px)]"
+        >
+          <Info size={16} aria-hidden="true" />
+          {toastMessage}
         </div>
       )}
     </div>

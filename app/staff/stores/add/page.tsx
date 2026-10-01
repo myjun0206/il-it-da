@@ -19,18 +19,14 @@ interface StaffMembership {
 }
 
 const STAFF_COPY: StoreRequestCopy = {
-  backHref: "/staff",
-  backLabel: "직원 홈으로 돌아가기",
-  title: "근무 매장 추가",
+  backHref: "/staff/stores",
+  backLabel: "근무 매장으로 돌아가기",
+  title: "매장 추가",
   description: "근무할 매장을 검색하고 신청하세요. 해당 매장 점주가 승인하면 근무 매장에 추가됩니다.",
-  successDescription: "근무 신청이 접수되었습니다. 점주의 승인을 기다려 주세요.",
   successTitle: "근무 신청이 완료되었습니다.",
   pendingLabel: "점주 승인 대기",
-  approvalStepLabel: "점주 승인",
-  startStepLabel: "근무 시작",
-  successGuide: "해당 매장의 점주가 승인하면 근무 매장으로 선택할 수 있습니다.",
-  successSubGuide: "승인 상태는 근무 매장에서 확인할 수 있습니다.",
-  statusHref: "/staff/stores",
+  successGuide: "점주가 승인하면 근무 매장으로 사용할 수 있습니다.",
+  statusHref: "/staff/stores/requests",
   searchIdleText: "근무할 매장을 검색해 주세요.",
   activeBadge: "근무 중",
   selectedLabel: "선택한 근무 매장",
@@ -93,6 +89,9 @@ export default function StaffAddStorePage() {
 
       if (response.status === 401 || response.status === 403) {
         return { kind: "error", message: "로그인 정보를 확인할 수 없습니다. 다시 로그인한 뒤 신청해 주세요." };
+      }
+      if (result.code === "STORE_NO_OWNER") {
+        return { kind: "error", message: "아직 점주가 등록되지 않은 매장이라 근무 신청을 할 수 없습니다. 점주가 등록된 뒤 다시 신청해 주세요." };
       }
       if (response.status === 404 || result.code === "STORE_NOT_FOUND") {
         return { kind: "error", message: "일잇다에 등록된 매장이 아니라 신청할 수 없습니다. 매장 이름을 다시 확인해 주세요." };

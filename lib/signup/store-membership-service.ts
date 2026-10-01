@@ -431,11 +431,15 @@ export interface StoreMembershipRequestResult {
   /** 반환된 membership의 현재 상태 (pending | approved | rejected) */
   membershipStatus?: string;
   /** 클라이언트가 안내 문구를 고를 수 있는 안전한 코드 (내부 에러 내용은 담지 않는다) */
-  code?: "STORE_NOT_FOUND";
+  code?: "STORE_NOT_FOUND" | "STORE_BRAND_UNKNOWN" | "STORE_NO_OWNER";
   error?: string;
   details?: string;
   status: number;
 }
+
+/** 브랜드가 연결되지 않은 기존 매장은 클라이언트 값으로 채우지 않고 고정 안내로 막는다. */
+export const STORE_BRAND_UNRESOLVED_MESSAGE =
+  "이 매장의 브랜드 정보가 연결되어 있지 않아 신청할 수 없습니다. 본사에 문의해 주세요.";
 
 /**
  * 매장 조회/생성 + store_memberships row 생성(중복이면 기존 것 반환) + 알림 발송.
@@ -458,23 +462,45 @@ export async function submitStoreMembershipRequest(
 
   let resolvedStoreName = storeName?.trim() || null;
   let storeFromId: { id: string; store_name: string; franchise_id: string | null } | null = null;
-  if (storeId && DATABASE_UUID_PATTERN.test(storeId)) {
+  const requestedStoreId = storeId?.trim() || null;
+
+  // storeId를 명시했으면 그 매장으로만 처리한다. 없는 매장이면 이름 resolver나 새 매장 생성으로 넘기지 않는다.
+  if (requestedStoreId) {
+    if (!DATABASE_UUID_PATTERN.test(requestedStoreId)) {
+      return {
+        success: false,
+        error: "선택한 매장 정보가 올바르지 않습니다.",
+        details: "매장을 다시 선택해주세요.",
+        status: 400,
+      };
+    }
+
     const { data, error } = await adminClient
       .from("stores")
       .select("id, store_name, franchise_id")
-      .eq("id", storeId)
+      .eq("id", requestedStoreId)
       .maybeSingle<{ id: string; store_name: string; franchise_id: string | null }>();
 
     if (error) {
       return { success: false, error: "Failed to lookup store", details: error.message, status: 500 };
     }
-    if (data) {
-      storeFromId = data;
-      resolvedStoreName = data.store_name;
+    if (!data) {
+      return {
+        success: false,
+        error: "선택한 매장을 찾을 수 없습니다.",
+        code: "STORE_NOT_FOUND",
+        status: 404,
+      };
     }
+
+    storeFromId = data;
+    resolvedStoreName = data.store_name;
   }
 
   let requestedFranchiseId: string | null = null;
+  // body의 franchiseId는 "실재하는 프랜차이즈인가"만 확인한다. 기존 매장의 브랜드는 이 값으로 정하지 않는다.
+  let clientFranchiseId: string | null = null;
+
   if (franchiseId) {
     const { data: chosenFranchise, error: chosenFranchiseError } = await adminClient
       .from("franchises")
@@ -485,18 +511,87 @@ export async function submitStoreMembershipRequest(
     if (chosenFranchiseError || !chosenFranchise) {
       return { success: false, error: "Invalid franchiseId", status: 400 };
     }
-    requestedFranchiseId = chosenFranchise.id;
-  } else if (storeFromId?.franchise_id) {
-    requestedFranchiseId = storeFromId.franchise_id;
-  } else if (resolvedStoreName) {
-    requestedFranchiseId = await resolveFranchiseIdForStoreName(adminClient, resolvedStoreName);
-    if (!requestedFranchiseId) {
+    clientFranchiseId = chosenFranchise.id;
+  }
+
+  if (storeFromId) {
+    // 기존 매장은 서버가 조회한 stores.franchise_id만 기준으로 삼는다.
+    if (!storeFromId.franchise_id) {
       return {
         success: false,
-        error: "프랜차이즈를 자동으로 확인할 수 없습니다.",
-        details: "매장명을 확인하거나 프랜차이즈를 직접 선택해주세요.",
+        error: STORE_BRAND_UNRESOLVED_MESSAGE,
+        code: "STORE_BRAND_UNKNOWN",
         status: 400,
       };
+    }
+    if (clientFranchiseId && clientFranchiseId !== storeFromId.franchise_id) {
+      return {
+        success: false,
+        error: "매장과 프랜차이즈 정보가 일치하지 않습니다.",
+        details: "선택한 매장의 브랜드를 다시 확인해주세요.",
+        status: 400,
+      };
+    }
+    requestedFranchiseId = storeFromId.franchise_id;
+  } else if (resolvedStoreName) {
+    // 같은 이름의 매장이 이미 있으면 그 행의 브랜드가 기준이다(이름 resolver나 body보다 우선한다).
+    const { data: namedStores, error: namedStoresError } = await adminClient
+      .from("stores")
+      .select("id, franchise_id")
+      .eq("store_name", resolvedStoreName);
+
+    if (namedStoresError) {
+      return { success: false, error: "Failed to lookup store", details: namedStoresError.message, status: 500 };
+    }
+
+    const existingBrands = [
+      ...new Set(
+        ((namedStores ?? []) as { franchise_id: string | null }[])
+          .map((store) => store.franchise_id)
+          .filter((id): id is string => typeof id === "string" && id.length > 0),
+      ),
+    ];
+
+    if ((namedStores ?? []).length > 0) {
+      if (existingBrands.length === 0) {
+        return {
+          success: false,
+          error: STORE_BRAND_UNRESOLVED_MESSAGE,
+          code: "STORE_BRAND_UNKNOWN",
+          status: 400,
+        };
+      }
+      if (clientFranchiseId) {
+        if (!existingBrands.includes(clientFranchiseId)) {
+          return {
+            success: false,
+            error: "매장과 프랜차이즈 정보가 일치하지 않습니다.",
+            details: "선택한 매장의 브랜드를 다시 확인해주세요.",
+            status: 400,
+          };
+        }
+        requestedFranchiseId = clientFranchiseId;
+      } else if (existingBrands.length === 1) {
+        requestedFranchiseId = existingBrands[0];
+      } else {
+        return {
+          success: false,
+          error: "매장과 프랜차이즈 정보가 일치하지 않습니다.",
+          details: "같은 이름의 매장이 여러 브랜드에 있어 브랜드를 선택해야 합니다.",
+          status: 400,
+        };
+      }
+    } else {
+      // 같은 이름의 매장이 아직 없을 때만 기존 경로(클라이언트 선택 또는 매장명 resolver)를 쓴다.
+      requestedFranchiseId = clientFranchiseId ?? (await resolveFranchiseIdForStoreName(adminClient, resolvedStoreName));
+      if (!requestedFranchiseId) {
+        return {
+          success: false,
+          error: "프랜차이즈를 자동으로 확인할 수 없습니다.",
+          details: "매장명을 확인하거나 프랜차이즈를 직접 선택해주세요.",
+          status: 400,
+        };
+      }
     }
   } else {
     return {
@@ -505,42 +600,6 @@ export async function submitStoreMembershipRequest(
       details: "매장명을 입력해주세요.",
       status: 400,
     };
-  }
-
-  if (storeFromId?.franchise_id && requestedFranchiseId !== storeFromId.franchise_id) {
-    return {
-      success: false,
-      error: "매장과 프랜차이즈 정보가 일치하지 않습니다.",
-      details: "선택한 매장의 브랜드를 다시 확인해주세요.",
-      status: 400,
-    };
-  }
-
-  if (storeFromId && !storeFromId.franchise_id && requestedFranchiseId) {
-    const { error: storeBrandUpdateError } = await adminClient
-      .from("stores")
-      .update({ franchise_id: requestedFranchiseId })
-      .eq("id", storeFromId.id);
-
-    if (storeBrandUpdateError) {
-      console.error("[AUTH] STORE_BRAND_BACKFILL_FAILED", {
-        userId,
-        storeId: storeFromId.id,
-        storeName: resolvedStoreName,
-        franchiseId: requestedFranchiseId,
-        message: storeBrandUpdateError.message,
-        code: storeBrandUpdateError.code,
-        details: storeBrandUpdateError.details,
-      });
-      logSafeAuthError("STORE_BRAND_BACKFILL_FAILED", storeBrandUpdateError);
-      return {
-        success: false,
-        error: "매장 브랜드 연결에 실패했습니다.",
-        details: storeBrandUpdateError.message,
-        status: 500,
-      };
-    }
-    storeFromId.franchise_id = requestedFranchiseId;
   }
 
   // stores row 생성/조회
@@ -736,6 +795,38 @@ export async function submitStoreMembershipRequest(
         membershipStatus: existingMembership.status,
         status: 200,
       };
+    }
+
+    // 직원 신청은 그 매장의 점주가 승인한다. 승인된 점주가 없는 매장은 신청을 받을 사람이 없으므로
+    // 새 신청을 만들지 않는다. (기존 membership은 위에서 그대로 반환되므로 영향 없음)
+    if (role === "staff") {
+      const { data: approvedOwners, error: ownerLookupError } = await adminClient
+        .from("store_memberships")
+        .select("id")
+        .eq("store_id", finalStoreId)
+        .eq("role", "owner")
+        .eq("status", "approved")
+        .limit(1);
+
+      if (ownerLookupError) {
+        logSafeAuthError("STORE_MEMBERSHIP_OWNER_LOOKUP_FAILED", ownerLookupError);
+        return {
+          success: false,
+          error: "Failed to verify store owner",
+          details: ownerLookupError.message,
+          status: 500,
+        };
+      }
+
+      if (!approvedOwners || approvedOwners.length === 0) {
+        return {
+          success: false,
+          error: "아직 점주가 등록되지 않은 매장이라 근무 신청을 할 수 없습니다.",
+          details: "해당 매장의 점주가 일잇다에 등록된 뒤 다시 신청해 주세요.",
+          code: "STORE_NO_OWNER",
+          status: 409,
+        };
+      }
     }
 
     const { data: newMembership, error: createError } = await adminClient

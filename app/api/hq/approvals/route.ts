@@ -4,6 +4,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireHqUser } from "@/lib/supabase/hq-auth";
 import { isMembershipInHqFranchise, isUuid } from "@/lib/hq/approval-scope";
 import { createNotification } from "@/lib/notifications";
+import {
+  buildMasterApprovalUpdate,
+  expectedMasterApprovalStatus,
+  groupMembershipStatusesByUser,
+  needsApprovalCompletion,
+} from "@/lib/signup/approval-recovery";
 import { ensureBrandProfileForApprovedMembership, MembershipAuthNotReadyError, requireConfirmedMembershipAuthUser } from "@/lib/signup/store-membership-service";
 
 export const runtime = "nodejs";
@@ -70,22 +76,14 @@ async function syncProfileApprovalStatus(adminClient: ReturnType<typeof createAd
     .select("status, approved_at, approved_by")
     .eq("user_id", userId);
 
+  // 조회 실패는 빈 목록으로 바꾸지 않는다(그대로 두면 rejected를 잘못 기록하게 된다).
   if (error) {
     throw error;
   }
 
-  const hasApproved = (memberships ?? []).some((membership) => membership.status === "approved");
-  const hasPending = (memberships ?? []).some((membership) => isPendingStatus(membership.status));
-  const firstApproved = (memberships ?? []).find((membership) => membership.status === "approved");
-  const approvalStatus = hasApproved ? "approved" : hasPending ? "pending" : "rejected";
-
   const { error: profileUpdateError } = await adminClient
     .from("profiles")
-    .update({
-      approval_status: approvalStatus,
-      approved_at: approvalStatus === "approved" ? firstApproved?.approved_at ?? new Date().toISOString() : null,
-      approved_by: approvalStatus === "approved" ? firstApproved?.approved_by ?? null : null,
-    })
+    .update(buildMasterApprovalUpdate(memberships ?? []))
     .eq("id", userId);
 
   if (profileUpdateError) {
@@ -170,7 +168,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const profileUserIds = [...new Set([...scopedUserIds, ...ownerUserIds])];
   const { data: profiles, error: profileError } = await adminClient
     .from("profiles")
-    .select("id, full_name, email")
+    .select("id, full_name, email, approval_status")
     .in("id", profileUserIds);
   if (profileError) {
     return NextResponse.json({ success: false, error: "Failed to fetch approvals" }, { status: 500 });
@@ -179,6 +177,47 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const namesByUserId = new Map((profiles ?? []).map((profile) => [profile.id, profile.full_name]));
   const emailsByUserId = new Map((profiles ?? []).map((profile) => [profile.id, profile.email]));
   const namesByStoreId = new Map((stores ?? []).map((store) => [store.id, store.store_name]));
+
+  // 승인은 됐지만 후속 단계(브랜드 프로필 생성, 마스터 승인 상태 동기화)가 끝나지 않은
+  // "부분 승인"을 화면이 구분할 수 있게 한다. 조회가 실패하면 복구 불필요로 위장하지 않고 500으로 끊는다.
+  const approvedUserIds = [
+    ...new Set(scopedMemberships.filter((membership) => membership.status === "approved").map((m) => m.user_id)),
+  ];
+  const { data: brandProfiles, error: brandProfileError } = approvedUserIds.length
+    ? await adminClient
+        .from("profiles")
+        .select("user_id, brand_id")
+        .in("user_id", approvedUserIds)
+        .not("brand_id", "is", null)
+    : { data: [], error: null };
+
+  if (brandProfileError) {
+    return NextResponse.json({ success: false, error: "Failed to fetch approvals" }, { status: 500 });
+  }
+
+  // 마스터 승인 상태의 기대값은 그 사용자의 모든 매장 membership에서 계산한다.
+  const { data: allUserMemberships, error: allMembershipError } = approvedUserIds.length
+    ? await adminClient
+        .from("store_memberships")
+        .select("user_id, status")
+        .in("user_id", approvedUserIds)
+    : { data: [], error: null };
+
+  if (allMembershipError) {
+    return NextResponse.json({ success: false, error: "Failed to fetch approvals" }, { status: 500 });
+  }
+
+  const membershipsByUser = groupMembershipStatusesByUser(allUserMemberships ?? []);
+  const masterStatusByUserId = new Map(
+    (profiles ?? []).map((profile) => [profile.id, profile.approval_status ?? null]),
+  );
+
+  const brandProfileKeys = new Set(
+    ((brandProfiles ?? []) as { user_id: string; brand_id: string }[]).map(
+      (profile) => `${profile.user_id}:${profile.brand_id}`,
+    ),
+  );
+
   const data: ApprovalItem[] = scopedMemberships.map((membership) => ({
     membership: (() => {
       const existingOwners = (ownerMemberships ?? []).filter(
@@ -192,6 +231,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         user_name: namesByUserId.get(membership.user_id) || "Unknown User",
         user_email: emailsByUserId.get(membership.user_id) || null,
         store_name: namesByStoreId.get(membership.store_id) || "Unknown Store",
+        needs_brand_profile_recovery: (() => {
+          const brandId = membership.franchise_id ?? storesById.get(membership.store_id)?.franchise_id ?? null;
+          return needsApprovalCompletion({
+            membershipStatus: membership.status,
+            hasBrandProfile: brandId ? brandProfileKeys.has(`${membership.user_id}:${brandId}`) : null,
+            masterApprovalStatus: masterStatusByUserId.get(membership.user_id) ?? null,
+            expectedMasterStatus: expectedMasterApprovalStatus(
+              membershipsByUser.get(membership.user_id) ?? [],
+            ),
+          });
+        })(),
         has_owner_conflict: membership.role === "owner" && existingOwners.length > 0,
         existing_owner_names: existingOwners.map(
           (ownerMembership) => namesByUserId.get(ownerMembership.user_id) || "Unknown Owner",
