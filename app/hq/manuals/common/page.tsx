@@ -2,7 +2,7 @@
 
 import React, { useEffect, useLayoutEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, FileText, Pencil, Plus, Search, Upload, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, FileText, Pencil, Plus, RefreshCw, Search, Upload, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
@@ -101,6 +101,8 @@ export default function ManualDashboardPage() {
   const [isReady, setIsReady] = useState(false);
   const [manuals, setManuals] = useState<ManualRecord[]>([]);
   const [isLoadingManuals, setIsLoadingManuals] = useState(true);
+  const [manualsLoadError, setManualsLoadError] = useState("");
+  const [manualsReloadKey, setManualsReloadKey] = useState(0);
   const [view, setView] = useState<ManualView>("categories");
   const [searchQuery, setSearchQuery] = useState("");
   const [titleSearchQuery, setTitleSearchQuery] = useState("");
@@ -191,25 +193,34 @@ export default function ManualDashboardPage() {
     setUserInfo();
   }, []);
 
-  // 상태를 전혀 건드리지 않는 순수 데이터 조회 함수 - useEffect에서 안전하게 호출하기 위해 분리.
-  // 기존 동작과 동일하게, HTTP 오류 응답은 조용히 무시하고(에러 로그 없이) manuals를 갱신하지 않는다.
-  const fetchManualsData = async (): Promise<ManualRecord[] | null> => {
-    const response = await fetch("/api/manuals?includeCategoryPlaceholders=1");
+  const fetchManualsData = async (): Promise<ManualRecord[]> => {
+    const response = await fetch("/api/manuals?includeCategoryPlaceholders=1", {
+      cache: "no-store",
+      credentials: "same-origin",
+    });
     const data = (await response.json()) as { manuals?: ManualRecord[]; error?: string };
-    return response.ok ? data.manuals ?? [] : null;
+    if (!response.ok) {
+      const requestId = response.headers.get("x-request-id");
+      throw new Error(`${data.error || "공통 매뉴얼을 불러오지 못했습니다."}${requestId ? ` (문의 ID: ${requestId})` : ""}`);
+    }
+    if (!Array.isArray(data.manuals)) {
+      throw new Error("공통 매뉴얼 응답을 확인할 수 없습니다.");
+    }
+    return data.manuals;
   };
 
   // 마운트 시 로딩 표시는 isLoadingManuals의 초기값(true)으로 이미 처리되므로,
   // 재조회 시에만 로딩 상태를 다시 켠다(이벤트 핸들러에서 호출, effect 동기 구간과 무관).
   const refetchManuals = async () => {
     setIsLoadingManuals(true);
+    setManualsLoadError("");
     try {
       const manuals = await fetchManualsData();
-      if (manuals) {
-        setManuals(manuals);
-      }
+      setManuals(manuals);
     } catch (e) {
-      console.error("매뉴얼 목록 조회 실패:", e);
+      setManualsLoadError(e instanceof Error && e.message.includes("공통 매뉴얼")
+        ? e.message
+        : "네트워크 문제로 공통 매뉴얼을 불러오지 못했습니다. 다시 시도해 주세요.");
     } finally {
       setIsLoadingManuals(false);
     }
@@ -217,14 +228,15 @@ export default function ManualDashboardPage() {
 
   useEffect(() => {
     fetchManualsData()
-      .then((manuals) => {
-        if (manuals) {
-          setManuals(manuals);
-        }
+      .then((data) => {
+        setManuals(data);
+        setManualsLoadError("");
       })
-      .catch((e) => console.error("매뉴얼 목록 조회 실패:", e))
+      .catch((e) => setManualsLoadError(e instanceof Error && e.message.includes("공통 매뉴얼")
+        ? e.message
+        : "네트워크 문제로 공통 매뉴얼을 불러오지 못했습니다. 다시 시도해 주세요."))
       .finally(() => setIsLoadingManuals(false));
-  }, []);
+  }, [manualsReloadKey]);
 
   const handleLogout = async () => {
     try {
@@ -790,6 +802,22 @@ export default function ManualDashboardPage() {
 
           {isLoadingManuals ? (
             <p className="text-sm text-[var(--color-text-secondary)]">불러오는 중...</p>
+          ) : manualsLoadError ? (
+            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-5" role="alert">
+              <AlertCircle size={18} className="shrink-0 text-red-700" aria-hidden="true" />
+              <p className="flex-1 text-sm text-red-700">{manualsLoadError}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setManualsLoadError("");
+                  setIsLoadingManuals(true);
+                  setManualsReloadKey((current) => current + 1);
+                }}
+                className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-sm font-medium text-red-700 hover:bg-red-100"
+              >
+                <RefreshCw size={16} aria-hidden="true" /> 다시 시도
+              </button>
+            </div>
           ) : view === "categories" ? (
             <section>
               {/* Toolbar: 왼쪽 검색 / 오른쪽 [위험] [보조] [주요] 액션. 좌우 끝이 아래 grid와 같은 기준선이다. */}

@@ -26,7 +26,10 @@ type WriteCall = { table: string; op: "insert" | "update"; payload: Row };
 const NOT_FOUND = { code: "PGRST116", message: "No rows found" };
 
 /** 004/006 + 023 구조를 흉내낸 최소 가짜 DB. 실제 Supabase는 쓰지 않는다. */
-function fakeClient(seed: { stores?: Row[]; memberships?: Row[]; profiles?: Row[] } = {}) {
+function fakeClient(
+  seed: { stores?: Row[]; memberships?: Row[]; profiles?: Row[] } = {},
+  options: { membershipInsertRace?: boolean } = {},
+) {
   const tables: Record<string, Row[]> = {
     stores: (seed.stores ?? []).map((row) => ({ ...row })),
     store_memberships: (seed.memberships ?? []).map((row) => ({ ...row })),
@@ -34,6 +37,7 @@ function fakeClient(seed: { stores?: Row[]; memberships?: Row[]; profiles?: Row[
     franchises: [{ id: BRAND_A }, { id: BRAND_B }],
   };
   const writes: WriteCall[] = [];
+  let membershipRacePending = options.membershipInsertRace === true;
 
   const matches = (row: Row, filters: Row) =>
     Object.entries(filters).every(([column, value]) => row[column] === value);
@@ -67,6 +71,18 @@ function fakeClient(seed: { stores?: Row[]; memberships?: Row[]; profiles?: Row[
       return {
         select: () => makeSelect(table),
         insert(payload: Row) {
+          if (table === "store_memberships" && membershipRacePending) {
+            membershipRacePending = false;
+            tables.store_memberships.push({ id: "membership-created-concurrently", ...payload, status: "pending" });
+            return {
+              select: () => ({
+                single: () => Promise.resolve({
+                  data: null,
+                  error: { code: "23505", message: "duplicate key violates store_memberships_user_id_store_id_key" },
+                }),
+              }),
+            };
+          }
           const inserted = { id: `${table}-new`, ...payload };
           tables[table].push(inserted);
           writes.push({ table, op: "insert", payload });
@@ -215,6 +231,24 @@ describe("점주 매장 추가 (submitStoreMembershipRequest 실제 실행)", ()
     assert.equal(tables.store_memberships.filter((row) => row.store_id === STORE_B).length, 1);
   });
 
+  test("동시 신청으로 membership unique 위반이 나면 방금 생성된 요청을 재사용한다", async () => {
+    const { client, tables } = fakeClient({ stores: storeSeed() }, { membershipInsertRace: true });
+
+    const result = await submitStoreMembershipRequest(client, {
+      userId: OWNER_ID,
+      userName: "점주",
+      role: "owner",
+      storeId: STORE_B,
+      storeName: "브랜드A 2호점",
+      franchiseId: BRAND_A,
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.created, false);
+    assert.equal(result.membershipStatus, "pending");
+    assert.equal(tables.store_memberships.length, 1);
+  });
+
   test("이미 승인된 매장을 다시 신청하면 approved 상태를 그대로 알린다", async () => {
     const { client } = fakeClient({ stores: storeSeed(), memberships: [APPROVED_A] });
 
@@ -326,6 +360,13 @@ describe("라우트 소스 계약", () => {
   test("브랜드를 확인할 수 없으면 고정 안내로 거절한다", () => {
     assert.match(storeRequest, /code: "STORE_BRAND_UNKNOWN"/);
     assert.match(storeRequest, /STORE_BRAND_UNKNOWN_MESSAGE/);
+  });
+
+  test("운영 신청 서버 진단에는 requestId와 안전한 실패 단계 로그가 포함된다", () => {
+    assert.match(storeRequest, /createDiagnosticRequestId\(\)/);
+    assert.match(storeRequest, /logDiagnosticError\("OWNER_STORE_REQUEST"/);
+    assert.match(storeRequest, /"X-Request-Id": requestId/);
+    assert.match(storeRequest, /requestId\s*\}/);
   });
 
   test("두 라우트 모두 세션 사용자로 대상을 정한다", () => {

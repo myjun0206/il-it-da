@@ -10,6 +10,7 @@ import {
   SUPABASE_SESSION_COOKIE_OPTIONS,
   toSessionCookieOptions,
 } from "@/lib/supabase/session-cookies";
+import { createDiagnosticRequestId, logDiagnosticError } from "@/lib/auth/diagnostic-error-log";
 
 function copyCookies(source: NextResponse, target: NextResponse): void {
   for (const cookie of source.cookies.getAll()) {
@@ -30,7 +31,12 @@ function expireLegacySupabaseCookies(request: NextRequest, response: NextRespons
  * 클라이언트가 보낸 쿠키가 서버에서 계속 유효하지 않아 API 라우트가 401을 반환하게 된다.
  */
 export async function updateSession(request: NextRequest): Promise<NextResponse> {
+  const proxyRequestId = createDiagnosticRequestId();
+  request.headers.set("x-proxy-request-id", proxyRequestId);
+  const hasSessionCookie = request.cookies.getAll().some(({ name }) => name === SUPABASE_SESSION_COOKIE_OPTIONS.name || name.startsWith(`${SUPABASE_SESSION_COOKIE_OPTIONS.name}.`));
+  let refreshedCookieCount = 0;
   let response = NextResponse.next({ request });
+  response.headers.set("X-Proxy-Request-Id", proxyRequestId);
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -46,12 +52,14 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
         return request.cookies.getAll();
       },
       setAll(cookiesToSet, headers) {
+        refreshedCookieCount += cookiesToSet.length;
         cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
         response = NextResponse.next({ request });
         cookiesToSet.forEach(({ name, value, options }) => {
           response.cookies.set(name, value, toSessionCookieOptions(value, options));
         });
         Object.entries(headers).forEach(([name, value]) => response.headers.set(name, value));
+        response.headers.set("X-Proxy-Request-Id", proxyRequestId);
       },
     },
   });
@@ -59,6 +67,16 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
   // getUser()를 호출해야 만료된 access token이 refresh token으로 갱신되고,
   // 갱신된 쿠키가 setAll을 통해 response에 반영된다.
   const { error } = await supabase.auth.getUser();
+
+  if (error) {
+    logDiagnosticError("SUPABASE_PROXY_SESSION", "auth.get_user", error, {
+      requestId: proxyRequestId,
+      path: request.nextUrl.pathname,
+      hasSessionCookie,
+      refreshedCookieCount,
+      sessionPresent: hasSessionCookie,
+    });
+  }
 
   if (isSupabaseSessionInvalidationError(error) && request.nextUrl.pathname !== "/api/auth/login") {
     try {
