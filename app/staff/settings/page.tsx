@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, CheckCircle2, Check } from "lucide-react";
+import { AlertCircle, CheckCircle2, Check, X } from "lucide-react";
 
 import ThemeSelector from "@/components/common/ThemeSelector";
 import ProfileAvatar from "@/components/common/ProfileAvatar";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { AccountDeleteConfirmDialog } from "@/components/common/AccountDeleteConfirmDialog";
 import { useStaffShell } from "@/components/staff/StaffShellContext";
 import { formatStoreDisplayName } from "@/lib/stores/search-stores";
 import { createClient } from "@/lib/supabase/client";
@@ -40,7 +42,7 @@ function FeedbackMessage({ feedback }: { feedback: Feedback }) {
 
 export default function StaffSettingsPage() {
   const router = useRouter();
-  const { userName, roleLabel, selectedStore, stores, isStoresLoading, logout } = useStaffShell();
+  const { userName, roleLabel, defaultStoreId, stores, isStoresLoading, logout } = useStaffShell();
   const [email, setEmail] = useState("");
   const [userId, setUserId] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
@@ -49,6 +51,40 @@ export default function StaffSettingsPage() {
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [avatarFeedback, setAvatarFeedback] = useState<Feedback>(null);
+
+  // 가입 정보 상태
+  const [signupFullName, setSignupFullName] = useState("");
+  const [signupEmail, setSignupEmail] = useState("");
+  const [signupPhoneNumber, setSignupPhoneNumber] = useState("");
+  const [signupDataLoading, setSignupDataLoading] = useState(false);
+
+  // 비밀번호 변경 상태
+  const [showPasswordChange, setShowPasswordChange] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newPasswordConfirm, setNewPasswordConfirm] = useState("");
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [passwordFeedback, setPasswordFeedback] = useState<Feedback>(null);
+  const [isAuthenticatingPassword, setIsAuthenticatingPassword] = useState(false);
+  const [isPasswordAuthenticated, setIsPasswordAuthenticated] = useState(false);
+
+  // 매장 탈퇴 상태
+  const [selectedWithdrawStore, setSelectedWithdrawStore] = useState<string | null>(null);
+  const [isWithdrawing, setIsWithdrawing] = useState(false);
+  const [withdrawFeedback, setWithdrawFeedback] = useState<Feedback>(null);
+  const [withdrawConfirmDialog, setWithdrawConfirmDialog] = useState<{
+    isOpen: boolean;
+    storeId?: string;
+    storeName?: string;
+    isDefault?: boolean;
+  }>({ isOpen: false });
+
+  // 회원 탈퇴 상태
+  const [showAccountDeleteConfirm, setShowAccountDeleteConfirm] = useState(false);
+  const [accountDeletePassword, setAccountDeletePassword] = useState("");
+  const [isAuthenticatingForDelete, setIsAuthenticatingForDelete] = useState(false);
+  const [isAccountDeletePasswordAuthenticated, setIsAccountDeletePasswordAuthenticated] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     let isCancelled = false;
@@ -64,9 +100,9 @@ export default function StaffSettingsPage() {
           // avatar_url 조회 (cache busting은 이제 filename에 포함됨)
           const { data: profile } = await supabase
             .from("profiles")
-            .select("avatar_url, avatar_updated_at")
+            .select("avatar_url, avatar_updated_at, full_name")
             .eq("id", userData.user.id)
-            .maybeSingle<{ avatar_url: string | null; avatar_updated_at: string | null }>();
+            .maybeSingle<{ avatar_url: string | null; avatar_updated_at: string | null; full_name: string | null }>();
 
           if (!isCancelled) {
             // 원본 URL만 사용 (query string 없음)
@@ -76,6 +112,63 @@ export default function StaffSettingsPage() {
         }
       } catch (e) {
         console.error("Failed to load staff account:", e);
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  // 가입 정보 로드
+  useEffect(() => {
+    let isCancelled = false;
+    void (async () => {
+      setSignupDataLoading(true);
+      try {
+        const supabase = createClient();
+        const { data: userData } = await supabase.auth.getUser();
+
+        if (!isCancelled && userData.user) {
+          // auth.users에서 직접 가입 정보 조회
+          setSignupEmail(userData.user.email ?? "");
+
+          // 우선: auth.users.user_metadata에서 full_name 조회 (가입 시 저장됨)
+          const metadataFullName = userData.user.user_metadata?.full_name as string | undefined;
+
+          // 메타데이터에 full_name이 없으면 profiles 테이블에서 조회
+          let fullName = metadataFullName ?? "";
+          if (!fullName) {
+            const { data: profile } = await supabase
+              .from("profiles")
+              .select("full_name")
+              .eq("id", userData.user.id)
+              .maybeSingle<{ full_name: string | null }>();
+
+            fullName = profile?.full_name ?? "";
+          }
+
+          if (!isCancelled) {
+            setSignupFullName(fullName);
+          }
+
+          // signup_profiles 테이블에서 전화번호 조회
+          const { data: signupProfile } = await supabase
+            .from("signup_profiles")
+            .select("phone_number")
+            .eq("user_id", userData.user.id)
+            .maybeSingle<{ phone_number: string | null }>();
+
+          if (!isCancelled) {
+            setSignupPhoneNumber(signupProfile?.phone_number ?? "");
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load signup info:", e);
+      } finally {
+        if (!isCancelled) {
+          setSignupDataLoading(false);
+        }
       }
     })();
 
@@ -179,6 +272,250 @@ export default function StaffSettingsPage() {
         message: e instanceof Error ? e.message : "프로필 사진 삭제 중 오류가 발생했습니다.",
       });
     }
+  };
+
+  // 비밀번호 인증 (현재 비밀번호 확인)
+  const handleAuthenticatePassword = async () => {
+    if (!currentPassword) {
+      setPasswordFeedback({ type: "error", message: "현재 비밀번호를 입력해주세요." });
+      return;
+    }
+
+    setIsAuthenticatingPassword(true);
+    setPasswordFeedback(null);
+
+    try {
+      // 백엔드 API로 현재 비밀번호 검증
+      const response = await fetch("/api/staff/validate-password", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ password: currentPassword }),
+      });
+
+      const result = (await response.json()) as {
+        success?: boolean;
+        code?: string;
+        message?: string;
+      };
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || "비밀번호 검증에 실패했습니다.");
+      }
+
+      setIsPasswordAuthenticated(true);
+      setPasswordFeedback({ type: "success", message: "인증되었습니다. 새 비밀번호를 입력해주세요." });
+    } catch (e) {
+      setPasswordFeedback({
+        type: "error",
+        message: e instanceof Error ? e.message : "비밀번호 인증에 실패했습니다.",
+      });
+    } finally {
+      setIsAuthenticatingPassword(false);
+    }
+  };
+
+  // 비밀번호 변경 핸들러
+  const handleChangePassword = async () => {
+    if (!isPasswordAuthenticated) {
+      setPasswordFeedback({ type: "error", message: "먼저 현재 비밀번호로 인증해주세요." });
+      return;
+    }
+
+    if (!newPassword || !newPasswordConfirm) {
+      setPasswordFeedback({ type: "error", message: "새 비밀번호를 입력해주세요." });
+      return;
+    }
+
+    if (newPassword !== newPasswordConfirm) {
+      setPasswordFeedback({ type: "error", message: "비밀번호가 일치하지 않습니다." });
+      return;
+    }
+
+    if (newPassword.length < 8) {
+      setPasswordFeedback({ type: "error", message: "비밀번호는 최소 8자 이상이어야 합니다." });
+      return;
+    }
+
+    if (newPassword === currentPassword) {
+      setPasswordFeedback({ type: "error", message: "새 비밀번호는 현재 비밀번호와 달라야 합니다." });
+      return;
+    }
+
+    setIsChangingPassword(true);
+    setPasswordFeedback(null);
+
+    try {
+      // 백엔드 API로 비밀번호 변경
+      const response = await fetch("/api/staff/change-password", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ newPassword }),
+      });
+
+      const result = (await response.json()) as {
+        success?: boolean;
+        code?: string;
+        message?: string;
+      };
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || "비밀번호 변경에 실패했습니다.");
+      }
+
+      setPasswordFeedback({ type: "success", message: "비밀번호가 변경되었습니다." });
+      setShowPasswordChange(false);
+      setCurrentPassword("");
+      setNewPassword("");
+      setNewPasswordConfirm("");
+      setIsPasswordAuthenticated(false);
+    } catch (e) {
+      setPasswordFeedback({
+        type: "error",
+        message: e instanceof Error ? e.message : "비밀번호 변경에 실패했습니다.",
+      });
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
+
+  // 회원 탈퇴 비밀번호 인증
+  const handleAuthenticateForDelete = async () => {
+    if (!accountDeletePassword) {
+      setPasswordFeedback({ type: "error", message: "비밀번호를 입력해주세요." });
+      return;
+    }
+
+    setIsAuthenticatingForDelete(true);
+    setPasswordFeedback(null);
+
+    try {
+      const supabase = createClient();
+      const { data: userData } = await supabase.auth.getUser();
+
+      if (!userData.user?.email) {
+        throw new Error("사용자 정보를 가져올 수 없습니다.");
+      }
+
+      // 현재 비밀번호로 다시 인증 (reauthenticate)
+      const { error } = await supabase.auth.signInWithPassword({
+        email: userData.user.email,
+        password: accountDeletePassword,
+      });
+
+      if (error) {
+        throw new Error("비밀번호가 일치하지 않습니다.");
+      }
+
+      setIsAccountDeletePasswordAuthenticated(true);
+      setPasswordFeedback({ type: "success", message: "본인 확인이 완료되었습니다. 탈퇴를 진행하시겠습니까?" });
+    } catch (e) {
+      setPasswordFeedback({
+        type: "error",
+        message: e instanceof Error ? e.message : "본인 확인에 실패했습니다.",
+      });
+    } finally {
+      setIsAuthenticatingForDelete(false);
+    }
+  };
+
+  // 회원 탈퇴 실행
+  const handleDeleteAccount = async () => {
+    if (!isAccountDeletePasswordAuthenticated) {
+      setPasswordFeedback({ type: "error", message: "먼저 비밀번호로 본인 확인을 해주세요." });
+      return;
+    }
+
+    setIsDeleting(true);
+    setPasswordFeedback(null);
+
+    try {
+      const response = await fetch("/api/staff/delete-account", {
+        method: "POST",
+        credentials: "include",
+      });
+
+      const result = (await response.json()) as {
+        success?: boolean;
+        code?: string;
+        message?: string;
+        stats?: {
+          approvedStoresCount: number;
+          pendingRequestsCount: number;
+        };
+      };
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || "회원 탈퇴 요청 실패");
+      }
+
+      setPasswordFeedback({ type: "success", message: "회원 탈퇴 처리 중입니다. 페이지를 이동합니다..." });
+
+      // 2초 후 로그인 페이지로 이동
+      setTimeout(() => {
+        router.push("/auth/login");
+      }, 2000);
+    } catch (e) {
+      setPasswordFeedback({
+        type: "error",
+        message: e instanceof Error ? e.message : "회원 탈퇴에 실패했습니다.",
+      });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  // 매장 탈퇴 핸들러
+  const handleWithdrawStore = async (storeId: string) => {
+    setIsWithdrawing(true);
+    setWithdrawFeedback(null);
+
+    try {
+      const response = await fetch(`/api/staff/memberships/${storeId}`, {
+        method: "DELETE",
+      });
+
+      const data = (await response.json()) as { success: boolean; error?: string };
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "매장 탈퇴에 실패했습니다.");
+      }
+
+      setWithdrawFeedback({ type: "success", message: "매장 탈퇴가 완료되었습니다." });
+      setSelectedWithdrawStore(null);
+      setWithdrawConfirmDialog({ isOpen: false });
+
+      // 페이지 새로고침하여 업데이트
+      setTimeout(() => {
+        window.location.reload();
+      }, 1500);
+    } catch (e) {
+      setWithdrawFeedback({
+        type: "error",
+        message: e instanceof Error ? e.message : "요청을 처리하지 못했습니다.",
+      });
+    } finally {
+      setIsWithdrawing(false);
+    }
+  };
+
+  // 기본 매장 탈퇴 전 확인
+  const handleConfirmWithdraw = (storeId: string) => {
+    const store = stores.find((s) => s.id === storeId);
+    if (!store) return;
+
+    const isDefault = defaultStoreId === storeId;
+    setWithdrawConfirmDialog({
+      isOpen: true,
+      storeId,
+      storeName: formatStoreDisplayName(store.name),
+      isDefault,
+    });
   };
 
   return (
@@ -305,7 +642,8 @@ export default function StaffSettingsPage() {
             ) : stores.length > 0 ? (
               <div className="space-y-3">
                 {stores.map((store) => {
-                  const isCurrent = selectedStore?.id === store.id;
+                  // 배지는 계정에 저장된 기본 매장 기준 (활성 매장과는 별개)
+                  const isCurrent = defaultStoreId === store.id;
                   return (
                     <div
                       key={store.id}
@@ -334,6 +672,299 @@ export default function StaffSettingsPage() {
           </div>
         </section>
 
+        {/* === 가입 정보 카드 === */}
+        <section aria-labelledby="signup-heading" className={cardClass}>
+          <h2 id="signup-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-2">
+            가입 정보
+          </h2>
+          <p className="mb-6 text-base text-[var(--color-text-primary)] opacity-70">
+            가입 시 등록한 정보입니다. 비밀번호만 변경할 수 있습니다.
+          </p>
+
+          {/* 가입 정보 필드 */}
+          {signupDataLoading ? (
+            <p className="text-base text-[var(--color-text-secondary)]">로드 중...</p>
+          ) : (
+            <div className="space-y-4 mb-6">
+              <div>
+                <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                  이름
+                </label>
+                <input
+                  type="text"
+                  value={signupFullName}
+                  disabled
+                  className="w-full px-4 py-3 rounded-lg bg-[var(--color-bg-default)] border border-[var(--color-border)] text-[var(--color-text-primary)] cursor-not-allowed opacity-70"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                  이메일
+                </label>
+                <input
+                  type="email"
+                  value={signupEmail}
+                  disabled
+                  className="w-full px-4 py-3 rounded-lg bg-[var(--color-bg-default)] border border-[var(--color-border)] text-[var(--color-text-primary)] cursor-not-allowed opacity-70"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                  전화번호
+                </label>
+                <input
+                  type="tel"
+                  value={signupPhoneNumber || "등록된 전화번호가 없습니다"}
+                  disabled
+                  className="w-full px-4 py-3 rounded-lg bg-[var(--color-bg-default)] border border-[var(--color-border)] text-[var(--color-text-primary)] cursor-not-allowed opacity-70"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* 구분선 */}
+          <div className="border-t border-[var(--color-border)] my-6" />
+
+          {/* 비밀번호 변경 섹션 */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-bold text-[var(--color-text-primary)]">비밀번호</h3>
+              <p className="text-base text-[var(--color-text-secondary)] mt-1">계정 보안을 위해 비밀번호를 변경할 수 있습니다.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setShowPasswordChange(!showPasswordChange);
+                setPasswordFeedback(null);
+                setNewPassword("");
+                setNewPasswordConfirm("");
+              }}
+              className={secondaryButtonClass}
+            >
+              {showPasswordChange ? "취소" : "비밀번호 변경"}
+            </button>
+          </div>
+
+          {/* 비밀번호 변경 폼 */}
+          {showPasswordChange && (
+            <div className="mt-6 pt-6 border-t border-[var(--color-border)] space-y-4">
+              {!isPasswordAuthenticated ? (
+                // Step 1: 현재 비밀번호 인증
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                      현재 비밀번호
+                    </label>
+                    <input
+                      type="password"
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                      placeholder="현재 비밀번호를 입력하세요"
+                      className="w-full px-4 py-3 rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+                      disabled={isAuthenticatingPassword}
+                    />
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={handleAuthenticatePassword}
+                      disabled={isAuthenticatingPassword}
+                      className={primaryButtonClass}
+                    >
+                      {isAuthenticatingPassword ? "인증 중..." : "인증"}
+                    </button>
+                  </div>
+
+                  <FeedbackMessage feedback={passwordFeedback} />
+                </>
+              ) : (
+                // Step 2: 새 비밀번호 설정
+                <>
+                  <div className="mb-4 p-4 rounded-lg bg-[var(--color-primary-light)]/20 border border-[var(--color-primary)]/30">
+                    <p className="text-sm text-[var(--color-text-secondary)]">
+                      ✓ 본인 확인이 완료되었습니다. 새 비밀번호를 입력해주세요.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                      새 비밀번호
+                    </label>
+                    <input
+                      type="password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="최소 8자 이상"
+                      className="w-full px-4 py-3 rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+                      disabled={isChangingPassword}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                      비밀번호 확인
+                    </label>
+                    <input
+                      type="password"
+                      value={newPasswordConfirm}
+                      onChange={(e) => setNewPasswordConfirm(e.target.value)}
+                      placeholder="새 비밀번호를 다시 입력하세요"
+                      className="w-full px-4 py-3 rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+                      disabled={isChangingPassword}
+                    />
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={handleChangePassword}
+                      disabled={isChangingPassword}
+                      className={primaryButtonClass}
+                    >
+                      {isChangingPassword ? "변경 중..." : "변경"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowPasswordChange(false);
+                        setCurrentPassword("");
+                        setNewPassword("");
+                        setNewPasswordConfirm("");
+                        setIsPasswordAuthenticated(false);
+                        setPasswordFeedback(null);
+                      }}
+                      disabled={isChangingPassword}
+                      className={secondaryButtonClass}
+                    >
+                      취소
+                    </button>
+                  </div>
+
+                  <FeedbackMessage feedback={passwordFeedback} />
+                </>
+              )}
+            </div>
+          )}
+        </section>
+
+        {/* === 매장 탈퇴 카드 === */}
+        <section aria-labelledby="withdraw-heading" className={cardClass}>
+          <h2 id="withdraw-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-2">
+            매장 탈퇴
+          </h2>
+          <p className="mb-6 text-base text-[var(--color-text-primary)] opacity-70">
+            승인받은 근무 매장 중 탈퇴할 매장을 선택하세요.
+          </p>
+
+          {/* 매장 목록 */}
+          {isStoresLoading ? (
+            <p className="text-base text-[var(--color-text-secondary)]">불러오는 중...</p>
+          ) : stores.length > 0 ? (
+            <>
+              <div className="space-y-3 mb-6">
+                {stores.map((store) => {
+                  const isSelected = selectedWithdrawStore === store.id;
+                  const isDefault = defaultStoreId === store.id;
+
+                  return (
+                    <div
+                      key={store.id}
+                      onClick={() =>
+                        setSelectedWithdrawStore(isSelected ? null : store.id)
+                      }
+                      className={`flex items-center gap-4 p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                        isSelected
+                          ? "bg-[var(--color-primary-light)]/10 border-[var(--color-primary)] shadow-sm"
+                          : "bg-white border-[var(--color-border)] hover:border-[var(--color-primary)]/50"
+                      }`}
+                    >
+                      {/* 선택 원형 */}
+                      <div
+                        className={`flex-shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
+                          isSelected
+                            ? "bg-[var(--color-primary)] border-[var(--color-primary)]"
+                            : "border-[var(--color-border)]"
+                        }`}
+                      >
+                        {isSelected && (
+                          <Check size={16} className="text-white" aria-hidden="true" />
+                        )}
+                      </div>
+
+                      {/* 매장 정보 */}
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <p className="text-base font-semibold text-[var(--color-text-primary)]">
+                            {formatStoreDisplayName(store.name)}
+                          </p>
+                          {isDefault && (
+                            <span className="inline-flex items-center px-2 py-1 rounded-full bg-[var(--color-primary)]/10 text-xs font-medium text-[var(--color-primary)]">
+                              기본 매장
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-[var(--color-text-secondary)]">
+                          승인 완료
+                        </p>
+                      </div>
+
+                      {/* 체크 아이콘 */}
+                      {isSelected && (
+                        <div className="flex-shrink-0">
+                          <Check size={20} className="text-[var(--color-primary)]" aria-hidden="true" />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* 탈퇴 버튼 */}
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!selectedWithdrawStore) return;
+                    handleConfirmWithdraw(selectedWithdrawStore);
+                  }}
+                  disabled={!selectedWithdrawStore || isWithdrawing}
+                  className={primaryButtonClass}
+                >
+                  {isWithdrawing ? "처리 중..." : "선택한 매장 탈퇴"}
+                </button>
+              </div>
+
+              <FeedbackMessage feedback={withdrawFeedback} />
+            </>
+          ) : (
+            <p className="text-base text-[var(--color-text-secondary)]">승인된 근무 매장이 없습니다.</p>
+          )}
+        </section>
+
+        {/* === 회원 탈퇴 카드 === */}
+        <section aria-labelledby="delete-account-heading" className={cardClass}>
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+            <div className="min-w-0">
+              <h2 id="delete-account-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-2">
+                회원 탈퇴
+              </h2>
+              <p className="text-base text-[var(--color-text-primary)] opacity-70">
+                일잇다 서비스 이용을 종료하고 계정을 삭제합니다. 탈퇴 시 소속된 모든 매장에서 자동으로 탈퇴되며, 승인 대기 중인 매장 신청도 취소됩니다.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowAccountDeleteConfirm(true)}
+              className="inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-lg border-2 border-red-300 bg-white px-4 text-sm font-medium text-red-700 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 disabled:cursor-not-allowed disabled:opacity-60 transition-colors whitespace-nowrap"
+            >
+              회원 탈퇴
+            </button>
+          </div>
+        </section>
+
         {/* === 화면 설정 카드 === */}
         <section aria-labelledby="display-heading" className={cardClass}>
           <h2 id="display-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-2">
@@ -344,6 +975,51 @@ export default function StaffSettingsPage() {
           </p>
           <ThemeSelector />
         </section>
+
+        {/* === 매장 탈퇴 확인 대화상자 === */}
+        <ConfirmDialog
+          isOpen={withdrawConfirmDialog.isOpen}
+          title={
+            withdrawConfirmDialog.isDefault
+              ? "기본 매장 탈퇴"
+              : "매장 탈퇴"
+          }
+          description={
+            withdrawConfirmDialog.isDefault
+              ? `기본 매장인 "${withdrawConfirmDialog.storeName}"에서 탈퇴하시겠습니까? 탈퇴 후 다른 기본 매장을 설정해주세요.`
+              : `"${withdrawConfirmDialog.storeName}"에서 탈퇴하시겠습니까? 이 작업은 되돌릴 수 없습니다.`
+          }
+          confirmText="탈퇴"
+          cancelText="취소"
+          isDangerous
+          isLoading={isWithdrawing}
+          onConfirm={() => {
+            if (withdrawConfirmDialog.storeId) {
+              handleWithdrawStore(withdrawConfirmDialog.storeId);
+            }
+          }}
+          onCancel={() => setWithdrawConfirmDialog({ isOpen: false })}
+        />
+
+        {/* === 회원 탈퇴 확인 대화상자 === */}
+        <AccountDeleteConfirmDialog
+          isOpen={showAccountDeleteConfirm}
+          title="회원 탈퇴"
+          description="일잇다 서비스 이용을 종료하고 계정을 삭제합니다. 본인 확인을 위해 비밀번호를 입력해주세요."
+          passwordValue={accountDeletePassword}
+          isAuthenticated={isAccountDeletePasswordAuthenticated}
+          isAuthenticating={isAuthenticatingForDelete}
+          isDeleting={isDeleting}
+          onPasswordChange={setAccountDeletePassword}
+          onAuthenticate={handleAuthenticateForDelete}
+          onConfirmDelete={handleDeleteAccount}
+          onCancel={() => {
+            setShowAccountDeleteConfirm(false);
+            setAccountDeletePassword("");
+            setIsAccountDeletePasswordAuthenticated(false);
+            setPasswordFeedback(null);
+          }}
+        />
       </div>
     </div>
   );

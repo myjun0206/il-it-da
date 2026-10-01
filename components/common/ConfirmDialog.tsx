@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { X } from "lucide-react";
+import { Portal } from "./Portal";
 
 interface ConfirmDialogProps {
   isOpen: boolean;
@@ -50,19 +51,31 @@ export function ConfirmDialog({
   if (!isOpen) return null;
 
   return (
-    <div
-      role="presentation"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={handleBackdropClick}
-    >
-      <dialog
-        open={isOpen}
-        className="max-w-sm w-full rounded-2xl bg-white p-6 shadow-xl focus:outline-none"
-        onKeyDown={handleKeyDown}
-        onClick={(e) => e.stopPropagation()}
+    <Portal>
+      <div
+        role="presentation"
+        style={{
+          position: "absolute",
+          inset: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: "rgba(0, 0, 0, 0.4)",
+          padding: "1rem",
+        }}
+        onClick={handleBackdropClick}
       >
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="confirm-dialog-title"
+          tabIndex={-1}
+          className="max-w-sm w-full rounded-2xl bg-white p-6 shadow-xl focus:outline-none"
+          onKeyDown={handleKeyDown}
+          onClick={(e) => e.stopPropagation()}
+        >
         <div className="flex items-start justify-between gap-4 mb-4">
-          <h2 className="text-lg font-bold text-[var(--color-text-primary)]">{title}</h2>
+          <h2 id="confirm-dialog-title" className="text-lg font-bold text-[var(--color-text-primary)]">{title}</h2>
           <button
             type="button"
             onClick={onCancel}
@@ -98,7 +111,8 @@ export function ConfirmDialog({
             {isLoading ? "처리 중..." : confirmText}
           </button>
         </div>
-      </dialog>
-    </div>
+        </div>
+      </div>
+    </Portal>
   );
 }

@@ -152,7 +152,7 @@ export default function OwnerHeader({
         {/* Right */}
         <div className="flex shrink-0 items-center gap-6">
           {/* Notification Center */}
-          <NotificationCenter />
+          <NotificationCenter notificationPageUrl="/boss/notifications" />
 
           {/* Profile */}
           <ProfileMenu

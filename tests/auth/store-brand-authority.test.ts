@@ -48,6 +48,10 @@ function fakeClient(seed: { stores?: Row[]; memberships?: Row[]; profiles?: Row[
         const found = tables[table].find((row) => matches(row, filters));
         return Promise.resolve(found ? { data: { ...found }, error: null } : { data: null, error: NOT_FOUND });
       },
+      limit: (count: number) => {
+        const rows = tables[table].filter((row) => matches(row, filters)).slice(0, count);
+        return Promise.resolve({ data: rows.map((row) => ({ ...row })), error: null });
+      },
       then: (resolve: (value: unknown) => unknown) =>
         Promise.resolve({ data: tables[table].filter((row) => matches(row, filters)), error: null }).then(resolve),
     };
@@ -118,7 +122,15 @@ describe("정상 가입·신청 경로", () => {
   });
 
   test("직원도 브랜드가 연결된 기존 매장에 신청할 수 있다", async () => {
-    const { client, tables } = fakeClient({ stores: storeSeed() });
+    const approvedOwner = {
+      id: "owner-membership-1",
+      user_id: "owner-user-1",
+      store_id: BRANDED_STORE,
+      role: "owner",
+      status: "approved",
+      franchise_id: BRAND_A,
+    };
+    const { client, tables } = fakeClient({ stores: storeSeed(), memberships: [approvedOwner] });
 
     const result = await submitStoreMembershipRequest(client, {
       userId: STAFF_USER,
@@ -129,8 +141,25 @@ describe("정상 가입·신청 경로", () => {
     });
 
     assert.equal(result.success, true);
-    assert.equal(tables.store_memberships[0]?.role, "staff");
-    assert.equal(tables.store_memberships[0]?.status, "pending");
+    assert.equal(tables.store_memberships.find((m) => m.role === "staff")?.role, "staff");
+    assert.equal(tables.store_memberships.find((m) => m.role === "staff")?.status, "pending");
+  });
+
+  test("승인된 점주가 없는 매장에 직원이 신청하면 STORE_NO_OWNER로 거절된다", async () => {
+    const { client, tables } = fakeClient({ stores: storeSeed(), memberships: [] });
+
+    const result = await submitStoreMembershipRequest(client, {
+      userId: STAFF_USER,
+      userName: "박직원",
+      role: "staff",
+      storeId: BRANDED_STORE,
+      storeName: "브랜드A 1호점",
+    });
+
+    assert.equal(result.success, false);
+    assert.equal(result.code, "STORE_NO_OWNER");
+    assert.equal(result.status, 409);
+    assert.equal(tables.store_memberships.length, 0);
   });
 
   test("매장 id 없이 이름만 보내도 기존 매장의 브랜드로 접수된다", async () => {

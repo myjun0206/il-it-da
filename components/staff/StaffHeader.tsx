@@ -65,14 +65,14 @@ export default function StaffHeader() {
   return (
     <header className="sticky top-0 z-20 bg-white border-b border-[var(--color-border)] h-16 shrink-0">
       <div className="flex items-center justify-end gap-3 sm:gap-6 pl-16 pr-4 sm:pr-6 h-full lg:pl-6">
-        <NotificationCenter />
+        <NotificationCenter notificationPageUrl="/staff/notifications" />
         <ProfileMenu
           userName={userName || " "}
           subtitle={subtitle}
           roleLabel={roleLabel}
           settingsHref="/staff/settings"
           avatarUrl={avatarUrl}
-          context={selectedStore ? { label: "기본 매장", value: formatStoreDisplayName(selectedStore.name) } : undefined}
+          context={selectedStore ? { label: "현재 근무 매장", value: formatStoreDisplayName(selectedStore.name) } : undefined}
           onLogout={() => void logout()}
         />
       </div>

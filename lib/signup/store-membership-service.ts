@@ -431,7 +431,7 @@ export interface StoreMembershipRequestResult {
   /** 반환된 membership의 현재 상태 (pending | approved | rejected) */
   membershipStatus?: string;
   /** 클라이언트가 안내 문구를 고를 수 있는 안전한 코드 (내부 에러 내용은 담지 않는다) */
-  code?: "STORE_NOT_FOUND" | "STORE_BRAND_UNKNOWN";
+  code?: "STORE_NOT_FOUND" | "STORE_BRAND_UNKNOWN" | "STORE_NO_OWNER";
   error?: string;
   details?: string;
   status: number;
@@ -795,6 +795,38 @@ export async function submitStoreMembershipRequest(
         membershipStatus: existingMembership.status,
         status: 200,
       };
+    }
+
+    // 직원 신청은 그 매장의 점주가 승인한다. 승인된 점주가 없는 매장은 신청을 받을 사람이 없으므로
+    // 새 신청을 만들지 않는다. (기존 membership은 위에서 그대로 반환되므로 영향 없음)
+    if (role === "staff") {
+      const { data: approvedOwners, error: ownerLookupError } = await adminClient
+        .from("store_memberships")
+        .select("id")
+        .eq("store_id", finalStoreId)
+        .eq("role", "owner")
+        .eq("status", "approved")
+        .limit(1);
+
+      if (ownerLookupError) {
+        logSafeAuthError("STORE_MEMBERSHIP_OWNER_LOOKUP_FAILED", ownerLookupError);
+        return {
+          success: false,
+          error: "Failed to verify store owner",
+          details: ownerLookupError.message,
+          status: 500,
+        };
+      }
+
+      if (!approvedOwners || approvedOwners.length === 0) {
+        return {
+          success: false,
+          error: "아직 점주가 등록되지 않은 매장이라 근무 신청을 할 수 없습니다.",
+          details: "해당 매장의 점주가 일잇다에 등록된 뒤 다시 신청해 주세요.",
+          code: "STORE_NO_OWNER",
+          status: 409,
+        };
+      }
     }
 
     const { data: newMembership, error: createError } = await adminClient

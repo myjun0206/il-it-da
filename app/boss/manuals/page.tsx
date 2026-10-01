@@ -9,6 +9,7 @@ import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
 import { Input } from "@/components/common/Input";
 import type { ManualRecord } from "@/lib/types/manual";
+import { resolveOwnerCurrentStore } from "@/lib/owner/current-store";
 
 type ManualGroup = {
   id: string;
@@ -84,6 +85,7 @@ export default function OwnerManualsPage() {
   const [isReady, setIsReady] = useState(false);
   const [userName, setUserName] = useState("");
   const [storeName, setStoreName] = useState("");
+  const [selectedStoreId, setSelectedStoreId] = useState("");
   const [manuals, setManuals] = useState<ManualRecord[]>([]);
   const [isLoadingManuals, setIsLoadingManuals] = useState(true);
   const [error, setError] = useState("");
@@ -109,6 +111,23 @@ export default function OwnerManualsPage() {
           router.push("/signup/approval-status");
           return;
         }
+
+        const storeResolution = await resolveOwnerCurrentStore();
+        if (storeResolution.status !== "ready") {
+          setError("운영 매장 정보를 확인하지 못했습니다.");
+          setIsLoadingManuals(false);
+          setIsReady(true);
+          return;
+        }
+        if (!storeResolution.current) {
+          setError("승인된 운영 매장이 없습니다.");
+          setIsLoadingManuals(false);
+          setIsReady(true);
+          return;
+        }
+
+        setSelectedStoreId(storeResolution.current.storeId);
+        setStoreName(storeResolution.current.storeName);
 
         setIsReady(true);
       } catch (e) {
@@ -143,16 +162,15 @@ export default function OwnerManualsPage() {
     setUserInfo();
   }, []);
 
-  // 매뉴얼 조회 - /api/manuals는 owner role일 때 이미 storeId=null(본사 공통 매뉴얼)만,
-  // 로그인 계정의 franchise_id(또는 legacy brand_name)로 스코핑해서 내려준다.
+  // 현재 선택된 점주 매장의 franchise에 해당하는 본사 공통 매뉴얼만 조회한다.
   useEffect(() => {
-    if (!isReady) return;
+    if (!isReady || !selectedStoreId) return;
 
     const fetchManuals = async () => {
       setIsLoadingManuals(true);
       setError("");
       try {
-        const response = await fetch("/api/manuals");
+        const response = await fetch(`/api/manuals?storeId=${encodeURIComponent(selectedStoreId)}`);
         const data = (await response.json()) as { manuals?: ManualRecord[]; error?: string };
 
         if (!response.ok || !data.manuals) {
@@ -170,7 +188,7 @@ export default function OwnerManualsPage() {
     };
 
     void fetchManuals();
-  }, [isReady]);
+  }, [isReady, selectedStoreId]);
 
   const handleLogout = async () => {
     try {
