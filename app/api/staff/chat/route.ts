@@ -66,6 +66,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     answer?: string;
     status?: "answered" | "cautious" | "insufficient";
     source?: { title?: string; category?: string } | null;
+    sources?: { manualId?: string; title?: string; category?: string }[];
     similarity?: number | null;
     error?: string;
   };
@@ -144,6 +145,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     answer: ragBody.answer,
     status: ragBody.status,
     source: ragBody.source ?? null,
+    sources: ragBody.sources ?? [],
     similarity: ragBody.similarity ?? null,
     conversationId,
     storeId,

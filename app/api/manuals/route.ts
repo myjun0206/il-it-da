@@ -105,8 +105,14 @@ export async function GET(request: Request): Promise<NextResponse<ManualsListRes
       return NextResponse.json({ error: "매뉴얼 열람 권한이 없습니다." }, { status: 403 });
     }
 
+    const { searchParams } = new URL(request.url);
+    const storeIdParam = getString(searchParams.get("storeId") ?? undefined);
+    if (profile.role === "owner" && !storeIdParam) {
+      return NextResponse.json({ error: "공통 매뉴얼을 조회할 운영 매장을 선택해주세요." }, { status: 400 });
+    }
+
     // HQ는 master profile의 franchise를 사용하고, owner는 브랜드별 profile과
-    // 승인된 owner membership이 모두 확인된 franchise만 조회한다.
+    // 요청 매장의 승인 membership 및 stores.franchise_id가 일치하는 단일 franchise만 조회한다.
     let franchiseId: string | null = null;
     let brandName = "본사";
     let ownerFranchiseIds: string[] = [];
@@ -149,16 +155,20 @@ export async function GET(request: Request): Promise<NextResponse<ManualsListRes
         (brandProfiles ?? []).map((row) => row.brand_id).filter((id): id is string => !!id),
       );
       const franchiseIdByStoreId = new Map((stores ?? []).map((store) => [store.id, store.franchise_id]));
-      ownerFranchiseIds = [...new Set(
-        (memberships ?? [])
-          .filter((membership) =>
-            !!membership.franchise_id &&
-            profileBrandIds.has(membership.franchise_id) &&
-            franchiseIdByStoreId.get(membership.store_id) === membership.franchise_id,
-          )
-          .map((membership) => membership.franchise_id)
-          .filter((id): id is string => !!id),
-      )];
+      const selectedMembership = (memberships ?? []).find(
+        (membership) => membership.store_id === storeIdParam,
+      );
+      const selectedFranchiseId = selectedMembership?.franchise_id ?? null;
+
+      if (
+        !selectedFranchiseId ||
+        !profileBrandIds.has(selectedFranchiseId) ||
+        franchiseIdByStoreId.get(storeIdParam) !== selectedFranchiseId
+      ) {
+        return NextResponse.json({ error: "선택한 매장의 브랜드를 확인할 수 없습니다." }, { status: 403 });
+      }
+
+      ownerFranchiseIds = [selectedFranchiseId];
     } else if (profile.brand_id) {
       const { data: franchise } = await adminClient
         .from("franchises")
@@ -180,8 +190,6 @@ export async function GET(request: Request): Promise<NextResponse<ManualsListRes
     }
 
     // Owner는 공통 매뉴얼(store_id = null)만 조회 가능
-    const { searchParams } = new URL(request.url);
-    const storeIdParam = getString(searchParams.get("storeId") ?? undefined);
     const storeId = profile.role === "owner" ? null : storeIdParam;
     const includeCategoryPlaceholders = profile.role === "hq" && searchParams.get("includeCategoryPlaceholders") === "1";
 
@@ -405,12 +413,14 @@ export async function PATCH(request: Request): Promise<NextResponse<UpdateManual
 }
 
 type DeleteAllManualsResponse = {
+  targetCount?: number;
   deletedCount?: number;
+  remainingCount?: number;
+  verified?: boolean;
   error?: string;
 };
 
-// 현재 로그인한 본사 계정의 프랜차이즈(또는 레거시 brand_name) 범위 안의 매뉴얼을 전부 삭제한다.
-// public.manual_chunks는 manual_chunks_manual_id_fkey의 on delete cascade로 함께 정리된다.
+// 본사 공통 행만 삭제하며, 삭제 대상 밖의 자식은 FK cascade 전에 연결을 분리한다.
 export async function DELETE(): Promise<NextResponse<DeleteAllManualsResponse>> {
   const hqUser = await requireHqUser();
 
@@ -419,7 +429,73 @@ export async function DELETE(): Promise<NextResponse<DeleteAllManualsResponse>> 
   }
 
   const supabase = createAdminClient();
-  let query = supabase.from("manuals").delete();
+  let targetQuery = supabase
+    .from("manuals")
+    .select("id")
+    .is("store_id", null);
+  targetQuery = hqUser.franchiseId
+    ? targetQuery.eq("franchise_id", hqUser.franchiseId)
+    : targetQuery.eq("brand_name", hqUser.brandName);
+
+  const { data: targets, error: targetError } = await targetQuery;
+
+  if (targetError) {
+    return NextResponse.json({ error: "삭제 대상 매뉴얼 조회 중 오류가 발생했습니다." }, { status: 500 });
+  }
+
+  const targetIds = (targets ?? []).map((row) => row.id as string);
+  console.info("[HQ_MANUAL_DELETE] target scope and ids", {
+    franchise_id: hqUser.franchiseId,
+    brand_name: hqUser.franchiseId ? undefined : hqUser.brandName,
+    store_id: null,
+    target_count: targetIds.length,
+    target_ids: targetIds,
+  });
+
+  if (targetIds.length === 0) {
+    console.info("[HQ_MANUAL_DELETE] hard delete result", {
+      target_count: 0,
+      deleted_count: 0,
+      remaining_count: 0,
+      verified: true,
+    });
+    return NextResponse.json({ targetCount: 0, deletedCount: 0, remainingCount: 0, verified: true });
+  }
+
+  const { data: branchChildren, error: branchChildrenError } = await supabase
+    .from("manuals")
+    .select("id")
+    .in("parent_manual_id", targetIds);
+
+  if (branchChildrenError) {
+    return NextResponse.json({ error: "지점 하위 매뉴얼 확인 중 오류가 발생했습니다." }, { status: 500 });
+  }
+
+  const targetIdSet = new Set(targetIds);
+  const branchChildIds = (branchChildren ?? [])
+    .map((row) => row.id as string)
+    .filter((id) => !targetIdSet.has(id));
+  if (branchChildIds.length > 0) {
+    const { error: detachError } = await supabase
+      .from("manuals")
+      .update({ parent_manual_id: null, updated_at: new Date().toISOString() })
+      .in("id", branchChildIds);
+
+    if (detachError) {
+      return NextResponse.json({ error: "지점 하위 매뉴얼 보호 중 오류가 발생했습니다." }, { status: 500 });
+    }
+
+    console.info("[HQ_MANUAL_DELETE] preserved branch children", {
+      detached_count: branchChildIds.length,
+      detached_ids: branchChildIds,
+    });
+  }
+
+  let query = supabase
+    .from("manuals")
+    .delete()
+    .in("id", targetIds)
+    .is("store_id", null);
   query = hqUser.franchiseId
     ? query.eq("franchise_id", hqUser.franchiseId)
     : query.eq("brand_name", hqUser.brandName);
@@ -427,8 +503,57 @@ export async function DELETE(): Promise<NextResponse<DeleteAllManualsResponse>> 
   const { data, error } = await query.select("id");
 
   if (error) {
+    console.error("[HQ_MANUAL_DELETE] hard delete failed", {
+      target_count: targetIds.length,
+      error_code: error.code,
+      error_message: error.message,
+    });
     return NextResponse.json({ error: "매뉴얼 전체 삭제 중 오류가 발생했습니다." }, { status: 500 });
   }
 
-  return NextResponse.json({ deletedCount: (data ?? []).length });
+  const deletedCount = (data ?? []).length;
+  let remainingQuery = supabase
+    .from("manuals")
+    .select("id")
+    .in("id", targetIds)
+    .is("store_id", null);
+  remainingQuery = hqUser.franchiseId
+    ? remainingQuery.eq("franchise_id", hqUser.franchiseId)
+    : remainingQuery.eq("brand_name", hqUser.brandName);
+
+  const { data: remainingRows, error: verificationError } = await remainingQuery;
+  if (verificationError) {
+    console.error("[HQ_MANUAL_DELETE] verification failed", {
+      target_count: targetIds.length,
+      deleted_count: deletedCount,
+      error_code: verificationError.code,
+      error_message: verificationError.message,
+    });
+    return NextResponse.json({
+      targetCount: targetIds.length,
+      deletedCount,
+      error: "삭제는 실행됐지만 DB 잔존 여부를 확인하지 못했습니다.",
+    }, { status: 500 });
+  }
+
+  const remainingCount = (remainingRows ?? []).length;
+  const verified = remainingCount === 0;
+  console.info("[HQ_MANUAL_DELETE] hard delete result", {
+    target_count: targetIds.length,
+    deleted_count: deletedCount,
+    remaining_count: remainingCount,
+    verified,
+  });
+
+  if (!verified) {
+    return NextResponse.json({
+      targetCount: targetIds.length,
+      deletedCount,
+      remainingCount,
+      verified,
+      error: "일부 본사 공통 매뉴얼이 DB에 남아 있습니다.",
+    }, { status: 500 });
+  }
+
+  return NextResponse.json({ targetCount: targetIds.length, deletedCount, remainingCount, verified });
 }

@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 
+import EscalationNotificationPopup from "@/components/owner/EscalationNotificationPopup";
 import { requireServerRole } from "@/lib/auth/require-server-role";
 
 // profiles.role은 요청 시점에만 판정할 수 있으므로,
@@ -17,5 +18,10 @@ export default async function BossLayout({
     redirect("/");
   }
 
-  return <>{children}</>;
+  return (
+    <>
+      {children}
+      <EscalationNotificationPopup />
+    </>
+  );
 }

@@ -680,15 +680,24 @@ export default function ManualDashboardPage() {
 
     try {
       const response = await fetch("/api/manuals", { method: "DELETE" });
-      const data = (await response.json()) as { error?: string };
+      const data = (await response.json()) as {
+        targetCount?: number;
+        deletedCount?: number;
+        remainingCount?: number;
+        verified?: boolean;
+        error?: string;
+      };
 
       if (!response.ok) {
         throw new Error(data.error || "매뉴얼 전체 삭제 중 오류가 발생했습니다.");
       }
+      if (!data.verified || data.remainingCount !== 0) {
+        throw new Error("DB에서 삭제 결과를 확인하지 못했습니다. 새로고침 후 목록을 확인해 주세요.");
+      }
 
       setShowDeleteAllConfirm(false);
       await refetchManuals();
-      showToast("등록된 모든 매뉴얼이 삭제되었습니다.");
+      showToast(`본사 공통 매뉴얼 ${data.deletedCount ?? 0}건이 삭제되었습니다.`);
     } catch (e) {
       setDeleteAllError(e instanceof Error ? e.message : "매뉴얼 전체 삭제 중 오류가 발생했습니다.");
     } finally {
