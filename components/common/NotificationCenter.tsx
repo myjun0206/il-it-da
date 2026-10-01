@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useRef } from "react";
 import { Bell } from "lucide-react";
+import Link from "next/link";
 import { formatNotificationTime } from "@/lib/notifications";
 
 interface Notification {
@@ -18,13 +19,14 @@ interface Notification {
 
 interface NotificationCenterProps {
   className?: string;
+  notificationPageUrl?: string;
 }
 
 interface NavigationState {
   targetUrl: string | null;
 }
 
-export default function NotificationCenter({ className = "" }: NotificationCenterProps) {
+export default function NotificationCenter({ className = "", notificationPageUrl = "/notifications" }: NotificationCenterProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -163,13 +165,18 @@ export default function NotificationCenter({ className = "" }: NotificationCente
         ref={buttonRef}
         onClick={() => setIsOpen(!isOpen)}
         className="relative p-2 rounded-lg hover:bg-[var(--color-bg-surface)] transition-colors"
-        aria-label="알림"
+        aria-label={unreadCount > 0 ? `알림 (읽지 않은 알림 ${unreadCount}개)` : "알림"}
         aria-expanded={isOpen}
         aria-haspopup="dialog"
       >
         <Bell size={20} className="text-[var(--color-text-secondary)]" />
         {unreadCount > 0 && (
-          <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
+          <span
+            className="absolute -top-0.5 -right-0.5 min-w-[20px] h-5 bg-red-500 text-white text-xs font-semibold rounded-full flex items-center justify-center"
+            aria-label={`${unreadCount > 99 ? '99+' : unreadCount}개의 읽지 않은 알림`}
+          >
+            {unreadCount > 99 ? '99+' : unreadCount}
+          </span>
         )}
       </button>
 
@@ -247,9 +254,12 @@ export default function NotificationCenter({ className = "" }: NotificationCente
           {/* Footer */}
           {notifications.length > 0 && (
             <div className="sticky bottom-0 px-4 py-3 border-t border-[var(--color-border)] bg-white rounded-b-lg text-center">
-              <button className="text-sm font-medium text-[var(--color-primary)] hover:opacity-80 transition-opacity">
+              <Link
+                href={notificationPageUrl}
+                className="text-sm font-medium text-[var(--color-primary)] hover:opacity-80 transition-opacity inline-block"
+              >
                 알림 전체보기
-              </button>
+              </Link>
             </div>
           )}
         </div>
