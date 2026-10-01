@@ -263,7 +263,7 @@ function FindAccountContent() {
                 fontSize: "clamp(16px, 1.2vw, 20px)",
               }}
             >
-              가입할 때 입력한 정보로 계정을 확인할 수 있어요.
+              가입할 때 입력한 정보로 계정을 확인할 수 있어요
             </p>
           </div>
 
@@ -278,7 +278,7 @@ function FindAccountContent() {
                     : "border-transparent text-[var(--color-text-secondary)] font-medium hover:text-[var(--color-text-primary)]"
                 }`}
               >
-                아이디 찾기
+                이메일 찾기
               </button>
               <button
                 onClick={() => router.push('?tab=password')}
@@ -299,7 +299,7 @@ function FindAccountContent() {
               {!findIdState.isFound ? (
                 <form onSubmit={handleFindId} className="space-y-6">
                   <p className="text-sm sm:text-base text-[var(--color-text-secondary)] text-center mb-8">
-                    가입할 때 입력한 이름과 휴대폰 번호를 입력해주세요.
+                    가입할 때 입력한 이름과 휴대폰 번호를 입력해주세요
                   </p>
 
                   <div>
@@ -352,7 +352,7 @@ function FindAccountContent() {
                     disabled={findIdState.isSearching}
                     className="w-full mt-8"
                   >
-                    아이디 찾기
+                    이메일 찾기
                   </Button>
                 </form>
               ) : (
@@ -364,12 +364,12 @@ function FindAccountContent() {
                   </div>
 
                   <h2 className="text-xl sm:text-2xl font-bold text-[var(--color-text-primary)] mb-6">
-                    아이디를 찾았어요
+                    이메일을 찾았어요
                   </h2>
 
                   <div className="mb-8 p-6 bg-[var(--color-primary-light)]/20 border border-[var(--color-primary)]/20 rounded-lg">
                     <p className="text-sm text-[var(--color-text-secondary)] mb-2">
-                      회원님의 아이디는
+                      회원님의 이메일은
                     </p>
                     <p className="text-lg font-bold text-[var(--color-text-primary)]">
                       {findIdState.foundId}
@@ -404,8 +404,7 @@ function FindAccountContent() {
               {!findPasswordState.isInfoVerified && (
                 <div className="space-y-6">
                   <p className="text-sm sm:text-base text-[var(--color-text-secondary)] text-center mb-8">
-                    비밀번호를 찾기 위해<br />
-                    가입 정보를 입력해주세요.
+                    비밀번호를 찾기 위해 가입 정보를 입력해주세요
                   </p>
 
                   <div>
@@ -429,11 +428,11 @@ function FindAccountContent() {
 
                   <div>
                     <label className="block text-base font-semibold text-[var(--color-text-primary)] mb-2.5">
-                      아이디(이메일)
+                      이메일
                     </label>
                     <Input
                       type="email"
-                      placeholder="아이디 또는 이메일을 입력해주세요"
+                      placeholder="이메일을 입력해주세요"
                       value={findPasswordState.email}
                       onChange={(e) =>
                         setFindPasswordState({

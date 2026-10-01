@@ -104,7 +104,7 @@ function LoginPageContent() {
         setIsLoading(false);
         setErrors((prev) => ({
           ...prev,
-          email: result.error || "아이디 또는 비밀번호를 확인해주세요.",
+          email: result.error || "이메일 또는 비밀번호를 확인해주세요.",
         }));
         return;
       }
@@ -252,12 +252,12 @@ function LoginPageContent() {
         {/* RIGHT SIDE - 로그인 폼 */}
         <div className="flex items-center justify-center px-8 py-12">
           <div className="w-full max-w-md p-6">
-            <div className="mb-8">
+            <div className="mb-8 text-center">
               <h2 className="text-2xl font-bold text-[var(--color-text-primary)]">
                 로그인
               </h2>
               <p className="mt-2 text-[var(--color-text-secondary)]">
-                일잇다에서 매장 업무를 이어가세요.
+                일잇다에서 매장 업무를 이어가세요
               </p>
             </div>
 
@@ -273,11 +273,12 @@ function LoginPageContent() {
                 </p>
               )}
               <Input
-                label="아이디 또는 이메일"
+                label="이메일"
                 type="email"
                 placeholder="example@email.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                onClear={() => setEmail("")}
                 error={errors.email}
               />
 
@@ -286,53 +287,55 @@ function LoginPageContent() {
                 placeholder="비밀번호를 입력하세요"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                maxLength={16}
                 error={errors.password}
               />
 
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="rememberMe"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                  className="h-4 w-4 rounded border-[var(--color-border)] accent-[var(--color-primary)]"
-                />
-                <label
-                  htmlFor="rememberMe"
-                  className="text-sm text-[var(--color-text-secondary)]"
-                >
-                  자동 로그인
-                </label>
-              </div>
-
-              <Button
-                type="submit"
-                variant="primary"
-                size="md"
-                isLoading={isLoading}
-                className="w-full"
-              >
-                로그인
-              </Button>
-
-              <div className="flex justify-center">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="rememberMe"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                    className="h-4 w-4 rounded border-[var(--color-border)] accent-[var(--color-primary)]"
+                  />
+                  <label
+                    htmlFor="rememberMe"
+                    className="text-sm text-[var(--color-text-secondary)]"
+                  >
+                    자동 로그인
+                  </label>
+                </div>
                 <Link
                   href="/find-account"
                   className="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors"
                 >
-                  아이디 · 비밀번호 찾기
+                  이메일 · 비밀번호 찾기
                 </Link>
               </div>
 
-              <Button
-                type="button"
-                variant="outline"
-                size="md"
-                onClick={() => router.push("/signup/approval-status")}
-                className="w-full border-[var(--color-primary)] text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/20"
-              >
-                승인 확인하기
-              </Button>
+              <div className="space-y-4">
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="md"
+                  isLoading={isLoading}
+                  className="w-full"
+                >
+                  로그인
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="md"
+                  onClick={() => router.push("/signup/approval-status")}
+                  className="w-full border-[var(--color-primary)] text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/20"
+                >
+                  승인 확인하기
+                </Button>
+              </div>
 
               <div className="flex items-center gap-3 my-6">
                 <div className="flex-1 border-t border-[var(--color-border)]"></div>
@@ -434,11 +437,11 @@ function LoginPageContent() {
 
             <div className="mt-8 text-center text-sm">
               <span className="text-[var(--color-text-secondary)]">
-                아직 계정이 없으신가요?{" "}
+                아직 계정이 없으신가요?
               </span>
               <Link
                 href="/signup/start"
-                className="font-semibold text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] transition-colors"
+                className="ml-2.5 font-semibold text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] transition-colors"
               >
                 회원가입
               </Link>
@@ -466,12 +469,12 @@ function LoginPageContent() {
 
         <div className="flex-1 flex items-center justify-center px-4 py-8">
           <div className="w-full max-w-md p-6">
-            <div className="mb-6">
+            <div className="mb-6 text-center">
               <h2 className="text-xl font-bold text-[var(--color-text-primary)]">
                 로그인
               </h2>
               <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
-                일잇다에서 매장 업무를 이어가세요.
+                일잇다에서 매장 업무를 이어가세요
               </p>
             </div>
 
@@ -487,11 +490,12 @@ function LoginPageContent() {
                 </p>
               )}
               <Input
-                label="아이디 또는 이메일"
+                label="이메일"
                 type="email"
                 placeholder="example@email.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                onClear={() => setEmail("")}
                 error={errors.email}
               />
 
@@ -500,53 +504,55 @@ function LoginPageContent() {
                 placeholder="비밀번호를 입력하세요"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                maxLength={16}
                 error={errors.password}
               />
 
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="rememberMeMobile"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                  className="h-4 w-4 rounded border-[var(--color-border)] accent-[var(--color-primary)]"
-                />
-                <label
-                  htmlFor="rememberMeMobile"
-                  className="text-sm text-[var(--color-text-secondary)]"
-                >
-                  자동 로그인
-                </label>
-              </div>
-
-              <Button
-                type="submit"
-                variant="primary"
-                size="md"
-                isLoading={isLoading}
-                className="w-full"
-              >
-                로그인
-              </Button>
-
-              <div className="flex justify-center">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="rememberMeMobile"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                    className="h-4 w-4 rounded border-[var(--color-border)] accent-[var(--color-primary)]"
+                  />
+                  <label
+                    htmlFor="rememberMeMobile"
+                    className="text-sm text-[var(--color-text-secondary)]"
+                  >
+                    자동 로그인
+                  </label>
+                </div>
                 <Link
                   href="/find-account"
                   className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors"
                 >
-                  아이디 · 비밀번호 찾기
+                  이메일 · 비밀번호 찾기
                 </Link>
               </div>
 
-              <Button
-                type="button"
-                variant="outline"
-                size="md"
-                onClick={() => router.push("/signup/approval-status")}
-                className="w-full border-[var(--color-primary)] text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/20"
-              >
-                승인 확인하기
-              </Button>
+              <div className="space-y-3">
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="md"
+                  isLoading={isLoading}
+                  className="w-full"
+                >
+                  로그인
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="md"
+                  onClick={() => router.push("/signup/approval-status")}
+                  className="w-full border-[var(--color-primary)] text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/20"
+                >
+                  승인 확인하기
+                </Button>
+              </div>
 
               <div className="relative my-4">
                 <div className="absolute inset-0 flex items-center">
@@ -651,11 +657,11 @@ function LoginPageContent() {
 
             <div className="mt-6 text-center text-xs">
               <span className="text-[var(--color-text-secondary)]">
-                아직 계정이 없으신가요?{" "}
+                아직 계정이 없으신가요?
               </span>
               <Link
                 href="/signup/start"
-                className="font-semibold text-[var(--color-primary)] hover:text-[var(--color-primary-hover)]"
+                className="ml-2.5 font-semibold text-[var(--color-primary)] hover:text-[var(--color-primary-hover)]"
               >
                 회원가입
               </Link>
