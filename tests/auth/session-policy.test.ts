@@ -121,6 +121,27 @@ describe("server-trusted remember-me policy", () => {
 });
 
 describe("Proxy session persistence enforcement", () => {
+  test("skips Auth for cookieless public requests after policy and legacy cleanup", async (context) => {
+    const { NextRequest } = await import("next/server");
+    const { updateSession } = await import("../../lib/supabase/middleware.ts");
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://test.supabase.co";
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-test-key";
+    const fetchMock = context.mock.method(globalThis, "fetch", async () => {
+      throw new Error("Unexpected Auth call for a cookieless request");
+    });
+    const request = new NextRequest("https://app.example.com/", {
+      headers: { cookie: `${SESSION_MODE_COOKIE}=persistent; sb-test-auth-token.0=legacy` },
+    });
+    const response = await updateSession(request);
+    assert.equal(fetchMock.mock.callCount(), 0);
+    assert.equal(response.headers.has("location"), false);
+    assert.equal(response.cookies.get(SESSION_POLICY_COOKIE)?.maxAge, 0);
+    assert.equal(response.cookies.get(SESSION_MODE_COOKIE)?.maxAge, 0);
+    assert.equal(response.cookies.get("sb-test-auth-token.0")?.maxAge, 0);
+    assert.ok(response.headers.get("X-Proxy-Request-Id"));
+    assert.equal(response.headers.get("x-middleware-request-x-proxy-request-id"), response.headers.get("X-Proxy-Request-Id"));
+  });
+
   test("removes orphaned auth cookies from both the response and forwarded request", async () => {
     const { NextRequest } = await import("next/server");
     const { updateSession } = await import("../../lib/supabase/middleware.ts");
@@ -150,6 +171,7 @@ describe("Proxy session persistence enforcement", () => {
     assert.equal(response.cookies.get(SESSION_MODE_COOKIE)?.maxAge, undefined);
     assert.equal(request.cookies.has(SUPABASE_SESSION_COOKIE_OPTIONS.name), true);
     assert.equal(readSessionPolicy(request.cookies.getAll())?.rememberMe, false);
+    assert.match(response.headers.get("x-middleware-request-cookie") ?? "", /il-it-da-session-mode=session/);
   });
 
   test("refreshes expired tokens using the original checked or unchecked cookie lifetime", async (context) => {
@@ -169,6 +191,40 @@ describe("Proxy session persistence enforcement", () => {
       assert.equal(response.cookies.get(SUPABASE_SESSION_COOKIE_OPTIONS.name)?.maxAge, rememberMe ? PERSISTENT_SESSION_MAX_AGE : undefined);
       assert.equal(response.cookies.get(SESSION_POLICY_COOKIE)?.httpOnly, true);
       assert.match(response.headers.get("Cache-Control") ?? "", /no-store/);
+      assert.ok(response.headers.get("X-Proxy-Request-Id"));
+      assert.equal(response.headers.get("x-middleware-request-x-proxy-request-id"), response.headers.get("X-Proxy-Request-Id"));
+      assert.equal(readSessionPolicy(request.cookies.getAll())?.rememberMe, rememberMe);
+    }
+  });
+
+  test("preserves local session deletion on expiry responses and avoids a login redirect loop", async (context) => {
+    const { NextRequest } = await import("next/server");
+    const { updateSession } = await import("../../lib/supabase/middleware.ts");
+    context.mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
+      if (String(url).includes("/logout")) return new Response(null, { status: 204 });
+      return new Response(JSON.stringify({ code: "session_expired", message: "Test session expired" }), {
+        status: 403, headers: { "Content-Type": "application/json", "X-Supabase-Api-Version": "2024-01-01" },
+      });
+    });
+    for (const pathname of ["/boss", "/api/auth/session"]) {
+      const cookies = [...sessionWrites(false), { name: "sb-test-auth-token.0", value: "legacy" }];
+      const request = new NextRequest(`https://app.example.com${pathname}`, {
+        headers: { cookie: cookies.map(({ name, value }) => `${name}=${value}`).join("; ") },
+      });
+      const response = await updateSession(request);
+      for (const name of [SUPABASE_SESSION_COOKIE_OPTIONS.name, SESSION_POLICY_COOKIE, SESSION_MODE_COOKIE, "sb-test-auth-token.0"]) {
+        assert.equal(response.cookies.get(name)?.maxAge, 0);
+      }
+      assert.equal(request.cookies.has(SUPABASE_SESSION_COOKIE_OPTIONS.name), false);
+      if (pathname.startsWith("/api/")) {
+        assert.equal(response.status, 401);
+        assert.equal((await response.json()).code, "SESSION_EXPIRED");
+      } else {
+        assert.equal(response.status, 307);
+        assert.equal(response.headers.get("location"), "https://app.example.com/?session=expired");
+        const nextResponse = await updateSession(new NextRequest(response.headers.get("location")!));
+        assert.equal(nextResponse.headers.has("location"), false);
+      }
     }
   });
 

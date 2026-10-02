@@ -20,6 +20,17 @@ function copyCookies(source: NextResponse, target: NextResponse): void {
   }
 }
 
+function createNextResponse(request: NextRequest, requestId: string): NextResponse {
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-proxy-request-id", requestId);
+
+  const response = NextResponse.next({
+    request: { headers: requestHeaders },
+  });
+  response.headers.set("X-Proxy-Request-Id", requestId);
+  return response;
+}
+
 function expireLegacySupabaseCookies(request: NextRequest, response: NextResponse): void {
   request.cookies.getAll().forEach(({ name }) => {
     if (isLegacySupabaseAuthCookie(name)) {
@@ -34,11 +45,9 @@ function expireLegacySupabaseCookies(request: NextRequest, response: NextRespons
  */
 export async function updateSession(request: NextRequest): Promise<NextResponse> {
   const proxyRequestId = createDiagnosticRequestId();
-  request.headers.set("x-proxy-request-id", proxyRequestId);
   const hasSessionCookie = request.cookies.getAll().some(({ name }) => name === SUPABASE_SESSION_COOKIE_OPTIONS.name || name.startsWith(`${SUPABASE_SESSION_COOKIE_OPTIONS.name}.`));
   let refreshedCookieCount = 0;
-  let response = NextResponse.next({ request });
-  response.headers.set("X-Proxy-Request-Id", proxyRequestId);
+  let response = createNextResponse(request, proxyRequestId);
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -53,8 +62,10 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
     ? request.cookies.getAll().filter(({ name }) => isSupabaseSessionCookie(name))
     : [];
   rejectedCookies.forEach(({ name }) => request.cookies.delete(name));
-  response = NextResponse.next({ request });
-  response.headers.set("X-Proxy-Request-Id", proxyRequestId);
+  if (policy) {
+    request.cookies.set(SESSION_MODE_COOKIE, policy.rememberMe ? "persistent" : "session");
+  }
+  response = createNextResponse(request, proxyRequestId);
   const policyCleanup = rejectedCookies.length || (!hasSessionCookie && !policy)
     ? [...rejectedCookies.map(({ name }) => ({ name, value: "", options: { path: "/", maxAge: 0 } })), ...clearSessionPolicyCookies()]
     : [];
@@ -62,11 +73,15 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
     policyCleanup.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
     if (policy) {
       const mode = policy.rememberMe ? "persistent" : "session";
-      request.cookies.set(SESSION_MODE_COOKIE, mode);
       response.cookies.set(SESSION_MODE_COOKIE, mode, sessionPolicyCookieOptions(policy.rememberMe, false));
     }
   };
   applyPolicyState();
+
+  if (!hasSessionCookie) {
+    expireLegacySupabaseCookies(request, response);
+    return response;
+  }
 
   const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
     cookieOptions: SUPABASE_SESSION_COOKIE_OPTIONS,
@@ -78,13 +93,12 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
         refreshedCookieCount += cookiesToSet.length;
         const writes = applySessionCookiePolicy(request.cookies.getAll(), cookiesToSet, policy?.rememberMe ?? false);
         writes.forEach(({ name, value }) => value ? request.cookies.set(name, value) : request.cookies.delete(name));
-        response = NextResponse.next({ request });
+        response = createNextResponse(request, proxyRequestId);
         applyPolicyState();
         writes.forEach(({ name, value, options }) => {
           response.cookies.set(name, value, options);
         });
         Object.entries(headers).forEach(([name, value]) => response.headers.set(name, value));
-        response.headers.set("X-Proxy-Request-Id", proxyRequestId);
       },
     },
   });

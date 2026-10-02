@@ -8,6 +8,8 @@ import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
 import ThemeSelector from "@/components/common/ThemeSelector";
 import ProfileAvatar from "@/components/common/ProfileAvatar";
+import OwnerPasswordChangeForm from "@/components/owner/OwnerPasswordChangeForm";
+import OwnerAccountDeletionForm from "@/components/owner/OwnerAccountDeletionForm";
 import { uploadProfileAvatarClient, deleteProfileAvatarClient } from "@/lib/supabase/storage-profile-avatar";
 
 interface UserInfo {
@@ -579,6 +581,8 @@ export default function SettingsPage() {
               </p>
             </section>
 
+            <OwnerPasswordChangeForm />
+
             {/* 2. 알림 설정 */}
             <section aria-labelledby="notification-heading" className={cardClass}>
               <h2 id="notification-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-1">
@@ -638,6 +642,7 @@ export default function SettingsPage() {
                   로그아웃
                 </button>
               </div>
+              <OwnerAccountDeletionForm />
             </section>
           </div>
         </main>

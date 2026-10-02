@@ -6,6 +6,7 @@ import Link from "next/link";
 import { formatNotificationTime } from "@/lib/notifications";
 import { NOTIFICATIONS_CHANGED_EVENT } from "@/lib/notifications/escalation-popup";
 import { resolveNotificationClick } from "@/lib/notifications/notification-href";
+import { createClient } from "@/lib/supabase/client";
 
 interface Notification {
   id: string;
@@ -57,16 +58,29 @@ export default function NotificationCenter({ className = "", notificationPageUrl
     let isCancelled = false;
 
     const loadUnreadCount = () => {
-      fetch("/api/notifications?limit=1")
-        .then(async (response) => {
-          const data = (await response.json()) as { success?: boolean; data?: { unreadCount?: number } };
-          if (!isCancelled && response.ok && data.success && typeof data.data?.unreadCount === "number") {
-            setUnreadCount(data.data.unreadCount);
+      void (async () => {
+        try {
+          const { data, error: sessionError } = await createClient().auth.getSession();
+          if (isCancelled) return;
+          if (sessionError || !data.session) {
+            setUnreadCount(0);
+            return;
           }
-        })
-        .catch(() => {
-          // badge만 생략한다. 패널을 열면 다시 조회한다.
-        });
+
+          const response = await fetch("/api/notifications?limit=1", { credentials: "include" });
+          if (isCancelled) return;
+          if (response.status === 401) {
+            setUnreadCount(0);
+            return;
+          }
+          const result = (await response.json()) as { success?: boolean; data?: { unreadCount?: number } };
+          if (response.ok && result.success && typeof result.data?.unreadCount === "number") {
+            setUnreadCount(result.data.unreadCount);
+          }
+        } catch {
+          // 배지 조회 실패는 생략한다. 패널을 열면 다시 조회한다.
+        }
+      })();
     };
 
     loadUnreadCount();
@@ -87,7 +101,19 @@ export default function NotificationCenter({ className = "", notificationPageUrl
       setError("");
 
       try {
-        const response = await fetch("/api/notifications?limit=15");
+        const { data: sessionData, error: sessionError } = await createClient().auth.getSession();
+        if (sessionError || !sessionData.session) {
+          setNotifications([]);
+          setUnreadCount(0);
+          return;
+        }
+
+        const response = await fetch("/api/notifications?limit=15", { credentials: "include" });
+        if (response.status === 401) {
+          setNotifications([]);
+          setUnreadCount(0);
+          return;
+        }
         const data = (await response.json()) as {
           success: boolean;
           data?: { notifications: Notification[]; unreadCount: number };
@@ -100,8 +126,7 @@ export default function NotificationCenter({ className = "", notificationPageUrl
         } else {
           setError(data.error || "알림을 불러올 수 없습니다.");
         }
-      } catch (e) {
-        console.error("Failed to fetch notifications:", e);
+      } catch {
         setError("알림을 불러올 수 없습니다.");
       } finally {
         setIsLoading(false);
@@ -118,9 +143,10 @@ export default function NotificationCenter({ className = "", notificationPageUrl
       try {
         await fetch(`/api/notifications/${notification.id}/mark-read`, {
           method: "PUT",
+          credentials: "include",
         });
-      } catch (e) {
-        console.error("Failed to mark notification as read:", e);
+      } catch {
+        // 읽음 처리에 실패해도 상세 화면 이동은 계속한다.
       }
       setNotifications((prev) => prev.map((n) => (n.id === notification.id ? { ...n, isRead: true } : n)));
       setUnreadCount((count) => Math.max(0, count - 1));
@@ -137,13 +163,13 @@ export default function NotificationCenter({ className = "", notificationPageUrl
   // Handle mark all as read
   const handleMarkAllRead = async () => {
     try {
-      await fetch("/api/notifications/read-all", { method: "PUT" });
+      await fetch("/api/notifications/read-all", { method: "PUT", credentials: "include" });
       setUnreadCount(0);
       setNotifications((prev) =>
         prev.map((n) => ({ ...n, isRead: true }))
       );
-    } catch (e) {
-      console.error("Failed to mark all as read:", e);
+    } catch {
+      // 실패하면 기존 배지 상태를 유지한다.
     }
   };
 

@@ -23,7 +23,7 @@ describe("app/boss/store-manuals/page.tsx (integrated store manual analysis)", (
   test("shows the analysis category and item counts before save", () => {
     assert.match(source, /preview\.totalDetailManualCount/);
     assert.match(source, /preview\.topCategoryCount/);
-    assert.match(source, /매뉴얼 분석 결과/);
+    assert.match(source, /매뉴얼 등록 미리보기/);
   });
 
   test("uses only the store-scoped analysis and confirmation endpoints", () => {
@@ -64,6 +64,7 @@ describe("app/boss/store-manuals/page.tsx (integrated store manual analysis)", (
 
   test("the analysis picker is the only owner upload entry point", () => {
     assert.match(source, /<Button variant="outline" onClick=\{openAnalyzeFilePicker\}/);
+    assert.match(source, /매뉴얼 등록/);
     assert.equal(source.includes("미리보기로 올리기"), false);
   });
 });

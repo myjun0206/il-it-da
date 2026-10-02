@@ -186,7 +186,10 @@ export default function EscalationNotificationPopup() {
     setActionError("");
 
     try {
-      const response = await fetch(`/api/notifications/${notification.id}/mark-read`, { method: "PUT" });
+      const response = await fetch(`/api/notifications/${notification.id}/mark-read`, {
+        method: "PUT",
+        credentials: "include",
+      });
       if (!response.ok) {
         setActionError("알림을 읽음 처리하지 못했어요. 잠시 후 다시 시도해 주세요.");
         return;
