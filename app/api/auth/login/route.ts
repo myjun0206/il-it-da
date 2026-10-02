@@ -8,6 +8,7 @@ export const runtime = "nodejs";
 type LoginRequestBody = {
   email?: unknown;
   password?: unknown;
+  rememberMe?: unknown;
 };
 
 type LoginResponseBody = {
@@ -42,11 +43,15 @@ export async function POST(request: Request): Promise<NextResponse<LoginResponse
   const email = getString(body.email);
   const password = getString(body.password);
 
+  if (body.rememberMe !== undefined && typeof body.rememberMe !== "boolean") {
+    return NextResponse.json({ error: "Invalid rememberMe value." }, { status: 400 });
+  }
+
   if (!email || !password) {
     return NextResponse.json({ error: "이메일과 비밀번호를 입력해주세요." }, { status: 400 });
   }
 
-  const supabase = await createClient();
+  const supabase = await createClient({ rememberMe: body.rememberMe === true });
 
   const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
     email,

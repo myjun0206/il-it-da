@@ -22,6 +22,8 @@
     "tests/auth/safe-auth-log.test.ts",
     "tests/auth/require-server-role.test.ts",
     "tests/auth/protected-layouts.test.ts",
+    "tests/auth/session-cookies.test.ts",
+    "tests/auth/session-policy.test.ts",
     "tests/auth/signup-profile-membership.test.ts",
     "tests/auth/store-brand-authority.test.ts",
     "tests/auth/approval-recovery.test.ts",

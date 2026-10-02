@@ -85,7 +85,7 @@ function LoginPageContent() {
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, rememberMe }),
       });
 
       const result: {
@@ -141,17 +141,14 @@ function LoginPageContent() {
     setErrors({});
 
     try {
-      const supabase = createClient();
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider,
-        options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
-        },
+      const response = await fetch("/api/auth/oauth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider, rememberMe }),
       });
-
-      if (error) {
-        throw error;
-      }
+      const result = await response.json();
+      if (!response.ok || typeof result.url !== "string") throw new Error("OAuth login failed.");
+      window.location.assign(result.url);
     } catch (error) {
       logSafeAuthError("LOGIN_OAUTH_FAILED", error);
       setErrors((prev) => ({
