@@ -42,7 +42,8 @@ export default function StaffNotificationsPage() {
 
       try {
         const response = await fetch(
-          `/api/notifications?limit=${pageSize * page}&includeRead=${filter === "all"}`
+          `/api/notifications?limit=${pageSize * page}&includeRead=${filter === "all"}`,
+          { credentials: "include" },
         );
         const data = (await response.json()) as {
           success: boolean;
@@ -88,6 +89,7 @@ export default function StaffNotificationsPage() {
       try {
         await fetch(`/api/notifications/${notification.id}/mark-read`, {
           method: "PUT",
+          credentials: "include",
         });
         setNotifications((prev) =>
           prev.map((n) => (n.id === notification.id ? { ...n, isRead: true } : n))
@@ -109,6 +111,7 @@ export default function StaffNotificationsPage() {
     try {
       await fetch(`/api/notifications/${notificationId}/mark-read`, {
         method: "PUT",
+          credentials: "include",
       });
       setNotifications((prev) =>
         prev.map((n) => (n.id === notificationId ? { ...n, isRead: true } : n))
@@ -125,6 +128,7 @@ export default function StaffNotificationsPage() {
     try {
       const response = await fetch(`/api/notifications/${notificationId}/mark-unread`, {
         method: "PUT",
+        credentials: "include",
       });
 
       if (response.ok) {
@@ -144,7 +148,7 @@ export default function StaffNotificationsPage() {
   // Handle mark all as read
   const handleMarkAllRead = async () => {
     try {
-      await fetch("/api/notifications/read-all", { method: "PUT" });
+      await fetch("/api/notifications/read-all", { method: "PUT", credentials: "include" });
       setUnreadCount(0);
       setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
     } catch (e) {
@@ -157,6 +161,7 @@ export default function StaffNotificationsPage() {
     try {
       const response = await fetch(`/api/notifications/${notificationId}/delete`, {
         method: "DELETE",
+        credentials: "include",
       });
 
       if (response.ok) {
@@ -180,6 +185,7 @@ export default function StaffNotificationsPage() {
     try {
       const response = await fetch("/api/notifications/delete-all", {
         method: "DELETE",
+        credentials: "include",
       });
 
       if (response.ok) {

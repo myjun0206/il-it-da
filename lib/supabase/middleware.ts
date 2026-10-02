@@ -45,6 +45,11 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
     return response;
   }
 
+  if (!hasSessionCookie) {
+    expireLegacySupabaseCookies(request, response);
+    return response;
+  }
+
   const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
     cookieOptions: SUPABASE_SESSION_COOKIE_OPTIONS,
     cookies: {

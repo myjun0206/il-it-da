@@ -8,6 +8,7 @@ import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
 import ThemeSelector from "@/components/common/ThemeSelector";
 import ProfileAvatar from "@/components/common/ProfileAvatar";
+import OwnerPasswordChangeForm from "@/components/owner/OwnerPasswordChangeForm";
 import { uploadProfileAvatarClient, deleteProfileAvatarClient } from "@/lib/supabase/storage-profile-avatar";
 
 interface UserInfo {
@@ -578,6 +579,8 @@ export default function SettingsPage() {
                 이메일, 소속 프랜차이즈, 매장 및 역할 변경이 필요한 경우 본사에 문의해주세요.
               </p>
             </section>
+
+            <OwnerPasswordChangeForm />
 
             {/* 2. 알림 설정 */}
             <section aria-labelledby="notification-heading" className={cardClass}>
