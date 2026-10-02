@@ -8,8 +8,10 @@ import {
 import {
   isLegacySupabaseAuthCookie,
   SUPABASE_SESSION_COOKIE_OPTIONS,
-  toSessionCookieOptions,
+  isSupabaseSessionCookie,
+  SESSION_MODE_COOKIE,
 } from "@/lib/supabase/session-cookies";
+import { applySessionCookiePolicy, clearSessionPolicyCookies, readSessionPolicy, sessionPolicyCookieOptions } from "@/lib/supabase/session-policy";
 import { createDiagnosticRequestId, logDiagnosticError } from "@/lib/auth/diagnostic-error-log";
 
 function copyCookies(source: NextResponse, target: NextResponse): void {
@@ -45,6 +47,27 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
     return response;
   }
 
+  const policy = readSessionPolicy(request.cookies.getAll());
+  const isSessionEstablishment = request.nextUrl.pathname === "/api/auth/session" && request.method === "POST";
+  const rejectedCookies = hasSessionCookie && !policy && !isSessionEstablishment
+    ? request.cookies.getAll().filter(({ name }) => isSupabaseSessionCookie(name))
+    : [];
+  rejectedCookies.forEach(({ name }) => request.cookies.delete(name));
+  response = NextResponse.next({ request });
+  response.headers.set("X-Proxy-Request-Id", proxyRequestId);
+  const policyCleanup = rejectedCookies.length || (!hasSessionCookie && !policy)
+    ? [...rejectedCookies.map(({ name }) => ({ name, value: "", options: { path: "/", maxAge: 0 } })), ...clearSessionPolicyCookies()]
+    : [];
+  const applyPolicyState = () => {
+    policyCleanup.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
+    if (policy) {
+      const mode = policy.rememberMe ? "persistent" : "session";
+      request.cookies.set(SESSION_MODE_COOKIE, mode);
+      response.cookies.set(SESSION_MODE_COOKIE, mode, sessionPolicyCookieOptions(policy.rememberMe, false));
+    }
+  };
+  applyPolicyState();
+
   const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
     cookieOptions: SUPABASE_SESSION_COOKIE_OPTIONS,
     cookies: {
@@ -53,10 +76,12 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
       },
       setAll(cookiesToSet, headers) {
         refreshedCookieCount += cookiesToSet.length;
-        cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
+        const writes = applySessionCookiePolicy(request.cookies.getAll(), cookiesToSet, policy?.rememberMe ?? false);
+        writes.forEach(({ name, value }) => value ? request.cookies.set(name, value) : request.cookies.delete(name));
         response = NextResponse.next({ request });
-        cookiesToSet.forEach(({ name, value, options }) => {
-          response.cookies.set(name, value, toSessionCookieOptions(value, options));
+        applyPolicyState();
+        writes.forEach(({ name, value, options }) => {
+          response.cookies.set(name, value, options);
         });
         Object.entries(headers).forEach(([name, value]) => response.headers.set(name, value));
         response.headers.set("X-Proxy-Request-Id", proxyRequestId);

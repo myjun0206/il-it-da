@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { OAUTH_POLICY_COOKIE } from "@/lib/supabase/session-cookies";
+import { sessionPolicyCookieOptions, verifySessionPolicy } from "@/lib/supabase/session-policy";
 
 import { getSafeAuthNextPath } from "@/lib/auth/auth-callback";
 import { createClient } from "@/lib/supabase/server";
@@ -130,7 +133,10 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.redirect(loginErrorUrl(requestUrl.origin, "missing_code"));
   }
 
-  const supabase = await createClient();
+  const cookieStore = await cookies();
+  const pendingPolicy = code ? verifySessionPolicy(cookieStore.get(OAUTH_POLICY_COOKIE)?.value, "oauth") : null;
+  cookieStore.set(OAUTH_POLICY_COOKIE, "", { ...sessionPolicyCookieOptions(false), maxAge: 0 });
+  const supabase = await createClient({ rememberMe: pendingPolicy?.rememberMe ?? false });
   let authError;
   if (code) {
     authError = (await supabase.auth.exchangeCodeForSession(code)).error;

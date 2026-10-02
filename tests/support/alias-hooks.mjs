@@ -6,13 +6,16 @@
 // contents - it only teaches Node how to find it. No production code or behavior is touched.
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")), "../..");
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 const CANDIDATE_SUFFIXES = ["", ".ts", ".tsx", "/index.ts"];
 
 export async function resolve(specifier, context, nextResolve) {
+  if (specifier === "next/server") {
+    return nextResolve("next/server.js", context);
+  }
   if (specifier.startsWith("@/")) {
     const rest = specifier.slice(2);
     for (const suffix of CANDIDATE_SUFFIXES) {
