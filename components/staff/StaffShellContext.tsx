@@ -25,6 +25,7 @@ export interface StaffPendingStore {
   membershipId: string;
   storeId: string;
   storeName: string;
+  status: "pending" | "rejected";
   requestedAt?: string;
 }
 
@@ -155,8 +156,8 @@ export function StaffShellProvider({ children }: { children: ReactNode }) {
           const membershipPayload = (await membershipResponse.json()) as { success?: boolean; data?: MembershipRow[] };
           if (membershipResponse.ok && membershipPayload.success && Array.isArray(membershipPayload.data)) {
             pendingStores = membershipPayload.data
-              .filter((membership) => membership.role === "staff" && membership.status === "pending")
-              .map(({ membershipId, storeId, storeName, requestedAt }) => ({ membershipId, storeId, storeName, requestedAt }));
+              .filter((membership) => membership.role === "staff" && (membership.status === "pending" || membership.status === "rejected"))
+              .map(({ membershipId, storeId, storeName, status, requestedAt }) => ({ membershipId, storeId, storeName, status, requestedAt }));
           }
         } catch {
           pendingStores = [];

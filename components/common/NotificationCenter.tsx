@@ -257,8 +257,17 @@ export default function NotificationCenter({ className = "", notificationPageUrl
                 {error}
               </div>
             ) : notifications.length === 0 ? (
-              <div className="p-8 text-center text-[var(--color-text-secondary)] text-sm">
-                새로운 알림이 없습니다.
+              <div className="flex flex-col items-center justify-center py-8 px-4 gap-4">
+                <p className="text-center text-[var(--color-text-secondary)] text-sm">
+                  새로운 알림이 없습니다.
+                </p>
+                <Link
+                  href={notificationPageUrl}
+                  className="inline-flex items-center justify-center rounded-md px-3 h-8 text-sm font-medium border border-[var(--color-border)] text-[var(--color-primary)] bg-white hover:bg-[var(--color-primary-light)]/10 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
+                  onClick={() => setIsOpen(false)}
+                >
+                  지난 알림 보기
+                </Link>
               </div>
             ) : (
               <div className="divide-y divide-[var(--color-border)]">

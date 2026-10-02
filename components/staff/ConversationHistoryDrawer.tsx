@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { AlertCircle, MessageSquare, RefreshCw, Trash2, X } from "lucide-react";
 
 import type { ConversationSummaryDto } from "@/lib/staff/conversations";
-import { formatStoreDisplayName } from "@/lib/stores/search-stores";
 
 type ListState =
   | { status: "loading" }
@@ -182,8 +181,6 @@ export default function ConversationHistoryDrawer({
                           </span>
                           <span className="mt-0.5 truncate text-xs text-[var(--color-text-secondary)]">
                             {formatItemTime(conversation.updatedAt, group.label)}
-                            {conversation.storeName && ` · ${formatStoreDisplayName(conversation.storeName)}`}
-                            {isActive && " · 현재"}
                           </span>
                         </button>
                         <button

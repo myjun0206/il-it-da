@@ -52,8 +52,7 @@ function writeEditDraft(draft: EditDraft | null): void {
   }
 }
 
-const sectionTitleClass = "mb-3 text-lg font-bold text-[var(--color-text-primary)]";
-const approvedTextClass = "mt-1 flex items-center gap-1 text-sm font-medium text-[var(--color-primary)]";
+const sectionTitleClass = "mb-4 text-lg font-bold text-[var(--color-text-primary)]";
 // 매장 행 공통 레이아웃: 왼쪽(아이콘 + 매장 정보)은 남는 폭을 쓰고, 오른쪽 문구는 카드 세로 중앙·같은 오른쪽 여백(px-5)에 맞춘다.
 // 좁은 화면에서도 가로 배치를 유지하며 매장명만 줄바꿈된다(오른쪽 문구는 줄바꿈하지 않아 겹치지 않는다).
 const storeRowClass = "flex items-center gap-3 px-5";
@@ -97,9 +96,10 @@ export default function StaffStoresPage() {
   // 편집 중 값은 항상 "지금 승인된 매장" 범위로 정리해서 쓴다. (제외/승인 변동이 있어도 안전)
   const editStores = draft ? applyStoreOrder(stores, draft.order) : stores;
   const editOrder = editStores.map((store) => store.id);
-  const editDefaultId =
-    draft?.defaultStoreId && stores.some((store) => store.id === draft.defaultStoreId) ? draft.defaultStoreId : defaultStoreId;
-  const isDirty = isEditing && (editDefaultId !== defaultStoreId || editOrder.join(",") !== savedOrder.join(","));
+  // 편집 모드: 1순위 매장이 기본 매장 (드래그로 자동 변경)
+  const editDefaultId = editOrder[0] ?? null;
+  // isDirty: 순서만 비교 (기본 매장은 1순위로 자동 결정)
+  const isDirty = isEditing && editOrder.join(",") !== savedOrder.join(",");
 
   const defaultStore = stores.find((store) => store.id === defaultStoreId) ?? null;
   const otherStores = stores.filter((store) => store.id !== defaultStoreId);
@@ -112,7 +112,7 @@ export default function StaffStoresPage() {
   const startEditing = () => {
     setNotice(null);
     setSaveFailed(false);
-    updateDraft({ order: savedOrder, defaultStoreId });
+    updateDraft({ order: savedOrder, defaultStoreId: savedOrder[0] ?? null });
   };
 
   const exitEditing = () => {
@@ -187,7 +187,7 @@ export default function StaffStoresPage() {
   const revertDraft = () => {
     setSaveFailed(false);
     setNotice(null);
-    updateDraft({ order: savedOrder, defaultStoreId });
+    updateDraft({ order: savedOrder, defaultStoreId: savedOrder[0] ?? null });
   };
 
   const cancelRequest = async () => {
@@ -219,46 +219,21 @@ export default function StaffStoresPage() {
   return (
     <div className="p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
-        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div className="min-w-0">
-            <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
+            <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-3">
               근무 매장{isEditing && <span className="ml-2 text-base font-semibold text-[var(--color-primary)]">편집 중</span>}
             </h1>
             <p className="text-base text-[var(--color-text-secondary)]">
               {isEditing
-                ? "핸들을 끌어 순서를 바꾸고, 기본 매장 지정·매장 제외·신청 취소를 할 수 있습니다."
+                ? "드래그하여 매장 순서를 변경하세요. 첫 번째 매장이 기본 매장으로 설정됩니다."
                 : "근무 중인 매장과 새로운 근무 신청을 관리할 수 있습니다."}
             </p>
-            {isReady && (
-              <p className="mt-2 text-sm text-[var(--color-text-secondary)]" aria-label="근무 매장 요약">
-                승인 완료 <span className="font-bold text-[var(--color-text-primary)]">{stores.length}</span>
-                <span className="mx-2 text-[var(--color-text-tertiary)]" aria-hidden="true">·</span>
-                승인 대기 <span className="font-bold text-[var(--color-text-primary)]">{pendingStores.length}</span>
-                {!isEditing && hasAnyStore && (
-                  <>
-                    <span className="mx-2 text-[var(--color-text-tertiary)]" aria-hidden="true">·</span>
-                    <Link
-                      href="/staff/stores/requests"
-                      className="rounded font-medium text-[var(--color-primary)] underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
-                    >
-                      신청 현황 보기
-                    </Link>
-                  </>
-                )}
-              </p>
-            )}
           </div>
           {isReady && (
             <div className="flex shrink-0 items-center gap-2 self-start sm:self-auto">
               {isEditing ? (
-                <button
-                  type="button"
-                  onClick={() => (isDirty ? setShowDiscardDialog(true) : exitEditing())}
-                  disabled={isSaving}
-                  className={secondaryButtonClass}
-                >
-                  취소
-                </button>
+                <></>
               ) : (
                 <>
                   {hasAnyStore && (
@@ -336,82 +311,54 @@ export default function StaffStoresPage() {
           <div className="space-y-8">
             <section aria-labelledby="edit-approved-heading">
               <h2 id="edit-approved-heading" className={sectionTitleClass}>
-                근무 중인 매장
+                매장 순서
               </h2>
               {editStores.length === 0 ? (
                 <p className="rounded-xl border border-[var(--color-border)] bg-white px-5 py-4 text-sm text-[var(--color-text-secondary)]">
                   승인 완료된 근무 매장이 없습니다.
                 </p>
               ) : (
-                <SortableStoreList
-                  items={editStores}
-                  label="근무 중인 매장 (순서 변경 가능)"
-                  getItemLabel={(store) => formatStoreDisplayName(store.name)}
-                  disabled={isSaving}
-                  onReorder={(order) => updateDraft({ order, defaultStoreId: editDefaultId })}
-                  renderItem={(store) => {
-                    const name = formatStoreDisplayName(store.name);
-                    const isDefault = store.id === editDefaultId;
-                    return (
-                      <div className="flex flex-col gap-1 py-3 pl-2 pr-3 sm:flex-row sm:items-center sm:gap-3">
-                        <div className="min-w-0 flex-1">
-                          <p className="text-base font-semibold text-[var(--color-text-primary)] break-keep">{name}</p>
-                          <p className={approvedTextClass}>
-                            <CheckCircle2 size={14} aria-hidden="true" /> 승인 완료
-                          </p>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-1">
-                          {isDefault ? (
-                            <StoreStatusBadge tone="current">기본 매장</StoreStatusBadge>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => updateDraft({ order: editOrder, defaultStoreId: store.id })}
-                              disabled={isSaving}
-                              className={primaryTextActionClass}
-                            >
-                              기본 매장으로 설정
-                            </button>
+                <>
+                  <SortableStoreList
+                    items={editStores}
+                    label="매장 순서 (순서 변경 가능)"
+                    getItemLabel={(store) => formatStoreDisplayName(store.name)}
+                    disabled={isSaving || editStores.length === 1}
+                    onReorder={(order) => updateDraft({ order, defaultStoreId: order[0] ?? null })}
+                    renderItem={(store) => {
+                      const name = formatStoreDisplayName(store.name);
+                      const isDefault = store.id === editOrder[0];
+                      return (
+                        <div className="flex items-center h-full w-full gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-base font-semibold text-[var(--color-text-primary)] break-keep">{name}</p>
+                          </div>
+                          {isDefault && (
+                            <div className="flex shrink-0">
+                              <StoreStatusBadge tone="current">기본 매장</StoreStatusBadge>
+                            </div>
                           )}
                         </div>
-                      </div>
-                    );
-                  }}
-                />
+                      );
+                    }}
+                  />
+                  {editStores.length === 1 && (
+                    <p className="mt-3 text-sm text-[var(--color-text-secondary)]">
+                      현재 순서를 변경할 다른 근무 매장이 없습니다.
+                    </p>
+                  )}
+                </>
               )}
             </section>
 
-            {pendingStores.length > 0 && (
-              <section aria-labelledby="edit-pending-heading">
-                <h2 id="edit-pending-heading" className={sectionTitleClass}>
-                  승인 대기
-                </h2>
-                <StoreMembershipList label="승인 대기 신청">
-                  {pendingStores.map((request) => (
-                    <PendingRow key={request.membershipId} request={request} asideClassName="-mr-2 flex-wrap">
-                      <span className="text-sm font-semibold text-amber-800">점주 승인 대기</span>
-                      <button type="button" onClick={() => setCancelTarget(request)} disabled={isSaving} className={textActionClass}>
-                        신청 취소
-                      </button>
-                    </PendingRow>
-                  ))}
-                </StoreMembershipList>
-              </section>
-            )}
 
-            <Link
-              href="/staff/stores/add"
-              className="flex min-h-[64px] items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-[var(--color-border)] bg-white px-5 text-base font-semibold text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
-            >
-              <Plus size={18} aria-hidden="true" /> 근무 매장 추가
-            </Link>
 
-            <div className="flex flex-col gap-2 border-t border-[var(--color-border)] pt-5 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-sm text-[var(--color-text-secondary)]" role="status">
-                {isDirty ? "저장하지 않은 변경 사항이 있습니다." : "변경 사항이 없습니다."}
-              </p>
-              <button type="button" onClick={() => void finishEditing()} disabled={isSaving} className={`${primaryButtonClass} sm:min-w-[140px]`}>
-                {isSaving ? "저장 중..." : "편집 완료"}
+            <div className="flex items-center justify-end gap-2 border-t border-[var(--color-border)] pt-5">
+              <button type="button" onClick={() => (isDirty ? setShowDiscardDialog(true) : exitEditing())} disabled={isSaving} className={secondaryButtonClass}>
+                취소
+              </button>
+              <button type="button" onClick={() => void finishEditing()} disabled={isSaving || !isDirty} className={`${primaryButtonClass} sm:min-w-[140px]`}>
+                {isSaving ? "저장 중..." : "변경 저장"}
               </button>
             </div>
           </div>
@@ -430,11 +377,8 @@ export default function StaffStoresPage() {
                       <p className="text-lg font-bold text-[var(--color-text-primary)] break-keep">
                         {formatStoreDisplayName(defaultStore.name)}
                       </p>
-                      <p className={approvedTextClass}>
-                        <CheckCircle2 size={14} aria-hidden="true" /> 승인 완료
-                      </p>
                       <p className="mt-3 text-sm text-[var(--color-text-secondary)] break-keep">
-                        AI 챗봇과 지점 매뉴얼의 기본 기준 매장입니다. 로그인하면 이 매장으로 시작합니다.
+                        AI 챗봇, 지점 매뉴얼, 공지사항의 기본 기준 매장입니다.
                       </p>
                     </div>
                   </div>
@@ -464,16 +408,13 @@ export default function StaffStoresPage() {
                             <p className="text-base font-semibold text-[var(--color-text-primary)] break-keep">
                               {formatStoreDisplayName(store.name)}
                             </p>
-                            <p className={approvedTextClass}>
-                              <CheckCircle2 size={14} aria-hidden="true" /> 승인 완료
-                            </p>
                           </div>
                         </div>
                         {/* 기본 매장으로 설정 = 기본 매장 저장 + 활성 매장 전환 (AI 챗봇·지점 매뉴얼·상단 프로필이 함께 바뀐다) */}
                         {/* 버튼의 좌우 패딩(px-2)만큼 당겨서 글자 오른쪽 끝을 다른 카드 문구와 같은 선에 맞춘다. */}
                         <div className={`${storeRowAsideClass} -mr-2`}>
                           <button type="button" onClick={() => void setAsDefault(store)} disabled={isSettingDefault} className={primaryTextActionClass}>
-                            기본 매장으로 설정
+                            기본 설정
                           </button>
                         </div>
                       </li>
@@ -486,17 +427,31 @@ export default function StaffStoresPage() {
             {pendingStores.length > 0 && (
               <section aria-labelledby="pending-heading">
                 <h2 id="pending-heading" className={sectionTitleClass}>
-                  승인 대기
+                  근무 신청
                 </h2>
-                <StoreMembershipList label="승인 대기 신청">
-                  {pendingStores.map((request) => (
-                    <PendingRow key={request.membershipId} request={request}>
-                      <span className="text-sm font-semibold text-amber-800">점주 승인 대기</span>
-                    </PendingRow>
-                  ))}
+                <StoreMembershipList label="근무 신청">
+                  {/* Pending 신청을 먼저 표시 */}
+                  {pendingStores
+                    .filter((request) => request.status === "pending")
+                    .map((request) => (
+                      <PendingRow key={request.membershipId} request={request} asideClassName="-mr-2 flex-wrap">
+                        <span className="text-sm font-semibold text-amber-800">승인 대기</span>
+                        <button type="button" onClick={() => setCancelTarget(request)} disabled={isSaving} className={textActionClass}>
+                          신청 취소
+                        </button>
+                      </PendingRow>
+                    ))}
+                  {/* Rejected 신청을 그 다음 표시 */}
+                  {pendingStores
+                    .filter((request) => request.status === "rejected")
+                    .map((request) => (
+                      <PendingRow key={request.membershipId} request={request} asideClassName="-mr-2">
+                        <span className="text-sm font-semibold text-red-700">승인 거절</span>
+                      </PendingRow>
+                    ))}
                 </StoreMembershipList>
                 <p className="mt-2 text-sm text-[var(--color-text-tertiary)]">
-                  승인 전에는 해당 매장으로 전환할 수 없습니다. 신청 취소는 편집에서 할 수 있습니다.
+                  승인 전에는 해당 매장으로 전환할 수 없습니다.
                 </p>
               </section>
             )}
@@ -532,7 +487,7 @@ export default function StaffStoresPage() {
   );
 }
 
-/** 승인 대기 행: 매장명 + 신청일, 오른쪽에 상태 또는 액션 */
+/** 승인 대기/거절 행: 매장명 + 신청일, 오른쪽에 상태 또는 액션 */
 function PendingRow({
   request,
   children,
@@ -544,10 +499,16 @@ function PendingRow({
   asideClassName?: string;
 }) {
   const requestedDate = formatRequestDate(request.requestedAt);
+  const isPending = request.status === "pending";
+  
   return (
     <li className={`${storeRowClass} py-4`}>
       <div className={storeRowMainClass}>
-        <Clock3 size={20} className="mt-0.5 shrink-0 text-amber-700" aria-hidden="true" />
+        {isPending ? (
+          <Clock3 size={20} className="mt-0.5 shrink-0 text-amber-700" aria-hidden="true" />
+        ) : (
+          <AlertCircle size={20} className="mt-0.5 shrink-0 text-red-700" aria-hidden="true" />
+        )}
         <div className="min-w-0">
           <p className="text-base font-semibold text-[var(--color-text-primary)] break-keep">{formatStoreDisplayName(request.storeName)}</p>
           <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{requestedDate ? `${requestedDate} 신청` : "신청 접수"}</p>

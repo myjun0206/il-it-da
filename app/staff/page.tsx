@@ -7,7 +7,6 @@ import { AlertCircle, Bot, CheckCircle2, Clock3, History, Info, Lock, Mic, Plus,
 
 import { useStaffShell } from "@/components/staff/StaffShellContext";
 import ConversationHistoryDrawer from "@/components/staff/ConversationHistoryDrawer";
-import StoreSwitcher from "@/components/common/StoreSwitcher";
 import type { RagSource, RagStatus } from "@/lib/rag/types";
 import type { StaffStore } from "@/lib/staff/approved-stores";
 import type { ConversationMessageDto, ConversationSummaryDto } from "@/lib/staff/conversations";
@@ -47,15 +46,13 @@ const quickQuestions = [
   "매장 청소 체크리스트 보여줘",
   "신규 알바가 꼭 알아야 할 내용은?",
 ];
-const EXAMPLE_GUIDE_MESSAGE: Message = { from: "ai", text: "아래 예시 질문을 참고하거나,\n직접 궁금한 내용을 입력해보세요.", time: "" };
 
 function buildNewChatMessages(storeName?: string): Message[] {
   const greetingText = storeName
-    ? `새로운 대화를 시작해보세요.\n"${storeName}"의 업무에 대해 무엇이든 물어보세요.`
-    : `새로운 대화를 시작해보세요.\n업무에 대해 무엇이든 물어보세요.`;
+    ? `새로운 대화를 시작해보세요.\n"${storeName}"의 업무에 대해 무엇이든 물어보세요.\n\n아래 예시 질문을 참고하거나,\n직접 궁금한 내용을 입력해보세요.`
+    : `새로운 대화를 시작해보세요.\n업무에 대해 무엇이든 물어보세요.\n\n아래 예시 질문을 참고하거나,\n직접 궁금한 내용을 입력해보세요.`;
   return [
     { from: "ai", text: greetingText, time: "" },
-    EXAMPLE_GUIDE_MESSAGE,
   ];
 }
 
@@ -131,6 +128,7 @@ export default function StaffPage() {
     stores,
     pendingStores,
     selectedStore,
+    defaultStoreId,
     isStoresLoading,
     storesError,
     reloadStores,
@@ -177,26 +175,6 @@ export default function StaffPage() {
   function applyStore(store: StaffStore) {
     // 공통 상태를 바꾸면 Header/ProfileMenu도 즉시 같은 매장으로 바뀐다.
     selectShellStore(store.id);
-  }
-
-  function selectStore(storeId: string) {
-    if (isBusy) return;
-
-    const store = stores.find((candidate) => candidate.id === storeId) ?? null;
-
-    if (!store || (selectedStore?.id === store.id && readOnlyStoreName === null)) return;
-
-    // 대화는 매장에 고정된다: 현재 대화는 기록에 그대로 두고, 새 매장 기준 새 대화를 시작한다.
-    resetConversation([
-      {
-        from: "ai",
-        text: `${formatStoreDisplayName(store.name)}으로 전환했습니다.\n이제 이 매장의 매뉴얼을 기준으로 답변합니다.`,
-        time: "",
-      },
-      EXAMPLE_GUIDE_MESSAGE,
-    ]);
-    applyStore(store);
-    setToastMessage(`${formatStoreDisplayName(store.name)}으로 전환했습니다.`);
   }
 
   async function openConversation(summary: ConversationSummaryDto) {
@@ -332,10 +310,11 @@ export default function StaffPage() {
 
     try {
       // 이어서 묻는 대화면 서버가 대화에 저장된 매장을 쓰고, storeId는 새 대화 시작에만 쓰인다.
+      // 기본 매장을 사용한다.
       const response = await fetch("/api/staff/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, storeId: selectedStore.id, conversationId }),
+        body: JSON.stringify({ question, storeId: defaultStoreId ?? selectedStore?.id, conversationId }),
       });
 
       const result: unknown = await response.json();
@@ -430,20 +409,7 @@ export default function StaffPage() {
               </div>
             </div>
 
-            {/* Store Selector: 승인된 매장만 선택 가능, 승인 대기 매장은 안내만, 근무 매장 추가 신청 */}
-            <div className="mb-4 flex-shrink-0">
-              <StoreSwitcher
-                label="현재 근무 매장"
-                manageLabel="근무 매장 관리"
-                stores={stores}
-                pendingCount={pendingStores.length}
-                selectedStoreId={selectedStore?.id ?? null}
-                isLoading={isStoresLoading}
-                disabled={isLoading || isConversationLoading}
-                onSelect={selectStore}
-                onManageStores={() => router.push("/staff/stores")}
-              />
-            </div>
+            {/* Store Selector 제거됨 - 기본 매장 자동 사용 */}
 
             {storesError && (
               <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
@@ -488,7 +454,7 @@ export default function StaffPage() {
             {/* Chat Container - takes remaining space */}
             <div className="bg-white border border-[var(--color-border)] rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
             {/* Messages Area - Only this scrolls */}
-            <div ref={messagesAreaRef} className="flex-1 overflow-y-auto space-y-4 p-6 min-h-0">
+            <div ref={messagesAreaRef} className="flex-1 overflow-y-auto space-y-6 p-6 min-h-0">
               {/* Date Indicator */}
               <div className="flex justify-center">
                 <span className="flex items-center gap-1.5 rounded-full bg-[var(--color-bg-surface)] px-3 py-1.5 text-xs font-semibold text-[var(--color-text-secondary)]">
@@ -503,9 +469,17 @@ export default function StaffPage() {
               )}
 
               {/* Messages */}
-              {messages.map((message, index) => (
-                <MessageBubble key={`${message.time}-${index}`} message={message} />
-              ))}
+              {messages.map((message, index) => {
+                const prevMessage = index > 0 ? messages[index - 1] : null;
+                const isConsecutiveAI = prevMessage?.from === "ai" && message.from === "ai";
+                return (
+                  <MessageBubble 
+                    key={`${message.time}-${index}`} 
+                    message={message} 
+                    showIcon={!isConsecutiveAI}
+                  />
+                );
+              })}
 
               {/* Loading Indicator */}
               {isLoading && <TypingIndicator />}
@@ -533,7 +507,7 @@ export default function StaffPage() {
             <QuickQuestionsScroller questions={quickQuestions} canAsk={canAsk} onSelectQuestion={submitQuestion} />
 
             {/* Input Area - Fixed at bottom */}
-            <div className="border-t border-[var(--color-border)] bg-white p-4 flex-shrink-0">
+            <div className="bg-white px-4 pt-3 pb-4 flex-shrink-0">
               {readOnlyStoreName !== null && (
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900" role="note">
                   <span className="flex min-w-0 items-start gap-1.5">
@@ -551,13 +525,13 @@ export default function StaffPage() {
                   </button>
                 </div>
               )}
-              <form onSubmit={sendMessage} className="flex items-center gap-3">
+              <form onSubmit={sendMessage} className="flex items-center gap-0 border border-[var(--color-border)] rounded-lg bg-white overflow-hidden">
                 <button
                   type="button"
                   disabled
                   title="음성 입력 준비 중"
                   aria-label="음성 입력 (준비 중)"
-                  className="flex h-11 w-11 items-center justify-center rounded-lg text-[var(--color-text-tertiary)] hover:bg-[var(--color-bg-surface)] transition-colors flex-shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex h-12 w-12 items-center justify-center text-[var(--color-text-tertiary)] hover:bg-[var(--color-bg-surface)] transition-colors flex-shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Mic size={20} />
                 </button>
@@ -568,14 +542,14 @@ export default function StaffPage() {
                   onChange={event => setInput(event.target.value)}
                   placeholder={isLoading ? "답변을 기다리는 중이에요…" : readOnlyStoreName !== null ? "열람 전용 대화입니다" : "질문을 입력하세요"}
                   aria-label="질문 입력창"
-                  className="min-w-0 flex-1 px-4 py-3 border border-[var(--color-border)] rounded-lg bg-white text-base font-normal text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-secondary)]/70 focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]/20 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                  className="min-w-0 flex-1 px-4 py-3 bg-white text-base font-normal text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-secondary)]/70 transition-colors disabled:cursor-not-allowed disabled:opacity-60 border-l border-[var(--color-border)]"
                 />
 
                 <button
                   type="submit"
                   disabled={!canAsk || !input.trim()}
                   aria-label="메시지 보내기"
-                  className="flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary)]/90 transition-colors flex-shrink-0 disabled:cursor-not-allowed disabled:bg-[var(--color-primary)]/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
+                  className="flex h-12 w-12 items-center justify-center bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary)]/90 transition-colors flex-shrink-0 disabled:cursor-not-allowed disabled:bg-[var(--color-primary)]/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)] border-l border-[var(--color-border)]"
                 >
                   <Send size={20} />
                 </button>
@@ -596,68 +570,84 @@ export default function StaffPage() {
   );
 }
 
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({ message, showIcon = true }: { message: Message; showIcon?: boolean }) {
   const badge = message.from === "ai" && message.status ? statusBadgeConfig[message.status] : null;
   const StatusIcon = badge?.icon;
-  const hasSource = message.from === "ai" && (message.source?.title || message.source?.category || typeof message.similarity === "number");
+  const hasSource = message.from === "ai" && (message.source?.title || message.source?.category);
   const similarityPercent = typeof message.similarity === "number" ? Math.min(100, Math.max(0, Math.round(message.similarity * 100))) : null;
 
   return (
     <div className={`flex items-end gap-3 ${message.from === "me" ? "justify-end" : "justify-start"}`}>
-      {/* AI Avatar */}
-      {message.from === "ai" && (
+      {/* AI Avatar - Only show if not consecutive AI message */}
+      {message.from === "ai" && showIcon && (
         <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-[#e8f5f0] text-[var(--color-primary)]">
           <Bot size={16} strokeWidth={2} />
         </div>
       )}
 
+      {/* Spacing placeholder for alignment when icon is hidden */}
+      {message.from === "ai" && !showIcon && (
+        <div className="h-9 w-9 flex-shrink-0" />
+      )}
+
       <div className={`max-w-[65%] ${message.from === "me" ? "items-end" : "items-start"} flex flex-col`}>
-        {/* Status Badge - Only for AI */}
-        {badge && (
-          <div className={`mb-2 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${badge.className}`}>
-            {StatusIcon && <StatusIcon size={14} strokeWidth={2.5} />}
-            <span>{badge.label}</span>
-          </div>
-        )}
+        {message.from === "ai" ? (
+          <>
+            {/* AI Answer - Document-style with left accent line */}
+            <div className="flex gap-4 items-start">
+              {/* Left Accent Line */}
+              <div className="w-0.5 bg-[var(--color-primary)] flex-shrink-0" />
+              
+              {/* AI Answer Content */}
+              <div className="flex-1 flex flex-col">
+                {/* Status Badge - Small label */}
+                {badge && (
+                  <div className={`mb-3 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold w-fit ${badge.className}`}>
+                    {StatusIcon && <StatusIcon size={12} strokeWidth={2.5} />}
+                    <span>{badge.label}</span>
+                  </div>
+                )}
 
-        {/* Message Bubble */}
-        <div
-          className={`rounded-2xl px-4 py-3 text-base leading-relaxed ${
-            message.from === "me"
-              ? "rounded-br-none bg-[#d4ead7] text-[#0d5d4d] font-medium"
-              : "rounded-bl-none bg-[#f0f7f4] text-[#1a1a1a] border border-[#e0eae8]"
-          }`}
-        >
-          <div className="whitespace-pre-line break-words">{message.text}</div>
-        </div>
-
-        {/* Source Info - Only for AI */}
-        {hasSource && (
-          <div className="mt-3 w-full max-w-sm rounded-lg border border-[#e0eae8] bg-[#f9fbfa] p-3">
-            {/* Source Badge */}
-            {(message.source?.title || message.source?.category) && (
-              <div className="mb-2 flex items-start gap-2">
-                <span className="text-xs font-semibold text-[var(--color-primary)]">📖</span>
-                <div>
-                  <p className="text-xs font-semibold text-[#0d5d4d]">근거 매뉴얼</p>
-                  <p className="mt-0.5 text-xs font-medium text-[#0d5d4d]">
-                    {[message.source?.title, message.source?.category].filter(Boolean).join(" · ")}
-                  </p>
+                {/* Message Text - Multiple paragraphs with proper spacing */}
+                <div className="text-base leading-relaxed text-[#1a1a1a] space-y-3">
+                  {message.text.split('\n\n').map((paragraph, idx) => (
+                    <div key={idx} className="whitespace-pre-wrap break-words">
+                      {paragraph}
+                    </div>
+                  ))}
                 </div>
-              </div>
-            )}
 
-            {/* Similarity - Only if exists */}
-            {similarityPercent !== null && (
-              <div className="mt-2 border-t border-[#e0eae8] pt-2">
-                <p className="text-xs text-[#555]">관련도 <span className="font-semibold text-[#0d5d4d]">{similarityPercent}%</span></p>
+                {/* Source Info - Inside the accent line group */}
+                {hasSource && (
+                  <div className="mt-4 pt-3 border-t border-[#dfe7dc] flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <span className="text-sm flex-shrink-0">📖</span>
+                      <p className="text-xs font-medium text-[#0d5d4d] truncate">
+                        {[message.source?.title, message.source?.category].filter(Boolean).join(" · ")}
+                      </p>
+                    </div>
+                    {similarityPercent !== null && (
+                      <p className="text-xs font-semibold text-[#0d5d4d] flex-shrink-0 whitespace-nowrap">{similarityPercent}%</p>
+                    )}
+                  </div>
+                )}
+
+                {/* Timestamp - Inside accent line group, below source */}
+                {message.time && <span className="mt-2 text-xs text-[#888]">{message.time}</span>}
               </div>
-            )}
-          </div>
+            </div>
+          </>
+        ) : (
+          <>
+            {/* User Message Bubble */}
+            <div className="rounded-2xl rounded-br-none bg-[#d4ead7] text-[#0d5d4d] font-medium px-4 py-3 text-base leading-relaxed">
+              <div className="whitespace-pre-line break-words">{message.text}</div>
+            </div>
+
+            {/* Timestamp - Outside */}
+            {message.time && <span className="mt-2 px-1 text-xs text-[#888]">{message.time}</span>}
+          </>
         )}
-
-        {/* Timestamp */}
-        {message.time && <span className="mt-2 px-1 text-xs text-[#888]">{message.time}</span>}
       </div>
 
       {/* User Avatar */}
@@ -672,17 +662,28 @@ function MessageBubble({ message }: { message: Message }) {
 
 function TypingIndicator() {
   return (
-    <div className="flex justify-start items-end gap-3">
+    <div className="flex items-end gap-3 justify-start">
       <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-[#e8f5f0] text-[var(--color-primary)]">
         <Bot size={16} strokeWidth={2} />
       </div>
-      <div role="status" aria-label="AI가 답변을 작성 중" className="flex items-center gap-2 rounded-2xl rounded-bl-none bg-[#f0f7f4] px-4 py-3 border border-[#e0eae8]">
-        <span className="flex gap-1.5">
-          <i className="h-2 w-2 animate-bounce rounded-full bg-[var(--color-primary)]" />
-          <i className="h-2 w-2 animate-bounce rounded-full bg-[var(--color-primary)] [animation-delay:120ms]" />
-          <i className="h-2 w-2 animate-bounce rounded-full bg-[var(--color-primary)] [animation-delay:240ms]" />
-        </span>
-        <span className="text-sm font-medium text-[#1a1a1a]">매뉴얼을 확인하고 있어요</span>
+      <div className="max-w-[65%] items-start flex flex-col">
+        <div role="status" aria-label="AI가 답변을 작성 중" className="flex gap-4 items-start">
+          {/* Accent line placeholder for alignment */}
+          <div className="w-0.5 bg-transparent flex-shrink-0" />
+          
+          {/* Loading content - SAME STRUCTURE as MessageBubble text wrapper */}
+          <div className="flex-1 flex flex-col">
+            {/* Match MessageBubble's text wrapper structure exactly */}
+            <div className="text-sm font-medium text-[#1a1a1a]">
+              <span className="inline-flex gap-1.5">
+                <i className="h-2 w-2 animate-bounce rounded-full bg-[var(--color-primary)]" />
+                <i className="h-2 w-2 animate-bounce rounded-full bg-[var(--color-primary)] [animation-delay:120ms]" />
+                <i className="h-2 w-2 animate-bounce rounded-full bg-[var(--color-primary)] [animation-delay:240ms]" />
+              </span>
+              <span className="ml-2">매뉴얼을 확인하고 있어요</span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -786,7 +787,7 @@ function QuickQuestionsScroller({ questions, canAsk, onSelectQuestion }: QuickQu
   }, [questions]);
 
   return (
-    <div className="border-t border-[var(--color-border)] bg-white px-5 py-3 flex-shrink-0 relative overflow-hidden">
+    <div className="bg-white px-5 py-3 flex-shrink-0 relative overflow-hidden">
       {/* Left Fade */}
       {showLeftFade && (
         <div className="absolute left-5 top-0 bottom-0 w-12 pointer-events-none z-10" style={{

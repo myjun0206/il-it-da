@@ -146,7 +146,7 @@ export default function SortableStoreList<T extends SortableItem>({
         />
       )}
 
-      <ul ref={listRef} aria-label={label} className="relative flex flex-col gap-3">
+      <ul ref={listRef} aria-label={label} className="relative w-full flex flex-col gap-3">
         {items.map((item, index) => {
           const isDragging = drag?.id === item.id;
           const itemLabel = getItemLabel(item);
@@ -154,7 +154,7 @@ export default function SortableStoreList<T extends SortableItem>({
             <li
               key={item.id}
               style={{ transform: drag ? `translateY(${offsetFor(index)}px)` : undefined }}
-              className={`flex items-stretch rounded-xl border bg-white ${
+              className={`flex items-center gap-3 min-h-[52px] rounded-xl border bg-white ${
                 isDragging
                   ? "relative z-10 border-[var(--color-primary)] shadow-lg"
                   : `border-[var(--color-border)] ${drag ? "motion-safe:transition-transform motion-safe:duration-200" : ""}`
@@ -170,13 +170,13 @@ export default function SortableStoreList<T extends SortableItem>({
                 onPointerUp={() => endDrag(true)}
                 onPointerCancel={() => endDrag(false)}
                 onKeyDown={(event) => handleKeyDown(event, index)}
-                className={`flex w-11 shrink-0 touch-none items-center justify-center rounded-l-xl text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-default)] hover:text-[var(--color-text-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-40 ${
+                className={`ml-4 flex w-11 shrink-0 touch-none items-center justify-center rounded-l-xl text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-default)] hover:text-[var(--color-text-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-40 ${
                   isDragging ? "cursor-grabbing" : "cursor-grab"
                 }`}
               >
                 <GripVertical size={20} aria-hidden="true" />
               </button>
-              <div className="min-w-0 flex-1">{renderItem(item)}</div>
+              <div className="min-w-0 flex-1 pr-4">{renderItem(item)}</div>
             </li>
           );
         })}

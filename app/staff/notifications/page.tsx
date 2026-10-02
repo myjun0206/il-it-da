@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { AlertCircle, Bell, MoreVertical } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertCircle, Bell } from "lucide-react";
 import { formatNotificationTime } from "@/lib/notifications";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { NotificationDetailModal } from "@/components/notifications/NotificationDetailModal";
 
 interface Notification {
   id: string;
@@ -21,7 +21,6 @@ interface Notification {
 type FilterType = "all" | "unread";
 
 export default function StaffNotificationsPage() {
-  const router = useRouter();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [filter, setFilter] = useState<FilterType>("all");
@@ -30,8 +29,7 @@ export default function StaffNotificationsPage() {
   const [page, setPage] = useState(1);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleteLoading, setIsDeleteLoading] = useState(false);
-  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const menuRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const [selectedNotificationId, setSelectedNotificationId] = useState<string | null>(null);
   const pageSize = 20;
 
   // Fetch notifications
@@ -68,23 +66,12 @@ export default function StaffNotificationsPage() {
     fetchNotifications();
   }, [filter, page]);
 
-  // Validate internal URL (must start with /)
-  const isInternalUrl = (url?: string): boolean => {
-    if (!url) return false;
-    // Only allow paths starting with /
-    // Reject http://, https://, //, javascript:, etc.
-    return url.startsWith("/") && !url.startsWith("//");
-  };
+  // Handle notification click - open modal and mark as read
+  const handleNotificationClick = async (notification: Notification) => {
+    // Open modal
+    setSelectedNotificationId(notification.id);
 
-  // Handle notification click
-  const handleNotificationClick = async (notification: Notification, e?: React.MouseEvent) => {
-    // Prevent navigation if clicking on menu
-    if (e && (e.target as HTMLElement).closest('[data-menu-button]')) {
-      e.stopPropagation();
-      return;
-    }
-
-    // Mark as read
+    // Mark as read if unread
     if (!notification.isRead) {
       try {
         await fetch(`/api/notifications/${notification.id}/mark-read`, {
@@ -202,20 +189,6 @@ export default function StaffNotificationsPage() {
     }
   };
 
-  // Close menu when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (openMenuId && menuRefs.current[openMenuId]) {
-        if (!menuRefs.current[openMenuId]?.contains(e.target as Node)) {
-          setOpenMenuId(null);
-        }
-      }
-    };
-
-    document.addEventListener("click", handleClickOutside);
-    return () => document.removeEventListener("click", handleClickOutside);
-  }, [openMenuId]);
-
   // Filter notifications based on current filter
   const filteredNotifications =
     filter === "unread"
@@ -325,11 +298,11 @@ export default function StaffNotificationsPage() {
                   <button
                     key={notification.id}
                     type="button"
-                    onClick={(e) => handleNotificationClick(notification, e)}
-                    className={`w-full px-6 py-4 text-left transition-colors border-b border-[var(--color-border)] last:border-b-0 ${
+                    onClick={() => handleNotificationClick(notification)}
+                    className={`w-full px-6 py-4 text-left transition-colors border-b border-[var(--color-border)] last:border-b-0 cursor-pointer ${
                       notification.isRead
                         ? "hover:bg-[var(--color-bg-surface)]"
-                        : "hover:bg-[var(--color-primary-light)]/5"
+                        : "hover:bg-[var(--color-primary-light)]/10"
                     }`}
                   >
                     <div className="flex gap-4">
@@ -358,71 +331,11 @@ export default function StaffNotificationsPage() {
                             </p>
                           </div>
 
-                          {/* Time and menu */}
-                          <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                          {/* Time */}
+                          <div className="flex-shrink-0 ml-2">
                             <p className="text-xs text-[var(--color-text-tertiary)] whitespace-nowrap">
                               {formatNotificationTime(notification.createdAt)}
                             </p>
-
-                            {/* Overflow menu */}
-                            <div
-                              ref={(el) => {
-                                if (el) menuRefs.current[notification.id] = el;
-                              }}
-                              className="relative"
-                            >
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setOpenMenuId(openMenuId === notification.id ? null : notification.id);
-                                }}
-                                data-menu-button
-                                className="p-1 rounded-lg text-[var(--color-text-tertiary)] hover:bg-[var(--color-bg-surface)] transition-colors"
-                                aria-label="메뉴"
-                              >
-                                <MoreVertical size={16} />
-                              </button>
-
-                              {/* Dropdown menu */}
-                              {openMenuId === notification.id && (
-                                <div className="absolute right-0 top-full mt-1 w-40 bg-white border border-[var(--color-border)] rounded-lg shadow-md z-10 overflow-hidden">
-                                  {notification.isRead ? (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleMarkAsUnread(notification.id);
-                                      }}
-                                      className="w-full px-4 py-2 text-left text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-bg-surface)] transition-colors"
-                                    >
-                                      읽지 않음으로 표시
-                                    </button>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleMarkAsRead(notification.id);
-                                      }}
-                                      className="w-full px-4 py-2 text-left text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-bg-surface)] transition-colors"
-                                    >
-                                      읽음 처리
-                                    </button>
-                                  )}
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleDeleteNotification(notification.id);
-                                    }}
-                                    className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 transition-colors"
-                                  >
-                                    삭제
-                                  </button>
-                                </div>
-                              )}
-                            </div>
                           </div>
                         </div>
                       </div>
@@ -459,6 +372,21 @@ export default function StaffNotificationsPage() {
         onConfirm={handleDeleteAll}
         onCancel={() => setShowDeleteConfirm(false)}
       />
+
+      {/* Notification detail modal */}
+      {selectedNotificationId && (
+        <NotificationDetailModal
+          notification={
+            notifications.find((n) => n.id === selectedNotificationId) || {
+              id: selectedNotificationId,
+              title: "",
+              message: "",
+              createdAt: new Date().toISOString(),
+            }
+          }
+          onClose={() => setSelectedNotificationId(null)}
+        />
+      )}
     </div>
   );
 }

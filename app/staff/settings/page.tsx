@@ -25,9 +25,11 @@ const rowClass =
   "flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:gap-6 border-t border-[var(--color-border)] first:border-t-0 first:pt-0 last:pb-0";
 const rowLabelClass = "w-40 shrink-0 text-sm font-medium text-[var(--color-text-secondary)]";
 const secondaryButtonClass =
-  "inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-lg border-2 border-[var(--color-border)] bg-white px-4 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-bg-default)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60";
+  "flex h-11 w-32 shrink-0 items-center justify-center rounded-lg border-2 border-[var(--color-border)] bg-white px-5 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-bg-default)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap";
 const primaryButtonClass =
-  "inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary)] px-4 text-sm font-medium text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60";
+  "flex h-11 w-32 shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary)] px-5 text-sm font-medium text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap";
+const dangerButtonClass =
+  "flex h-11 w-32 shrink-0 items-center justify-center rounded-lg border-2 border-red-300 bg-white px-5 text-sm font-medium text-red-700 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 disabled:cursor-not-allowed disabled:opacity-60 transition-colors whitespace-nowrap";
 
 type Feedback = { type: "success" | "error"; message: string } | null;
 
@@ -626,7 +628,7 @@ export default function StaffSettingsPage() {
                       type="button"
                       onClick={handleDeleteAvatar}
                       disabled={isUploadingAvatar}
-                      className="inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-lg border-2 border-red-300 bg-white px-4 text-sm font-medium text-red-700 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 disabled:cursor-not-allowed disabled:opacity-60 transition-colors"
+                      className={dangerButtonClass}
                     >
                       사진 삭제
                     </button>
@@ -978,7 +980,7 @@ export default function StaffSettingsPage() {
             <button
               type="button"
               onClick={() => setShowAccountDeleteConfirm(true)}
-              className="inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-lg border-2 border-red-300 bg-white px-4 text-sm font-medium text-red-700 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 disabled:cursor-not-allowed disabled:opacity-60 transition-colors whitespace-nowrap"
+              className={dangerButtonClass}
             >
               회원 탈퇴
             </button>

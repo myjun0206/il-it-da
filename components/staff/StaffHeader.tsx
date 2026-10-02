@@ -10,10 +10,14 @@ import { createClient } from "@/lib/supabase/client";
 // 직원 공통 Header: HQ/Owner와 같은 알림(NotificationCenter)과 계정 메뉴(ProfileMenu)를 쓴다.
 // 이름/역할/현재 근무 매장은 모두 StaffShell 공통 상태에서 읽는다(별도 매장 state 없음).
 export default function StaffHeader() {
-  const { userName, roleLabel, selectedStore, isStoresLoading, logout } = useStaffShell();
+  const { userName, roleLabel, selectedStore, isStoresLoading, logout, stores, defaultStoreId, saveStorePreferences } = useStaffShell();
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const storeLabel = selectedStore ? formatStoreDisplayName(selectedStore.name) : isStoresLoading ? "" : "근무 매장 없음";
   const subtitle = [storeLabel, roleLabel].filter(Boolean).join(" · ");
+
+  const handleSetDefaultStore = async (storeId: string) => {
+    await saveStorePreferences({ defaultStoreId: storeId, order: stores.map((s) => s.id) });
+  };
 
   useEffect(() => {
     let isCancelled = false;
@@ -72,7 +76,9 @@ export default function StaffHeader() {
           roleLabel={roleLabel}
           settingsHref="/staff/settings"
           avatarUrl={avatarUrl}
-          context={selectedStore ? { label: "현재 근무 매장", value: formatStoreDisplayName(selectedStore.name) } : undefined}
+          stores={stores}
+          defaultStoreId={defaultStoreId}
+          onSetDefaultStore={handleSetDefaultStore}
           onLogout={() => void logout()}
         />
       </div>
