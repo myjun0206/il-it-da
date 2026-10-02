@@ -12,6 +12,10 @@ export function buildBossQuestionsUrl(storeId: string): string {
   return `${BOSS_QUESTIONS_PATH}?storeId=${encodeURIComponent(storeId)}`;
 }
 
+export function buildBossQuestionDetailUrl(questionId: string, storeId: string): string {
+  return `${BOSS_QUESTIONS_PATH}/${encodeURIComponent(questionId)}?storeId=${encodeURIComponent(storeId)}`;
+}
+
 export const BOSS_REPEATED_QUESTIONS_PATH = "/boss/questions/repeated";
 
 export function buildBossRepeatedQuestionsUrl(storeId: string, alertId: string): string {
@@ -71,11 +75,17 @@ function isPendingQuestion(value: unknown): value is PendingQuestion {
   if (!value || typeof value !== "object") return false;
   const row = value as Record<string, unknown>;
   // 031 미적용 응답에는 resolutionStatus가 없을 수 있어 open으로 본다.
-  const resolutionStatus = typeof row.resolutionStatus === "string" ? row.resolutionStatus : "open";
+  const resolutionStatus = row.resolutionStatus === null
+    ? null
+    : typeof row.resolutionStatus === "string"
+      ? row.resolutionStatus
+      : "open";
+  const isKnownQuestionStatus = row.status === "answered" || row.status === "cautious" || row.status === "insufficient";
   return typeof row.id === "string"
     && typeof row.question === "string"
     && typeof row.createdAt === "string"
-    && (resolutionStatus === "open" || resolutionStatus === "in_progress" || resolutionStatus === "resolved")
+    && isKnownQuestionStatus
+    && (resolutionStatus === null || resolutionStatus === "open" || resolutionStatus === "in_progress" || resolutionStatus === "resolved")
     && (row.originReason === "manual_gap" || row.originReason === "frequent_question")
     && typeof row.repeatCount === "number"
     && Number.isInteger(row.repeatCount)

@@ -11,7 +11,7 @@ import { createClient } from "@/lib/supabase/server";
 export const runtime = "nodejs";
 
 /**
- * 점주가 자기 매장에서 매뉴얼 근거 부족으로 보류된(status='insufficient') 직원 질문만 읽는다.
+ * 점주가 자기 매장의 insufficient 질문과 반복 검토 대상 질문을 읽는다.
  *
  * storeId는 쿼리로 받지만 fetchPendingQuestionsForOwner 안에서 requireStoreOwner
  * (승인된 owner 멤버십 + stores.franchise_id 확인)로 다시 검증하므로, 다른 매장 점주·
@@ -47,7 +47,7 @@ interface PatchResolutionBody {
 }
 
 /**
- * 점주가 insufficient 질문의 처리 상태(open, in_progress, resolved)를 갱신한다.
+ * 점주가 insufficient 질문 또는 검증된 반복 질문 대표 로그의 처리 상태를 갱신한다.
  * 세션 사용자가 question_logs.store_id의 승인된 점주인지 서버에서 다시 검증한다.
  */
 export async function PATCH(request: Request): Promise<NextResponse> {
