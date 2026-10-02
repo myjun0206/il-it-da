@@ -11,6 +11,7 @@
     "check:integration": "node scripts/check-integration.mjs",
     "test:integration": "node --test tests/integration/check-repository.test.mjs tests/integration/check-integration.test.mjs tests/integration/verify-poc.test.mjs tests/integration/check-frontend.test.mjs tests/integration/check-git-whitespace.test.mjs",
     "verify:poc": "node scripts/verify-poc.mjs",
+    "setup:orphan-owner": "node scripts/ensure-system-orphan-owner.mjs",
     "typecheck": "next typegen && tsc --noEmit",
     "check:frontend": "node scripts/check-frontend.mjs",
     "test:frontend": "node --test tests/frontend/route-entry-files.test.mjs tests/frontend/client-server-boundary.test.mjs tests/frontend/no-conflict-markers.test.mjs",

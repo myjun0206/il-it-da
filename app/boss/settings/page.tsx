@@ -9,6 +9,7 @@ import OwnerHeader from "@/components/owner/OwnerHeader";
 import ThemeSelector from "@/components/common/ThemeSelector";
 import ProfileAvatar from "@/components/common/ProfileAvatar";
 import OwnerPasswordChangeForm from "@/components/owner/OwnerPasswordChangeForm";
+import OwnerAccountDeletionForm from "@/components/owner/OwnerAccountDeletionForm";
 import { uploadProfileAvatarClient, deleteProfileAvatarClient } from "@/lib/supabase/storage-profile-avatar";
 
 interface UserInfo {
@@ -641,6 +642,7 @@ export default function SettingsPage() {
                   로그아웃
                 </button>
               </div>
+              <OwnerAccountDeletionForm />
             </section>
           </div>
         </main>
