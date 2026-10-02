@@ -253,11 +253,8 @@ export async function ensureBrandProfileForApprovedMembership(
     approved_at: masterProfile.approved_at,
     approved_by: masterProfile.approved_by,
   };
-  const brandProfileValues = {
-    id: crypto.randomUUID(),
-    ...brandProfileFields,
-  };
 
+  // Step 1: 기존 brand profile 조회
   const { data: existingBrandProfile, error: lookupError } = await adminClient
     .from("profiles")
     .select("id")
@@ -278,50 +275,122 @@ export async function ensureBrandProfileForApprovedMembership(
     return false;
   }
 
-  let saveResult;
-  try {
-    if (!existingBrandProfile && process.env.DEBUG_PROFILE_INSERT === "true") {
-      console.info("[AUTH] Inserting brand profile for user_id:", authUser.id, { profileId: brandProfileValues.id });
-    }
-    saveResult = existingBrandProfile
-      ? await adminClient.from("profiles").update(brandProfileFields).eq("id", existingBrandProfile.id)
-      : await adminClient.from("profiles").insert(brandProfileValues);
-  } catch (error) {
-    logBrandProfileWriteError("STORE_MEMBERSHIP_BRAND_PROFILE_SYNC_FAILED",
-      error instanceof Error ? error : { message: "Unexpected profile write exception" },
-      existingBrandProfile ? "existing_brand_profile" : "generated_brand_profile");
-    return false;
-  }
+  // Step 2: 기존 profile이 있으면 UPDATE, 없으면 INSERT
+  let writeResult;
+  const isExistingProfile = !!existingBrandProfile;
 
-  if (saveResult.error?.code === "23505" && !existingBrandProfile) {
-    const { data: concurrentBrandProfile, error: concurrentLookupError } = await adminClient
-      .from("profiles")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("brand_id", brandId)
-      .maybeSingle();
-
-    if (concurrentLookupError || !concurrentBrandProfile) {
+  if (isExistingProfile) {
+    // 기존 profile 업데이트
+    try {
+      writeResult = await adminClient
+        .from("profiles")
+        .update(brandProfileFields)
+        .eq("id", existingBrandProfile.id);
+    } catch (error) {
       logBrandProfileWriteError(
-        "STORE_MEMBERSHIP_BRAND_PROFILE_DUPLICATE_RECOVERY_FAILED",
-        concurrentLookupError || saveResult.error,
+        "STORE_MEMBERSHIP_BRAND_PROFILE_UPDATE_FAILED",
+        error instanceof Error ? error : { message: "Unexpected update exception" },
+        "existing_brand_profile",
       );
       return false;
     }
 
-    const concurrentUpdate = await adminClient
-      .from("profiles")
-      .update(brandProfileFields)
-      .eq("id", concurrentBrandProfile.id);
-
-    if (concurrentUpdate.error) {
-      logBrandProfileWriteError("STORE_MEMBERSHIP_BRAND_PROFILE_DUPLICATE_UPDATE_FAILED", concurrentUpdate.error);
+    if (writeResult.error) {
+      logBrandProfileWriteError(
+        "STORE_MEMBERSHIP_BRAND_PROFILE_UPDATE_FAILED",
+        writeResult.error,
+        "existing_brand_profile",
+      );
       return false;
     }
-  } else if (saveResult.error) {
-    logBrandProfileWriteError("STORE_MEMBERSHIP_BRAND_PROFILE_SYNC_FAILED", saveResult.error,
-      existingBrandProfile ? "existing_brand_profile" : "generated_brand_profile");
-    return false;
+  } else {
+    // 신규 profile 생성
+    const brandProfileValues = {
+      id: crypto.randomUUID(),
+      ...brandProfileFields,
+    };
+
+    if (process.env.DEBUG_PROFILE_INSERT === "true") {
+      console.info("[AUTH] Inserting brand profile for user_id:", authUser.id, { profileId: brandProfileValues.id });
+    }
+
+    try {
+      writeResult = await adminClient
+        .from("profiles")
+        .insert(brandProfileValues);
+    } catch (error) {
+      logBrandProfileWriteError(
+        "STORE_MEMBERSHIP_BRAND_PROFILE_INSERT_FAILED",
+        error instanceof Error ? error : { message: "Unexpected insert exception" },
+        "generated_brand_profile",
+      );
+      return false;
+    }
+
+    // Step 3: INSERT 실패 시 23505 duplicate check
+    if (writeResult.error?.code === "23505") {
+      console.info("[AUTH] STORE_MEMBERSHIP_BRAND_PROFILE_DUPLICATE_DETECTED", {
+        userId,
+        brandId,
+        message: "INSERT failed with 23505, attempting recovery",
+      });
+
+      // Step 3a: 재조회로 실제 존재 여부 확인
+      const { data: concurrentProfile, error: concurrentLookupError } = await adminClient
+        .from("profiles")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("brand_id", brandId)
+        .maybeSingle();
+
+      if (concurrentLookupError) {
+        logBrandProfileWriteError(
+          "STORE_MEMBERSHIP_BRAND_PROFILE_DUPLICATE_RECOVERY_LOOKUP_FAILED",
+          concurrentLookupError,
+        );
+        return false;
+      }
+
+      // Step 3b: 재조회에서 profile을 찾지 못한 경우
+      if (!concurrentProfile) {
+        logBrandProfileWriteError(
+          "STORE_MEMBERSHIP_BRAND_PROFILE_DUPLICATE_RECOVERY_NOT_FOUND",
+          writeResult.error,
+        );
+        return false;
+      }
+
+      // Step 3c: 재조회에서 찾은 profile을 UPDATE
+      const concurrentUpdateResult = await adminClient
+        .from("profiles")
+        .update(brandProfileFields)
+        .eq("id", concurrentProfile.id);
+
+      if (concurrentUpdateResult.error) {
+        logBrandProfileWriteError(
+          "STORE_MEMBERSHIP_BRAND_PROFILE_DUPLICATE_RECOVERY_UPDATE_FAILED",
+          concurrentUpdateResult.error,
+        );
+        return false;
+      }
+
+      // Recovery 성공
+      if (process.env.DEBUG_PROFILE_INSERT === "true") {
+        console.info("[AUTH] STORE_MEMBERSHIP_BRAND_PROFILE_DUPLICATE_RECOVERED", {
+          userId,
+          brandId,
+          profileId: concurrentProfile.id,
+        });
+      }
+    } else if (writeResult.error) {
+      // INSERT 실패 (23505 아닌 다른 오류)
+      logBrandProfileWriteError(
+        "STORE_MEMBERSHIP_BRAND_PROFILE_INSERT_FAILED",
+        writeResult.error,
+        "generated_brand_profile",
+      );
+      return false;
+    }
   }
 
   return true;
