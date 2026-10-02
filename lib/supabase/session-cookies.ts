@@ -13,11 +13,22 @@ export const SUPABASE_SESSION_COOKIE_OPTIONS = {
 
 const LEGACY_AUTH_COOKIE_PATTERN = /^sb-.+-auth-token(?:\.\d+)?$/;
 
+export const SESSION_POLICY_COOKIE = "il-it-da-session-policy";
+export const SESSION_MODE_COOKIE = "il-it-da-session-mode";
+export const OAUTH_POLICY_COOKIE = "il-it-da-oauth-policy";
+export const PERSISTENT_SESSION_MAX_AGE = 400 * 24 * 60 * 60;
+
+export function isSupabaseSessionCookie(name: string): boolean {
+  return name === SUPABASE_SESSION_COOKIE_OPTIONS.name ||
+    new RegExp(`^${SUPABASE_SESSION_COOKIE_OPTIONS.name}\\.\\d+$`).test(name);
+}
+
 export function toSessionCookieOptions(
   value: string,
   options: CookieOptions,
+  rememberMe = false,
 ): CookieOptions {
-  if (!value || options.maxAge === 0) {
+  if (!value || options.maxAge === 0 || rememberMe) {
     return options;
   }
 
@@ -39,7 +50,8 @@ export function serializeBrowserCookie(
   name: string,
   value: string,
   options: CookieOptions,
+  rememberMe = false,
 ): string {
-  const cookieOptions = toSessionCookieOptions(value, options);
+  const cookieOptions = toSessionCookieOptions(value, options, rememberMe);
   return serializeCookieHeader(name, value, cookieOptions);
 }

@@ -4,12 +4,27 @@ import { createChunks } from "@supabase/ssr";
 
 import {
   isLegacySupabaseAuthCookie,
+  isSupabaseSessionCookie,
   parseBrowserCookies,
   serializeBrowserCookie,
   toSessionCookieOptions,
 } from "../../lib/supabase/session-cookies.ts";
 
 describe("Supabase session cookie policy", () => {
+  test("preserves SDK persistence only when rememberMe is enabled", () => {
+    const options = { path: "/", maxAge: 34560000 };
+    assert.deepEqual(toSessionCookieOptions("token", options, true), options);
+    assert.match(serializeBrowserCookie("auth", "token", options, true), /Max-Age=34560000/);
+    assert.doesNotMatch(serializeBrowserCookie("auth", "token", options, false), /Max-Age|Expires/);
+    assert.deepEqual(toSessionCookieOptions("", { maxAge: 0 }, true), { maxAge: 0 });
+  });
+
+  test("identifies session chunks without treating PKCE verifiers as sessions", () => {
+    assert.equal(isSupabaseSessionCookie("il-it-da-auth-session"), true);
+    assert.equal(isSupabaseSessionCookie("il-it-da-auth-session.0"), true);
+    assert.equal(isSupabaseSessionCookie("il-it-da-auth-session-code-verifier"), false);
+  });
+
   test("removes persistent lifetime attributes from session cookies", () => {
     const result = toSessionCookieOptions("session", {
       path: "/",

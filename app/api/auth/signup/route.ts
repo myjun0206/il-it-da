@@ -37,7 +37,7 @@ export async function POST(request: Request): Promise<NextResponse<SignupRespons
   const result = await runSignup(body, {
     admin: createAdminClient(),
     async signInHq(email, password) {
-      const sessionClient = await createSessionClient();
+      const sessionClient = await createSessionClient({ rememberMe: false });
       return sessionClient.auth.signInWithPassword({ email, password });
     },
   });

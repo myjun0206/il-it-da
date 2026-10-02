@@ -1,4 +1,8 @@
--- 035: 점주 계정 삭제 때 매장과 매뉴얼을 보존하고 소유권을 시스템 계정으로 이전한다.
+-- 036: 점주 계정 삭제 때 매장과 매뉴얼을 보존하고 소유권을 시스템 계정으로 이전한다.
+--
+-- 공유 DB에는 이전 이름 035_preserve_manuals_on_owner_deletion.sql로 이미 수동 적용됐다.
+-- 035_remove_staff_membership_rpc.sql도 적용됐으며, 공유 DB에는 supabase_migrations.schema_migrations가 없다.
+-- 이번 036 파일명 변경은 저장소의 번호 중복 해소용이며, 공유 DB에 SQL을 재실행할 필요가 없다.
 --
 -- 시스템 프로필은 점주 탈퇴 API가 Supabase Auth Admin API로 지연 생성한다.
 -- Auth 사용자를 SQL migration에서 직접 생성하지 않아 Auth 내부 스키마에 의존하지 않는다.
@@ -16,7 +20,7 @@ begin
     or to_regclass('public.store_memberships') is null
     or to_regclass('public.manuals') is null
   then
-    raise exception '035 requires profiles, stores, store_memberships, and manuals tables.';
+    raise exception '036 requires profiles, stores, store_memberships, and manuals tables.';
   end if;
 
   if not exists (
@@ -24,7 +28,7 @@ begin
     from information_schema.columns
     where table_schema = 'public' and table_name = 'stores' and column_name = 'boss_id'
   ) then
-    raise exception '035 requires public.stores.boss_id.';
+    raise exception '036 requires public.stores.boss_id.';
   end if;
 
   if exists (
@@ -45,7 +49,7 @@ begin
         and actual.column_name = required.column_name
     )
   ) then
-    raise exception '035 requires multi-brand owner profiles and membership approval columns.';
+    raise exception '036 requires multi-brand owner profiles and membership approval columns.';
   end if;
 
   for existing_fk in

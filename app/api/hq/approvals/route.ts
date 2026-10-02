@@ -73,7 +73,7 @@ function forbiddenResponse() {
 async function syncProfileApprovalStatus(adminClient: ReturnType<typeof createAdminClient>, userId: string): Promise<void> {
   const { data: memberships, error } = await adminClient
     .from("store_memberships")
-    .select("status, approved_at, approved_by")
+    .select("id, status, approved_at, approved_by")
     .eq("user_id", userId);
 
   // 조회 실패는 빈 목록으로 바꾸지 않는다(그대로 두면 rejected를 잘못 기록하게 된다).

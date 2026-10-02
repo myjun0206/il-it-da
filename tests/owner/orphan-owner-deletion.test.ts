@@ -5,7 +5,7 @@ import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const migration = readFileSync(path.join(root, "supabase/migrations/035_preserve_manuals_on_owner_deletion.sql"), "utf8");
+const migration = readFileSync(path.join(root, "supabase/migrations/036_preserve_manuals_on_owner_deletion.sql"), "utf8");
 const orphanOwner = readFileSync(path.join(root, "lib/owner/orphan-owner.ts"), "utf8");
 const deleteRoute = readFileSync(path.join(root, "app/api/boss/delete-account/route.ts"), "utf8");
 const deletionForm = readFileSync(path.join(root, "components/owner/OwnerAccountDeletionForm.tsx"), "utf8");
