@@ -19,7 +19,7 @@ HQ·점주 매뉴얼 파일 업로드 → 미리보기 → 확정 저장 흐름�
 | 점주 | `POST /api/store-manuals/preview` (file, storeId) | `POST /api/store-manuals/preview/confirm` (`{ storeId, manuals }`) | `requireStoreOwner()` |
 
 - 화면: HQ `app/hq/manuals/onboarding/page.tsx`, 점주 `app/boss/store-manuals/page.tsx`의
-  "매뉴얼 분석" 흐름. 점주 분석 결과는 별도 업로드 페이지 없이 관리 화면 안에서 확인한다.
+  "매뉴얼 등록" 흐름. 점주 미리보기 결과는 별도 업로드 페이지 없이 관리 화면 안에서 확인한다.
   편집 UI는 `components/manuals/ManualPreviewEditor.tsx`를 공유한다.
 - confirm은 미리보기 결과를 신뢰하지 않고 매번 인증·권한을 다시 확인하고
   `parseConfirmedManualGroups`로 제목/카테고리/본문/개수·길이 제한을 다시 검증한다.

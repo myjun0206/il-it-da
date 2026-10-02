@@ -1040,7 +1040,7 @@ export default function StoreManualsManagementPage() {
                     </button>
                   )}
                   <Button variant="outline" onClick={openAnalyzeFilePicker} isLoading={isAnalyzing}>
-                    <Sparkles size={16} className="mr-2" /> 매뉴얼 분석
+                    <Sparkles size={16} className="mr-2" /> 매뉴얼 등록
                   </Button>
                   <Button variant="primary" onClick={() => setShowCategoryModal(true)}>
                     <Plus size={16} className="mr-2" /> 카테고리 추가
@@ -1559,7 +1559,7 @@ export default function StoreManualsManagementPage() {
               <X size={20} />
             </button>
             <div className="shrink-0 border-b border-[var(--color-border)] px-6 py-5">
-              <h2 className="mb-1 text-lg font-bold text-[var(--color-text-primary)]">매뉴얼 분석 결과</h2>
+              <h2 className="mb-1 text-lg font-bold text-[var(--color-text-primary)]">매뉴얼 등록 미리보기</h2>
               <p className="text-sm text-[var(--color-text-secondary)]">
                 {preview.totalDetailManualCount}개 세부 매뉴얼을 {preview.topCategoryCount}개 카테고리로 분류했습니다. 분류와 저장 항목을 확인하세요.
               </p>
