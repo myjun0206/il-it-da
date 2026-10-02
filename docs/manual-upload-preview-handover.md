@@ -18,9 +18,9 @@ HQ·점주 매뉴얼 파일 업로드 → 미리보기 → 확정 저장 흐름�
 | HQ | `POST /api/manuals/preview` (file) | `POST /api/manuals/preview/confirm` (`{ manuals }`) | `requireHqUser()` |
 | 점주 | `POST /api/store-manuals/preview` (file, storeId) | `POST /api/store-manuals/preview/confirm` (`{ storeId, manuals }`) | `requireStoreOwner()` |
 
-- 화면: HQ `app/hq/manuals/onboarding/page.tsx`, 점주 `app/boss/store-manuals/upload/page.tsx`
-  (진입: `app/boss/store-manuals/page.tsx`의 "미리보기로 올리기"). 편집 UI는 둘 다
-  `components/manuals/ManualPreviewEditor.tsx`를 쓴다.
+- 화면: HQ `app/hq/manuals/onboarding/page.tsx`, 점주 `app/boss/store-manuals/page.tsx`의
+  "매뉴얼 분석" 흐름. 점주 분석 결과는 별도 업로드 페이지 없이 관리 화면 안에서 확인한다.
+  편집 UI는 `components/manuals/ManualPreviewEditor.tsx`를 공유한다.
 - confirm은 미리보기 결과를 신뢰하지 않고 매번 인증·권한을 다시 확인하고
   `parseConfirmedManualGroups`로 제목/카테고리/본문/개수·길이 제한을 다시 검증한다.
   `tempId`, `scopeType`, `franchiseId`, `brandName`은 요청에서 읽지 않는다.

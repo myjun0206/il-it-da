@@ -74,6 +74,7 @@ function fakeClient(options: {
   const dbError = { code: "42703", message: 'column "x" does not exist: select * from question_logs' };
   const selectedColumns: string[] = [];
   let appliedLimit: number | null = null;
+  let appliedRepeatLimit: number | null = null;
   let appliedOrder: { column: string; ascending: boolean } | null = null;
 
   const client = {
@@ -153,19 +154,29 @@ function fakeClient(options: {
               inFilters[column] = values;
               return query;
             },
+            gte(column: string, value: unknown) {
+              filters[`${column}_gte`] = value;
+              return query;
+            },
             order(column: string, opts: { ascending: boolean }) {
               appliedOrder = { column, ascending: opts.ascending };
               return query;
             },
             limit(value: number) {
-              appliedLimit = value;
+              if (selectedColumns.at(-1)?.includes("source_manual_id")) {
+                appliedRepeatLimit = value;
+              } else {
+                appliedLimit = value;
+              }
               if (options.failAt === "question_logs") {
                 return Promise.resolve({ data: null, error: dbError });
               }
+              const createdAtGte = filters.created_at_gte;
               const rows = logs
+                .filter((row) => row.store_id === filters.store_id)
+                .filter((row) => filters.status === undefined || row.status === filters.status)
+                .filter((row) => typeof createdAtGte !== "string" || row.created_at >= createdAtGte)
                 .filter((row) => {
-                  if (filters.store_id && row.store_id !== filters.store_id) return false;
-                  if (filters.status && row.status !== filters.status) return false;
                   if (filters.resolution_status && (row.resolution_status ?? "open") !== filters.resolution_status) return false;
                   if (inFilters.resolution_status && !inFilters.resolution_status.includes(row.resolution_status ?? "open")) return false;
                   return true;
@@ -183,7 +194,7 @@ function fakeClient(options: {
 
   return {
     client,
-    inspect: () => ({ selectedColumns, appliedLimit, appliedOrder }),
+    inspect: () => ({ selectedColumns, appliedLimit, appliedRepeatLimit, appliedOrder }),
   };
 }
 
@@ -204,6 +215,31 @@ describe("fetchPendingQuestionsForOwner (가짜 DB로 실제 함수 실행)", ()
     assert.deepEqual(questions.map((q) => q.id), ["log-a1"]);
     assert.equal(questions[0].question, "A 매장 보류 질문");
     assert.equal(questions[0].status, PENDING_QUESTION_STATUS);
+    assert.equal(questions[0].originReason, "manual_gap");
+    assert.equal(questions[0].repeatCount, 1);
+  });
+
+  test("최근 7일에 같은 질문이 3회 들어오면 반복 원인과 횟수를 붙인다", async () => {
+    const recent = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
+    const { client } = fakeClient({
+      logs: [
+        log({ id: "repeat-1", question: "환불 어떻게 하나요?", status: "answered", created_at: recent(5) }),
+        log({ id: "repeat-2", question: "환불 어떻게 하나요", status: "cautious", created_at: recent(4) }),
+        log({ id: "repeat-3", question: "환불 어떻게 하나요?", status: PENDING_QUESTION_STATUS, created_at: recent(3) }),
+        log({ id: "manual-gap", question: "폐기 기준은 무엇인가요?", status: PENDING_QUESTION_STATUS, created_at: recent(2) }),
+      ],
+    });
+
+    const result = await fetchPendingQuestionsForOwner(client, { userId: OWNER_A, storeId: STORE_A });
+    assert.equal(result.status, 200);
+    if (result.status !== 200) return;
+
+    const repeated = result.body.data.questions.find((question) => question.id === "repeat-3");
+    const manualGap = result.body.data.questions.find((question) => question.id === "manual-gap");
+    assert.equal(repeated?.originReason, "frequent_question");
+    assert.equal(repeated?.repeatCount, 3);
+    assert.equal(manualGap?.originReason, "manual_gap");
+    assert.equal(manualGap?.repeatCount, 1);
   });
 
   test("다른 매장 점주는 차단된다", async () => {
@@ -298,12 +334,14 @@ describe("fetchPendingQuestionsForOwner (가짜 DB로 실제 함수 실행)", ()
     const { client, inspect } = fakeClient({ logs });
     const result = await fetchPendingQuestionsForOwner(client, { userId: OWNER_A, storeId: STORE_A });
     assert.equal(inspect().appliedLimit, DEFAULT_PENDING_QUESTION_LIMIT);
+    assert.equal(inspect().appliedRepeatLimit, 500);
     assert.equal(result.status === 200 ? result.body.data.questions.length : -1, DEFAULT_PENDING_QUESTION_LIMIT);
     assert.equal(result.status === 200 ? result.body.data.limit : -1, DEFAULT_PENDING_QUESTION_LIMIT);
 
     const capped = fakeClient({ logs });
     await fetchPendingQuestionsForOwner(capped.client, { userId: OWNER_A, storeId: STORE_A, limit: "9999" });
     assert.equal(capped.inspect().appliedLimit, MAX_PENDING_QUESTION_LIMIT);
+    assert.equal(capped.inspect().appliedRepeatLimit, 500);
   });
 
   test("응답에 answer·유사도·근거 매뉴얼 id를 담지 않는다", async () => {
@@ -316,7 +354,9 @@ describe("fetchPendingQuestionsForOwner (가짜 DB로 실제 함수 실행)", ()
     assert.deepEqual(Object.keys(questions[0]).sort(), [
       "createdAt",
       "id",
+      "originReason",
       "question",
+      "repeatCount",
       "resolutionRevision",
       "resolutionStatus",
       "resolutionUpdatedAt",
@@ -333,6 +373,7 @@ describe("fetchPendingQuestionsForOwner (가짜 DB로 실제 함수 실행)", ()
     // 애초에 필요한 컬럼만 select 한다.
     assert.deepEqual(inspect().selectedColumns, [
       "id, question, status, store_id, created_at, resolution_status, resolution_revision, resolution_updated_at, resolution_updated_by, resolved_at, resolved_by",
+      "id, question, status, store_id, source_manual_id, created_at",
     ]);
   });
 });

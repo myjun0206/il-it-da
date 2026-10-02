@@ -3,7 +3,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, ArrowLeft, ArrowRight, BookOpen, FileText, Pencil, Plus, RefreshCw, Search, Sparkles, Store, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, ArrowRight, BookOpen, FileText, Pencil, Plus, RefreshCw, Search, Sparkles, Store, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
@@ -11,9 +11,10 @@ import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
 import { ManualSearchReadinessPanel } from "@/components/manuals/ManualSearchReadinessPanel";
+import { ManualPreviewEditor, type ManualEditState } from "@/components/manuals/ManualPreviewEditor";
 import type { ManualRecord } from "@/lib/types/manual";
 import { resolveOwnerCurrentStore } from "@/lib/owner/current-store";
-import type { AnalyzedManualGroup } from "@/lib/manuals/analyze-manual-with-ai";
+import { buildConfirmedManualsPayload, type ManualUploadPreview } from "@/lib/manuals/build-manual-preview";
 
 type ManualGroup = {
   id: string;
@@ -29,14 +30,6 @@ type ManualCategory = {
 };
 
 type ManualView = "categories" | "titles" | "items";
-
-// AI 분석 미리보기 화면에서 편집 가능한 그룹(카테고리/타이틀/세부 매뉴얼 여러 줄 텍스트).
-type AnalyzeDraftGroup = {
-  id: string;
-  category: string;
-  topic: string;
-  itemsText: string;
-};
 
 const SUPPORTED_ANALYZE_EXTENSIONS = [".txt", ".md", ".docx", ".csv", ".xlsx", ".xls"];
 
@@ -159,11 +152,16 @@ export default function StoreManualsManagementPage() {
   const [deleteAllError, setDeleteAllError] = useState("");
   const [toastMessage, setToastMessage] = useState("");
   const analyzeFileInputRef = useRef<HTMLInputElement>(null);
+  const isSubmittingRef = useRef(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState("");
-  const [analyzeDraftGroups, setAnalyzeDraftGroups] = useState<AnalyzeDraftGroup[] | null>(null);
-  const [isBatchRegistering, setIsBatchRegistering] = useState(false);
-  const [batchRegisterError, setBatchRegisterError] = useState("");
+  const [preview, setPreview] = useState<ManualUploadPreview | null>(null);
+  const [categoryLabels, setCategoryLabels] = useState<Record<string, string>>({});
+  const [manualEdits, setManualEdits] = useState<Record<string, ManualEditState>>({});
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+  const [idempotencyKey, setIdempotencyKey] = useState("");
+  const [isSavingAnalysis, setIsSavingAnalysis] = useState(false);
+  const [analysisSaveError, setAnalysisSaveError] = useState("");
 
   const showToast = (message: string) => {
     setToastMessage(message);
@@ -751,13 +749,19 @@ export default function StoreManualsManagementPage() {
     analyzeFileInputRef.current?.click();
   };
 
-  const closeAnalyzePreview = () => {
-    setAnalyzeDraftGroups(null);
-    setBatchRegisterError("");
+  const closeAnalyzeReview = () => {
+    setPreview(null);
+    setCategoryLabels({});
+    setManualEdits({});
+    setCollapsedCategories(new Set());
+    setIdempotencyKey("");
+    setAnalysisSaveError("");
   };
 
   const handleAnalyzeFileSelected = async (file: File) => {
     setAnalyzeError("");
+    setIdempotencyKey("");
+    setAnalysisSaveError("");
     setIsAnalyzing(true);
 
     try {
@@ -765,24 +769,35 @@ export default function StoreManualsManagementPage() {
       formData.append("file", file);
       formData.append("storeId", selectedStoreId);
 
-      const response = await fetch("/api/store-manuals/analyze", {
+      const response = await fetch("/api/store-manuals/preview", {
         method: "POST",
         body: formData,
       });
-      const data = (await response.json()) as { groups?: AnalyzedManualGroup[]; error?: string };
+      const data = (await response.json()) as {
+        preview?: ManualUploadPreview;
+        idempotencyKey?: string;
+        error?: string;
+      };
 
-      if (!response.ok || !data.groups) {
+      if (!response.ok || !data.preview || !data.idempotencyKey) {
         throw new Error(data.error || "파일을 분석하는 중 오류가 발생했습니다.");
       }
 
-      setAnalyzeDraftGroups(
-        data.groups.map((group) => ({
-          id: crypto.randomUUID(),
-          category: group.category,
-          topic: group.topic,
-          itemsText: group.items.join("\n"),
-        })),
+      setPreview(data.preview);
+      setIdempotencyKey(data.idempotencyKey);
+      setCategoryLabels(
+        Object.fromEntries(data.preview.categories.map((category) => [category.tempId, category.label])),
       );
+      setManualEdits(
+        Object.fromEntries(
+          data.preview.manuals.map((manual) => [
+            manual.tempId,
+            { title: manual.title, topCategoryTempId: manual.topCategoryTempId, excluded: false },
+          ]),
+        ),
+      );
+      setCollapsedCategories(new Set());
+      setAnalysisSaveError("");
     } catch (e) {
       setAnalyzeError(e instanceof Error ? e.message : "파일을 분석하는 중 오류가 발생했습니다.");
     } finally {
@@ -790,69 +805,78 @@ export default function StoreManualsManagementPage() {
     }
   };
 
-  const handleDraftGroupChange = (id: string, field: "category" | "topic" | "itemsText", value: string) => {
-    setAnalyzeDraftGroups((prev) =>
-      prev ? prev.map((group) => (group.id === id ? { ...group, [field]: value } : group)) : prev,
-    );
+  const handleCategoryLabelChange = (tempId: string, value: string) => {
+    setCategoryLabels((previous) => ({ ...previous, [tempId]: value }));
   };
 
-  const handleRemoveDraftGroup = (id: string) => {
-    setAnalyzeDraftGroups((prev) => (prev ? prev.filter((group) => group.id !== id) : prev));
+  const handleManualTitleChange = (tempId: string, value: string) => {
+    setManualEdits((previous) => ({ ...previous, [tempId]: { ...previous[tempId], title: value } }));
   };
 
-  const handleAddDraftGroup = () => {
-    setAnalyzeDraftGroups((prev) => [
-      ...(prev ?? []),
-      { id: crypto.randomUUID(), category: "", topic: "", itemsText: "" },
-    ]);
+  const handleManualCategoryMove = (tempId: string, topCategoryTempId: string) => {
+    setManualEdits((previous) => ({ ...previous, [tempId]: { ...previous[tempId], topCategoryTempId } }));
   };
 
-  const handleBatchRegister = async () => {
-    if (!analyzeDraftGroups || analyzeDraftGroups.length === 0) return;
+  const handleManualExcludeToggle = (tempId: string) => {
+    setManualEdits((previous) => ({
+      ...previous,
+      [tempId]: { ...previous[tempId], excluded: !previous[tempId]?.excluded },
+    }));
+  };
 
-    setBatchRegisterError("");
+  const handleToggleCategoryCollapsed = (tempId: string) => {
+    setCollapsedCategories((previous) => {
+      const next = new Set(previous);
+      if (next.has(tempId)) {
+        next.delete(tempId);
+      } else {
+        next.add(tempId);
+      }
+      return next;
+    });
+  };
 
-    const groups = analyzeDraftGroups
-      .map((group) => ({
-        // 카테고리를 비워두고 제출하면 서버(batch-create)의 legacy fallback으로 타이틀이 그대로
-        // 카테고리가 되어버릴 수 있으므로, 프런트에서 먼저 "미분류"로 채워 넣어 그 경로를 막는다.
-        category: group.category.trim() || "미분류",
-        topic: group.topic.trim(),
-        items: group.itemsText
-          .split("\n")
-          .map((line) => line.trim())
-          .filter(Boolean),
-      }))
-      .filter((group) => group.topic && group.items.length > 0);
+  const handleSaveAnalysis = async () => {
+    if (!preview || !selectedStoreId || !idempotencyKey || isSubmittingRef.current) return;
 
-    if (groups.length === 0) {
-      setBatchRegisterError("등록할 타이틀과 세부 매뉴얼을 하나 이상 입력해주세요.");
+    setAnalysisSaveError("");
+    const payloadManuals = buildConfirmedManualsPayload(preview, categoryLabels, manualEdits);
+    const includedCount = payloadManuals.filter((manual) => !manual.excluded).length;
+
+    if (includedCount === 0) {
+      setAnalysisSaveError("저장할 매뉴얼이 없어요. 최소 1개 이상 남겨주세요.");
       return;
     }
 
-    setIsBatchRegistering(true);
+    isSubmittingRef.current = true;
+    setIsSavingAnalysis(true);
 
     try {
-      const response = await fetch("/api/store-manuals/batch-create", {
+      const response = await fetch("/api/store-manuals/preview/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storeId: selectedStoreId, groups }),
+        body: JSON.stringify({ storeId: selectedStoreId, manuals: payloadManuals, idempotencyKey }),
       });
       const data = (await response.json()) as { error?: string };
 
       if (!response.ok) {
-        throw new Error(data.error || "매뉴얼 일괄 등록 중 오류가 발생했습니다.");
+        throw new Error(data.error || "매뉴얼 저장 중 오류가 발생했습니다.");
       }
 
-      closeAnalyzePreview();
+      closeAnalyzeReview();
       await refetchManuals();
-      showToast(`AI 분석 결과 ${groups.length}개 타이틀을 등록했습니다.`);
+      showToast(`세부 매뉴얼 ${includedCount}개를 저장했어요. 검색 준비 상태를 확인해 주세요.`);
     } catch (e) {
-      setBatchRegisterError(e instanceof Error ? e.message : "매뉴얼 일괄 등록 중 오류가 발생했습니다.");
+      setAnalysisSaveError(e instanceof Error ? e.message : "매뉴얼 저장 중 오류가 발생했습니다.");
     } finally {
-      setIsBatchRegistering(false);
+      setIsSavingAnalysis(false);
+      isSubmittingRef.current = false;
     }
   };
+
+  const includedAnalysisCount = preview
+    ? preview.manuals.filter((manual) => !(manualEdits[manual.tempId]?.excluded ?? false)).length
+    : 0;
 
   const goToTitles = () => {
     setItemSearchQuery("");
@@ -1015,9 +1039,6 @@ export default function StoreManualsManagementPage() {
                       전체 삭제
                     </button>
                   )}
-                  <Button variant="outline" onClick={() => router.push("/boss/store-manuals/upload")}>
-                    <FileText size={16} className="mr-2" /> 미리보기로 올리기
-                  </Button>
                   <Button variant="outline" onClick={openAnalyzeFilePicker} isLoading={isAnalyzing}>
                     <Sparkles size={16} className="mr-2" /> 매뉴얼 분석
                   </Button>
@@ -1525,91 +1546,55 @@ export default function StoreManualsManagementPage() {
         </div>
       )}
 
-      {analyzeDraftGroups && (
+      {preview && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <div className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-xl">
             <button
               type="button"
-              onClick={closeAnalyzePreview}
-              disabled={isBatchRegistering}
+              onClick={closeAnalyzeReview}
+              disabled={isSavingAnalysis}
               className="absolute right-4 top-4 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
               aria-label="닫기"
             >
               <X size={20} />
             </button>
             <div className="shrink-0 border-b border-[var(--color-border)] px-6 py-5">
-              <h2 className="mb-1 text-lg font-bold text-[var(--color-text-primary)]">AI 분석 결과 미리보기</h2>
+              <h2 className="mb-1 text-lg font-bold text-[var(--color-text-primary)]">매뉴얼 분석 결과</h2>
               <p className="text-sm text-[var(--color-text-secondary)]">
-                카테고리/타이틀/세부 매뉴얼 내용을 확인하고 필요하면 수정한 뒤 일괄 등록하세요.
+                {preview.totalDetailManualCount}개 세부 매뉴얼을 {preview.topCategoryCount}개 카테고리로 분류했습니다. 분류와 저장 항목을 확인하세요.
               </p>
             </div>
 
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5 overscroll-contain">
-              {analyzeDraftGroups.map((group, index) => (
-                <section
-                  key={group.id}
-                  className="rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-bg-surface)] p-4 shadow-md"
-                >
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <p className="text-sm font-bold text-[var(--color-primary)]">그룹 {index + 1}</p>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveDraftGroup(group.id)}
-                      className="rounded-md border border-red-200 bg-white px-2.5 py-1 text-xs font-semibold text-[var(--color-status-error)] hover:bg-red-50"
-                    >
-                      <Trash2 size={14} className="mr-1 inline" /> 삭제
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <Input
-                      label="카테고리"
-                      placeholder="예: 오픈/마감"
-                      value={group.category}
-                      onChange={(event) => handleDraftGroupChange(group.id, "category", event.target.value)}
-                    />
-                    <Input
-                      label="타이틀"
-                      placeholder="예: 1. 오픈 준비"
-                      value={group.topic}
-                      onChange={(event) => handleDraftGroupChange(group.id, "topic", event.target.value)}
-                    />
-                  </div>
-                  <label className="mt-3 mb-1 block text-sm font-bold text-[var(--color-text-primary)]">
-                    세부 매뉴얼 (한 줄에 하나씩)
-                  </label>
-                  <textarea
-                    value={group.itemsText}
-                    onChange={(event) => handleDraftGroupChange(group.id, "itemsText", event.target.value)}
-                    rows={4}
-                    className="w-full rounded-lg border-2 border-[var(--color-border)] bg-white px-4 py-3 text-sm text-[var(--color-text-primary)] focus:border-[var(--color-primary-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary-accent)]/30"
-                  />
-                </section>
-              ))}
-
-              <button
-                type="button"
-                onClick={handleAddDraftGroup}
-                className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-[var(--color-border)] bg-[var(--color-bg-surface)] py-3 text-sm font-bold text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-primary)] hover:bg-white hover:text-[var(--color-primary)]"
-              >
-                <Plus size={16} /> 그룹 추가
-              </button>
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 overscroll-contain">
+              <ManualPreviewEditor
+                preview={preview}
+                categoryLabels={categoryLabels}
+                manualEdits={manualEdits}
+                collapsedCategories={collapsedCategories}
+                onCategoryLabelChange={handleCategoryLabelChange}
+                onManualTitleChange={handleManualTitleChange}
+                onManualCategoryMove={handleManualCategoryMove}
+                onManualExcludeToggle={handleManualExcludeToggle}
+                onToggleCategoryCollapsed={handleToggleCategoryCollapsed}
+              />
             </div>
 
             <div className="shrink-0 border-t border-[var(--color-border)] bg-white px-6 py-4">
-              {batchRegisterError && (
-                <p className="mb-3 text-sm text-[var(--color-status-error)]">{batchRegisterError}</p>
+              {analysisSaveError && (
+                <p role="alert" className="mb-3 text-sm text-[var(--color-status-error)]">{analysisSaveError}</p>
               )}
               <div className="flex gap-3">
-                <Button variant="ghost" className="flex-1" onClick={closeAnalyzePreview} disabled={isBatchRegistering}>
+                <Button variant="ghost" className="flex-1" onClick={closeAnalyzeReview} disabled={isSavingAnalysis}>
                   취소
                 </Button>
                 <Button
                   variant="primary"
                   className="flex-1"
-                  isLoading={isBatchRegistering}
-                  onClick={handleBatchRegister}
+                  isLoading={isSavingAnalysis}
+                  disabled={isSavingAnalysis}
+                  onClick={handleSaveAnalysis}
                 >
-                  일괄 등록
+                  세부 매뉴얼 {includedAnalysisCount}개 저장
                 </Button>
               </div>
             </div>

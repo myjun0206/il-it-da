@@ -13,7 +13,11 @@ export default async function HqLayout({
 }) {
   const result = await requireServerRole("hq");
 
-  if (result.status !== "AUTHORIZED") {
+  if (result.status === "UNAUTHENTICATED") {
+    redirect("/?session=expired");
+  }
+
+  if (result.status === "FORBIDDEN") {
     redirect("/");
   }
 

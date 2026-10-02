@@ -20,6 +20,8 @@ const QUESTION_A = {
   question: "A점 폐기 기준이 뭔가요?",
   status: "insufficient",
   createdAt: "2026-09-29T01:00:00.000Z",
+  originReason: "manual_gap",
+  repeatCount: 1,
 };
 
 describe("pickQuestionsStore (URL storeId 대조)", () => {
@@ -87,7 +89,7 @@ describe("classifyPendingQuestionsResponse", () => {
   test("형식이 깨진 질문 항목은 제외한다", () => {
     const state = classifyPendingQuestionsResponse(STORE_A.storeId, 200, {
       success: true,
-      data: { questions: [QUESTION_A, { id: 1 }, null] },
+      data: { questions: [QUESTION_A, { ...QUESTION_A, originReason: "unknown" }, { id: 1 }, null] },
     });
     assert.deepEqual(state.kind === "ready" ? state.questions : [], [QUESTION_A]);
   });
@@ -146,6 +148,15 @@ describe("알림 링크와 화면 연결", () => {
       /storeState\.status === "ready" && !storeState\.requestedStoreRejected \? highlightQuestionId : null/,
     );
     assert.match(viewSource, /if \(highlightForFetch\) queryParams\.set\("questionId", highlightForFetch\);/);
+  });
+
+  test("각 카드 우측 하단에 원인별 배지와 반복 횟수를 표시한다", () => {
+    assert.match(viewSource, /originReason === "frequent_question"/);
+    assert.match(viewSource, /flex items-end justify-between/);
+    assert.match(viewSource, /반복 질문 \(\{question\.repeatCount\}회\)/);
+    assert.match(viewSource, /매뉴얼 근거 부족/);
+    assert.equal((viewSource.match(/<Repeat2\b/g) ?? []).length, 1);
+    assert.equal((viewSource.match(/<BookOpen\b/g) ?? []).length, 1);
   });
 
   test("URL storeId는 승인된 점주 매장 목록과 대조한 뒤에만 쓴다", () => {

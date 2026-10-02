@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { BookOpen, Repeat2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
@@ -379,9 +380,6 @@ export default function BossQuestionsView({ requestedStoreId, highlightQuestionI
                             <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-3">
                               <div className="flex items-center gap-2">
                                 <ResolutionBadge status={question.resolutionStatus} />
-                                <time dateTime={question.createdAt} className="text-xs text-[var(--color-text-secondary)]">
-                                  {formatDateTime(question.createdAt)}
-                                </time>
                               </div>
 
                               {/* 상태 변경 액션 버튼들 */}
@@ -442,6 +440,27 @@ export default function BossQuestionsView({ requestedStoreId, highlightQuestionI
                                 상태 변경: {formatDateTime(question.resolutionUpdatedAt)}
                               </p>
                             )}
+
+                            <div className="mt-4 flex items-end justify-between gap-3">
+                              <time dateTime={question.createdAt} className="text-sm text-[var(--color-text-secondary)]">
+                                {formatDateTime(question.createdAt)}
+                              </time>
+                              {question.originReason === "frequent_question" ? (
+                                <span
+                                  aria-label={`반복 질문, 최근 7일 ${question.repeatCount}회`}
+                                  className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-800"
+                                >
+                                  <Repeat2 size={14} aria-hidden="true" /> 반복 질문 ({question.repeatCount}회)
+                                </span>
+                              ) : (
+                                <span
+                                  aria-label="매뉴얼 근거 부족, 점주 확인 필요"
+                                  className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-semibold text-orange-900"
+                                >
+                                  <BookOpen size={14} aria-hidden="true" /> 매뉴얼 근거 부족
+                                </span>
+                              )}
+                            </div>
                           </li>
                         );
                       })}

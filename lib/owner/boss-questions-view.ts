@@ -70,13 +70,16 @@ type PendingQuestionsBody = {
 function isPendingQuestion(value: unknown): value is PendingQuestion {
   if (!value || typeof value !== "object") return false;
   const row = value as Record<string, unknown>;
+  // 031 미적용 응답에는 resolutionStatus가 없을 수 있어 open으로 본다.
   const resolutionStatus = typeof row.resolutionStatus === "string" ? row.resolutionStatus : "open";
-  return (
-    typeof row.id === "string" &&
-    typeof row.question === "string" &&
-    typeof row.createdAt === "string" &&
-    (resolutionStatus === "open" || resolutionStatus === "in_progress" || resolutionStatus === "resolved")
-  );
+  return typeof row.id === "string"
+    && typeof row.question === "string"
+    && typeof row.createdAt === "string"
+    && (resolutionStatus === "open" || resolutionStatus === "in_progress" || resolutionStatus === "resolved")
+    && (row.originReason === "manual_gap" || row.originReason === "frequent_question")
+    && typeof row.repeatCount === "number"
+    && Number.isInteger(row.repeatCount)
+    && row.repeatCount >= 1;
 }
 
 /** GET /api/boss/question-logs 응답을 화면 상태로 분류한다. 401/403은 권한 오류로 구분한다. */

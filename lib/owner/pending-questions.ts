@@ -8,6 +8,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { requireStoreOwner } from "@/lib/manuals/store-manual-auth";
+import { normalizeRepeatedQuestionKey, REPEATED_QUESTION_MIN_COUNT, REPEATED_QUESTION_WINDOW_DAYS } from "@/lib/owner/repeated-questions";
 
 /** 022의 에스컬레이션 대상과 같은 상태값. answered/cautious는 점주에게 보여주지 않는다. */
 export const PENDING_QUESTION_STATUS = "insufficient";
@@ -62,6 +63,8 @@ export type PendingQuestion = {
   resolutionUpdatedBy: string | null;
   resolvedAt: string | null;
   resolvedBy: string | null;
+  originReason: "manual_gap" | "frequent_question";
+  repeatCount: number;
 };
 
 export type PendingQuestionsResult =
@@ -159,6 +162,7 @@ export function parsePendingQuestionLimit(raw: string | null | undefined): numbe
 export function toPendingQuestions(
   rows: readonly QuestionLogRow[],
   verifiedStoreId: string,
+  repeatCounts: ReadonlyMap<string, number> = new Map(),
 ): PendingQuestion[] {
   if (!verifiedStoreId) {
     return [];
@@ -190,6 +194,8 @@ export function toPendingQuestions(
       ? row.resolution_revision
       : 1;
 
+    const repeatCount = repeatCounts.get(normalizeRepeatedQuestionKey(question)) ?? 1;
+
     return [
       {
         id: row.id,
@@ -202,9 +208,40 @@ export function toPendingQuestions(
         resolutionUpdatedBy: typeof row.resolution_updated_by === "string" ? row.resolution_updated_by : null,
         resolvedAt: typeof row.resolved_at === "string" ? row.resolved_at : null,
         resolvedBy: typeof row.resolved_by === "string" ? row.resolved_by : null,
+        originReason: repeatCount >= REPEATED_QUESTION_MIN_COUNT ? "frequent_question" : "manual_gap",
+        repeatCount,
       },
     ];
   });
+}
+
+/** 보류 카드의 반복 배지용 최근 7일 집계(develop 계약: 최신 500건). 실패하면 null. */
+async function fetchRecentRepeatCounts(
+  adminClient: SupabaseClient,
+  verifiedStoreId: string,
+): Promise<Map<string, number> | null> {
+  const windowStart = new Date(Date.now() - REPEATED_QUESTION_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const { data: recentLogs, error: repeatQueryError } = await adminClient
+    .from("question_logs")
+    .select("id, question, status, store_id, source_manual_id, created_at")
+    .eq("store_id", verifiedStoreId)
+    .gte("created_at", windowStart.toISOString())
+    .order("created_at", { ascending: false })
+    .limit(500);
+
+  if (repeatQueryError) {
+    logSafePendingQuestionError("QUESTION_REPEAT_QUERY_FAILED", repeatQueryError);
+    return null;
+  }
+
+  const repeatCounts = new Map<string, number>();
+  for (const row of (recentLogs ?? []) as QuestionLogRow[]) {
+    if (row.store_id !== verifiedStoreId || typeof row.question !== "string") continue;
+    const key = normalizeRepeatedQuestionKey(row.question);
+    if (!key) continue;
+    repeatCounts.set(key, (repeatCounts.get(key) ?? 0) + 1);
+  }
+  return repeatCounts;
 }
 
 export interface FetchPendingQuestionsInput {
@@ -252,7 +289,7 @@ export async function fetchPendingQuestionsForOwner(
   const LEGACY_COLUMNS = "id, question, status, store_id, created_at";
 
   try {
-    // 031 마이그레이션이 적용된 DB에서는 resolution 관련 컬럼들을 함께 읽는다.
+    // 보류 질문 목록은 기간 제한이 없다. 031이 적용된 DB에서는 resolution 컨럼을 함께 읽는다.
     let query = adminClient
       .from("question_logs")
       .select(COLUMNS)
@@ -291,7 +328,10 @@ export async function fetchPendingQuestionsForOwner(
           return failedPendingQuestionsResult();
         }
 
-        let parsedLegacy = toPendingQuestions((legacyData ?? []) as QuestionLogRow[], storeAuth.storeId);
+        const legacyRepeatCounts = await fetchRecentRepeatCounts(adminClient, storeAuth.storeId);
+        if (!legacyRepeatCounts) return failedPendingQuestionsResult();
+
+        let parsedLegacy = toPendingQuestions((legacyData ?? []) as QuestionLogRow[], storeAuth.storeId, legacyRepeatCounts);
 
         // 하이라이트 대상 질문이 조회 목록에 없으면 단건 추가 조회
         if (highlightId && !parsedLegacy.some((q) => q.id === highlightId)) {
@@ -304,7 +344,7 @@ export async function fetchPendingQuestionsForOwner(
             .maybeSingle<QuestionLogRow>();
 
           if (!legacyHighlightError && legacyHighlight) {
-            const parsedHighlight = toPendingQuestions([legacyHighlight], storeAuth.storeId);
+            const parsedHighlight = toPendingQuestions([legacyHighlight], storeAuth.storeId, legacyRepeatCounts);
             if (parsedHighlight.length > 0) {
               parsedLegacy = [parsedHighlight[0], ...parsedLegacy];
             }
@@ -318,7 +358,10 @@ export async function fetchPendingQuestionsForOwner(
       return failedPendingQuestionsResult();
     }
 
-    let parsedQuestions = toPendingQuestions((data ?? []) as QuestionLogRow[], storeAuth.storeId);
+    const repeatCounts = await fetchRecentRepeatCounts(adminClient, storeAuth.storeId);
+    if (!repeatCounts) return failedPendingQuestionsResult();
+
+    let parsedQuestions = toPendingQuestions((data ?? []) as QuestionLogRow[], storeAuth.storeId, repeatCounts);
 
     // 하이라이트 대상 질문이 resolved이거나 20건 범위 밖이어서 목록에 없는 경우:
     // 해당 매장 점주 권한(store_id = storeAuth.storeId)으로 단건 조회하여 목록 맨 앞에 포함한다.
@@ -333,7 +376,7 @@ export async function fetchPendingQuestionsForOwner(
         .maybeSingle<QuestionLogRow>();
 
       if (!highlightError && highlightData) {
-        const parsedHighlight = toPendingQuestions([highlightData], storeAuth.storeId);
+        const parsedHighlight = toPendingQuestions([highlightData], storeAuth.storeId, repeatCounts);
         if (parsedHighlight.length > 0) {
           parsedQuestions = [parsedHighlight[0], ...parsedQuestions];
         }

@@ -252,7 +252,6 @@ describe("legacy /api/manuals/upload 호환 유지", () => {
       "app/hq/manuals/page.tsx",
       "app/hq/manuals/onboarding/page.tsx",
       "app/boss/store-manuals/page.tsx",
-      "app/boss/store-manuals/upload/page.tsx",
     ]) {
       assert.equal(readSource(relative).includes('"/api/manuals/upload"'), false, `${relative} still calls it`);
     }

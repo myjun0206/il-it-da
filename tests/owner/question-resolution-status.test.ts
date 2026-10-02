@@ -135,6 +135,10 @@ function fakeClient(options: {
                 inFilters[col] = vals;
                 return query;
               },
+              gte(col: string, val: unknown) {
+                filters[`${col}_gte`] = val;
+                return query;
+              },
               order() {
                 return query;
               },
@@ -176,6 +180,7 @@ function fakeClient(options: {
                 const filtered = logs.filter((l) => {
                   if (filters.store_id && l.store_id !== filters.store_id) return false;
                   if (filters.status && l.status !== filters.status) return false;
+                  if (typeof filters.created_at_gte === "string" && l.created_at < filters.created_at_gte) return false;
                   if (filters.resolution_status && (l.resolution_status ?? "open") !== filters.resolution_status) return false;
                   if (inFilters.resolution_status && !inFilters.resolution_status.includes(l.resolution_status ?? "open")) return false;
                   return true;

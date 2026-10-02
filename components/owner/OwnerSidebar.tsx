@@ -60,13 +60,15 @@ export default function OwnerSidebar({
       >
         {/* Logo Section - aligned with header */}
         <div className="flex items-center px-6 h-16 border-b border-[var(--color-border)]">
-          <Image
-            src="/logo/ilitda-wordmark.png"
-            alt="일잉다"
-            width={687}
-            height={253}
-            className="h-8 w-auto object-contain"
-          />
+          <Link href="/boss" aria-label="홈으로 이동" onClick={() => setIsOpen(false)}>
+            <Image
+              src="/logo/ilitda-wordmark.png"
+              alt="일잉다"
+              width={687}
+              height={253}
+              className="h-8 w-auto object-contain"
+            />
+          </Link>
         </div>
 
         {/* Menu Section */}

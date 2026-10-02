@@ -147,7 +147,7 @@ export default function HQPage() {
         }
 
         // 공통 매뉴얼: 매뉴얼 관리 Overview와 같은 /api/manuals 기준(store_id 없는 매뉴얼).
-        const manualsResponse = await fetch("/api/manuals", { credentials: "include" });
+        const manualsResponse = await fetch("/api/manuals", { credentials: "include", cache: "no-store" });
         if (manualsResponse.ok) {
           const manualsResult = (await manualsResponse.json()) as {
             manuals?: { store_id: string | null; scope_type?: string | null }[];

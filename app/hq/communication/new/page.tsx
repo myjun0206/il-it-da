@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { AlertCircle, ArrowLeft } from "lucide-react";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
+import { buildHqNoticeTarget, type HqNoticeAudience } from "@/lib/notices/build-hq-notice-target";
 import { createClient } from "@/lib/supabase/client";
 import type { HqStoreSummary } from "@/lib/types/store";
 
@@ -25,6 +26,7 @@ export default function NewNoticePage() {
   const [stores, setStores] = useState<HqStoreSummary[]>([]);
   const [storesError, setStoresError] = useState("");
   const [targetType, setTargetType] = useState<TargetType>("all");
+  const [audience, setAudience] = useState<HqNoticeAudience>("all_members");
   const [targetStoreId, setTargetStoreId] = useState("");
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -92,8 +94,7 @@ export default function NewNoticePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          targetType,
-          targetStoreId: targetType === "store" ? targetStoreId : null,
+          ...buildHqNoticeTarget(targetType, targetStoreId, audience),
           title: trimmedTitle,
           content: trimmedContent,
         }),
@@ -211,6 +212,53 @@ export default function NewNoticePage() {
                   )}
                 </div>
               )}
+            </fieldset>
+
+            <fieldset className="mt-6">
+              <legend className="mb-2.5 text-sm font-semibold text-[var(--color-text-primary)]">
+                수신 대상 <span className="text-red-700" aria-hidden="true">*</span>
+              </legend>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {(
+                  [
+                    { value: "owner", label: "점주만", description: "승인된 점주에게만 전달합니다." },
+                    { value: "all_members", label: "점주 + 직원", description: "승인된 점주와 직원에게 전달합니다." },
+                  ] as { value: HqNoticeAudience; label: string; description: string }[]
+                ).map((option) => {
+                  const isSelected = audience === option.value;
+                  return (
+                    <label
+                      key={option.value}
+                      className={`flex cursor-pointer items-start gap-3 rounded-lg border-2 p-4 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--color-primary)] has-[:focus-visible]:ring-offset-2 ${
+                        isSelected
+                          ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/30"
+                          : "border-[var(--color-border)] bg-white hover:border-[var(--color-primary)]/50"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="audience"
+                        value={option.value}
+                        checked={isSelected}
+                        onChange={() => setAudience(option.value)}
+                        className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-primary)]"
+                      />
+                      <span>
+                        <span
+                          className={`block text-base font-semibold ${
+                            isSelected ? "text-[var(--color-primary)]" : "text-[var(--color-text-primary)]"
+                          }`}
+                        >
+                          {option.label}
+                        </span>
+                        <span className="mt-0.5 block text-sm text-[var(--color-text-secondary)]">
+                          {option.description}
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
             </fieldset>
 
             <div className="mt-8">

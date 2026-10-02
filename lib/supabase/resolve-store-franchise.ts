@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { createDiagnosticRequestId, logDiagnosticError } from "@/lib/auth/diagnostic-error-log";
 
 type FranchiseCandidate = { id: string; name: string | null };
 
@@ -52,6 +53,7 @@ function fuzzyPrefixScore(storeName: string, franchiseName: string): number {
 export async function resolveFranchiseIdForStoreName(
   supabase: SupabaseClient,
   storeName: string,
+  diagnostics: { requestId?: string; userId?: string | null } = {},
 ): Promise<string | null> {
   const normalizedStoreName = normalizeStoreFranchiseName(storeName);
 
@@ -63,7 +65,17 @@ export async function resolveFranchiseIdForStoreName(
     .from("franchises")
     .select("id, name");
 
-  if (error || !franchises) {
+  if (error) {
+    logDiagnosticError("STORE_FRANCHISE_RESOLVE", "franchises.lookup", error, {
+      requestId: diagnostics.requestId ?? createDiagnosticRequestId(),
+      userId: diagnostics.userId,
+      storeName,
+      sessionPresent: Boolean(diagnostics.userId),
+    });
+    throw error;
+  }
+
+  if (!franchises) {
     return null;
   }
 

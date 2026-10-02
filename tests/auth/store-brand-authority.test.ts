@@ -4,6 +4,7 @@ import { describe, test } from "node:test";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { submitStoreMembershipRequest } from "../../lib/signup/store-membership-service.ts";
+import { resolveFranchiseIdForStoreName } from "../../lib/supabase/resolve-store-franchise.ts";
 
 const NEW_USER = "11111111-1111-4111-8111-111111111111";
 const APPROVED_OWNER = "22222222-2222-4222-8222-222222222222";
@@ -12,6 +13,30 @@ const BRANDED_STORE = "44444444-4444-4444-8444-444444444444";
 const BRANDLESS_STORE = "55555555-5555-4555-8555-555555555555";
 const BRAND_A = "66666666-6666-4666-8666-666666666666";
 const BRAND_B = "77777777-7777-4777-8777-777777777777";
+
+describe("resolveFranchiseIdForStoreName database failures", () => {
+  test("throws database lookup errors so callers return an operational error, not a brand-mismatch response", async () => {
+    const query = {
+      then(resolve: (value: unknown) => unknown) {
+        return Promise.resolve({ data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } }).then(resolve);
+      },
+    };
+    const client = {
+      from: () => ({ select: () => query }),
+    } as unknown as SupabaseClient;
+
+    await assert.rejects(
+      resolveFranchiseIdForStoreName(client, "브랜드A 2호점", {
+        requestId: "request-diagnostic-test",
+        userId: NEW_USER,
+      }),
+      (error: unknown) =>
+        Boolean(error && typeof error === "object" &&
+          (error as { code?: unknown }).code === "57014" &&
+          String((error as { message?: unknown }).message).includes("statement timeout")),
+    );
+  });
+});
 
 type Row = Record<string, unknown>;
 type WriteCall = { table: string; op: "insert" | "update"; payload: Row };
