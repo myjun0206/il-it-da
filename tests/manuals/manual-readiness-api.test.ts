@@ -363,7 +363,8 @@ describe("기존 화면/계약 회귀 없음", () => {
     assert.match(route, /logDiagnosticError\("MANUALS_GET"/);
     assert.match(route, /request\.headers\.get\("x-proxy-request-id"\)/);
     assert.match(route, /franchiseError \|\| !franchise/);
-    assert.match(proxy, /request\.headers\.set\("x-proxy-request-id", proxyRequestId\)/);
+    assert.match(proxy, /requestHeaders\.set\("x-proxy-request-id", requestId\)/);
+    assert.match(proxy, /NextResponse\.next\(\{\s*request: \{ headers: requestHeaders \}/);
     assert.match(proxy, /refreshedCookieCount/);
     assert.match(proxy, /logDiagnosticError\("SUPABASE_PROXY_SESSION"/);
     assert.match(page, /cache: "no-store"/);

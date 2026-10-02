@@ -22,6 +22,12 @@ describe("알림 요청 인증 세션 처리", () => {
     assert.match(middleware, /if \(!hasSessionCookie\) \{[\s\S]*?expireLegacySupabaseCookies\(request, response\);[\s\S]*?return response;/);
   });
 
+  test("proxy는 Next.js가 지원하는 request.headers 전달 문법으로 헤더와 갱신 쿠키를 전달한다", () => {
+    assert.match(middleware, /NextResponse\.next\(\{\s*request: \{ headers: requestHeaders \}/);
+    assert.match(middleware, /cookiesToSet\.forEach\(\(\{ name, value \}\) => request\.cookies\.set\(name, value\)\)/);
+    assert.match(middleware, /response\.cookies\.set\(name, value, toSessionCookieOptions\(value, options\)\)/);
+  });
+
   test("브라우저·서버·proxy가 같은 커스텀 세션 쿠키 이름과 루트 경로 정책을 공유한다", () => {
     assert.match(cookiePolicy, /name: "il-it-da-auth-session"/);
     assert.match(cookiePolicy, /path: "\/"/);
