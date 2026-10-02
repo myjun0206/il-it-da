@@ -48,6 +48,26 @@ export interface WithdrawStaffMembershipInput {
   identifier: string;
 }
 
+/**
+ * 남은 멤버십을 기준으로 마스터 profiles.approval_status를 다시 계산해 저장한다.
+ * 조회 실패를 빈 목록으로 바꾸지 않는다(그러면 승인 매장이 있는데도 rejected로 기록된다). 실패하면 throw.
+ */
+export async function syncStaffMasterApprovalStatus(adminClient: SupabaseClient, userId: string): Promise<void> {
+  const { data: remainingMemberships, error: remainingError } = await adminClient
+    .from("store_memberships")
+    .select("id, status, approved_at, approved_by")
+    .eq("user_id", userId);
+
+  if (remainingError) throw remainingError;
+
+  const { error: profileUpdateError } = await adminClient
+    .from("profiles")
+    .update(buildMasterApprovalUpdate(remainingMemberships ?? []))
+    .eq("id", userId);
+
+  if (profileUpdateError) throw profileUpdateError;
+}
+
 export type WithdrawStaffMembershipResult =
   | {
       success: true;
@@ -132,16 +152,7 @@ export async function withdrawStaffMembership(
     // 복구: 이전 시도에서 멤버십은 삭제되었으나 프로필 동기화가 누락된 경우,
     // 재요청으로 남은 멤버십을 기준으로 마스터 프로필 상태를 복구한다.
     try {
-      const { data: remainingMemberships } = await adminClient
-        .from("store_memberships")
-        .select("status, approved_at, approved_by")
-        .eq("user_id", userId);
-
-      const updatePayload = buildMasterApprovalUpdate(remainingMemberships ?? []);
-      await adminClient
-        .from("profiles")
-        .update(updatePayload)
-        .eq("id", userId);
+      await syncStaffMasterApprovalStatus(adminClient, userId);
     } catch (syncError) {
       console.error("[STAFF_MEMBERSHIP_WITHDRAW] Profile sync recovery error:", syncError);
     }
@@ -194,20 +205,7 @@ export async function withdrawStaffMembership(
 
   // 3. 마스터 profiles.approval_status 동기화 (기존 공통 규칙 반영)
   try {
-    const { data: remainingMemberships, error: remainingError } = await adminClient
-      .from("store_memberships")
-      .select("status, approved_at, approved_by")
-      .eq("user_id", userId);
-
-    if (remainingError) throw remainingError;
-
-    const updatePayload = buildMasterApprovalUpdate(remainingMemberships ?? []);
-    const { error: profileUpdateError } = await adminClient
-      .from("profiles")
-      .update(updatePayload)
-      .eq("id", userId);
-
-    if (profileUpdateError) throw profileUpdateError;
+    await syncStaffMasterApprovalStatus(adminClient, userId);
   } catch (syncError) {
     console.error("[STAFF_MEMBERSHIP_DELETE] Profile status sync error:", syncError);
     return {
