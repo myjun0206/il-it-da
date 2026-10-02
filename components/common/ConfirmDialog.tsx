@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { Portal } from "./Portal";
 
@@ -27,6 +27,8 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = "hidden";
@@ -38,14 +40,58 @@ export function ConfirmDialog({
     };
   }, [isOpen]);
 
+  // 초점이 창 밖(탭 이동 등)으로 나가도 Esc로 닫히도록 문서 단위에서 받는다.
+  // Tab 순환은 EscalationNotificationPopup과 같은 방식이다.
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (!isLoading) onCancel();
+        return;
+      }
+      if (e.key !== "Tab") return;
+
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>('button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'),
+      );
+      const active = document.activeElement;
+
+      // 처리 중에는 버튼이 모두 비활성이므로 창 자체에 초점을 묶어 둔다.
+      if (focusable.length === 0) {
+        e.preventDefault();
+        dialog.focus();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const outside = !active || !dialog.contains(active);
+
+      if (e.shiftKey && (outside || active === first || active === dialog)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (outside || active === last)) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, isLoading, onCancel]);
+
+  // 닫히면 창을 열기 전 초점(예: "소속 해제" 버튼)으로 돌려보낸다.
+  useEffect(() => {
+    if (!isOpen) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    return () => {
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, [isOpen]);
+
   const handleBackdropClick = () => {
     if (!isLoading) onCancel();
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape" && !isLoading) {
-      onCancel();
-    }
   };
 
   if (!isOpen) return null;
@@ -66,12 +112,12 @@ export function ConfirmDialog({
         onClick={handleBackdropClick}
       >
         <div
+          ref={dialogRef}
           role="dialog"
           aria-modal="true"
           aria-labelledby="confirm-dialog-title"
           tabIndex={-1}
           className="max-w-sm w-full rounded-2xl bg-white p-6 shadow-xl focus:outline-none"
-          onKeyDown={handleKeyDown}
           onClick={(e) => e.stopPropagation()}
         >
         <div className="flex items-start justify-between gap-4 mb-4">
@@ -94,6 +140,8 @@ export function ConfirmDialog({
             type="button"
             onClick={onCancel}
             disabled={isLoading}
+            // 위험한 작업은 Enter로 바로 실행되지 않도록 취소에 먼저 초점을 둔다.
+            autoFocus={isDangerous}
             className="inline-flex min-h-[44px] items-center px-4 py-2 rounded-lg border-2 border-[var(--color-border)] bg-white text-sm font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {cancelText}

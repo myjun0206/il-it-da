@@ -349,7 +349,9 @@ export default function StaffPage() {
         return;
       }
       if (payload.code === "STORE_FORBIDDEN") {
-        setErrorMessage("이 매장의 근무 권한이 확인되지 않아 답변할 수 없습니다. 근무 매장을 확인해 주세요.");
+        // 점주가 소속을 해제했을 수 있다: 승인 매장 목록을 다시 불러와 다른 매장 또는 매장 관리로 안내한다.
+        setErrorMessage("이 매장의 근무 권한이 확인되지 않아 답변할 수 없습니다. 근무 매장 목록을 새로 불러왔습니다.");
+        reloadStores();
         return;
       }
 

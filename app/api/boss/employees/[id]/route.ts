@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createNotification } from "@/lib/notifications";
 import { buildMasterApprovalUpdate } from "@/lib/signup/approval-recovery";
 import { ensureBrandProfileForApprovedMembership, MembershipAuthNotReadyError, requireConfirmedMembershipAuthUser } from "@/lib/signup/store-membership-service";
+import { removeStaffMembershipByOwner, type RemoveStaffMembershipResult } from "@/lib/owner/remove-staff-membership";
 
 export const runtime = "nodejs";
 
@@ -21,7 +22,7 @@ interface UpdateMembershipResponse {
 async function syncProfileApprovalStatus(adminClient: ReturnType<typeof createAdminClient>, userId: string): Promise<void> {
   const { data: memberships, error } = await adminClient
     .from("store_memberships")
-    .select("status, approved_at, approved_by")
+    .select("id, status, approved_at, approved_by")
     .eq("user_id", userId);
 
   // 조회 실패는 빈 목록으로 바꾸지 않는다(그대로 두면 rejected를 잘못 기록하게 된다).
@@ -247,4 +248,44 @@ export async function PUT(
       { status: 500 }
     );
   }
+}
+
+/**
+ * 점주가 자기 매장(storeId)의 승인된 직원 소속을 해제한다.
+ * 권한과 대상은 세션 사용자와 서버 조회로만 판단한다(body에서는 storeId만 읽는다).
+ */
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<NextResponse<RemoveStaffMembershipResult["body"] | { success: false; error: string }>> {
+  const { id: membershipId } = await params;
+
+  const serverClient = await createClient();
+  const { data: { user }, error: userError } = await serverClient.auth.getUser();
+  if (userError || !user) {
+    return NextResponse.json({ success: false, error: "인증이 필요합니다." }, { status: 401 });
+  }
+
+  let body: { storeId?: unknown } = {};
+  try {
+    body = (await request.json()) as { storeId?: unknown };
+  } catch {
+    return NextResponse.json({ success: false, error: "요청 본문 형식이 올바르지 않습니다." }, { status: 400 });
+  }
+
+  let adminClient;
+  try {
+    adminClient = createAdminClient();
+  } catch {
+    console.error("[DELETE /api/boss/employees/[id]] Admin client unavailable");
+    return NextResponse.json({ success: false, error: "서버 설정 오류입니다." }, { status: 500 });
+  }
+
+  const result = await removeStaffMembershipByOwner(adminClient, {
+    ownerUserId: user.id,
+    membershipId: membershipId ?? "",
+    storeId: typeof body.storeId === "string" ? body.storeId : "",
+  });
+
+  return NextResponse.json(result.body, { status: result.status });
 }

@@ -33,6 +33,7 @@ export function expectedMasterApprovalStatus(
 }
 
 export type MasterApprovalRow = {
+  id?: unknown;
   status?: unknown;
   approved_at?: unknown;
   approved_by?: unknown;
@@ -45,6 +46,41 @@ export type MasterApprovalUpdate = {
 };
 
 /**
+ * 대표 승인 행: approved_at이 가장 이른 행(없으면 뒤로), 같으면 id가 작은 행.
+ * 035 remove_staff_membership_by_owner의 `order by approved_at asc nulls last, id asc`와 같은 규칙이다.
+ */
+function pickEarliestApproval(memberships: readonly MasterApprovalRow[]): MasterApprovalRow | undefined {
+  // approved_at이 없거나 읽을 수 없으면 맨 뒤(SQL nulls last).
+  const timeOf = (row: MasterApprovalRow) => {
+    const ms = typeof row.approved_at === "string" ? Date.parse(row.approved_at) : Number.NaN;
+    return Number.isFinite(ms) ? ms : Number.POSITIVE_INFINITY;
+  };
+  const rawOf = (row: MasterApprovalRow) => (typeof row.approved_at === "string" ? row.approved_at : "");
+  const subMillisecondMicrosOf = (row: MasterApprovalRow) => {
+    const fraction = /\.(\d+)/.exec(rawOf(row))?.[1] ?? "";
+    return Number(fraction.slice(3, 6).padEnd(3, "0"));
+  };
+  const idOf = (row: MasterApprovalRow) => (typeof row.id === "string" ? row.id : "");
+  const isEarlier = (row: MasterApprovalRow, best: MasterApprovalRow) => {
+    const rowTime = timeOf(row);
+    const bestTime = timeOf(best);
+    if (rowTime !== bestTime) return rowTime < bestTime;
+    if (Number.isFinite(rowTime)) {
+      const rowSubMillisecondMicros = subMillisecondMicrosOf(row);
+      const bestSubMillisecondMicros = subMillisecondMicrosOf(best);
+      if (rowSubMillisecondMicros !== bestSubMillisecondMicros) {
+        return rowSubMillisecondMicros < bestSubMillisecondMicros;
+      }
+    }
+    return Boolean(idOf(row) && idOf(best) && idOf(row) < idOf(best));
+  };
+
+  return memberships
+    .filter((membership) => membership.status === "approved")
+    .reduce<MasterApprovalRow | undefined>((best, row) => (!best || isEarlier(row, best) ? row : best), undefined);
+}
+
+/**
  * 마스터 profiles에 쓸 승인 상태 payload. 두 승인 경로가 같은 규칙을 쓰도록 계산만 공유하고,
  * 실제 DB 쓰기와 조회 실패 처리는 각 라우트에 남긴다(조회 실패를 빈 목록으로 바꾸지 않기 위함).
  */
@@ -53,7 +89,7 @@ export function buildMasterApprovalUpdate(
   now: () => string = () => new Date().toISOString(),
 ): MasterApprovalUpdate {
   const approvalStatus = expectedMasterApprovalStatus(memberships);
-  const firstApproved = memberships.find((membership) => membership.status === "approved");
+  const firstApproved = pickEarliestApproval(memberships);
 
   if (approvalStatus !== "approved") {
     return { approval_status: approvalStatus, approved_at: null, approved_by: null };

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useLayoutEffect, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -9,6 +9,7 @@ import OwnerHeader from "@/components/owner/OwnerHeader";
 import { resolveOwnerCurrentStore } from "@/lib/owner/current-store";
 import { Input } from "@/components/common/Input";
 import { Button } from "@/components/common/Button";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 
 interface StaffMember {
   membershipId: string;
@@ -62,6 +63,10 @@ export default function EmployeesPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState("");
+  const [removeTarget, setRemoveTarget] = useState<StaffMember | null>(null);
+  const [isRemoving, setIsRemoving] = useState(false);
+  // 상태 반영 전 연타·키 반복에도 요청이 한 번만 나가도록 동기 플래그로 막는다.
+  const removingRef = useRef(false);
 
   // Auth 확인
   useLayoutEffect(() => {
@@ -189,6 +194,55 @@ export default function EmployeesPage() {
       showToast(e instanceof Error ? e.message : "상태 변경 중 오류가 발생했습니다.");
     } finally {
       setProcessingId(null);
+    }
+  };
+
+  const refreshEmployees = async () => {
+    try {
+      const listResponse = await fetch(`/api/boss/employees?storeId=${selectedStoreId}`);
+      const listData = (await listResponse.json()) as { success: boolean; data?: EmployeesData };
+      if (listResponse.ok && listData.success && listData.data) {
+        setEmployees(listData.data);
+      }
+    } catch (e) {
+      console.error("Failed to refresh employees:", e);
+    }
+  };
+
+  // 직원 소속 해제. 결과 불확실·기능 준비 중은 사라지는 토스트가 아니라 화면 상단에 남긴다.
+  const requestRemoval = async (target: StaffMember) => {
+    if (removingRef.current) return;
+    removingRef.current = true;
+    setIsRemoving(true);
+
+    try {
+      const response = await fetch(`/api/boss/employees/${encodeURIComponent(target.membershipId)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storeId: selectedStoreId }),
+      });
+      const data = (await response.json().catch(() => null)) as {
+        success?: boolean;
+        error?: string;
+        alreadyRemoved?: boolean;
+        removed?: false | null;
+      } | null;
+
+      if (response.ok && data?.success) {
+        showToast(data.alreadyRemoved ? "이미 소속이 해제된 직원입니다." : "직원 소속을 해제했습니다.");
+      } else if (data?.removed === null || response.status === 503) {
+        setError(data?.error || "소속 해제 결과를 확인하지 못했습니다. 목록을 새로고침해 주세요.");
+      } else {
+        showToast(data?.error || "소속 해제에 실패했습니다.");
+      }
+    } catch (e) {
+      console.error("Failed to remove staff:", e);
+      setError("네트워크 오류로 소속 해제 결과를 확인하지 못했습니다. 목록을 확인해 주세요.");
+    } finally {
+      setRemoveTarget(null);
+      setIsRemoving(false);
+      removingRef.current = false;
+      await refreshEmployees();
     }
   };
 
@@ -449,6 +503,14 @@ export default function EmployeesPage() {
                         <span className="text-xs text-[var(--color-text-secondary)]">
                           {formatDate(staff.approvedAt || staff.requestedAt)}
                         </span>
+                        <button
+                          type="button"
+                          disabled={isRemoving || processingId === staff.membershipId}
+                          onClick={() => setRemoveTarget(staff)}
+                          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-[var(--color-border)] bg-white px-3 text-sm font-medium text-red-700 transition-colors hover:border-red-300 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2 disabled:opacity-60"
+                        >
+                          소속 해제
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -465,6 +527,28 @@ export default function EmployeesPage() {
           {toastMessage}
         </div>
       )}
+
+      <ConfirmDialog
+        isOpen={removeTarget !== null}
+        title={`${removeTarget?.name ?? "직원"} 소속 해제`}
+        description={
+          <div className="space-y-2">
+            <p className="font-medium text-[var(--color-text-primary)]">
+              이 직원의 {storeName} 소속을 해제할까요?
+            </p>
+            <p>해당 매장의 챗봇·매뉴얼·공지·대화를 이용할 수 없게 됩니다.</p>
+            <p>직원 계정과 다른 매장 소속은 유지됩니다.</p>
+          </div>
+        }
+        confirmText="소속 해제"
+        cancelText="취소"
+        isDangerous
+        isLoading={isRemoving}
+        onConfirm={() => {
+          if (removeTarget) void requestRemoval(removeTarget);
+        }}
+        onCancel={() => setRemoveTarget(null)}
+      />
     </div>
   );
 }
