@@ -14,6 +14,7 @@ import {
 } from "@/lib/owner/current-store";
 import {
   BOSS_QUESTIONS_PATH,
+  buildBossQuestionDetailUrl,
   type QuestionsLoadState,
   classifyPendingQuestionsResponse,
   pickQuestionsStore,
@@ -40,8 +41,6 @@ const QUESTION_LIMIT = 20;
 
 const RESOLUTION_FILTER_TABS: Array<{ id: QuestionResolutionFilter; label: string }> = [
   { id: "active", label: "확인 필요" },
-  { id: "open", label: "미처리" },
-  { id: "in_progress", label: "확인 중" },
   { id: "resolved", label: "처리 완료" },
   { id: "all", label: "전체" },
 ];
@@ -86,7 +85,10 @@ function Notice({ tone, children }: { tone: "info" | "error"; children: React.Re
   );
 }
 
-export default function BossQuestionsView({ requestedStoreId, highlightQuestionId }: BossQuestionsViewProps) {
+export default function BossQuestionsView({
+  requestedStoreId,
+  highlightQuestionId,
+}: BossQuestionsViewProps) {
   const router = useRouter();
   const [userName, setUserName] = useState("");
   const [storeState, setStoreState] = useState<StoreState>({ status: "resolving" });
@@ -95,6 +97,7 @@ export default function BossQuestionsView({ requestedStoreId, highlightQuestionI
   const [activeFilter, setActiveFilter] = useState<QuestionResolutionFilter>("active");
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState<{ id: string; message: string } | null>(null);
+  const [updateSuccess, setUpdateSuccess] = useState<string | null>(null);
   const highlightRef = useRef<HTMLLIElement>(null);
 
   // 알림 링크의 storeId는 승인된 점주 매장 목록과 대조한 뒤에만 현재 매장으로 채택한다.
@@ -187,13 +190,20 @@ export default function BossQuestionsView({ requestedStoreId, highlightQuestionI
     if (highlightFound) highlightRef.current?.scrollIntoView({ block: "center" });
   }, [highlightFound]);
 
+  useEffect(() => {
+    if (!updateSuccess) return;
+    const timeout = window.setTimeout(() => setUpdateSuccess(null), 3500);
+    return () => window.clearTimeout(timeout);
+  }, [updateSuccess]);
+
   const handleUpdateStatus = async (
     question: PendingQuestion,
     nextStatus: QuestionResolutionStatus,
-  ) => {
-    if (updatingId || question.resolutionStatus === nextStatus) return;
+  ): Promise<boolean> => {
+    if (updatingId || question.resolutionStatus === nextStatus) return false;
     setUpdatingId(question.id);
     setUpdateError(null);
+    setUpdateSuccess(null);
 
     try {
       const response = await fetch("/api/boss/question-logs", {
@@ -222,15 +232,26 @@ export default function BossQuestionsView({ requestedStoreId, highlightQuestionI
               ? "다른 관리자에 의해 질문 상태가 이미 변경되었습니다. 새로고침 후 다시 시도해 주세요."
               : (body?.error || "처리 상태 변경에 실패했습니다. 다시 시도해 주세요.");
         setUpdateError({ id: question.id, message: errorMsg });
-        return;
+        return false;
       }
 
-      // 성공 시 목록을 다시 불러온다
+      setUpdateSuccess(nextStatus === "resolved" ? "질문을 처리 완료로 변경했습니다." : "질문을 확인 중으로 변경했습니다.");
       setReloadKey((k) => k + 1);
+      return true;
     } catch {
       setUpdateError({ id: question.id, message: "네트워크 오류가 발생했습니다. 다시 시도해 주세요." });
+      return false;
     } finally {
       setUpdatingId(null);
+    }
+  };
+
+  const handleStartProcessing = async (question: PendingQuestion) => {
+    if (storeState.status !== "ready") return;
+    const started = question.resolutionStatus === "in_progress"
+      || await handleUpdateStatus(question, "in_progress");
+    if (started) {
+      router.push(buildBossQuestionDetailUrl(question.id, storeState.store.storeId));
     }
   };
 
@@ -268,7 +289,7 @@ export default function BossQuestionsView({ requestedStoreId, highlightQuestionI
                 확인이 필요한 직원 질문
               </h1>
               <p className="text-lg text-[var(--color-text-secondary)]">
-                매뉴얼에서 답을 찾지 못해 보류된 직원 질문입니다. 최근 {QUESTION_LIMIT}건까지 표시합니다.
+                매뉴얼 근거가 부족한 질문과 최근 7일간 반복된 질문입니다. 최근 {QUESTION_LIMIT}건까지 표시합니다.
               </p>
             </div>
 
@@ -327,6 +348,8 @@ export default function BossQuestionsView({ requestedStoreId, highlightQuestionI
                   </div>
                 </div>
 
+                {updateSuccess && <Notice tone="info">{updateSuccess}</Notice>}
+
                 {visible.kind === "loading" && <Notice tone="info">질문을 불러오는 중...</Notice>}
 
                 {visible.kind === "forbidden" && (
@@ -348,7 +371,7 @@ export default function BossQuestionsView({ requestedStoreId, highlightQuestionI
                       보류된 질문이 없습니다.
                     </p>
                     <p className="text-sm text-[var(--color-text-secondary)]">
-                      직원 질문에 매뉴얼로 답하지 못하면 이곳에 표시됩니다.
+                      매뉴얼 근거 부족 또는 반복 질문이 있으면 이곳에 표시됩니다.
                     </p>
                   </div>
                 )}
@@ -365,13 +388,23 @@ export default function BossQuestionsView({ requestedStoreId, highlightQuestionI
                         const isHighlighted = highlightFound && question.id === highlightQuestionId;
                         const isUpdating = updatingId === question.id;
                         const hasError = updateError?.id === question.id;
+                        const isInProgress = question.resolutionStatus === "in_progress";
+                        const detailUrl = buildBossQuestionDetailUrl(question.id, storeState.status === "ready" ? storeState.store.storeId : "");
 
                         return (
                           <li
                             key={question.id}
                             ref={isHighlighted ? highlightRef : undefined}
                             aria-current={isHighlighted ? "true" : undefined}
-                            className={`bg-white border rounded-lg p-4 lg:p-6 transition-all ${
+                            role={isInProgress ? "link" : undefined}
+                            tabIndex={isInProgress ? 0 : undefined}
+                            onClick={isInProgress ? () => router.push(detailUrl) : undefined}
+                            onKeyDown={isInProgress ? (event) => {
+                              if (event.target !== event.currentTarget || event.key !== "Enter") return;
+                              event.preventDefault();
+                              router.push(detailUrl);
+                            } : undefined}
+                            className={`bg-white border rounded-lg p-4 lg:p-6 transition-all ${isInProgress ? "cursor-pointer hover:border-[var(--color-primary)] hover:bg-[var(--color-bg-surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-primary)]" : ""} ${
                               isHighlighted
                                 ? "border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/20"
                                 : "border-[var(--color-border)]"
@@ -379,44 +412,58 @@ export default function BossQuestionsView({ requestedStoreId, highlightQuestionI
                           >
                             <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-3">
                               <div className="flex items-center gap-2">
-                                <ResolutionBadge status={question.resolutionStatus} />
+                                {question.resolutionStatus ? (
+                                  <ResolutionBadge status={question.resolutionStatus} />
+                                ) : (
+                                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sky-50 text-sky-700 border border-sky-200">
+                                    반복 검토
+                                  </span>
+                                )}
                               </div>
 
                               {/* 상태 변경 액션 버튼들 */}
-                              <div className="flex items-center gap-1.5 self-end sm:self-auto">
-                                {question.resolutionStatus === "open" && (
-                                  <button
-                                    type="button"
-                                    disabled={isUpdating || !visible.resolutionFeatureAvailable}
-                                    onClick={() => handleUpdateStatus(question, "in_progress")}
-                                    className="px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-surface)] disabled:opacity-50 transition-colors"
-                                  >
-                                    {isUpdating ? "변경 중..." : "확인 시작"}
-                                  </button>
-                                )}
+                              {question.resolutionStatus && (
+                                <div className="flex items-center gap-1.5 self-end sm:self-auto">
+                                  {question.resolutionStatus === "open" && (
+                                    <button
+                                      type="button"
+                                      disabled={isUpdating || !visible.resolutionFeatureAvailable}
+                                      onClick={() => handleStartProcessing(question)}
+                                      className="px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-surface)] disabled:opacity-50 transition-colors"
+                                    >
+                                      {isUpdating ? "처리 중..." : "처리 시작"}
+                                    </button>
+                                  )}
 
-                                {(question.resolutionStatus === "open" || question.resolutionStatus === "in_progress") && (
-                                  <button
-                                    type="button"
-                                    disabled={isUpdating || !visible.resolutionFeatureAvailable}
-                                    onClick={() => handleUpdateStatus(question, "resolved")}
-                                    className="px-3 py-1.5 text-xs font-medium rounded-md bg-[var(--color-primary)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
-                                  >
-                                    {isUpdating ? "변경 중..." : "처리 완료"}
-                                  </button>
-                                )}
+                                  {(question.resolutionStatus === "open" || question.resolutionStatus === "in_progress") && (
+                                    <button
+                                      type="button"
+                                      disabled={isUpdating || !visible.resolutionFeatureAvailable}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        void handleUpdateStatus(question, "resolved");
+                                      }}
+                                      className="px-3 py-1.5 text-xs font-medium rounded-md bg-[var(--color-primary)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+                                    >
+                                      {isUpdating ? "변경 중..." : "처리 완료"}
+                                    </button>
+                                  )}
 
-                                {question.resolutionStatus === "resolved" && (
-                                  <button
-                                    type="button"
-                                    disabled={isUpdating || !visible.resolutionFeatureAvailable}
-                                    onClick={() => handleUpdateStatus(question, "in_progress")}
-                                    className="px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-surface)] disabled:opacity-50 transition-colors"
-                                  >
-                                    {isUpdating ? "변경 중..." : "다시 열기"}
-                                  </button>
-                                )}
-                              </div>
+                                  {question.resolutionStatus === "resolved" && (
+                                    <button
+                                      type="button"
+                                      disabled={isUpdating || !visible.resolutionFeatureAvailable}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        void handleUpdateStatus(question, "in_progress");
+                                      }}
+                                      className="px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-surface)] disabled:opacity-50 transition-colors"
+                                    >
+                                      {isUpdating ? "변경 중..." : "다시 열기"}
+                                    </button>
+                                  )}
+                                </div>
+                              )}
                             </div>
 
                             <p className="text-base font-medium text-[var(--color-text-primary)] whitespace-pre-wrap break-words mb-2">

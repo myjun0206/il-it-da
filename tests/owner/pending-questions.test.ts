@@ -37,7 +37,7 @@ type LogRow = {
   resolved_by?: string | null;
 };
 
-type FailurePoint = "store_memberships" | "question_logs";
+type FailurePoint = "store_memberships" | "question_logs" | "missing_resolution_column";
 
 function log(overrides: Partial<LogRow> = {}): LogRow {
   return {
@@ -168,6 +168,12 @@ function fakeClient(options: {
               } else {
                 appliedLimit = value;
               }
+              if (options.failAt === "missing_resolution_column" && selectedColumns.at(-1)?.includes("resolution_status")) {
+                return Promise.resolve({
+                  data: null,
+                  error: { code: "42703", message: 'column "resolution_status" does not exist' },
+                });
+              }
               if (options.failAt === "question_logs") {
                 return Promise.resolve({ data: null, error: dbError });
               }
@@ -240,6 +246,95 @@ describe("fetchPendingQuestionsForOwner (가짜 DB로 실제 함수 실행)", ()
     assert.equal(repeated?.repeatCount, 3);
     assert.equal(manualGap?.originReason, "manual_gap");
     assert.equal(manualGap?.repeatCount, 1);
+  });
+
+  test("최근 7일에 5회 반복된 답변 가능 질문도 보류 목록에 검토 항목으로 표시한다", async () => {
+    const recent = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
+    const latestCreatedAt = recent(1);
+    const { client } = fakeClient({
+      logs: [
+        ...Array.from({ length: 4 }, (_, index) => log({
+          id: `answered-repeat-${index + 1}`,
+          question: "마감 순서 알려주세요",
+          status: "answered",
+          created_at: recent(5 - index),
+        })),
+        log({
+          id: "answered-repeat-latest",
+          question: "마감 순서 알려주세요?",
+          status: "cautious",
+          created_at: latestCreatedAt,
+        }),
+      ],
+    });
+
+    const result = await fetchPendingQuestionsForOwner(client, { userId: OWNER_A, storeId: STORE_A });
+    assert.equal(result.status, 200);
+    if (result.status !== 200) return;
+
+    assert.equal(result.body.data.questions.length, 1);
+    assert.deepEqual(result.body.data.questions[0], {
+      id: "answered-repeat-latest",
+      question: "마감 순서 알려주세요?",
+      status: "cautious",
+      createdAt: latestCreatedAt,
+      resolutionStatus: "open",
+      resolutionRevision: 1,
+      resolutionUpdatedAt: null,
+      resolutionUpdatedBy: null,
+      resolvedAt: null,
+      resolvedBy: null,
+      originReason: "frequent_question",
+      repeatCount: 5,
+    });
+  });
+
+  test("반복 질문 처리 상태에 따라 확인 필요와 처리 완료 필터가 반영된다", async () => {
+    const recent = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
+    const logs = Array.from({ length: 5 }, (_, index) => log({
+      id: `resolved-repeat-${index + 1}`,
+      question: "마감 순서 알려주세요",
+      status: "answered",
+      created_at: recent(index),
+    }));
+    logs[0].resolution_status = "resolved";
+
+    const active = await fetchPendingQuestionsForOwner(fakeClient({ logs }).client, {
+      userId: OWNER_A,
+      storeId: STORE_A,
+      resolutionStatus: "active",
+    });
+    const resolved = await fetchPendingQuestionsForOwner(fakeClient({ logs }).client, {
+      userId: OWNER_A,
+      storeId: STORE_A,
+      resolutionStatus: "resolved",
+    });
+
+    assert.deepEqual(active.status === 200 ? active.body.data.questions : [], []);
+    assert.deepEqual(
+      resolved.status === 200 ? resolved.body.data.questions.map((question) => question.id) : [],
+      ["resolved-repeat-1"],
+    );
+  });
+
+  test("031 미적용 DB에서도 반복 질문은 활성 목록에 읽기 전용으로 남는다", async () => {
+    const recent = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
+    const logs = Array.from({ length: 5 }, (_, index) => log({
+      id: `legacy-repeat-${index + 1}`,
+      question: "마감 순서 알려주세요",
+      status: "answered",
+      created_at: recent(index),
+    }));
+    const { client } = fakeClient({ logs, failAt: "missing_resolution_column" });
+
+    const result = await fetchPendingQuestionsForOwner(client, { userId: OWNER_A, storeId: STORE_A });
+
+    assert.equal(result.status, 200);
+    if (result.status !== 200) return;
+    assert.equal(result.body.data.resolutionFeatureAvailable, false);
+    assert.equal(result.body.data.questions.length, 1);
+    assert.equal(result.body.data.questions[0].resolutionStatus, null);
+    assert.equal(result.body.data.questions[0].originReason, "frequent_question");
   });
 
   test("다른 매장 점주는 차단된다", async () => {
@@ -373,7 +468,7 @@ describe("fetchPendingQuestionsForOwner (가짜 DB로 실제 함수 실행)", ()
     // 애초에 필요한 컬럼만 select 한다.
     assert.deepEqual(inspect().selectedColumns, [
       "id, question, status, store_id, created_at, resolution_status, resolution_revision, resolution_updated_at, resolution_updated_by, resolved_at, resolved_by",
-      "id, question, status, store_id, source_manual_id, created_at",
+      "id, question, status, store_id, source_manual_id, created_at, resolution_status, resolution_revision, resolution_updated_at, resolution_updated_by, resolved_at, resolved_by",
     ]);
   });
 });

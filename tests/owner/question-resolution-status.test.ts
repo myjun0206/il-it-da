@@ -585,6 +585,29 @@ describe("권한 및 기본 제약 검증", () => {
     assert.equal(result.body.error, "보류된 질문만 처리 상태를 변경할 수 있습니다.");
   });
 
+  test("최근 7일 반복 그룹의 대표 answered 로그는 점주 처리 상태를 변경할 수 있다", async () => {
+    const recent = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
+    const repeatedLogs = Array.from({ length: 5 }, (_, index) => log({
+      id: `repeat-${index + 1}`,
+      question: "마감 순서 알려주세요",
+      status: "answered",
+      created_at: recent(index),
+    }));
+    const { client, logs } = fakeClient({ logs: repeatedLogs });
+
+    const result = await updateQuestionResolutionStatusForOwner(client, {
+      userId: OWNER_A,
+      questionLogId: "repeat-1",
+      nextStatus: "in_progress",
+      currentStatus: "open",
+      currentRevision: 1,
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(logs[0].resolution_status, "in_progress");
+    assert.equal(logs[0].resolution_revision, 2);
+  });
+
   test("다른 매장 점주는 상태를 변경할 수 없다 (403)", async () => {
     const target = log({ id: "log-1", store_id: STORE_A });
     const { client } = fakeClient({ logs: [target] });

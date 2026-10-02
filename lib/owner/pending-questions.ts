@@ -8,9 +8,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { requireStoreOwner } from "@/lib/manuals/store-manual-auth";
-import { normalizeRepeatedQuestionKey, REPEATED_QUESTION_MIN_COUNT, REPEATED_QUESTION_WINDOW_DAYS } from "@/lib/owner/repeated-questions";
+import {
+  normalizeRepeatedQuestionKey,
+  QUESTION_LOG_STATUSES,
+  REPEATED_QUESTION_MIN_COUNT,
+  REPEATED_QUESTION_WINDOW_DAYS,
+  type QuestionLogStatus,
+} from "@/lib/owner/repeated-questions";
 
-/** 022의 에스컬레이션 대상과 같은 상태값. answered/cautious는 점주에게 보여주지 않는다. */
+/** 022의 근거 부족 상태값. 반복 검토 항목은 answered/cautious 로그도 포함할 수 있다. */
 export const PENDING_QUESTION_STATUS = "insufficient";
 
 /** 점주의 질문 처리 상태 */
@@ -55,10 +61,10 @@ export type QuestionLogRow = {
 export type PendingQuestion = {
   id: string;
   question: string;
-  status: typeof PENDING_QUESTION_STATUS;
+  status: QuestionLogStatus;
   createdAt: string;
-  resolutionStatus: QuestionResolutionStatus;
-  resolutionRevision: number;
+  resolutionStatus: QuestionResolutionStatus | null;
+  resolutionRevision: number | null;
   resolutionUpdatedAt: string | null;
   resolutionUpdatedBy: string | null;
   resolvedAt: string | null;
@@ -215,15 +221,24 @@ export function toPendingQuestions(
   });
 }
 
-/** 보류 카드의 반복 배지용 최근 7일 집계(develop 계약: 최신 500건). 실패하면 null. */
-async function fetchRecentRepeatCounts(
+type RecentQuestionRepeatData = {
+  counts: Map<string, number>;
+  answerableRepeatedRows: Map<string, QuestionLogRow>;
+};
+
+/** 반복 배지와 답변 가능한 반복 그룹 검토 카드용 최근 7일 집계(최신 500건). 실패하면 null. */
+async function fetchRecentQuestionRepeatData(
   adminClient: SupabaseClient,
   verifiedStoreId: string,
-): Promise<Map<string, number> | null> {
+  resolutionFeatureAvailable = true,
+): Promise<RecentQuestionRepeatData | null> {
   const windowStart = new Date(Date.now() - REPEATED_QUESTION_WINDOW_DAYS * 24 * 60 * 60 * 1000);
-  const { data: recentLogs, error: repeatQueryError } = await adminClient
-    .from("question_logs")
-    .select("id, question, status, store_id, source_manual_id, created_at")
+  const query = resolutionFeatureAvailable
+    ? adminClient.from("question_logs")
+      .select("id, question, status, store_id, source_manual_id, created_at, resolution_status, resolution_revision, resolution_updated_at, resolution_updated_by, resolved_at, resolved_by")
+    : adminClient.from("question_logs")
+      .select("id, question, status, store_id, source_manual_id, created_at");
+  const { data: recentLogs, error: repeatQueryError } = await query
     .eq("store_id", verifiedStoreId)
     .gte("created_at", windowStart.toISOString())
     .order("created_at", { ascending: false })
@@ -235,13 +250,103 @@ async function fetchRecentRepeatCounts(
   }
 
   const repeatCounts = new Map<string, number>();
-  for (const row of (recentLogs ?? []) as QuestionLogRow[]) {
-    if (row.store_id !== verifiedStoreId || typeof row.question !== "string") continue;
+  const insufficientCounts = new Map<string, number>();
+  const latestRows = new Map<string, QuestionLogRow>();
+  for (const row of (recentLogs ?? []) as unknown as QuestionLogRow[]) {
+    if (
+      row.store_id !== verifiedStoreId
+      || typeof row.question !== "string"
+      || !QUESTION_LOG_STATUSES.includes(row.status as QuestionLogStatus)
+    ) continue;
     const key = normalizeRepeatedQuestionKey(row.question);
     if (!key) continue;
     repeatCounts.set(key, (repeatCounts.get(key) ?? 0) + 1);
+    if (row.status === PENDING_QUESTION_STATUS) {
+      insufficientCounts.set(key, (insufficientCounts.get(key) ?? 0) + 1);
+    }
+    if (!latestRows.has(key)) latestRows.set(key, row);
   }
-  return repeatCounts;
+
+  const answerableRepeatedRows = new Map<string, QuestionLogRow>();
+  for (const [key, row] of latestRows) {
+    if (
+      (repeatCounts.get(key) ?? 0) >= REPEATED_QUESTION_MIN_COUNT
+      && (insufficientCounts.get(key) ?? 0) === 0
+      && (row.status === "answered" || row.status === "cautious")
+    ) {
+      answerableRepeatedRows.set(key, row);
+    }
+  }
+
+  return { counts: repeatCounts, answerableRepeatedRows };
+}
+
+function toAnswerableRepeatedQuestions(
+  repeatData: RecentQuestionRepeatData,
+  verifiedStoreId: string,
+  resolutionFeatureAvailable: boolean,
+): PendingQuestion[] {
+  return [...repeatData.answerableRepeatedRows.entries()].flatMap(([key, row]) => {
+    if (
+      typeof row.id !== "string"
+      || typeof row.question !== "string"
+      || typeof row.created_at !== "string"
+      || row.store_id !== verifiedStoreId
+    ) {
+      return [];
+    }
+
+    const question = row.question.trim();
+    const repeatCount = repeatData.counts.get(key) ?? 0;
+    if (!row.id.trim() || !question || !row.created_at.trim()) return [];
+
+    return [{
+      id: row.id,
+      question,
+      status: row.status as QuestionLogStatus,
+      createdAt: row.created_at,
+      resolutionStatus: resolutionFeatureAvailable
+        ? isQuestionResolutionStatus(row.resolution_status) ? row.resolution_status : "open"
+        : null,
+      resolutionRevision: resolutionFeatureAvailable
+        ? typeof row.resolution_revision === "number" ? row.resolution_revision : 1
+        : null,
+      resolutionUpdatedAt: typeof row.resolution_updated_at === "string" ? row.resolution_updated_at : null,
+      resolutionUpdatedBy: typeof row.resolution_updated_by === "string" ? row.resolution_updated_by : null,
+      resolvedAt: typeof row.resolved_at === "string" ? row.resolved_at : null,
+      resolvedBy: typeof row.resolved_by === "string" ? row.resolved_by : null,
+      originReason: "frequent_question" as const,
+      repeatCount,
+    }];
+  });
+}
+
+function mergeRepeatedQuestionReviews(
+  questions: PendingQuestion[],
+  repeatData: RecentQuestionRepeatData,
+  filter: QuestionResolutionFilter,
+  limit: number,
+  verifiedStoreId: string,
+  resolutionFeatureAvailable: boolean,
+  highlightId?: string,
+): PendingQuestion[] {
+  const repeatedQuestions = toAnswerableRepeatedQuestions(
+    repeatData,
+    verifiedStoreId,
+    resolutionFeatureAvailable,
+  ).filter((question) => {
+    if (filter === "all") return true;
+    const resolutionStatus = question.resolutionStatus ?? "open";
+    if (filter === "active") return resolutionStatus === "open" || resolutionStatus === "in_progress";
+    return resolutionStatus === filter;
+  });
+
+  const merged = [...questions, ...repeatedQuestions].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  const highlighted = highlightId ? merged.find((question) => question.id === highlightId) : undefined;
+  const ordered = highlighted
+    ? [highlighted, ...merged.filter((question) => question.id !== highlighted.id)]
+    : merged;
+  return ordered.slice(0, limit);
 }
 
 export interface FetchPendingQuestionsInput {
@@ -328,10 +433,10 @@ export async function fetchPendingQuestionsForOwner(
           return failedPendingQuestionsResult();
         }
 
-        const legacyRepeatCounts = await fetchRecentRepeatCounts(adminClient, storeAuth.storeId);
-        if (!legacyRepeatCounts) return failedPendingQuestionsResult();
+        const legacyRepeatData = await fetchRecentQuestionRepeatData(adminClient, storeAuth.storeId, false);
+        if (!legacyRepeatData) return failedPendingQuestionsResult();
 
-        let parsedLegacy = toPendingQuestions((legacyData ?? []) as QuestionLogRow[], storeAuth.storeId, legacyRepeatCounts);
+        let parsedLegacy = toPendingQuestions((legacyData ?? []) as QuestionLogRow[], storeAuth.storeId, legacyRepeatData.counts);
 
         // 하이라이트 대상 질문이 조회 목록에 없으면 단건 추가 조회
         if (highlightId && !parsedLegacy.some((q) => q.id === highlightId)) {
@@ -344,13 +449,22 @@ export async function fetchPendingQuestionsForOwner(
             .maybeSingle<QuestionLogRow>();
 
           if (!legacyHighlightError && legacyHighlight) {
-            const parsedHighlight = toPendingQuestions([legacyHighlight], storeAuth.storeId, legacyRepeatCounts);
+            const parsedHighlight = toPendingQuestions([legacyHighlight], storeAuth.storeId, legacyRepeatData.counts);
             if (parsedHighlight.length > 0) {
               parsedLegacy = [parsedHighlight[0], ...parsedLegacy];
             }
           }
         }
 
+        parsedLegacy = mergeRepeatedQuestionReviews(
+          parsedLegacy,
+          legacyRepeatData,
+          filter,
+          limit,
+          storeAuth.storeId,
+          false,
+          highlightId,
+        );
         return successfulPendingQuestionsResult(parsedLegacy, limit, false);
       }
 
@@ -358,10 +472,10 @@ export async function fetchPendingQuestionsForOwner(
       return failedPendingQuestionsResult();
     }
 
-    const repeatCounts = await fetchRecentRepeatCounts(adminClient, storeAuth.storeId);
-    if (!repeatCounts) return failedPendingQuestionsResult();
+    const repeatData = await fetchRecentQuestionRepeatData(adminClient, storeAuth.storeId);
+    if (!repeatData) return failedPendingQuestionsResult();
 
-    let parsedQuestions = toPendingQuestions((data ?? []) as QuestionLogRow[], storeAuth.storeId, repeatCounts);
+    let parsedQuestions = toPendingQuestions((data ?? []) as QuestionLogRow[], storeAuth.storeId, repeatData.counts);
 
     // 하이라이트 대상 질문이 resolved이거나 20건 범위 밖이어서 목록에 없는 경우:
     // 해당 매장 점주 권한(store_id = storeAuth.storeId)으로 단건 조회하여 목록 맨 앞에 포함한다.
@@ -376,13 +490,22 @@ export async function fetchPendingQuestionsForOwner(
         .maybeSingle<QuestionLogRow>();
 
       if (!highlightError && highlightData) {
-        const parsedHighlight = toPendingQuestions([highlightData], storeAuth.storeId, repeatCounts);
+        const parsedHighlight = toPendingQuestions([highlightData], storeAuth.storeId, repeatData.counts);
         if (parsedHighlight.length > 0) {
           parsedQuestions = [parsedHighlight[0], ...parsedQuestions];
         }
       }
     }
 
+    parsedQuestions = mergeRepeatedQuestionReviews(
+      parsedQuestions,
+      repeatData,
+      filter,
+      limit,
+      storeAuth.storeId,
+      true,
+      highlightId,
+    );
     return successfulPendingQuestionsResult(parsedQuestions, limit, true);
   } catch (e) {
     logSafePendingQuestionError("QUESTION_LOG_QUERY_FAILED", e);
@@ -420,10 +543,10 @@ export type UpdateQuestionResolutionResult =
     };
 
 /**
- * 점주가 insufficient 질문의 처리 상태(open/in_progress/resolved)를 변경한다.
+ * 점주가 insufficient 질문 또는 검증된 반복 질문 대표 로그의 처리 상태를 변경한다.
  *
  * 1) 세션 사용자 인증 (호출부에서 전달)
- * 2) question_logs 조회: 존재하는지, status === 'insufficient' 인지 확인 (answered/cautious 거절)
+ * 2) question_logs 조회: 존재 여부와 status 확인 (answered/cautious는 반복 대표 로그만 허용)
  * 3) 실제 question_logs.store_id로 requireStoreOwner 검증 (body의 storeId/userId를 절대 신뢰하지 않음)
  * 4) 이미 같은 상태인 경우: revision 일치 여부 확인 후 불필요한 write 없이 200 멱등 성공 반환
  * 5) 동시성 제어: 클라이언트가 보낸 currentRevision/currentStatus와 현재 DB 상태가 불일치하면 409 CONFLICT 반환
@@ -449,7 +572,7 @@ export async function updateQuestionResolutionStatusForOwner(
   try {
     const { data, error } = await adminClient
       .from("question_logs")
-      .select("id, status, store_id, resolution_status, resolution_revision, resolution_updated_at, resolution_updated_by, resolved_at, resolved_by")
+      .select("id, question, status, store_id, resolution_status, resolution_revision, resolution_updated_at, resolution_updated_by, resolved_at, resolved_by")
       .eq("id", questionLogId.trim())
       .maybeSingle<QuestionLogRow>();
 
@@ -477,8 +600,11 @@ export async function updateQuestionResolutionStatusForOwner(
     return { status: 404, body: { success: false, error: "질문 로그를 찾을 수 없습니다." } };
   }
 
-  // 2) insufficient 질문에만 처리 상태를 사용한다
-  if (logRow.status !== PENDING_QUESTION_STATUS) {
+  const isPendingQuestion = logRow.status === PENDING_QUESTION_STATUS;
+  const hasRepeatedQuestionStatus = logRow.status === "answered" || logRow.status === "cautious";
+
+  // 답변 가능 질문은 최근 반복 그룹의 대표 로그만 처리 상태를 가질 수 있다.
+  if (!isPendingQuestion && !hasRepeatedQuestionStatus) {
     return {
       status: 400,
       body: { success: false, error: "보류된 질문만 처리 상태를 변경할 수 있습니다." },
@@ -506,6 +632,21 @@ export async function updateQuestionResolutionStatusForOwner(
       status: 403,
       body: { success: false, error: "이 매장의 질문 상태를 변경할 권한이 없습니다." },
     };
+  }
+
+  if (!isPendingQuestion) {
+    const repeatData = await fetchRecentQuestionRepeatData(adminClient, storeAuth.storeId);
+    if (!repeatData) {
+      return { status: 500, body: { success: false, error: "반복 질문 여부를 확인하지 못했습니다." } };
+    }
+    const groupKey = typeof logRow.question === "string" ? normalizeRepeatedQuestionKey(logRow.question) : "";
+    const representative = groupKey ? repeatData.answerableRepeatedRows.get(groupKey) : undefined;
+    if (!representative || representative.id !== logRow.id) {
+      return {
+        status: 400,
+        body: { success: false, error: "보류된 질문만 처리 상태를 변경할 수 있습니다." },
+      };
+    }
   }
 
   const existingResolution: QuestionResolutionStatus = isQuestionResolutionStatus(logRow.resolution_status)
@@ -589,7 +730,7 @@ export async function updateQuestionResolutionStatusForOwner(
       .update(updatePayload)
       .eq("id", logRow.id)
       .eq("store_id", storeAuth.storeId)
-      .eq("status", PENDING_QUESTION_STATUS)
+      .eq("status", logRow.status)
       .eq("resolution_revision", existingRevision);
 
     const { data: updated, error: updateError } = await updateQuery

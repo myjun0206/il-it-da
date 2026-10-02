@@ -5,6 +5,7 @@ import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  buildBossQuestionDetailUrl,
   buildBossQuestionsUrl,
   classifyPendingQuestionsResponse,
   pickQuestionsStore,
@@ -62,6 +63,23 @@ describe("classifyPendingQuestionsResponse", () => {
     });
     assert.equal(state.kind, "ready");
     assert.deepEqual(state.kind === "ready" ? state.questions : [], [QUESTION_A]);
+  });
+
+  test("처리 상태가 없는 답변 가능 반복 질문도 검토 항목으로 분류한다", () => {
+    const repeatedReview = {
+      ...QUESTION_A,
+      status: "cautious",
+      resolutionStatus: null,
+      resolutionRevision: null,
+      originReason: "frequent_question",
+      repeatCount: 5,
+    };
+    const state = classifyPendingQuestionsResponse(STORE_A.storeId, 200, {
+      success: true,
+      data: { questions: [repeatedReview], limit: 20 },
+    });
+
+    assert.deepEqual(state.kind === "ready" ? state.questions : [], [repeatedReview]);
   });
 
   test("빈 목록은 오류가 아니라 빈 상태다", () => {
@@ -132,6 +150,13 @@ describe("알림 링크와 화면 연결", () => {
     assert.equal(buildBossQuestionsUrl("a&b=c"), "/boss/questions?storeId=a%26b%3Dc");
   });
 
+  test("상세 페이지 링크에 질문 id와 매장 id를 안전하게 인코딩한다", () => {
+    assert.equal(
+      buildBossQuestionDetailUrl("question/1", "store&1"),
+      "/boss/questions/question%2F1?storeId=store%261",
+    );
+  });
+
   const viewSource = readFileSync(
     path.join(path.dirname(fileURLToPath(import.meta.url)), "../../app/boss/questions/BossQuestionsView.tsx"),
     "utf8",
@@ -157,6 +182,54 @@ describe("알림 링크와 화면 연결", () => {
     assert.match(viewSource, /매뉴얼 근거 부족/);
     assert.equal((viewSource.match(/<Repeat2\b/g) ?? []).length, 1);
     assert.equal((viewSource.match(/<BookOpen\b/g) ?? []).length, 1);
+  });
+
+  test("처리 시작 버튼은 상태 변경 후 상세 처리 페이지로 이동한다", () => {
+    assert.match(viewSource, /question\.resolutionStatus &&/);
+    assert.match(viewSource, /반복 검토/);
+    assert.match(viewSource, /처리 시작/);
+    assert.match(viewSource, /router\.push\(buildBossQuestionDetailUrl\(question\.id, storeState\.store\.storeId\)\)/);
+    assert.match(viewSource, /setUpdateSuccess\(nextStatus === "resolved" \? "질문을 처리 완료로 변경했습니다\."/);
+  });
+
+  test("확인 중 카드 클릭은 상세로 이동하고 카드 내부 버튼 클릭은 전파되지 않는다", () => {
+    assert.match(viewSource, /const isInProgress = question\.resolutionStatus === "in_progress"/);
+    assert.match(viewSource, /role=\{isInProgress \? "link" : undefined\}/);
+    assert.match(viewSource, /tabIndex=\{isInProgress \? 0 : undefined\}/);
+    assert.match(viewSource, /onClick=\{isInProgress \? \(\) => router\.push\(detailUrl\) : undefined\}/);
+    assert.match(viewSource, /cursor-pointer hover:border-\[var\(--color-primary\)\]/);
+    assert.match(viewSource, /event\.stopPropagation\(\)/);
+  });
+
+  test("상세 페이지는 ID로 기존 질문 API를 조회하고 원문·유입 사유·상태 전이를 제공한다", () => {
+    const detailSource = readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "../../app/boss/questions/[id]/BossQuestionDetailView.tsx"),
+      "utf8",
+    );
+    const routeSource = readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "../../app/boss/questions/[id]/page.tsx"),
+      "utf8",
+    );
+    const listPageSource = readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "../../app/boss/questions/page.tsx"),
+      "utf8",
+    );
+
+    assert.match(routeSource, /params: Promise<\{ id: string \}>/);
+    assert.match(routeSource, /questionId=\{id\}/);
+    assert.match(detailSource, /resolutionStatus: "all"/);
+    assert.match(detailSource, /questionId,/);
+    assert.match(detailSource, /detail\.question\.question/);
+    assert.match(detailSource, /detail\.question\.originReason === "frequent_question"/);
+    assert.match(detailSource, /handleStatusChange\("resolved"\)/);
+    assert.match(detailSource, /보류 질문으로 돌아가기/);
+    assert.match(detailSource, /buildBossQuestionsUrl\(detail\.store\.storeId\)/);
+    assert.doesNotMatch(detailSource, /목록으로/);
+    assert.doesNotMatch(listPageSource, /resolutionStatus/);
+    assert.match(viewSource, /useState<QuestionResolutionFilter>\("active"\)/);
+    const filterTabs = viewSource.match(/const RESOLUTION_FILTER_TABS:[\s\S]*?\];/)?.[0] ?? "";
+    assert.match(filterTabs, /label: "확인 필요"/);
+    assert.doesNotMatch(filterTabs, /label: "미처리"|label: "확인 중"/);
   });
 
   test("URL storeId는 승인된 점주 매장 목록과 대조한 뒤에만 쓴다", () => {
