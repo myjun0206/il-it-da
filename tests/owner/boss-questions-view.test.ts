@@ -69,7 +69,7 @@ describe("classifyPendingQuestionsResponse", () => {
       success: true,
       data: { questions: [], limit: 20 },
     });
-    assert.deepEqual(state, { kind: "ready", storeId: STORE_A.storeId, questions: [] });
+    assert.deepEqual(state, { kind: "ready", storeId: STORE_A.storeId, questions: [], resolutionFeatureAvailable: true });
   });
 
   test("401·403은 권한 오류로 구분한다", () => {
@@ -115,7 +115,12 @@ describe("visibleQuestionsState (매장 전환 시 섞임 방지)", () => {
   });
 
   test("같은 매장 결과만 그대로 보여준다", () => {
-    const state = { kind: "ready" as const, storeId: STORE_B.storeId, questions: [] };
+    const state = {
+      kind: "ready" as const,
+      storeId: STORE_B.storeId,
+      questions: [],
+      resolutionFeatureAvailable: true,
+    };
     assert.strictEqual(visibleQuestionsState(state, STORE_B.storeId), state);
     assert.equal(visibleQuestionsState(null, STORE_B.storeId).kind, "loading");
   });
@@ -132,9 +137,17 @@ describe("알림 링크와 화면 연결", () => {
     "utf8",
   );
 
-  test("화면은 기존 GET /api/boss/question-logs만 재사용한다", () => {
-    assert.match(viewSource, /\/api\/boss\/question-logs\?storeId=\$\{encodeURIComponent\(selectedStoreId\)\}/);
-    assert.equal(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/.test(viewSource), false);
+  test("화면은 GET /api/boss/question-logs로 목록을 조회하고 PATCH로 처리 상태를 변경한다", () => {
+    assert.match(viewSource, /\/api\/boss\/question-logs\?\$\{queryParams\.toString\(\)\}/);
+    assert.match(viewSource, /method:\s*["']PATCH["']/);
+  });
+
+  test("알림의 질문 id는 승인 매장으로 채택됐을 때만 목록 API에 넘겨 완료·범위 밖 질문도 포함시킨다", () => {
+    assert.match(
+      viewSource,
+      /storeState\.status === "ready" && !storeState\.requestedStoreRejected \? highlightQuestionId : null/,
+    );
+    assert.match(viewSource, /if \(highlightForFetch\) queryParams\.set\("questionId", highlightForFetch\);/);
   });
 
   test("각 카드 우측 하단에 원인별 배지와 반복 횟수를 표시한다", () => {

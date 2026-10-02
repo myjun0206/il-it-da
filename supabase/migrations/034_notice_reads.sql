@@ -1,4 +1,7 @@
--- 030: Per-user first-read state for notices.
+-- 034 (formerly 030_notice_reads.sql): Per-user first-read state for notices.
+-- Renumbered only to remove the duplicate 030 prefix (030_remove_keyword_boost_score_floor.sql).
+-- ALREADY APPLIED on the shared Supabase project (public.notice_reads exists, verified 2026-10-02).
+-- Do NOT re-run because of the rename; verify with the read-only checks before any manual action.
 -- Notice read/write access remains server-only and is authorized by the API.
 
 begin;

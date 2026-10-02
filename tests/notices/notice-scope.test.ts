@@ -29,7 +29,7 @@ function readSource(relativePath: string): string {
 }
 
 const migration = readSource("supabase/migrations/021_hq_notices.sql");
-const audienceMigration = readSource("supabase/migrations/029_notice_audience.sql");
+const audienceMigration = readSource("supabase/migrations/033_notice_audience.sql");
 const hqRoute = readSource("app/api/hq/notices/route.ts");
 const bossRoute = readSource("app/api/boss/notices/route.ts");
 const staffRoute = readSource("app/api/staff/notices/route.ts");

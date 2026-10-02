@@ -188,6 +188,9 @@ function SignupApprovalStatusContent() {
           >
             {isSigningOut ? "로그아웃 중..." : "로그인으로 돌아가기"}
           </button>
+          <Link href="/staff/stores/add" className="font-semibold text-[var(--color-primary)] hover:underline">
+            근무 매장 신청
+          </Link>
           <Link href="/signup/role" className="text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]">
             회원가입
           </Link>

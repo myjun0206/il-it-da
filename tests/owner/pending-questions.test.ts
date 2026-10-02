@@ -32,6 +32,9 @@ type LogRow = {
   status: string;
   store_id: string | null;
   created_at: string;
+  resolution_status?: string | null;
+  resolved_at?: string | null;
+  resolved_by?: string | null;
 };
 
 type FailurePoint = "store_memberships" | "question_logs";
@@ -141,9 +144,14 @@ function fakeClient(options: {
         select(columns: string) {
           selectedColumns.push(columns);
           const filters: Record<string, unknown> = {};
+          const inFilters: Record<string, unknown[]> = {};
           const query = {
             eq(column: string, value: unknown) {
               filters[column] = value;
+              return query;
+            },
+            in(column: string, values: unknown[]) {
+              inFilters[column] = values;
               return query;
             },
             gte(column: string, value: unknown) {
@@ -168,6 +176,11 @@ function fakeClient(options: {
                 .filter((row) => row.store_id === filters.store_id)
                 .filter((row) => filters.status === undefined || row.status === filters.status)
                 .filter((row) => typeof createdAtGte !== "string" || row.created_at >= createdAtGte)
+                .filter((row) => {
+                  if (filters.resolution_status && (row.resolution_status ?? "open") !== filters.resolution_status) return false;
+                  if (inFilters.resolution_status && !inFilters.resolution_status.includes(row.resolution_status ?? "open")) return false;
+                  return true;
+                })
                 .sort((a, b) => b.created_at.localeCompare(a.created_at))
                 .slice(0, value);
               return Promise.resolve({ data: rows, error: null });
@@ -344,6 +357,12 @@ describe("fetchPendingQuestionsForOwner (가짜 DB로 실제 함수 실행)", ()
       "originReason",
       "question",
       "repeatCount",
+      "resolutionRevision",
+      "resolutionStatus",
+      "resolutionUpdatedAt",
+      "resolutionUpdatedBy",
+      "resolvedAt",
+      "resolvedBy",
       "status",
     ]);
 
@@ -353,7 +372,7 @@ describe("fetchPendingQuestionsForOwner (가짜 DB로 실제 함수 실행)", ()
     }
     // 애초에 필요한 컬럼만 select 한다.
     assert.deepEqual(inspect().selectedColumns, [
-      "id, question, status, store_id, created_at",
+      "id, question, status, store_id, created_at, resolution_status, resolution_revision, resolution_updated_at, resolution_updated_by, resolved_at, resolved_by",
       "id, question, status, store_id, source_manual_id, created_at",
     ]);
   });

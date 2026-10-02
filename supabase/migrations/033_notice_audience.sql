@@ -1,4 +1,8 @@
--- 029: notice audience and franchise-level target scope.
+-- 033 (formerly 029_notice_audience.sql): notice audience and franchise-level target scope.
+-- Renumbered only to remove the duplicate 029 prefix (029_staff_hq_manual_read_access.sql).
+-- ALREADY APPLIED on the shared Supabase project (notices.audience exists, verified 2026-10-02).
+-- Do NOT re-run because of the rename: notices_target_scope_check is added without
+-- "drop ... if exists", so a second run fails and rolls back.
 -- Preserve legacy "all" rows/API clients while allowing the explicit
 -- "franchise" value used by the audience-aware API.
 

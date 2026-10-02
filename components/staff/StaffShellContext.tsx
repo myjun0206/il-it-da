@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 import type { StaffStore } from "@/lib/staff/approved-stores";
 import {
@@ -69,6 +69,7 @@ type StoresState = {
 
 export function StaffShellProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [userName, setUserName] = useState("");
   const [roleLabel, setRoleLabel] = useState("");
   const [reloadToken, setReloadToken] = useState(0);
@@ -106,8 +107,14 @@ export function StaffShellProvider({ children }: { children: ReactNode }) {
           router.push("/");
           return;
         }
-        if (profile.approval_status !== "approved") {
-          router.push("/signup/approval-status");
+
+        // 매장 관리(/staff/stores/**) 및 설정(/staff/settings) 화면은
+        // 마지막 매장 탈퇴 후 미소속(rejected) 또는 대기(pending) 상태여도 접근을 허용한다.
+        const isStoreManagementPath =
+          pathname.startsWith("/staff/stores") || pathname.startsWith("/staff/settings");
+
+        if (profile.approval_status !== "approved" && !isStoreManagementPath) {
+          router.push(profile.approval_status === "rejected" ? "/staff/stores" : "/signup/approval-status");
           return;
         }
 
@@ -121,7 +128,7 @@ export function StaffShellProvider({ children }: { children: ReactNode }) {
     return () => {
       isCancelled = true;
     };
-  }, [router]);
+  }, [router, pathname]);
 
   // 근무 매장: approved는 /api/staff/stores(서버에서 approved staff membership만), 승인 대기는 본인 membership 목록
   useEffect(() => {

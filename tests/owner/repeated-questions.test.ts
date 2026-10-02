@@ -6,6 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   MANUAL_IMPROVEMENT_DRAFT_CONSTRAINTS,
   MAX_ANALYZED_QUESTION_LOGS,
+  QUESTION_LOG_PAGE_SIZE,
   REPEATED_QUESTION_CATEGORY_LABELS,
   REPEATED_QUESTION_MIN_COUNT,
   REPEATED_QUESTION_THRESHOLDS_VALIDATED,
@@ -539,8 +540,9 @@ type FakeClientOptions = {
 function fakeClient(options: FakeClientOptions = {}) {
   const rows = options.rows ?? [];
   const selectedColumns: string[] = [];
-  let appliedLimit: number | null = null;
+  const appliedRanges: Array<[number, number]> = [];
   let appliedGte: { column: string; value: string } | null = null;
+  let appliedLte: { column: string; value: string } | null = null;
 
   const client = {
     from(table: string) {
@@ -564,11 +566,15 @@ function fakeClient(options: FakeClientOptions = {}) {
               appliedGte = { column, value };
               return query;
             },
+            lte(column: string, value: string) {
+              appliedLte = { column, value };
+              return query;
+            },
             order() {
               return query;
             },
-            limit(value: number) {
-              appliedLimit = value;
+            range(from: number, to: number) {
+              appliedRanges.push([from, to]);
               if (options.failQuery) {
                 return Promise.resolve({
                   data: null,
@@ -577,9 +583,9 @@ function fakeClient(options: FakeClientOptions = {}) {
               }
               const matched = rows
                 .filter((item) => item.store_id === filters.store_id)
-                .filter((item) =>
-                  !appliedGte || String(item.created_at) >= appliedGte.value)
-                .slice(0, value);
+                .filter((item) => !appliedGte || String(item.created_at) >= appliedGte.value)
+                .filter((item) => !appliedLte || String(item.created_at) <= appliedLte.value)
+                .slice(from, to + 1);
               return Promise.resolve({ data: matched, error: null });
             },
           };
@@ -589,7 +595,7 @@ function fakeClient(options: FakeClientOptions = {}) {
     },
   } as unknown as SupabaseClient;
 
-  return { client, inspect: () => ({ selectedColumns, appliedLimit, appliedGte }) };
+  return { client, inspect: () => ({ selectedColumns, appliedRanges, appliedGte, appliedLte }) };
 }
 
 describe("fetchRepeatedQuestionsForStore (가짜 DB로 실제 함수 실행)", () => {
@@ -626,15 +632,49 @@ describe("fetchRepeatedQuestionsForStore (가짜 DB로 실제 함수 실행)", (
     assert.equal(inspect().selectedColumns.length, 0);
   });
 
-  test("필요한 컬럼만 읽고 기간·건수 상한을 건다", async () => {
+  test("필요한 컨럼만 읽고 기간을 건다 (페이지 단위)", async () => {
     const { client, inspect } = fakeClient({ rows: repeat(3) });
     await fetchRepeatedQuestionsForStore(client, { storeId: STORE_A, now: NOW });
     const applied = inspect();
 
-    assert.deepEqual(applied.selectedColumns, ["id, question, status, store_id, source_manual_id, created_at"]);
-    assert.equal(applied.appliedLimit, MAX_ANALYZED_QUESTION_LOGS);
+    assert.equal(applied.selectedColumns[0], "id, question, status, store_id, source_manual_id, created_at");
+    assert.deepEqual(applied.appliedRanges[0], [0, QUESTION_LOG_PAGE_SIZE - 1]);
     assert.equal(applied.appliedGte?.column, "created_at");
     assert.equal(applied.appliedGte?.value, daysAgo(REPEATED_QUESTION_WINDOW_DAYS));
+    assert.equal(applied.appliedLte?.value, NOW.toISOString());
+  });
+
+  test("서버 max-rows보다 많은 7일 로그도 끝까지 읽어 누락 없이 집계한다", async () => {
+    const many = [
+      ...repeat(2500, { question: "다른 질문", created_at: daysAgo(0.5) }),
+      ...repeat(3, { question: "환불 어떻게", created_at: daysAgo(6) }),
+    ];
+    const { client, inspect } = fakeClient({ rows: many });
+    const result = await fetchRepeatedQuestionsForStore(client, { storeId: STORE_A, now: NOW });
+
+    assert.equal(result.status, "ok");
+    assert.equal(result.status === "ok" && result.truncated, false);
+    const groups = result.status === "ok" ? result.report.groups : [];
+    assert.equal(groups.find((g) => g.groupKey === normalizeRepeatedQuestionKey("환불 어떻게"))?.repeatCount, 3);
+    assert.ok(inspect().appliedRanges.length >= 3);
+  });
+
+  test("분석 상한에 닿으면 truncated로 알린다", async () => {
+    const { client } = fakeClient({ rows: repeat(MAX_ANALYZED_QUESTION_LOGS + 5, { created_at: daysAgo(1) }) });
+    const result = await fetchRepeatedQuestionsForStore(client, { storeId: STORE_A, now: NOW });
+
+    assert.equal(result.status === "ok" && result.truncated, true);
+  });
+
+  test("정확히 상한만큼이면 truncated가 아니고 상한을 넘는 오래된 로그만 버린다", async () => {
+    const exact = fakeClient({ rows: repeat(MAX_ANALYZED_QUESTION_LOGS, { created_at: daysAgo(1) }) });
+    const exactResult = await fetchRepeatedQuestionsForStore(exact.client, { storeId: STORE_A, now: NOW });
+    assert.equal(exactResult.status === "ok" && exactResult.truncated, false);
+    assert.equal(exactResult.status === "ok" && exactResult.report.analyzedLogCount, MAX_ANALYZED_QUESTION_LOGS);
+
+    const over = fakeClient({ rows: repeat(MAX_ANALYZED_QUESTION_LOGS + 1, { created_at: daysAgo(1) }) });
+    const overResult = await fetchRepeatedQuestionsForStore(over.client, { storeId: STORE_A, now: NOW });
+    assert.equal(overResult.status === "ok" && overResult.report.analyzedLogCount, MAX_ANALYZED_QUESTION_LOGS);
   });
 
   test("조회 실패는 원본 DB 오류 없이 failed로 수렴한다", async () => {

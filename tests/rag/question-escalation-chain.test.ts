@@ -354,6 +354,10 @@ describe("app/api/rag/query/route.ts 연결 계약", () => {
     path.join(path.dirname(fileURLToPath(import.meta.url)), "../../app/api/rag/query/route.ts"),
     "utf8",
   ).replace(/\r\n/g, "\n");
+  const followUpSource = readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "../../lib/notifications/notify-repeated-question.ts"),
+    "utf8",
+  ).replace(/\r\n/g, "\n");
 
   test("모든 로그 저장 경로에 검증된 storeId를 넘긴다", () => {
     const finalizeCalls = source.match(/finalizeRagQueryResponse\(\{/g) ?? [];
@@ -363,33 +367,31 @@ describe("app/api/rag/query/route.ts 연결 계약", () => {
     assert.equal(storeIdArgs.length, finalizeCalls.length);
   });
 
-  test("최종 insufficient일 때만 에스컬레이션을 건다", () => {
+  test("최종 insufficient일 때만 단건 에스컬레이션을 건다 (반복 질문 검사는 모든 status)", () => {
     assert.match(
       source,
-      /afterQuestionLogSaved: outcome\.escalate \? escalateInsufficientQuestion\(storeId\) : undefined/,
+      /afterQuestionLogSaved: createQuestionLogFollowUp\(\{\s*\n\s*storeId,\s*\n\s*escalate: outcome\.escalate,/,
     );
-    assert.equal(
-      (source.match(/afterQuestionLogSaved: escalateInsufficientQuestion\(storeId\)/g) ?? []).length,
-      0,
-      "무조건 에스컬레이션하는 경로가 남아 있으면 안 된다",
-    );
+    assert.match(followUpSource, /if \(options\.escalate\) \{/);
+    assert.equal(/escalate: true/.test(source), false, "무조건 에스컬레이션하는 경로가 남아 있으면 안 된다");
   });
 
   test("저장 성공과 로그 id를 확인한 뒤에만 알림을 보낸다", () => {
-    assert.match(source, /if \(!logResult\.saved \|\| !logResult\.questionLogId\) \{\s*\n\s*return;/);
+    assert.match(followUpSource, /if \(!logResult\.saved \|\| !logResult\.questionLogId\) \{\s*\n\s*return;/);
   });
 
   test("클라이언트가 보낸 franchise id를 알림에 쓰지 않는다", () => {
-    assert.match(source, /escalateQuestionLogToStoreOwners\(createAdminClient\(\), \{\s*\n\s*questionLogId: logResult\.questionLogId,\s*\n\s*storeId,/);
+    assert.match(followUpSource, /escalateQuestionLogToStoreOwners\(client, \{ questionLogId, storeId: options\.storeId \}\)/);
     assert.equal(/franchiseId: (body|validation)/.test(source), false);
   });
 
   test("fire-and-forget이 아니라 응답 전에 await 한다", () => {
-    assert.equal(/void escalateQuestionLogToStoreOwners/.test(source), false);
-    assert.match(source, /const result = await escalateQuestionLogToStoreOwners\(/);
+    assert.equal(/void escalateQuestionLogToStoreOwners/.test(followUpSource), false);
+    assert.match(followUpSource, /const result = await escalateQuestionLogToStoreOwners\(/);
+    assert.match(followUpSource, /const repeated = await notifyRepeatedQuestion\(/);
   });
 
   test("에스컬레이션 실패를 응답에 섞지 않는다", () => {
-    assert.match(source, /console\.error\("\[RAG\] QUESTION_ESCALATION_FAILED", \{ status: result\.status \}\)/);
+    assert.match(followUpSource, /console\.error\("\[RAG\] QUESTION_ESCALATION_FAILED", \{ status: result\.status \}\)/);
   });
 });

@@ -12,6 +12,12 @@ export function buildBossQuestionsUrl(storeId: string): string {
   return `${BOSS_QUESTIONS_PATH}?storeId=${encodeURIComponent(storeId)}`;
 }
 
+export const BOSS_REPEATED_QUESTIONS_PATH = "/boss/questions/repeated";
+
+export function buildBossRepeatedQuestionsUrl(storeId: string, alertId: string): string {
+  return `${BOSS_REPEATED_QUESTIONS_PATH}?storeId=${encodeURIComponent(storeId)}&alertId=${encodeURIComponent(alertId)}`;
+}
+
 export type QuestionsStoreChoice = {
   store: OwnerStore | null;
   /** URL로 요청된 매장이 승인된 점주 매장 목록에 없어 무시했는지. */
@@ -44,21 +50,32 @@ export function pickQuestionsStore(
 
 export type QuestionsLoadState =
   | { kind: "loading"; storeId: string }
-  | { kind: "ready"; storeId: string; questions: PendingQuestion[] }
+  | {
+      kind: "ready";
+      storeId: string;
+      questions: PendingQuestion[];
+      resolutionFeatureAvailable: boolean;
+    }
   | { kind: "forbidden"; storeId: string }
   | { kind: "error"; storeId: string };
 
 type PendingQuestionsBody = {
   success?: unknown;
-  data?: { questions?: unknown } | null;
+  data?: {
+    questions?: unknown;
+    resolutionFeatureAvailable?: unknown;
+  } | null;
 };
 
 function isPendingQuestion(value: unknown): value is PendingQuestion {
   if (!value || typeof value !== "object") return false;
   const row = value as Record<string, unknown>;
+  // 031 미적용 응답에는 resolutionStatus가 없을 수 있어 open으로 본다.
+  const resolutionStatus = typeof row.resolutionStatus === "string" ? row.resolutionStatus : "open";
   return typeof row.id === "string"
     && typeof row.question === "string"
     && typeof row.createdAt === "string"
+    && (resolutionStatus === "open" || resolutionStatus === "in_progress" || resolutionStatus === "resolved")
     && (row.originReason === "manual_gap" || row.originReason === "frequent_question")
     && typeof row.repeatCount === "number"
     && Number.isInteger(row.repeatCount)
@@ -82,7 +99,17 @@ export function classifyPendingQuestionsResponse(
     return { kind: "error", storeId };
   }
 
-  return { kind: "ready", storeId, questions: questions.filter(isPendingQuestion) };
+  const resolutionFeatureAvailable =
+    typeof parsed.data?.resolutionFeatureAvailable === "boolean"
+      ? parsed.data.resolutionFeatureAvailable
+      : true;
+
+  return {
+    kind: "ready",
+    storeId,
+    questions: questions.filter(isPendingQuestion),
+    resolutionFeatureAvailable,
+  };
 }
 
 /** 현재 선택 매장과 다른 매장의 결과는 절대 보여주지 않고 로딩으로 취급한다. */

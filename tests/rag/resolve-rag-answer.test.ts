@@ -259,7 +259,7 @@ describe("라우트 연결부", () => {
   });
 
   test("에스컬레이션은 최종 insufficient일 때만 건다", () => {
-    assert.match(source, /outcome\.escalate \? escalateInsufficientQuestion\(storeId\) : undefined/);
+    assert.match(source, /escalate: outcome\.escalate,/);
   });
 
   test("구조화 출력을 요구한다", () => {
