@@ -21,6 +21,7 @@ interface ProfileMenuProps {
   context?: { label: string; value: string };
   /** 승인된 근무 매장 목록 (직원용) */
   stores?: StaffStore[];
+  isStoresLoading?: boolean;
   /** 현재 기본 매장 ID (직원용) */
   defaultStoreId?: string | null;
   /** 기본 매장 변경 핸들러 (직원용) */
@@ -38,6 +39,7 @@ export default function ProfileMenu({
   avatarUrl,
   context,
   stores,
+  isStoresLoading = false,
   defaultStoreId,
   onSetDefaultStore,
   onLogout,
@@ -53,7 +55,7 @@ export default function ProfileMenu({
   const currentDefaultStore = approvedStores.find((s) => s.id === defaultStoreId);
 
   const handleSelectStore = async (storeId: string) => {
-    if (!onSetDefaultStore || isSettingDefault) return;
+    if (!onSetDefaultStore || isSettingDefault || isStoresLoading) return;
     setIsSettingDefault(true);
     try {
       await onSetDefaultStore(storeId);
@@ -135,18 +137,18 @@ export default function ProfileMenu({
             </div>
             
             {/* 기본 매장 선택 */}
-            {approvedStores.length > 0 && (
+            {(approvedStores.length > 0 || isStoresLoading) && (
               <div className="mt-4 relative">
                 <button
                   type="button"
                   onClick={() => setStoreDropdownOpen(!storeDropdownOpen)}
-                  disabled={isSettingDefault || !hasMultipleStores}
+                  disabled={isStoresLoading || isSettingDefault || !hasMultipleStores}
                   className="w-full rounded-lg bg-[var(--color-bg-default)] px-3 py-2 text-left hover:bg-[var(--color-primary-light)]/15 transition-colors disabled:cursor-default disabled:hover:bg-[var(--color-bg-default)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                 >
                   <p className="text-xs text-[var(--color-text-tertiary)]">기본 매장</p>
                   <div className="mt-0.5 flex items-center justify-between gap-2">
                     <p className="flex-1 text-sm font-medium text-[var(--color-text-primary)] break-keep">
-                      {currentDefaultStore ? formatStoreDisplayName(currentDefaultStore.name) : ""}
+                      {isStoresLoading ? "근무 매장을 불러오는 중..." : currentDefaultStore ? formatStoreDisplayName(currentDefaultStore.name) : ""}
                     </p>
                     {hasMultipleStores && (
                       <ChevronDown
@@ -167,7 +169,7 @@ export default function ProfileMenu({
                           key={store.id}
                           type="button"
                           onClick={() => void handleSelectStore(store.id)}
-                          disabled={isSettingDefault}
+                          disabled={isStoresLoading || isSettingDefault}
                           className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-primary-light)]/15 transition-colors text-left disabled:opacity-60 disabled:cursor-not-allowed first:border-t-0 border-t border-[var(--color-border)]"
                         >
                           <Check

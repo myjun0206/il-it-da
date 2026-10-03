@@ -5,6 +5,15 @@ export const ESCALATION_NOTIFICATION_TYPE = "manual_question_escalation";
 /** 근거 부족 단건 알림과 별개인 "같은 질문 반복" 알림. related_id는 repeated_question_alerts.id다. */
 export const REPEATED_QUESTION_NOTIFICATION_TYPE = "repeated_question_alert";
 
+export function isInternalNotificationUrl(value?: string): value is string {
+  if (!value?.startsWith("/") || value.startsWith("//")) return false;
+  try {
+    return new URL(value, "http://local.invalid").origin === "http://local.invalid";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 에스컬레이션 알림이 점주 질문 화면을 가리키면 related_id(질문 로그 id)를 강조용 쿼리로 덧붙인다.
  * 그 외 알림이나 related_id가 없으면 target_url을 그대로 쓴다.
