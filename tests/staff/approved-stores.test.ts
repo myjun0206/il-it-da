@@ -110,23 +110,29 @@ describe("staff stores API results", () => {
   });
 });
 
-// 직원 복수 매장 선택은 app/staff/page.tsx의 React state 배선에 달려 있어 Next 런타임 밖에서
-// 실행할 수 없다. 회귀(설정 누락으로 선택 목록이 영구히 비는 문제)만 소스 계약으로 고정한다.
 describe("app/staff/page.tsx 근무 매장 선택 배선", () => {
-  const source = readFileSync(
-    path.join(path.dirname(fileURLToPath(import.meta.url)), "../../app/staff/page.tsx"),
-    "utf8",
-  ).replace(/\r\n/g, "\n");
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const read = (relativePath: string) => readFileSync(path.join(root, relativePath), "utf8").replace(/\r\n/g, "\n");
+  const source = read("app/staff/page.tsx");
+  const shell = read("components/staff/StaffShellContext.tsx");
+  const header = read("components/staff/StaffHeader.tsx");
+  const menu = read("components/common/ProfileMenu.tsx");
 
-  test("StaffShellContext에서 근무 매장 목록을 받아 StoreSwitcher에 전달한다", () => {
+  test("StaffShellContext의 승인 매장 목록을 Header의 ProfileMenu에 전달한다", () => {
     assert.match(source, /const \{\s*stores,/);
     assert.match(source, /useStaffShell\(\)/);
-    assert.match(source, /stores={stores}/);
+    assert.match(shell, /fetch\("\/api\/staff\/stores"/);
+    assert.match(header, /useStaffShell\(\)/);
+    assert.match(header, /<ProfileMenu[\s\S]*?stores={stores}/);
+    assert.match(menu, /approvedStores\.map\(\(store\) =>/);
   });
 
-  test("StoreSwitcher와 selectStore 함수를 통해 매장을 선택할 수 있다", () => {
-    assert.match(source, /onSelect={selectStore}/);
-    assert.match(source, /function selectStore/);
+  test("ProfileMenu의 기본 매장 선택을 공통 상태의 활성 매장에 반영한다", () => {
+    assert.match(header, /onSetDefaultStore={handleSetDefaultStore}/);
+    assert.match(header, /await saveStorePreferences\(\{ defaultStoreId: storeId, order: stores\.map/);
+    assert.match(menu, /onClick={\(\) => void handleSelectStore\(store\.id\)}/);
+    assert.match(menu, /await onSetDefaultStore\(storeId\)/);
+    assert.match(shell, /selectedStore = stores\.find\(\(store\) => store\.id === defaultStoreId\)/);
   });
 
   test("서버가 재검증하도록 선택한 매장 id를 질문 요청에 담아 보낸다", () => {
@@ -134,21 +140,34 @@ describe("app/staff/page.tsx 근무 매장 선택 배선", () => {
   });
 
   test("선택 매장이 바뀔 때 이전 매장의 대화·입력·오류를 초기화한다", () => {
-    assert.match(source, /function selectStore\(storeId: string\)/);
-    assert.match(source, /resetConversation/);
-    assert.match(source, /applyStore\(store\)/);
+    assert.match(source, /useEffectEvent\(\(\) => resetConversation\(\)\)/);
+    assert.match(source, /previousStoreId !== null && previousStoreId !== nextStoreId\) \{\s*resetForStoreChange\(\)/);
+    const reset = source.slice(source.indexOf("function resetConversation("), source.indexOf("const resetForStoreChange"));
+    for (const assertion of [/setMessages\(messagesToUse\)/, /setConversationId\(null\)/, /writeStaffConversationId\(null\)/, /setInput\(""\)/, /setErrorMessage\(""\)/]) {
+      assert.match(reset, assertion);
+    }
   });
 
   test("같은 매장을 다시 선택하면 대화를 보존한다", () => {
-    assert.match(
-      source,
-      /if \(!store \|\| \(selectedStore\?\.id === store\.id && readOnlyStoreName === null\)\) return;/,
-    );
+    assert.match(source, /previousStoreId !== null && previousStoreId !== nextStoreId/);
+    assert.match(shell, /defaultStoreId !== current\.defaultStoreId && defaultStoreId !== selectedStore\?\.id/);
+    assert.match(source, /function applyStore\(store: StaffStore\) \{[\s\S]*?previousStoreIdRef\.current = store\.id;\s*selectShellStore\(store\.id\)/);
   });
 
-  test("StoreSwitcher가 매장 로딩 상태를 표시한다", () => {
-    assert.match(source, /isLoading={isStoresLoading}/);
-    assert.match(source, /selectedStoreId={selectedStore\?\.id \?\? null}/);
+  test("ProfileMenu가 매장 로딩 상태를 표시하고 로딩 중 선택과 질문 전송을 차단한다", () => {
+    assert.match(header, /isStoresLoading={isStoresLoading}/);
+    assert.match(header, /defaultStoreId={defaultStoreId}/);
+    assert.match(menu, /approvedStores\.length > 0 \|\| isStoresLoading/);
+    assert.match(menu, /isStoresLoading \? "근무 매장을 불러오는 중/);
+    assert.match(menu, /if \(!onSetDefaultStore \|\| isSettingDefault \|\| isStoresLoading\) return/);
+    assert.match(menu, /disabled={isStoresLoading \|\| isSettingDefault \|\| !hasMultipleStores}/);
+    assert.match(menu, /disabled={isStoresLoading \|\| isSettingDefault}/);
+    assert.match(source, /const isBusy = isLoading \|\| isStoresLoading \|\| isConversationLoading/);
+    assert.match(source, /const canAsk = !isBusy && Boolean\(selectedStore\)/);
+    assert.match(source, /if \(!question \|\| isBusy\) return/);
+    assert.match(source, /<input[\s\S]*?disabled={!canAsk}/);
+    assert.match(source, /type="submit"\s+disabled={!canAsk \|\| !input\.trim\(\)}/);
+    assert.match(source, /<QuickQuestionsScroller[^>]*canAsk={canAsk}/);
   });
 
   test("목록 조회 실패와 매장 없음을 구분해서 안내한다", () => {
@@ -158,6 +177,16 @@ describe("app/staff/page.tsx 근무 매장 선택 배선", () => {
     assert.match(source, /"승인된 근무 매장이 없습니다/);
     // 두 조건이 분리되어 있음을 확인
     assert.match(source, /!isStoresLoading && !storesError && stores\.length === 0/);
+    assert.match(shell, /if \(!approvedResponse\.ok \|\| !Array\.isArray\(approvedPayload\.stores\)\) throw/);
+    assert.match(shell, /catch \{[\s\S]*?selectedStore: null,[\s\S]*?isStoresLoading: false,[\s\S]*?storesError: "승인된 근무 매장을 불러오지 못했습니다/);
+  });
+
+  test("권한 해제 시 기존 대화를 비우고 재조회 동안 질문을 차단하며 유효한 매장으로 갱신한다", () => {
+    assert.match(source, /payload\.code === "STORE_FORBIDDEN"\) \{[\s\S]*?resetConversation\(\);[\s\S]*?reloadStores\(\);\s*return/);
+    assert.match(shell, /const reloadStores[\s\S]*?isStoresLoading: true, storesError: ""[\s\S]*?setReloadToken/);
+    assert.match(shell, /stores\.find\(\(store\) => store\.id === storedStoreId\) \?\?[\s\S]*?stores\[0\] \?\?\s*null/);
+    assert.match(source, /if \(previousStoreIdRef\.current !== selectedStore\.id\) return/);
+    assert.match(source, /if \(controller\.signal\.aborted\) return;\s*restoreCheckedRef\.current = true/);
   });
 });
 

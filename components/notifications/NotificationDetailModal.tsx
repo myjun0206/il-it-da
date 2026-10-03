@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
-import { X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { MoreVertical, X } from "lucide-react";
 
 interface NotificationDetailModalProps {
   notification: {
@@ -12,6 +12,10 @@ interface NotificationDetailModalProps {
     type?: string;
   };
   onClose: () => void;
+  isRead?: boolean;
+  onMarkAsRead?: () => Promise<void>;
+  onMarkAsUnread?: () => Promise<void>;
+  onDelete?: () => Promise<void>;
 }
 
 function formatNotificationDate(value: string): string {
@@ -22,7 +26,21 @@ function formatNotificationDate(value: string): string {
   return `${date.getFullYear()}.${month}.${day}`;
 }
 
-export function NotificationDetailModal({ notification, onClose }: NotificationDetailModalProps) {
+export function NotificationDetailModal({ notification, onClose, isRead, onMarkAsRead, onMarkAsUnread, onDelete }: NotificationDetailModalProps) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isActionLoading, setIsActionLoading] = useState(false);
+  const markAction = isRead ? onMarkAsUnread : onMarkAsRead;
+
+  async function runAction(action: () => Promise<void>) {
+    if (isActionLoading) return;
+    setIsActionLoading(true);
+    try {
+      await action();
+      setIsMenuOpen(false);
+    } finally {
+      setIsActionLoading(false);
+    }
+  }
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -48,7 +66,10 @@ export function NotificationDetailModal({ notification, onClose }: NotificationD
         aria-modal="true"
         aria-labelledby="notification-detail-title"
         className="flex max-h-[90vh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-xl lg:max-w-[680px] lg:rounded-lg"
-        onClick={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (!(event.target as Element).closest("[data-notification-actions]")) setIsMenuOpen(false);
+        }}
       >
         {/* Header */}
         <header className="flex items-center justify-between border-b border-[var(--color-border)] px-6 py-5">
@@ -76,9 +97,24 @@ export function NotificationDetailModal({ notification, onClose }: NotificationD
         {/* Footer - Date and Confirm Button */}
         <footer className="flex items-center justify-between px-6 py-5">
           {/* Date on the left */}
-          <span className="text-sm text-[var(--color-text-secondary)]">
-            {formatNotificationDate(notification.createdAt)}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-[var(--color-text-secondary)]">
+              {formatNotificationDate(notification.createdAt)}
+            </span>
+            {(markAction || onDelete) && (
+              <div className="relative" data-notification-actions>
+                <button type="button" aria-label="알림 관리" title="알림 관리" aria-haspopup="menu" aria-expanded={isMenuOpen} disabled={isActionLoading} onClick={() => setIsMenuOpen((open) => !open)} className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-surface)] focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:opacity-50">
+                  <MoreVertical size={18} aria-hidden="true" />
+                </button>
+                {isMenuOpen && (
+                  <div role="menu" aria-label="알림 관리" className="absolute bottom-full left-0 mb-1 min-w-36 rounded-lg border border-[var(--color-border)] bg-white p-1 shadow-md">
+                    {markAction && <button type="button" role="menuitem" disabled={isActionLoading} onClick={() => void runAction(markAction)} className="block w-full rounded-md px-3 py-2 text-left text-sm hover:bg-[var(--color-bg-surface)] disabled:opacity-50">{isRead ? "읽지 않음으로 표시" : "읽음으로 표시"}</button>}
+                    {onDelete && <button type="button" role="menuitem" disabled={isActionLoading} onClick={() => void runAction(onDelete)} className="block w-full rounded-md px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 disabled:opacity-50">삭제</button>}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* Confirm Button on the right */}
           <button

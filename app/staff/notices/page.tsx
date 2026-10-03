@@ -8,6 +8,8 @@ import { AlertCircle, Megaphone, RefreshCw, Search, Store as StoreIcon } from "l
 import { useStaffShell } from "@/components/staff/StaffShellContext";
 import { NoticeDetailDialog } from "@/components/notices/NoticeDetailDialog";
 import { getNoticeViewCountIncrement, markNoticeAsRead } from "@/lib/notices/mark-notice-read";
+import { filterStaffNotices, toStaffNotice, type NoticeSourceFilter, type NoticeTargetFilter } from "@/lib/notices/notice-filters";
+import type { NoticeTargetType } from "@/lib/notices/notice-authorization";
 
 // 직원 공지사항: 기본 매장 범위의 공지만 조회·검색·필터·상세 보기 (작성/수정/삭제 없음).
 // 기본 매장이 변경되면 자동으로 반영된다.
@@ -19,6 +21,7 @@ interface StaffNotice {
   viewCount: number;
   sourceType: "hq" | "owner";
   sourceLabel: string;
+  targetType: NoticeTargetType;
   title: string;
   content: string;
   authorName: string;
@@ -26,16 +29,8 @@ interface StaffNotice {
 }
 
 type StaffNoticeResponse = Omit<StaffNotice, "sourceType">;
-type NoticeSourceFilter = "all" | "hq" | "owner";
 
 const DEFAULT_LOAD_ERROR = "공지사항을 불러오지 못했습니다.";
-
-function toStaffNotice(notice: StaffNoticeResponse): StaffNotice {
-  return {
-    ...notice,
-    sourceType: notice.sourceLabel === "점주 공지" ? "owner" : "hq",
-  };
-}
 
 type LoadResult =
   | { key: string; status: "ready"; notices: StaffNotice[] }
@@ -64,6 +59,7 @@ export default function StaffNoticesPage() {
   const [reloadToken, setReloadToken] = useState(0);
   const [query, setQuery] = useState("");
   const [sourceFilter, setSourceFilter] = useState<NoticeSourceFilter>("all");
+  const [targetFilter, setTargetFilter] = useState<NoticeTargetFilter>("all");
   // 상세 보기: 선택한 공지 ID를 기억한다.
   const [detail, setDetail] = useState<string | null>(null);
 
@@ -112,22 +108,7 @@ export default function StaffNoticesPage() {
   const currentResult = result && result.key === requestKey ? result : null;
   const allNotices = currentResult?.status === "ready" ? currentResult.notices : [];
   const trimmedQuery = query.trim();
-  const normalizedQuery = trimmedQuery.toLowerCase();
-
-  // 출처 필터 + 검색 적용
-  const visibleNotices = allNotices.filter((notice) => {
-    if (sourceFilter !== "all" && notice.sourceType !== sourceFilter) return false;
-
-    if (
-      normalizedQuery &&
-      !notice.title.toLowerCase().includes(normalizedQuery) &&
-      !notice.content.toLowerCase().includes(normalizedQuery)
-    ) {
-      return false;
-    }
-
-    return true;
-  });
+  const visibleNotices = filterStaffNotices(allNotices, { source: sourceFilter, target: targetFilter, query });
 
   // 상세 보기 시 해당 공지 찾기
   const selectedNotice = detail ? allNotices.find((notice) => notice.id === detail) ?? null : null;
@@ -239,7 +220,7 @@ export default function StaffNoticesPage() {
             </div>
 
             {/* 공지 유형 필터 (카테고리 스타일) */}
-            <div className="mb-5 flex flex-wrap gap-2" role="group" aria-label="공지 유형">
+            <div className="mb-5 flex flex-wrap items-center gap-2" role="group" aria-label="공지 유형">
               {(
                 [
                   { value: "all", label: "전체" },
@@ -264,6 +245,16 @@ export default function StaffNoticesPage() {
                   </button>
                 );
               })}
+              <select
+                value={targetFilter}
+                onChange={(event) => setTargetFilter(event.target.value as NoticeTargetFilter)}
+                aria-label="공지 대상 필터"
+                className="ml-auto min-h-[36px] rounded-lg border border-[var(--color-border)] bg-white px-3 text-sm font-medium text-[var(--color-text-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+              >
+                <option value="all">전체 대상</option>
+                <option value="franchise">전체 지점</option>
+                <option value="store">현재 매장</option>
+              </select>
             </div>
 
             {/* 공지 개수 */}

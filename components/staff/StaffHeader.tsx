@@ -77,6 +77,7 @@ export default function StaffHeader() {
           settingsHref="/staff/settings"
           avatarUrl={avatarUrl}
           stores={stores}
+          isStoresLoading={isStoresLoading}
           defaultStoreId={defaultStoreId}
           onSetDefaultStore={handleSetDefaultStore}
           onLogout={() => void logout()}

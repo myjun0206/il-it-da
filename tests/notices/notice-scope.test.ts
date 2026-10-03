@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { createElement, type ReactNode } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { componentElements, createHookHarness, loadComponentModule } from "../support/component-harness.ts";
 import {
   canCreateNotice,
   canReadNotice,
@@ -14,6 +17,7 @@ import { buildHqNoticeTarget } from "../../lib/notices/build-hq-notice-target.ts
 import { validateOwnerNoticeCreateRequest } from "../../lib/notices/validate-owner-notice-create-request.ts";
 import { withNoticeReadStats, withNoticeReadStatus, withNoticeViewCounts } from "../../lib/notices/with-read-status.ts";
 import { getNoticeViewCountIncrement } from "../../lib/notices/mark-notice-read.ts";
+import { filterStaffNotices, toStaffNotice, type NoticeSourceFilter, type NoticeTargetFilter } from "../../lib/notices/notice-filters.ts";
 import {
   validateNoticeContentUpdateRequest,
   validateNoticeDeleteRequest,
@@ -42,8 +46,76 @@ const staffNoticesPage = readSource("app/staff/notices/page.tsx");
 const noticeCard = readSource("components/notices/NoticeCard.tsx");
 const noticeFilter = readSource("components/notices/NoticeFilter.tsx");
 const noticeMeta = readSource("components/notices/NoticeMeta.tsx");
-const noticeDetailDialog = readSource("components/notices/NoticeDetailDialog.tsx");
 const markNoticeReadHelper = readSource("lib/notices/mark-notice-read.ts");
+
+function noticePageScenario(role: "hq" | "owner" | "staff", multiple = false) {
+  const notice = {
+    id: "notice-a", title: "Kitchen Safety", content: "Check the equipment before opening.",
+    createdAt: "2026-09-21T12:00:00.000Z", viewCount: 7, isRead: false,
+    sourceLabel: "본사 공지", sourceType: "hq", targetType: "store", targetStoreId: "store-a",
+    target: "Store A", isMine: false, category: "운영 안내", isImportant: false,
+  };
+  const rows = multiple ? [notice,
+    { ...notice, id: "notice-b", title: "Store Schedule", content: "Kitchen opening shifts", sourceLabel: "점주 공지", sourceType: "owner", target: "Store B", isMine: true, category: "기타" },
+    { ...notice, id: "notice-c", title: "Franchise Safety", targetType: "franchise", target: "전체 지점", targetStoreId: null },
+  ] : [notice];
+  const initialStates = role === "hq"
+    ? ["Tester", "Cafe", true, rows, false, "", "", "all", "all", null, null, null, false]
+    : role === "owner"
+      ? [true, "Tester", "Store A", "store-a", { notices: rows, summary: { total: rows.length, important: 0 } }, false, "", "all", "", "전체", null, null, null, false]
+      : [{ key: "store-a:0", status: "ready", notices: rows }, 0, "", "all", "all", null];
+  const harness = createHookHarness(initialStates);
+  const navigations: string[] = [];
+  const reads: string[] = [];
+  const emptyLayout = () => null;
+  const overrides = {
+    react: harness.react,
+    "next/navigation": { useRouter: () => ({ push: (href: string) => navigations.push(href) }) },
+    "next/link": { default: (props: { children: ReactNode; href: string }) => createElement("a", { href: props.href }, props.children), __esModule: true },
+    "@/lib/supabase/client": { createClient: () => { throw new Error("Unexpected auth request"); } },
+    "@/lib/owner/current-store": { resolveOwnerCurrentStore: () => { throw new Error("Unexpected store request"); } },
+    "@/components/hq/HQSidebar": { default: emptyLayout, __esModule: true },
+    "@/components/hq/HQHeader": { default: emptyLayout, __esModule: true },
+    "@/components/owner/OwnerSidebar": { default: emptyLayout, __esModule: true },
+    "@/components/owner/OwnerHeader": { default: emptyLayout, __esModule: true },
+    "@/components/staff/StaffShellContext": { useStaffShell: () => ({ selectedStore: { id: "store-a" }, stores: [{ id: "store-a" }], isStoresLoading: false, storesError: "" }) },
+    "@/lib/notices/mark-notice-read": {
+      getNoticeViewCountIncrement,
+      markNoticeAsRead: async (id: string) => { reads.push(id); return { succeeded: true, alreadyRead: false }; },
+    },
+  };
+  const relativePath = role === "hq" ? "app/hq/communication/page.tsx" : role === "owner" ? "app/boss/notices/page.tsx" : "app/staff/notices/page.tsx";
+  const componentModule = loadComponentModule<{ default: () => ReactNode }>(relativePath, overrides);
+  return { notice, reads, navigations, render: () => harness.render(componentModule.default) };
+}
+
+async function assertNoticeDetail(role: "hq" | "owner" | "staff") {
+  const scenario = noticePageScenario(role);
+  const initial = scenario.render();
+  const markup = renderToStaticMarkup(initial);
+  assert.ok(markup.includes(scenario.notice.title), role);
+  assert.match(markup, /조회 7/);
+  const titleControl = componentElements(initial).find((element) =>
+    element.props.title === scenario.notice.title && typeof element.props.onOpen === "function"
+    || element.type === "button" && typeof element.props.onClick === "function" && renderToStaticMarkup(element).includes(scenario.notice.title),
+  );
+  assert.ok(titleControl, `${role}: title must be actionable`);
+  ((titleControl.props.onOpen ?? titleControl.props.onClick) as () => void)();
+  await Promise.resolve();
+  const selected = componentElements(scenario.render()).find((element) => (element.props.notice as { title?: string } | undefined)?.title === scenario.notice.title);
+  assert.ok(selected, `${role}: click must select a detail dialog`);
+  const detail = renderToStaticMarkup(selected);
+  assert.match(detail, /role="dialog"/);
+  assert.match(detail, /aria-modal="true"/);
+  assert.ok(detail.includes(scenario.notice.title));
+  assert.ok(detail.includes(scenario.notice.content));
+  assert.ok(detail.includes("2026.09.21"));
+  assert.match(detail, new RegExp(`조회 ${role === "hq" ? 7 : 8}`));
+  assert.deepEqual(scenario.navigations, []);
+  assert.deepEqual(scenario.reads, role === "hq" ? [] : [scenario.notice.id]);
+  (selected.props.onClose as () => void)();
+  assert.equal(componentElements(scenario.render()).some((element) => element.props.notice), false);
+}
 
 describe("021_hq_notices.sql (DB 계약)", () => {
   test("021 번호를 쓰고 020(매뉴얼 업로드 batch)과 겹치지 않는다", () => {
@@ -460,22 +532,17 @@ describe("notice isRead/viewCount mapping and GET queries", () => {
     assert.equal((hqRoute.match(/\.from\("notice_reads"\)/g) ?? []).length, 1);
   });
 
-  test("all role pages use shared card and detail metadata", () => {
+  test("all role pages use shared card and detail metadata", async () => {
     assert.match(bossRoute, /isRead: boolean/);
     assert.match(bossRoute, /viewCount: number/);
     assert.match(staffRoute, /isRead: boolean/);
     assert.match(staffRoute, /viewCount: number/);
-    for (const page of [hqNoticesPage, ownerNoticesPage, staffNoticesPage]) {
-      assert.match(page, /<NoticePageHeader/);
-      assert.match(page, /<NoticeCard/);
-      assert.match(page, /<NoticeDetailDialog/);
-    }
+    for (const role of ["hq", "owner", "staff"] as const) await assertNoticeDetail(role);
     assert.match(ownerNoticesPage, /isRead=\{notice\.isRead\}/);
-    assert.match(staffNoticesPage, /isRead=\{notice\.isRead\}/);
+    assert.match(staffNoticesPage, /!notice\.isRead/);
     assert.match(noticeCard, /<NoticeReadStatus isRead=\{isRead\} \/>/);
     assert.match(noticeMeta, /조회 \{viewCount\}/);
     assert.match(noticeCard, /viewCount=\{viewCount\}/);
-    assert.match(noticeDetailDialog, /viewCount=\{notice\.viewCount\}/);
     assert.match(hqNoticesPage, /viewCount=\{notice\.viewCount\}/);
     assert.match(hqNoticesPage, /isRead=\{null\}/);
     assert.doesNotMatch(hqNoticesPage, /markNoticeAsRead/);
@@ -483,6 +550,58 @@ describe("notice isRead/viewCount mapping and GET queries", () => {
 });
 
 describe("notice source and target filters", () => {
+  test("role filter controls compose without resetting the other active filters (component handlers)", () => {
+    for (const role of ["hq", "owner", "staff"] as const) {
+      const scenario = noticePageScenario(role, true);
+      const change = (predicate: (element: ReturnType<typeof componentElements>[number]) => boolean, value: string, event = false) => {
+        const control = componentElements(scenario.render()).find(predicate);
+        assert.ok(control, `${role}: missing filter control`);
+        (control.props.onChange as (value: unknown) => void)(event ? { target: { value } } : value);
+      };
+      const hasTitles = (titles: string[]) => {
+        const markup = renderToStaticMarkup(scenario.render());
+        for (const title of ["Kitchen Safety", "Store Schedule", "Franchise Safety"]) {
+          assert.equal(markup.includes(title), titles.includes(title), `${role}: ${title}`);
+        }
+      };
+      const search = (value: string) => change((element) => typeof element.props.onChange === "function" && typeof element.props.placeholder === "string", value, true);
+      if (role === "hq") {
+        change((element) => element.props.ariaLabel === "공지 대상 범위", "store");
+        change((element) => element.props["aria-label"] === "공지 대상 지점 필터", "Store A", true);
+        search("  Kitchen  ");
+        hasTitles(["Kitchen Safety"]);
+        search("");
+        hasTitles(["Kitchen Safety"]);
+      } else if (role === "owner") {
+        change((element) => element.props.ariaLabel === "공지 출처", "hq");
+        change((element) => element.type === "select", "기타", true);
+        search("Kitchen");
+        hasTitles([]);
+        change((element) => element.props.ariaLabel === "공지 출처", "mine");
+        hasTitles(["Store Schedule"]);
+        search("missing");
+        hasTitles([]);
+        search("");
+        hasTitles(["Store Schedule"]);
+      } else {
+        change((element) => element.props["aria-label"] === "공지 대상 필터", "store", true);
+        const source = componentElements(scenario.render()).find((element) => element.type === "button" && element.props.children === "매장 공지");
+        assert.ok(source);
+        (source.props.onClick as () => void)();
+        search("  KITCHEN  ");
+        hasTitles(["Store Schedule"]);
+        change((element) => element.props["aria-label"] === "공지 대상 필터", "franchise", true);
+        hasTitles([]);
+        change((element) => element.props["aria-label"] === "공지 대상 필터", "store", true);
+        hasTitles(["Store Schedule"]);
+        search("missing");
+        hasTitles([]);
+        search("");
+        hasTitles(["Store Schedule"]);
+      }
+    }
+  });
+
   test("shared filter buttons expose pressed state and keyboard focus", () => {
     assert.match(noticeFilter, /aria-pressed=\{isSelected\}/);
     assert.match(noticeFilter, /focus-visible:ring-2/);
@@ -511,35 +630,42 @@ describe("notice source and target filters", () => {
   });
 
   test("STAFF maps sourceLabel to sourceType and keeps target filters independent", () => {
-    assert.match(staffNoticesPage, /sourceType: notice\.sourceLabel === "점주 공지" \? "owner" : "hq"/);
-    assert.match(staffNoticesPage, /useState<StaffSourceFilter>\("all"\)/);
-    assert.match(staffNoticesPage, /sourceFilter !== "all" && notice\.sourceType !== sourceFilter/);
-    assert.match(staffNoticesPage, /useState<string>\(ALL_TARGETS\)/);
-    assert.match(staffNoticesPage, /activeTargetFilter === FRANCHISE_TARGETS/);
-    // 여러 매장 응답을 공지 id 기준으로 한 번만 toStaffNotice로 변환해 합친다.
-    assert.match(staffNoticesPage, /const noticesById = new Map<string, StaffNotice>\(\)/);
-    assert.match(staffNoticesPage, /if \(!noticesById\.has\(notice\.id\)\) noticesById\.set\(notice\.id, toStaffNotice\(notice\)\)/);
-    assert.match(staffNoticesPage, /setResult\(\{ key: requestKey, status: "ready", notices: mergedNotices/);
+    assert.deepEqual(toStaffNotice({ id: "owner", sourceLabel: "점주 공지" }), { id: "owner", sourceLabel: "점주 공지", sourceType: "owner" });
+    assert.deepEqual(toStaffNotice({ id: "hq", sourceLabel: "본사 공지" }), { id: "hq", sourceLabel: "본사 공지", sourceType: "hq" });
+    assert.match(staffNoticesPage, /filterStaffNotices\(allNotices, \{ source: sourceFilter, target: targetFilter, query \}\)/);
+    assert.match(staffNoticesPage, /onClick={\(\) => setSourceFilter\(value\)}/);
+    assert.match(staffNoticesPage, /onChange={\(event\) => setTargetFilter\(event\.target\.value as NoticeTargetFilter\)}/);
+    assert.match(staffNoticesPage, /requestKey = storeId \? `\$\{storeId\}:\$\{reloadToken\}` : null/);
+    assert.match(staffNoticesPage, /fetch\(`\/api\/staff\/notices\?storeId=\$\{encodeURIComponent\(storeId!\)\}`/);
     assert.match(staffRoute, /sourceLabel: row\.audience === "staff" \? "점주 공지" : "본사 공지"/);
     assert.match(staffNoticesPage, /label: "본사 공지"/);
-    assert.match(staffNoticesPage, /label: "점주 공지"/);
+    assert.match(staffNoticesPage, /label: "매장 공지"/);
   });
 
   test("role filters are local state and compose with existing search", () => {
     assert.match(hqNoticesPage, /\.filter\(\(notice\) => !query \|\| notice\.title\.toLowerCase\(\)\.includes\(query\)\)/);
     assert.match(ownerNoticesPage, /const query = searchQuery\.toLowerCase\(\)\.trim\(\)/);
-    assert.match(staffNoticesPage, /const normalizedQuery = trimmedQuery\.toLowerCase\(\)/);
-    assert.match(
-      staffNoticesPage,
-      /const visibleNotices = notices\.filter\(\(notice\) => \{[\s\S]*?sourceFilter !== "all"[\s\S]*?FRANCHISE_TARGETS[\s\S]*?notice\.title\.toLowerCase\(\)\.includes\(normalizedQuery\)/,
-    );
+    const notices = [
+      { id: "hq-all", sourceType: "hq", targetType: "all", title: "Recipe", content: "Alpha" },
+      { id: "hq-franchise", sourceType: "hq", targetType: "franchise", title: "Safety", content: "Recipe" },
+      { id: "hq-store", sourceType: "hq", targetType: "store", title: "Recipe", content: "Beta" },
+      { id: "owner-store", sourceType: "owner", targetType: "store", title: "Closing", content: "Recipe" },
+    ] as const;
+    for (const source of ["all", "hq", "owner"] satisfies NoticeSourceFilter[]) {
+      for (const target of ["all", "franchise", "store"] satisfies NoticeTargetFilter[]) {
+        for (const query of ["", "  RECIPE  ", "closing", "missing"]) {
+          const expected = notices.filter((notice) =>
+            (source === "all" || notice.sourceType === source)
+            && (target === "all" || (target === "franchise" ? notice.targetType !== "store" : notice.targetType === "store"))
+            && `${notice.title} ${notice.content}`.toLowerCase().includes(query.trim().toLowerCase()),
+          ).map((notice) => notice.id);
+          assert.deepEqual(filterStaffNotices(notices, { source, target, query }).map((notice) => notice.id), expected, JSON.stringify({ source, target, query }));
+        }
+      }
+    }
     assert.match(hqNoticesPage, /void loadNotices\(\);\s*\}, \[isReady\]\)/);
     assert.match(ownerNoticesPage, /fetchNotices\(\);\s*\}, \[selectedStoreId\]\)/);
-    // STAFF는 선택 매장(전체면 승인된 모든 매장)별로 storeId를 붙여 조회하고, 조회 대상 배열은 memo로 고정한다.
-    assert.match(staffNoticesPage, /const storeIdsToFetch = useMemo\(/);
-    assert.match(staffNoticesPage, /activeStoreFilter === "all" \? stores\.map\(\(store\) => store\.id\) : \[activeStoreFilter\]/);
-    assert.match(staffNoticesPage, /fetch\(`\/api\/staff\/notices\?storeId=\$\{encodeURIComponent\(storeId\)\}`/);
-    assert.match(staffNoticesPage, /\}, \[storeIdsToFetch, requestKey, router\]\)/);
+    assert.match(staffNoticesPage, /\}, \[storeId, requestKey, router\]\)/);
   });
 });
 
@@ -754,15 +880,8 @@ describe("notice mutation UI ownership controls", () => {
     assert.match(hqNoticesPage, /<ConfirmDialog/);
   });
 
-  test("HQ notice title opens an in-page dialog with title, content, and date", () => {
-    assert.match(hqNoticesPage, /onOpen=\{\(\) => setSelectedNotice\(notice\)\}/);
-    assert.match(hqNoticesPage, /<NoticeDetailDialog/);
-    assert.match(noticeDetailDialog, /role="dialog"/);
-    assert.match(noticeDetailDialog, /aria-modal="true"/);
-    assert.match(noticeDetailDialog, /\{notice\.title\}/);
-    assert.match(noticeDetailDialog, /\{notice\.content\}/);
-    assert.match(noticeDetailDialog, /<NoticeMeta createdAt=\{notice\.createdAt\} viewCount=\{notice\.viewCount\}/);
-    assert.match(noticeMeta, /formatNoticeDate\(createdAt\)/);
+  test("HQ notice title opens an in-page dialog with title, content, and date", async () => {
+    await assertNoticeDetail("hq");
   });
 
   test("OWNER edit/delete actions are shown only for notices marked as mine", () => {
@@ -774,18 +893,9 @@ describe("notice mutation UI ownership controls", () => {
 });
 
 describe("STAFF notice detail interaction", () => {
-  test("opens a dialog from the list without navigating to a missing id route", () => {
+  test("opens a dialog from the list without navigating to a missing id route", async () => {
     assert.equal(/href=\{`\/staff\/notices\/\$\{notice\.id\}`\}/.test(staffNoticesPage), false);
-    assert.match(staffNoticesPage, /onOpen=\{\(\) => openNotice\(notice\)\}/);
-    assert.match(staffNoticesPage, /useState<\{ storeId: string; noticeId: string \} \| null>\(null\)/);
-    assert.match(staffNoticesPage, /const openNotice = \(notice: StaffNotice\) => \{[\s\S]*?setDetail\(\{ storeId: detailStoreId, noticeId: notice\.id \}\);[\s\S]*?if \(notice\.isRead\) return;[\s\S]*?markNoticeAsRead\(notice\.id\)\.then/);
-    assert.match(staffNoticesPage, /const selectedNotice = detail \? notices\.find\(\(notice\) => notice\.id === detail\.noticeId\)/);
-    assert.match(staffNoticesPage, /<NoticeDetailDialog[\s\S]*?onClose=\{\(\) => setDetail\(null\)\}/);
-    assert.match(noticeDetailDialog, /role="dialog"/);
-    assert.match(noticeDetailDialog, /aria-modal="true"/);
-    assert.match(noticeDetailDialog, /\{notice\.title\}/);
-    assert.match(noticeDetailDialog, /\{notice\.content\}/);
-    assert.match(noticeMeta, /formatNoticeDate\(createdAt\)/);
+    await assertNoticeDetail("staff");
   });
 });
 

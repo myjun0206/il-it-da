@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useEffectEvent, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AlertCircle, Bot, CheckCircle2, Clock3, History, Info, Lock, Mic, Plus, Send, UserRound } from "lucide-react";
@@ -128,13 +128,13 @@ export default function StaffPage() {
     stores,
     pendingStores,
     selectedStore,
-    defaultStoreId,
     isStoresLoading,
     storesError,
     reloadStores,
     selectStore: selectShellStore,
   } = useStaffShell();
   const restoreCheckedRef = useRef(false);
+  const previousStoreIdRef = useRef(selectedStore?.id ?? null);
   const [toastMessage, setToastMessage] = useState("");
   // 대화: 첫 질문에 서버가 만든 ID. null이면 아직 저장되지 않은 새 대화.
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -166,6 +166,18 @@ export default function StaffPage() {
     setErrorMessage("");
   }
 
+  const resetForStoreChange = useEffectEvent(() => resetConversation());
+
+  useEffect(() => {
+    if (isStoresLoading) return;
+    const nextStoreId = selectedStore?.id ?? null;
+    const previousStoreId = previousStoreIdRef.current;
+    previousStoreIdRef.current = nextStoreId;
+    if (previousStoreId !== null && previousStoreId !== nextStoreId) {
+      resetForStoreChange();
+    }
+  }, [isStoresLoading, selectedStore?.id]);
+
   /** + 새 대화: 화면만 초기화한다. DB row는 첫 질문 때 서버가 만든다. */
   function startNewConversation() {
     if (isBusy) return;
@@ -174,6 +186,7 @@ export default function StaffPage() {
 
   function applyStore(store: StaffStore) {
     // 공통 상태를 바꾸면 Header/ProfileMenu도 즉시 같은 매장으로 바뀐다.
+    previousStoreIdRef.current = store.id;
     selectShellStore(store.id);
   }
 
@@ -268,13 +281,18 @@ export default function StaffPage() {
   // 새로고침: 이 탭에서 보던 대화가 현재 근무 매장의 대화면 다시 연다. (본인 대화인지는 서버가 확인)
   useEffect(() => {
     if (isStoresLoading || restoreCheckedRef.current) return;
-    restoreCheckedRef.current = true;
     const storedConversationId = readStaffConversationId();
-    if (!storedConversationId) return;
+    if (!storedConversationId) {
+      restoreCheckedRef.current = true;
+      return;
+    }
 
-    void fetchConversationDetail(storedConversationId)
+    const controller = new AbortController();
+    void fetchConversationDetail(storedConversationId, controller.signal)
       .catch(() => null)
       .then((restored) => {
+        if (controller.signal.aborted) return;
+        restoreCheckedRef.current = true;
         const { conversation } = restored ?? {};
         const sameStore = conversation?.canContinue && conversation.storeId === selectedStore?.id;
         if (!restored || !conversation || (conversation.canContinue && !sameStore)) {
@@ -286,6 +304,7 @@ export default function StaffPage() {
         setConversationId(conversation.id);
         setReadOnlyStoreName(sameStore ? null : conversation.storeName || "이전 매장");
       });
+    return () => controller.abort();
   }, [isStoresLoading, selectedStore]);
 
   async function submitQuestion(rawQuestion: string) {
@@ -310,15 +329,15 @@ export default function StaffPage() {
 
     try {
       // 이어서 묻는 대화면 서버가 대화에 저장된 매장을 쓰고, storeId는 새 대화 시작에만 쓰인다.
-      // 기본 매장을 사용한다.
       const response = await fetch("/api/staff/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, storeId: defaultStoreId ?? selectedStore?.id, conversationId }),
+        body: JSON.stringify({ question, storeId: selectedStore.id, conversationId }),
       });
 
       const result: unknown = await response.json();
       const payload = isRecord(result) ? result : {};
+      if (previousStoreIdRef.current !== selectedStore.id) return;
 
       if (payload.code === "CONVERSATION_NOT_FOUND") {
         // 다른 탭에서 삭제된 대화: 새 대화로 돌린다.
@@ -329,6 +348,7 @@ export default function StaffPage() {
       }
       if (payload.code === "STORE_FORBIDDEN") {
         // 점주가 소속을 해제했을 수 있다: 승인 매장 목록을 다시 불러와 다른 매장 또는 매장 관리로 안내한다.
+        resetConversation();
         setErrorMessage("이 매장의 근무 권한이 확인되지 않아 답변할 수 없습니다. 근무 매장 목록을 새로 불러왔습니다.");
         reloadStores();
         return;
@@ -360,6 +380,7 @@ export default function StaffPage() {
         setErrorMessage(saveErr);
       }
     } catch {
+      if (previousStoreIdRef.current !== selectedStore.id) return;
       setErrorMessage("답변을 불러오지 못했어요. 잠시 후 다시 시도해주세요.");
     } finally {
       setIsLoading(false);

@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AlertCircle, Bell } from "lucide-react";
 import { formatNotificationTime } from "@/lib/notifications";
+import { isInternalNotificationUrl } from "@/lib/notifications/notification-href";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { NotificationDetailModal } from "@/components/notifications/NotificationDetailModal";
 
@@ -21,6 +23,7 @@ interface Notification {
 type FilterType = "all" | "unread";
 
 export default function StaffNotificationsPage() {
+  const router = useRouter();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [filter, setFilter] = useState<FilterType>("all");
@@ -74,21 +77,23 @@ export default function StaffNotificationsPage() {
     // Mark as read if unread
     if (!notification.isRead) {
       try {
-        await fetch(`/api/notifications/${notification.id}/mark-read`, {
+        const response = await fetch(`/api/notifications/${notification.id}/mark-read`, {
           method: "PUT",
           credentials: "include",
         });
-        setNotifications((prev) =>
-          prev.map((n) => (n.id === notification.id ? { ...n, isRead: true } : n))
-        );
-        setUnreadCount((count) => Math.max(0, count - 1));
+        if (response.ok) {
+          setNotifications((prev) =>
+            prev.map((n) => (n.id === notification.id ? { ...n, isRead: true } : n))
+          );
+          setUnreadCount((count) => Math.max(0, count - 1));
+        }
       } catch (e) {
         console.error("Failed to mark notification as read:", e);
       }
     }
 
     // Navigate if targetUrl exists and is internal
-    if (notification.targetUrl && isInternalUrl(notification.targetUrl)) {
+    if (isInternalNotificationUrl(notification.targetUrl)) {
       router.push(notification.targetUrl);
     }
   };
@@ -96,15 +101,17 @@ export default function StaffNotificationsPage() {
   // Handle mark as read
   const handleMarkAsRead = async (notificationId: string) => {
     try {
-      await fetch(`/api/notifications/${notificationId}/mark-read`, {
+      const response = await fetch(`/api/notifications/${notificationId}/mark-read`, {
         method: "PUT",
-          credentials: "include",
+        credentials: "include",
       });
+      if (!response.ok) return;
+      const notification = notifications.find((item) => item.id === notificationId);
       setNotifications((prev) =>
         prev.map((n) => (n.id === notificationId ? { ...n, isRead: true } : n))
       );
-      setUnreadCount((count) => Math.max(0, count - 1));
-      setOpenMenuId(null);
+      if (notification && !notification.isRead) setUnreadCount((count) => Math.max(0, count - 1));
+      setSelectedNotificationId(null);
     } catch (e) {
       console.error("Failed to mark notification as read:", e);
     }
@@ -119,11 +126,12 @@ export default function StaffNotificationsPage() {
       });
 
       if (response.ok) {
+        const notification = notifications.find((item) => item.id === notificationId);
         setNotifications((prev) =>
           prev.map((n) => (n.id === notificationId ? { ...n, isRead: false } : n))
         );
-        setUnreadCount((count) => count + 1);
-        setOpenMenuId(null);
+        if (notification?.isRead) setUnreadCount((count) => count + 1);
+        setSelectedNotificationId(null);
       } else {
         console.error("Failed to mark notification as unread");
       }
@@ -157,7 +165,7 @@ export default function StaffNotificationsPage() {
         if (deletedNotification && !deletedNotification.isRead) {
           setUnreadCount((count) => Math.max(0, count - 1));
         }
-        setOpenMenuId(null);
+        setSelectedNotificationId(null);
       } else {
         console.error("Failed to delete notification");
       }
@@ -385,6 +393,10 @@ export default function StaffNotificationsPage() {
             }
           }
           onClose={() => setSelectedNotificationId(null)}
+          isRead={notifications.find((item) => item.id === selectedNotificationId)?.isRead ?? false}
+          onMarkAsRead={() => handleMarkAsRead(selectedNotificationId)}
+          onMarkAsUnread={() => handleMarkAsUnread(selectedNotificationId)}
+          onDelete={() => handleDeleteNotification(selectedNotificationId)}
         />
       )}
     </div>
