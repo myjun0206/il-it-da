@@ -22,7 +22,7 @@ const SWITCH_TOAST_KEY = "ownerStoreSwitchedTo";
 export default function OwnerHeader({
   userName,
   storeName,
-  onLogout,
+  onLogout: _onLogout,
 }: OwnerHeaderProps) {
   const router = useRouter();
   const [stores, setStores] = useState<SwitcherStore[]>([]);
@@ -159,9 +159,7 @@ export default function OwnerHeader({
             userName={userName}
             subtitle={currentStoreName || storeName ? `${currentStoreName || storeName} · 점주` : "점주"}
             roleLabel="점주"
-            settingsHref="/boss/settings"
             avatarUrl={avatarUrl}
-            onLogout={onLogout}
           />
         </div>
       </div>

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, CheckCircle2, Check, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, Check, Camera, Store } from "lucide-react";
 
 import ThemeSelector from "@/components/common/ThemeSelector";
 import ProfileAvatar from "@/components/common/ProfileAvatar";
@@ -30,6 +30,8 @@ const primaryButtonClass =
   "flex h-11 w-32 shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary)] px-5 text-sm font-medium text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap";
 const dangerButtonClass =
   "flex h-11 w-32 shrink-0 items-center justify-center rounded-lg border-2 border-red-300 bg-white px-5 text-sm font-medium text-red-700 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 disabled:cursor-not-allowed disabled:opacity-60 transition-colors whitespace-nowrap";
+const compactButtonClass =
+  "text-sm font-medium text-[var(--color-text-primary)] hover:text-[var(--color-primary)] transition-colors underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] rounded px-1 py-1 disabled:cursor-not-allowed disabled:opacity-60";
 
 type Feedback = { type: "success" | "error"; message: string } | null;
 
@@ -68,6 +70,7 @@ export default function StaffSettingsPage() {
 
   // 비밀번호 변경 상태
   const [showPasswordChange, setShowPasswordChange] = useState(false);
+  const [passwordChangeMode, setPasswordChangeMode] = useState<"idle" | "verify" | "change" | "success">("idle");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [newPasswordConfirm, setNewPasswordConfirm] = useState("");
@@ -95,6 +98,22 @@ export default function StaffSettingsPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [isOAuthUser, setIsOAuthUser] = useState(false);
   const [accountDeleteError, setAccountDeleteError] = useState<string | null>(null);
+
+  // 비밀번호 변경 관련 상태 초기화
+  const resetPasswordChangeState = () => {
+    setShowPasswordChange(false);
+    setPasswordChangeMode("idle");
+    setCurrentPassword("");
+    setNewPassword("");
+    setNewPasswordConfirm("");
+    setIsPasswordAuthenticated(false);
+    setPasswordFeedback(null);
+  };
+
+  // 비밀번호 변경 성공 후 확인 버튼 핸들러
+  const handleConfirmPasswordSuccess = () => {
+    resetPasswordChangeState();
+  };
 
   useEffect(() => {
     let isCancelled = false;
@@ -315,11 +334,12 @@ export default function StaffSettingsPage() {
       };
 
       if (!response.ok || !result.success) {
-        throw new Error(result.message || "비밀번호 검증에 실패했습니다.");
+        throw new Error(result.message || "현재 비밀번호가 일치하지 않습니다.");
       }
 
       setIsPasswordAuthenticated(true);
-      setPasswordFeedback({ type: "success", message: "인증되었습니다. 새 비밀번호를 입력해주세요." });
+      setPasswordChangeMode("change");
+      setPasswordFeedback(null);
     } catch (e) {
       setPasswordFeedback({
         type: "error",
@@ -343,12 +363,12 @@ export default function StaffSettingsPage() {
     }
 
     if (newPassword !== newPasswordConfirm) {
-      setPasswordFeedback({ type: "error", message: "비밀번호가 일치하지 않습니다." });
+      setPasswordFeedback({ type: "error", message: "새 비밀번호가 일치하지 않습니다." });
       return;
     }
 
     if (newPassword.length < 8) {
-      setPasswordFeedback({ type: "error", message: "비밀번호는 최소 8자 이상이어야 합니다." });
+      setPasswordFeedback({ type: "error", message: "비밀번호는 8자 이상 입력해주세요." });
       return;
     }
 
@@ -381,13 +401,15 @@ export default function StaffSettingsPage() {
         throw new Error(result.message || "비밀번호 변경에 실패했습니다.");
       }
 
-      setPasswordFeedback({ type: "success", message: "비밀번호가 변경되었습니다." });
-      setShowPasswordChange(false);
+      // ✅ API 성공 → mode를 "success"로 변경 (폼은 유지)
       setCurrentPassword("");
       setNewPassword("");
       setNewPasswordConfirm("");
       setIsPasswordAuthenticated(false);
+      setPasswordChangeMode("success");
+      setPasswordFeedback(null);
     } catch (e) {
+      // ❌ 실패 → 현재 입력 화면 유지, 에러 메시지만 표시
       setPasswordFeedback({
         type: "error",
         message: e instanceof Error ? e.message : "비밀번호 변경에 실패했습니다.",
@@ -553,37 +575,19 @@ export default function StaffSettingsPage() {
           <h2 id="account-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-2">
             계정 정보
           </h2>
-          <p className="mb-7 text-base text-[var(--color-text-primary)] opacity-70">내 프로필과 근무 정보를 확인하고 관리합니다.</p>
+          <p className="mb-4 text-base text-[var(--color-text-primary)] opacity-70">내 프로필과 근무 정보를 확인하고 관리합니다.</p>
 
           {/* === 프로필 섹션 === */}
-          <div className="flex flex-col sm:flex-row sm:items-start gap-10 mb-8">
-            {/* 프로필 사진 */}
+          <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 mb-8">
+            {/* Avatar: 왼쪽 고정 */}
             <div className="flex-shrink-0">
               <ProfileAvatar
                 name={userName}
                 avatarUrl={avatarPreview || avatarUrl}
-                size="xxl"
+                size="xl"
               />
-            </div>
-
-            {/* 프로필 정보 및 액션 */}
-            <div className="flex-1 flex flex-col justify-between">
-              {/* 프로필 텍스트 정보 */}
-              <div className="mb-6">
-                <h3 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
-                  {userName || "등록된 이름 없음"}
-                </h3>
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="inline-flex items-center px-3 py-1 rounded-full bg-[var(--color-primary)]/10 text-sm font-medium text-[var(--color-primary)]">
-                    {roleLabel || "역할 정보 없음"}
-                  </span>
-                </div>
-                <p className="text-base text-[var(--color-text-primary)] break-all">
-                  {email || "등록된 이메일 없음"}
-                </p>
-              </div>
-
-              {/* 액션 버튼 */}
+              
+              {/* 사진 변경 입력 */}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -593,14 +597,41 @@ export default function StaffSettingsPage() {
                 className="hidden"
                 aria-label="프로필 사진 선택"
               />
+            </div>
 
+            {/* 사용자 정보 영역: 중앙 확장 */}
+            <div className="flex-1 flex flex-col gap-4">
+              {/* 이름 + 역할 배지 */}
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-bold text-[var(--color-text-primary)]">
+                  {userName || "등록된 이름 없음"}
+                </h3>
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-[var(--color-primary)]/10 text-xs font-medium text-[var(--color-primary)]">
+                  {roleLabel || "역할 정보 없음"}
+                </span>
+              </div>
+
+              {/* 이메일 */}
+              <div>
+                <p className="text-xs text-[var(--color-text-tertiary)] mb-1">이메일</p>
+                <p className="text-sm font-medium text-[var(--color-text-primary)] break-all">
+                  {email || "등록된 이메일 없음"}
+                </p>
+              </div>
+
+              {/* 피드백 메시지 */}
+              <FeedbackMessage feedback={avatarFeedback} />
+            </div>
+
+            {/* 사진 변경 액션: 오른쪽 끝 고정 */}
+            <div className="flex-shrink-0 flex flex-col gap-1 items-end justify-start">
               {avatarPreview ? (
-                <div className="flex gap-3 flex-wrap">
+                <div className="flex gap-2">
                   <button
                     type="button"
                     onClick={handleUploadAvatar}
                     disabled={isUploadingAvatar}
-                    className={primaryButtonClass}
+                    className={compactButtonClass}
                   >
                     {isUploadingAvatar ? "저장 중..." : "저장"}
                   </button>
@@ -608,86 +639,107 @@ export default function StaffSettingsPage() {
                     type="button"
                     onClick={handleCancelAvatarPreview}
                     disabled={isUploadingAvatar}
-                    className={secondaryButtonClass}
+                    className={compactButtonClass}
                   >
                     취소
                   </button>
                 </div>
               ) : (
-                <div className="flex gap-3 flex-wrap items-center">
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isUploadingAvatar}
-                    className={secondaryButtonClass}
-                  >
-                    사진 변경
-                  </button>
-                  {avatarUrl && (
-                    <button
-                      type="button"
-                      onClick={handleDeleteAvatar}
-                      disabled={isUploadingAvatar}
-                      className={dangerButtonClass}
-                    >
-                      사진 삭제
-                    </button>
-                  )}
-                </div>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploadingAvatar}
+                  className="inline-flex h-10 items-center gap-2 px-3 text-sm font-medium text-[var(--color-text-primary)] hover:text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary-light)]/10 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+                  aria-label="프로필 사진 변경"
+                >
+                  <Camera size={18} aria-hidden="true" className="flex-shrink-0" />
+                  <span>사진 변경</span>
+                </button>
+              )}
+              {!avatarPreview && avatarUrl && (
+                <button
+                  type="button"
+                  onClick={handleDeleteAvatar}
+                  disabled={isUploadingAvatar}
+                  className="text-sm font-medium text-red-700 hover:text-red-600 transition-colors underline focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 rounded px-1 py-1 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  사진 삭제
+                </button>
               )}
             </div>
           </div>
 
-          <FeedbackMessage feedback={avatarFeedback} />
+          {/* Divider + 간격 조정 */}
+          <div className="border-t border-[var(--color-border)] py-6" />
 
           {/* === 근무 정보 섹션 === */}
-          <div className="border-t border-[var(--color-border)] pt-8 mt-8">
-            {/* 제목 및 링크 */}
-            <div className="flex items-center justify-between gap-4 mb-5">
-              <div className="flex items-center gap-3">
-                <h3 className="text-lg font-bold text-[var(--color-text-primary)]">근무 매장</h3>
-                <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-[var(--color-primary)]/10 text-xs font-bold text-[var(--color-primary)]">
-                  {isStoresLoading ? "로드중" : `${stores.length}`}
-                </span>
-              </div>
-              <a
-                href="/staff/stores"
-                className="inline-flex min-h-[44px] items-center justify-center px-4 text-base font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary)]/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] rounded-lg transition-colors"
-              >
-                근무 매장 관리 →
-              </a>
-            </div>
-
-            {/* 매장 목록 */}
+          <div>
             {isStoresLoading ? (
               <p className="text-base text-[var(--color-text-secondary)]">불러오는 중...</p>
             ) : stores.length > 0 ? (
-              <div className="space-y-3">
+              <>
+                {/* 헤더 - 흰색 배경 */}
+                <div className="flex items-center justify-between gap-4 mb-6">
+                  <div className="flex items-center gap-2.5">
+                    <h3 className="text-lg font-bold text-[var(--color-text-primary)]">근무 매장</h3>
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-[var(--color-primary)]/10 text-xs font-bold text-[var(--color-primary)]">
+                      {`${stores.length}`}
+                    </span>
+                  </div>
+                  <a
+                    href="/staff/stores"
+                    className="inline-flex h-10 items-center gap-2 px-3 text-sm font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary)]/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] rounded-lg transition-colors whitespace-nowrap"
+                  >
+                    <Store size={18} aria-hidden="true" className="flex-shrink-0" />
+                    <span>매장 관리</span>
+                  </a>
+                </div>
+
+                {/* 기본 매장 - 선택 배경 */}
                 {stores.map((store) => {
-                  // 배지는 계정에 저장된 기본 매장 기준 (활성 매장과는 별개)
                   const isCurrent = defaultStoreId === store.id;
-                  return (
-                    <div
-                      key={store.id}
-                      className={`flex items-center justify-between gap-3 p-4 rounded-lg transition-colors ${
-                        isCurrent
-                          ? "bg-[var(--color-primary)]/8 border border-[var(--color-primary)]/20"
-                          : "bg-[var(--color-bg-default)] border border-transparent"
-                      }`}
-                    >
-                      <p className="text-base font-medium text-[var(--color-text-primary)]">
-                        {formatStoreDisplayName(store.name)}
-                      </p>
-                      {isCurrent && (
-                        <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--color-primary)]/10">
-                          <Check size={16} className="text-[var(--color-primary)] flex-shrink-0" aria-hidden="true" />
-                          <span className="text-xs font-medium text-[var(--color-primary)]">기본 매장</span>
+                  if (isCurrent) {
+                    return (
+                      <div
+                        key={store.id}
+                        className="bg-[var(--color-primary)]/8 border border-[var(--color-primary)]/15 rounded-lg mb-2"
+                      >
+                        <div className="flex items-center justify-between gap-3 px-4 py-3">
+                          <p className="text-base font-medium text-[var(--color-text-primary)]">
+                            {formatStoreDisplayName(store.name)}
+                          </p>
+                          <div className="inline-flex h-10 w-10 items-center justify-center rounded-lg flex-shrink-0" aria-label="기본 매장" title="기본 매장">
+                            <Check size={18} className="text-[var(--color-primary)]" aria-hidden="true" />
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  );
+                      </div>
+                    );
+                  }
+                  return null;
                 })}
-              </div>
+
+                {/* 일반 매장 목록 */}
+                {stores.some((s) => defaultStoreId !== s.id) && (
+                  <div className="space-y-2">
+                    {stores.map((store) => {
+                      const isCurrent = defaultStoreId === store.id;
+                      if (!isCurrent) {
+                        return (
+                          <div
+                            key={store.id}
+                            className="flex items-center justify-between gap-3 px-4 py-3 rounded-lg transition-colors"
+                          >
+                            <p className="text-base font-medium text-[var(--color-text-primary)]">
+                              {formatStoreDisplayName(store.name)}
+                            </p>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })}
+                  </div>
+                )}
+              </>
             ) : (
               <p className="text-base text-[var(--color-text-secondary)]">승인된 근무 매장이 없습니다.</p>
             )}
@@ -758,10 +810,12 @@ export default function StaffSettingsPage() {
             <button
               type="button"
               onClick={() => {
-                setShowPasswordChange(!showPasswordChange);
-                setPasswordFeedback(null);
-                setNewPassword("");
-                setNewPasswordConfirm("");
+                if (showPasswordChange) {
+                  resetPasswordChangeState();
+                } else {
+                  setShowPasswordChange(true);
+                  setPasswordChangeMode("verify");
+                }
               }}
               className={secondaryButtonClass}
             >
@@ -772,24 +826,23 @@ export default function StaffSettingsPage() {
           {/* 비밀번호 변경 폼 */}
           {showPasswordChange && (
             <div className="mt-6 pt-6 border-t border-[var(--color-border)] space-y-4">
-              {!isPasswordAuthenticated ? (
-                // Step 1: 현재 비밀번호 인증
+              {/* Step 1: 현재 비밀번호 인증 */}
+              {passwordChangeMode === "verify" && (
                 <>
-                  <div>
-                    <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
-                      현재 비밀번호
-                    </label>
-                    <input
-                      type="password"
-                      value={currentPassword}
-                      onChange={(e) => setCurrentPassword(e.target.value)}
-                      placeholder="현재 비밀번호를 입력하세요"
-                      className="w-full px-4 py-3 rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
-                      disabled={isAuthenticatingPassword}
-                    />
-                  </div>
-
-                  <div className="flex gap-3">
+                  <div className="flex gap-2 items-end">
+                    <div className="flex-1 flex flex-col">
+                      <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                        현재 비밀번호
+                      </label>
+                      <input
+                        type="password"
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        placeholder="현재 비밀번호를 입력하세요"
+                        className="h-11 px-4 rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] disabled:opacity-60"
+                        disabled={isAuthenticatingPassword}
+                      />
+                    </div>
                     <button
                       type="button"
                       onClick={handleAuthenticatePassword}
@@ -802,8 +855,10 @@ export default function StaffSettingsPage() {
 
                   <FeedbackMessage feedback={passwordFeedback} />
                 </>
-              ) : (
-                // Step 2: 새 비밀번호 설정
+              )}
+
+              {/* Step 2: 새 비밀번호 설정 */}
+              {passwordChangeMode === "change" && (
                 <>
                   <div className="mb-4 p-4 rounded-lg bg-[var(--color-primary-light)]/20 border border-[var(--color-primary)]/30">
                     <p className="text-sm text-[var(--color-text-secondary)]">
@@ -820,26 +875,25 @@ export default function StaffSettingsPage() {
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
                       placeholder="최소 8자 이상"
-                      className="w-full px-4 py-3 rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+                      className="w-full h-11 px-4 rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] disabled:opacity-60"
                       disabled={isChangingPassword}
                     />
                   </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
-                      비밀번호 확인
-                    </label>
-                    <input
-                      type="password"
-                      value={newPasswordConfirm}
-                      onChange={(e) => setNewPasswordConfirm(e.target.value)}
-                      placeholder="새 비밀번호를 다시 입력하세요"
-                      className="w-full px-4 py-3 rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
-                      disabled={isChangingPassword}
-                    />
-                  </div>
-
-                  <div className="flex gap-3">
+                  <div className="flex gap-2 items-end">
+                    <div className="flex-1 flex flex-col">
+                      <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                        비밀번호 확인
+                      </label>
+                      <input
+                        type="password"
+                        value={newPasswordConfirm}
+                        onChange={(e) => setNewPasswordConfirm(e.target.value)}
+                        placeholder="새 비밀번호를 다시 입력하세요"
+                        className="h-11 px-4 rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] disabled:opacity-60"
+                        disabled={isChangingPassword}
+                      />
+                    </div>
                     <button
                       type="button"
                       onClick={handleChangePassword}
@@ -848,25 +902,33 @@ export default function StaffSettingsPage() {
                     >
                       {isChangingPassword ? "변경 중..." : "변경"}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowPasswordChange(false);
-                        setCurrentPassword("");
-                        setNewPassword("");
-                        setNewPasswordConfirm("");
-                        setIsPasswordAuthenticated(false);
-                        setPasswordFeedback(null);
-                      }}
-                      disabled={isChangingPassword}
-                      className={secondaryButtonClass}
-                    >
-                      취소
-                    </button>
                   </div>
 
-                  <FeedbackMessage feedback={passwordFeedback} />
+                  {passwordFeedback?.type === "error" && <FeedbackMessage feedback={passwordFeedback} />}
                 </>
+              )}
+
+              {/* 성공 상태 - Compact 가로 레이아웃 */}
+              {passwordChangeMode === "success" && (
+                <div className="bg-[var(--color-primary)]/8 border border-[var(--color-primary)]/15 rounded-lg px-4 py-3 mt-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div
+                      role="status"
+                      aria-live="polite"
+                      className="flex items-center gap-2 text-base font-medium text-[var(--color-primary)]"
+                    >
+                      <CheckCircle2 size={18} aria-hidden="true" className="flex-shrink-0" />
+                      <span>비밀번호가 변경되었습니다.</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleConfirmPasswordSuccess}
+                      className="flex h-10 shrink-0 items-center justify-center rounded-lg border-2 border-[var(--color-primary)] bg-white px-4 text-sm font-medium text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary)]/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap"
+                    >
+                      확인
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           )}

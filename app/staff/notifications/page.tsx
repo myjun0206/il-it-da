@@ -1,10 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { AlertCircle, Bell } from "lucide-react";
 import { formatNotificationTime } from "@/lib/notifications";
-import { isInternalNotificationUrl } from "@/lib/notifications/notification-href";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { NotificationDetailModal } from "@/components/notifications/NotificationDetailModal";
 
@@ -23,7 +21,6 @@ interface Notification {
 type FilterType = "all" | "unread";
 
 export default function StaffNotificationsPage() {
-  const router = useRouter();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [filter, setFilter] = useState<FilterType>("all");
@@ -92,10 +89,8 @@ export default function StaffNotificationsPage() {
       }
     }
 
-    // Navigate if targetUrl exists and is internal
-    if (isInternalNotificationUrl(notification.targetUrl)) {
-      router.push(notification.targetUrl);
-    }
+    // NOTE: Do NOT navigate here. Navigation should only happen when user explicitly
+    // clicks a "go to" button in the detail modal, not on initial row click.
   };
 
   // Handle mark as read

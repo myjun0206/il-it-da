@@ -1,5 +1,5 @@
 import { createClient as createServerClient } from "@/lib/supabase/server";
-import { createClient as createServiceClient } from "@supabase/supabase-js";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { NextRequest, NextResponse } from "next/server";
 
 /**
@@ -32,11 +32,11 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. 현재 세션의 사용자 확인
-    const supabase = await createServerClient();
+    const serverClient = await createServerClient();
     const {
       data: { user },
       error: authError,
-    } = await supabase.auth.getUser();
+    } = await serverClient.auth.getUser();
 
     if (authError || !user) {
       return NextResponse.json(
@@ -47,37 +47,31 @@ export async function POST(req: NextRequest) {
 
     const userId = user.id;
 
-    // 4. Admin API를 통한 비밀번호 변경
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    // 4. Admin SDK를 통한 비밀번호 변경 (fetch 대신 Supabase admin SDK 사용)
+    const adminClient = createAdminClient();
+    
+    const { data, error: updateError } = await adminClient.auth.admin.updateUserById(userId, {
+      password: newPassword,
+    });
 
-    if (!supabaseUrl || !supabaseServiceKey) {
-      console.error("Supabase 환경 변수가 설정되지 않았습니다.");
+    if (updateError) {
+      console.error("[CHANGE_PASSWORD] Password update failed:", {
+        userId,
+        errorCode: updateError.code,
+        errorMessage: updateError.message,
+      });
+
+      // 일반적인 에러 메시지로 사용자에게 반환
       return NextResponse.json(
-        { success: false, code: "CONFIG_ERROR", message: "서버 설정 오류입니다." },
+        { success: false, code: "UPDATE_ERROR", message: "비밀번호 변경에 실패했습니다." },
         { status: 500 }
       );
     }
 
-    const updatePasswordResponse = await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}`, {
-      method: "PATCH",
-      headers: {
-        Authorization: `Bearer ${supabaseServiceKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ password: newPassword }),
-    });
-
-    if (!updatePasswordResponse.ok) {
-      const errorBody = await updatePasswordResponse.text();
-      console.error("비밀번호 변경 실패:", updatePasswordResponse.status, errorBody);
-
-      if (updatePasswordResponse.status === 404) {
-        return NextResponse.json(
-          { success: false, code: "USER_NOT_FOUND", message: "사용자를 찾을 수 없습니다." },
-          { status: 404 }
-        );
-      }
+    if (!data?.user) {
+      console.error("[CHANGE_PASSWORD] Password update succeeded but no user data returned:", {
+        userId,
+      });
 
       return NextResponse.json(
         { success: false, code: "UPDATE_ERROR", message: "비밀번호 변경에 실패했습니다." },
@@ -91,7 +85,10 @@ export async function POST(req: NextRequest) {
       message: "비밀번호가 변경되었습니다.",
     });
   } catch (error) {
-    console.error("비밀번호 변경 중 오류:", error);
+    console.error("[CHANGE_PASSWORD] Unexpected error:", {
+      errorName: error instanceof Error ? error.name : typeof error,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
 
     return NextResponse.json(
       {
