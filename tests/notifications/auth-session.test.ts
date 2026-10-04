@@ -37,17 +37,42 @@ function notificationScenario(targetUrl: string) {
     return entry;
   };
   const detail = () => componentElements(render()).find((element) => (element.props.notification as { id?: string } | undefined)?.id === notification.id);
-  return { navigations, requests, render, entry, detail, setRequestSucceeded: (value: boolean) => { requestSucceeded = value; } };
+  const modalHarness = createHookHarness([]);
+  const { NotificationDetailModal } = loadComponentModule<{ NotificationDetailModal: (props: Record<string, unknown>) => ReactNode }>(
+    "components/notifications/NotificationDetailModal.tsx", { react: modalHarness.react },
+  );
+  const detailControls = () => {
+    const selected = detail();
+    assert.ok(selected);
+    return componentElements(modalHarness.render(() => NotificationDetailModal(selected.props)));
+  };
+  return { navigations, requests, render, entry, detail, detailControls, setRequestSucceeded: (value: boolean) => { requestSucceeded = value; } };
 }
 
 describe("알림 요청 인증 세션 처리", () => {
-  test("직원 알림 클릭은 내부 링크만 이동하고 외부 링크에서는 상세 모달을 유지한다 (핸들러 실행)", async () => {
-    for (const target of ["/staff/notices", "https://example.com", "//example.com", "/\\example.com", "javascript:alert(1)"]) {
+  test("직원 알림 상세의 이동 버튼은 내부 링크만 이동하고 외부 링크는 차단한다 (핸들러 실행)", async () => {
+    const targets = [
+      { target: "/staff/notices", href: "/staff/notices" },
+      { target: "/staff/notices?notice=notice-a#detail", href: "/staff/notices?notice=notice-a#detail" },
+      ...["https://example.com", "//example.com", "/\\example.com", "javascript:alert(1)", "", "staff/notices"].map((target) => ({ target, href: null })),
+    ];
+    for (const { target, href } of targets) {
       const scenario = notificationScenario(target);
       await (scenario.entry().props.onClick as () => Promise<void>)();
-      assert.deepEqual(scenario.navigations, target === "/staff/notices" ? [target] : []);
+      assert.deepEqual(scenario.navigations, []);
       assert.ok(scenario.detail());
       assert.deepEqual(scenario.requests, ["PUT /api/notifications/notification-a/mark-read"]);
+      const navigate = scenario.detailControls().find((element) => element.type === "button" && renderToStaticMarkup(element).includes("관련 페이지로 이동"));
+      if (href) {
+        assert.ok(navigate);
+        (navigate.props.onClick as () => void)();
+        assert.deepEqual(scenario.navigations, [href]);
+      } else {
+        assert.equal(navigate, undefined);
+        assert.equal(scenario.detail()?.props.onNavigate, undefined);
+        assert.deepEqual(scenario.navigations, []);
+        assert.ok(scenario.detail());
+      }
     }
   });
 

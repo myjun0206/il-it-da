@@ -63,7 +63,7 @@ export default function StoreSelector({
   }, [isOpen]);
 
   // 매장이 없으면 표시하지 않음
-  if (stores.length === 0) return null;
+  if (stores.length === 0 && !isStoresLoading) return null;
 
   return (
     <div ref={selectorRef} className="relative">
@@ -71,7 +71,7 @@ export default function StoreSelector({
       <button
         type="button"
         onClick={() => hasMultipleStores && setIsOpen((prev) => !prev)}
-        disabled={!hasMultipleStores}
+        disabled={isStoresLoading || isSettingDefault || !hasMultipleStores}
         aria-haspopup={hasMultipleStores ? "menu" : undefined}
         aria-expanded={isOpen}
         aria-controls={hasMultipleStores ? "store-selector-menu" : undefined}

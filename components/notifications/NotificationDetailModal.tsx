@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { MoreVertical, X } from "lucide-react";
+import { ArrowUpRight, MoreVertical, X } from "lucide-react";
 
 interface NotificationDetailModalProps {
   notification: {
@@ -12,6 +12,7 @@ interface NotificationDetailModalProps {
     type?: string;
   };
   onClose: () => void;
+  onNavigate?: () => void;
   isRead?: boolean;
   onMarkAsRead?: () => Promise<void>;
   onMarkAsUnread?: () => Promise<void>;
@@ -26,7 +27,7 @@ function formatNotificationDate(value: string): string {
   return `${date.getFullYear()}.${month}.${day}`;
 }
 
-export function NotificationDetailModal({ notification, onClose, isRead, onMarkAsRead, onMarkAsUnread, onDelete }: NotificationDetailModalProps) {
+export function NotificationDetailModal({ notification, onClose, onNavigate, isRead, onMarkAsRead, onMarkAsUnread, onDelete }: NotificationDetailModalProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const markAction = isRead ? onMarkAsUnread : onMarkAsRead;
@@ -117,13 +118,24 @@ export function NotificationDetailModal({ notification, onClose, isRead, onMarkA
           </div>
 
           {/* Confirm Button on the right */}
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex min-h-[44px] items-center justify-center rounded-lg bg-[var(--color-primary)] px-5 text-sm font-semibold text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2"
-          >
-            확인
-          </button>
+          <div className="flex flex-wrap justify-end gap-2">
+            {onNavigate && (
+              <button
+                type="button"
+                onClick={onNavigate}
+                className="inline-flex min-h-[44px] items-center justify-center gap-1 rounded-lg px-3 text-sm font-semibold text-[var(--color-primary)] hover:bg-[var(--color-bg-surface)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+              >
+                관련 페이지로 이동 <ArrowUpRight size={16} aria-hidden="true" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex min-h-[44px] items-center justify-center rounded-lg bg-[var(--color-primary)] px-5 text-sm font-semibold text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2"
+            >
+              확인
+            </button>
+          </div>
         </footer>
       </section>
     </div>
