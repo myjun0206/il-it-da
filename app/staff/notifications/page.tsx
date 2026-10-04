@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AlertCircle, Bell } from "lucide-react";
 import { formatNotificationTime } from "@/lib/notifications";
+import { isInternalNotificationUrl } from "@/lib/notifications/notification-href";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { NotificationDetailModal } from "@/components/notifications/NotificationDetailModal";
 
@@ -21,6 +23,7 @@ interface Notification {
 type FilterType = "all" | "unread";
 
 export default function StaffNotificationsPage() {
+  const router = useRouter();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [filter, setFilter] = useState<FilterType>("all");
@@ -89,8 +92,6 @@ export default function StaffNotificationsPage() {
       }
     }
 
-    // NOTE: Do NOT navigate here. Navigation should only happen when user explicitly
-    // clicks a "go to" button in the detail modal, not on initial row click.
   };
 
   // Handle mark as read
@@ -200,6 +201,8 @@ export default function StaffNotificationsPage() {
 
   const hasMore = filteredNotifications.length >= pageSize * page;
   const allNotificationsCount = notifications.length;
+  const selectedNotification = notifications.find((notification) => notification.id === selectedNotificationId);
+  const notificationHref = isInternalNotificationUrl(selectedNotification?.targetUrl) ? selectedNotification.targetUrl : null;
 
   return (
     <div className="p-6 lg:p-8">
@@ -388,6 +391,7 @@ export default function StaffNotificationsPage() {
             }
           }
           onClose={() => setSelectedNotificationId(null)}
+          onNavigate={notificationHref ? () => router.push(notificationHref) : undefined}
           isRead={notifications.find((item) => item.id === selectedNotificationId)?.isRead ?? false}
           onMarkAsRead={() => handleMarkAsRead(selectedNotificationId)}
           onMarkAsUnread={() => handleMarkAsUnread(selectedNotificationId)}

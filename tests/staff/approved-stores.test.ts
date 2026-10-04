@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import type { ReactNode } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { componentElements, createHookHarness, loadComponentModule } from "../support/component-harness.ts";
+import type { useStaffShell } from "../../components/staff/StaffShellContext.tsx";
 
 import {
   failedStaffStoresResult,
@@ -110,83 +114,355 @@ describe("staff stores API results", () => {
   });
 });
 
-describe("app/staff/page.tsx 근무 매장 선택 배선", () => {
-  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-  const read = (relativePath: string) => readFileSync(path.join(root, relativePath), "utf8").replace(/\r\n/g, "\n");
-  const source = read("app/staff/page.tsx");
-  const shell = read("components/staff/StaffShellContext.tsx");
-  const header = read("components/staff/StaffHeader.tsx");
-  const menu = read("components/common/ProfileMenu.tsx");
+function storeSelectorScenario(stores = [{ id: "store-a", name: "Store A" }, { id: "store-b", name: "Store B" }], isStoresLoading = false) {
+  const harness = createHookHarness([]);
+  const selections: string[] = [];
+  let finishSave: (() => void) | undefined;
+  const props = {
+    stores,
+    defaultStoreId: "store-a",
+    isStoresLoading,
+    onSetDefaultStore: async (storeId: string) => {
+      selections.push(storeId);
+      await new Promise<void>((resolve) => { finishSave = resolve; });
+      props.defaultStoreId = storeId;
+    },
+  };
+  const { default: Selector } = loadComponentModule<{ default: (selectorProps: typeof props) => ReactNode }>(
+    "components/staff/StoreSelector.tsx",
+    { react: { ...harness.react, useRef: () => ({ current: null }) } },
+  );
+  const render = () => harness.render(() => Selector(props));
+  const buttons = () => componentElements(render()).filter((element) => element.type === "button");
+  const click = (button: ReturnType<typeof buttons>[number]) => {
+    if (!button.props.disabled) (button.props.onClick as () => void)();
+  };
+  return { props, selections, render, buttons, click, finishSave: async () => { finishSave?.(); await Promise.resolve(); await Promise.resolve(); } };
+}
 
-  test("StaffShellContext의 승인 매장 목록을 Header의 ProfileMenu에 전달한다", () => {
-    assert.match(source, /const \{\s*stores,/);
-    assert.match(source, /useStaffShell\(\)/);
-    assert.match(shell, /fetch\("\/api\/staff\/stores"/);
-    assert.match(header, /useStaffShell\(\)/);
-    assert.match(header, /<ProfileMenu[\s\S]*?stores={stores}/);
-    assert.match(menu, /approvedStores\.map\(\(store\) =>/);
-  });
+function lifecycleHarness() {
+  const harness = createHookHarness([]);
+  const refs: { current: unknown }[] = [];
+  const effects: { dependencies: unknown[]; cleanup?: () => void }[] = [];
+  let refCursor = 0;
+  let effectCursor = 0;
+  let pending: (() => void)[] = [];
+  const react = {
+    ...harness.react,
+    useRef(initial: unknown) {
+      const index = refCursor++;
+      return refs[index] ??= { current: initial };
+    },
+    useCallback: (callback: unknown) => callback,
+    useEffectEvent: (callback: unknown) => callback,
+    useEffect(callback: () => (() => void) | void, dependencies: unknown[] = []) {
+      const index = effectCursor++;
+      const previous = effects[index];
+      if (previous && dependencies.every((value, position) => Object.is(value, previous.dependencies[position]))) return;
+      pending.push(() => {
+        previous?.cleanup?.();
+        effects[index] = { dependencies, cleanup: callback() || undefined };
+      });
+    },
+  };
+  return {
+    react,
+    render(component: () => ReactNode) {
+      refCursor = 0;
+      effectCursor = 0;
+      const tree = harness.render(component);
+      const callbacks = pending;
+      pending = [];
+      callbacks.forEach((callback) => callback());
+      return tree;
+    },
+  };
+}
 
-  test("ProfileMenu의 기본 매장 선택을 공통 상태의 활성 매장에 반영한다", () => {
-    assert.match(header, /onSetDefaultStore={handleSetDefaultStore}/);
-    assert.match(header, /await saveStorePreferences\(\{ defaultStoreId: storeId, order: stores\.map/);
-    assert.match(menu, /onClick={\(\) => void handleSelectStore\(store\.id\)}/);
-    assert.match(menu, /await onSetDefaultStore\(storeId\)/);
-    assert.match(shell, /selectedStore = stores\.find\(\(store\) => store\.id === defaultStoreId\)/);
-  });
+async function settleComponent() {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+}
 
-  test("서버가 재검증하도록 선택한 매장 id를 질문 요청에 담아 보낸다", () => {
-    assert.match(source, /storeId: selectedStore\.id/);
-  });
-
-  test("선택 매장이 바뀔 때 이전 매장의 대화·입력·오류를 초기화한다", () => {
-    assert.match(source, /useEffectEvent\(\(\) => resetConversation\(\)\)/);
-    assert.match(source, /previousStoreId !== null && previousStoreId !== nextStoreId\) \{\s*resetForStoreChange\(\)/);
-    const reset = source.slice(source.indexOf("function resetConversation("), source.indexOf("const resetForStoreChange"));
-    for (const assertion of [/setMessages\(messagesToUse\)/, /setConversationId\(null\)/, /writeStaffConversationId\(null\)/, /setInput\(""\)/, /setErrorMessage\(""\)/]) {
-      assert.match(reset, assertion);
+function staffScenario(restoreConversation = false) {
+  type Shell = ReturnType<typeof useStaffShell>;
+  const shellHarness = lifecycleHarness();
+  const pageHarness = lifecycleHarness();
+  let selectedId: string | null = null;
+  let conversationId: string | null = restoreConversation ? "conversation-a" : null;
+  let stores = [{ id: "store-a", name: "Store A" }, { id: "store-b", name: "Store B" }];
+  let storesFailed = false;
+  let releaseStores: (() => void) | undefined;
+  let holdStores = false;
+  let forbidden = false;
+  let chatFailed = false;
+  let holdChat = false;
+  let releaseChat: (() => void) | undefined;
+  let releaseRestore: (() => void) | undefined;
+  let storeRequests = 0;
+  const questions: { question: string; storeId: string; conversationId: string | null }[] = [];
+  const storage = {
+    readSelectedStaffStoreId: () => selectedId,
+    writeSelectedStaffStoreId: (id: string | null) => { selectedId = id; },
+    readStaffConversationId: () => conversationId,
+    writeStaffConversationId: (id: string | null) => { conversationId = id; },
+  };
+  const supabase = { createClient: () => ({
+    auth: { getUser: async () => ({ data: { user: { id: CURRENT_USER_ID } } }) },
+    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { role: "staff", approval_status: "approved", full_name: "Tester" } }) }) }) }),
+  }) };
+  const router = { push: () => { throw new Error("Unexpected navigation"); } };
+  const navigation = { useRouter: () => router, usePathname: () => "/staff" };
+  const fetchMock = async (url: string, options?: { body?: string; method?: string }) => {
+    if (url === "/api/staff/stores") {
+      storeRequests++;
+      if (holdStores) await new Promise<void>((resolve) => { releaseStores = resolve; });
+      return { ok: !storesFailed, status: storesFailed ? 500 : 200, json: async () => storesFailed ? { error: "Failure" } : { stores } };
     }
+    if (url === "/api/signup/store-membership") return { ok: true, json: async () => ({ success: true, data: [] }) };
+    if (url === "/api/staff/store-preferences") return { ok: true, json: async () => ({ preferences: options?.body ? JSON.parse(options.body) : { defaultStoreId: "store-a", order: [] } }) };
+    if (url === "/api/staff/chat") {
+      questions.push(JSON.parse(options?.body ?? "{}"));
+      if (holdChat) await new Promise<void>((resolve) => { releaseChat = resolve; });
+      return { ok: !forbidden && !chatFailed, json: async () => forbidden ? { code: "STORE_FORBIDDEN" } : chatFailed ? { error: "Chat failed" } : { answer: "Test answer", conversationId: "conversation-a" } };
+    }
+    if (url === "/api/staff/conversations/conversation-a") {
+      await new Promise<void>((resolve) => { releaseRestore = resolve; });
+      return { ok: true, json: async () => ({
+        conversation: { id: "conversation-a", storeId: "store-a", canContinue: true },
+        messages: [{ role: "assistant", content: "Previous store restored answer", createdAt: "2026-10-04T00:00:00Z" }],
+      }) };
+    }
+    throw new Error(`Unexpected network request: ${url}`);
+  };
+  const overrides = { "next/navigation": navigation, "@/lib/supabase/client": supabase, "@/lib/staff/selected-store": storage };
+  const { StaffShellProvider } = loadComponentModule<{ StaffShellProvider: (props: { children: ReactNode }) => ReactNode }>(
+    "components/staff/StaffShellContext.tsx", { ...overrides, react: shellHarness.react }, { fetch: fetchMock },
+  );
+  let shell: Shell;
+  const refreshShell = () => {
+    const provider = shellHarness.render(() => StaffShellProvider({ children: null }));
+    shell = componentElements(provider)[0].props.value as Shell;
+    return shell;
+  };
+  refreshShell();
+  const { default: Page } = loadComponentModule<{ default: () => ReactNode }>("app/staff/page.tsx", {
+    ...overrides,
+    react: pageHarness.react,
+    "@/components/staff/StaffShellContext": { useStaffShell: () => shell },
+    "@/components/staff/ConversationHistoryDrawer": { default: () => null, __esModule: true },
+  }, { fetch: fetchMock });
+  const render = () => pageHarness.render(Page);
+  const elements = () => componentElements(render());
+  const input = () => elements().find((element) => element.type === "input")!;
+  const type = (value: string) => (input().props.onChange as (event: unknown) => void)({ target: { value } });
+  const ask = async (question: string) => {
+    type(question);
+    const form = elements().find((element) => element.type === "form")!;
+    (form.props.onSubmit as (event: unknown) => void)({ preventDefault() {} });
+    await settleComponent();
+  };
+  return {
+    refreshShell, render, elements, input, type, ask, questions,
+    conversationId: () => conversationId,
+    storeRequests: () => storeRequests,
+    setStores: (next: typeof stores) => { stores = next; },
+    failStores: () => { storesFailed = true; },
+    failChat: () => { chatFailed = true; },
+    holdChat: () => { holdChat = true; },
+    releaseChat: async () => { holdChat = false; releaseChat?.(); await settleComponent(); },
+    releaseRestore: async () => { releaseRestore?.(); await settleComponent(); },
+    forbidStore: () => { forbidden = true; holdStores = true; },
+    releaseStores: async () => { holdStores = false; releaseStores?.(); await settleComponent(); },
+    ready: async () => { await settleComponent(); refreshShell(); render(); },
+  };
+}
+
+describe("app/staff/page.tsx 근무 매장 선택 배선", () => {
+
+  test("Header가 승인 매장과 로딩 상태를 선택기에 전달하고 선택한 ID를 저장한다", async () => {
+    const scenario = storeSelectorScenario();
+    const harness = createHookHarness([]);
+    const saved: unknown[] = [];
+    const Selector = () => null;
+    const { default: Header } = loadComponentModule<{ default: () => ReactNode }>("components/staff/StaffHeader.tsx", {
+      react: harness.react,
+      "@/components/staff/StoreSelector": { default: Selector, __esModule: true },
+      "@/components/common/ProfileMenu": { default: () => null, __esModule: true },
+      "@/components/common/NotificationCenter": { default: () => null, __esModule: true },
+      "@/lib/supabase/client": { createClient: () => { throw new Error("Unexpected auth request"); } },
+      "@/components/staff/StaffShellContext": { useStaffShell: () => ({ ...scenario.props, saveStorePreferences: async (value: unknown) => { saved.push(value); } }) },
+    });
+    const selector = componentElements(harness.render(Header)).find((element) => element.type === Selector);
+    assert.ok(selector);
+    assert.equal(selector.props.stores, scenario.props.stores);
+    assert.equal(selector.props.defaultStoreId, "store-a");
+    assert.equal(selector.props.isStoresLoading, false);
+    await (selector.props.onSetDefaultStore as (id: string) => Promise<void>)("store-b");
+    assert.equal(JSON.stringify(saved), JSON.stringify([{ defaultStoreId: "store-b", order: ["store-a", "store-b"] }]));
   });
 
-  test("같은 매장을 다시 선택하면 대화를 보존한다", () => {
-    assert.match(source, /previousStoreId !== null && previousStoreId !== nextStoreId/);
-    assert.match(shell, /defaultStoreId !== current\.defaultStoreId && defaultStoreId !== selectedStore\?\.id/);
-    assert.match(source, /function applyStore\(store: StaffStore\) \{[\s\S]*?previousStoreIdRef\.current = store\.id;\s*selectShellStore\(store\.id\)/);
+  test("승인 매장을 표시하고 선택한 ID를 저장하며 저장 중 중복 선택을 차단한다", async () => {
+    const scenario = storeSelectorScenario();
+    assert.ok(renderToStaticMarkup(scenario.render()).includes("Store A"));
+    scenario.click(scenario.buttons()[0]);
+    const options = scenario.buttons().slice(1);
+    assert.equal(options.length, 2);
+    assert.ok(renderToStaticMarkup(options[0]).includes("Store A"));
+    assert.ok(renderToStaticMarkup(options[1]).includes("Store B"));
+    scenario.click(options[1]);
+    assert.deepEqual(scenario.selections, ["store-b"]);
+    assert.ok(scenario.buttons().every((button) => button.props.disabled));
+    scenario.click(scenario.buttons()[1]);
+    assert.deepEqual(scenario.selections, ["store-b"]);
+    await scenario.finishSave();
+    assert.equal(scenario.buttons().length, 1);
+    assert.ok(renderToStaticMarkup(scenario.render()).includes("Store B"));
+    assert.equal(scenario.buttons()[0].props.disabled, false);
   });
 
-  test("ProfileMenu가 매장 로딩 상태를 표시하고 로딩 중 선택과 질문 전송을 차단한다", () => {
-    assert.match(header, /isStoresLoading={isStoresLoading}/);
-    assert.match(header, /defaultStoreId={defaultStoreId}/);
-    assert.match(menu, /approvedStores\.length > 0 \|\| isStoresLoading/);
-    assert.match(menu, /isStoresLoading \? "근무 매장을 불러오는 중/);
-    assert.match(menu, /if \(!onSetDefaultStore \|\| isSettingDefault \|\| isStoresLoading\) return/);
-    assert.match(menu, /disabled={isStoresLoading \|\| isSettingDefault \|\| !hasMultipleStores}/);
-    assert.match(menu, /disabled={isStoresLoading \|\| isSettingDefault}/);
-    assert.match(source, /const isBusy = isLoading \|\| isStoresLoading \|\| isConversationLoading/);
-    assert.match(source, /const canAsk = !isBusy && Boolean\(selectedStore\)/);
-    assert.match(source, /if \(!question \|\| isBusy\) return/);
-    assert.match(source, /<input[\s\S]*?disabled={!canAsk}/);
-    assert.match(source, /type="submit"\s+disabled={!canAsk \|\| !input\.trim\(\)}/);
-    assert.match(source, /<QuickQuestionsScroller[^>]*canAsk={canAsk}/);
+  test("선택한 승인 매장 ID로 질문을 전송한다", async () => {
+    const scenario = staffScenario();
+    await scenario.ready();
+    await scenario.refreshShell().saveStorePreferences({ defaultStoreId: "store-b", order: ["store-a", "store-b"] });
+    scenario.refreshShell();
+    scenario.render();
+    scenario.render();
+    await scenario.ask("Question for B");
+    assert.equal(JSON.stringify(scenario.questions), JSON.stringify([{ question: "Question for B", storeId: "store-b", conversationId: null }]));
   });
 
-  test("목록 조회 실패와 매장 없음을 구분해서 안내한다", () => {
-    // storesError가 있으면 에러 메시지 표시
-    assert.match(source, /\{storesError && \(/);
-    // 매장이 없으면 '승인된 근무 매장이 없습니다' 표시
-    assert.match(source, /"승인된 근무 매장이 없습니다/);
-    // 두 조건이 분리되어 있음을 확인
-    assert.match(source, /!isStoresLoading && !storesError && stores\.length === 0/);
-    assert.match(shell, /if \(!approvedResponse\.ok \|\| !Array\.isArray\(approvedPayload\.stores\)\) throw/);
-    assert.match(shell, /catch \{[\s\S]*?selectedStore: null,[\s\S]*?isStoresLoading: false,[\s\S]*?storesError: "승인된 근무 매장을 불러오지 못했습니다/);
+  test("다른 매장 선택 시 이전 대화와 입력을 초기화한다", async () => {
+    const scenario = staffScenario();
+    await scenario.ready();
+    await scenario.ask("Previous question");
+    scenario.type("Unsent input");
+    assert.equal(scenario.conversationId(), "conversation-a");
+    assert.ok(renderToStaticMarkup(scenario.render()).includes("Previous question"));
+    scenario.failChat();
+    await scenario.ask("Failed question");
+    scenario.type("Unsent input");
+    assert.ok(renderToStaticMarkup(scenario.render()).includes("답변을 불러오지 못했어요"));
+    await scenario.refreshShell().saveStorePreferences({ defaultStoreId: "store-b", order: [] });
+    scenario.refreshShell();
+    scenario.render();
+    assert.equal(scenario.input().props.value, "");
+    assert.equal(scenario.conversationId(), null);
+    const markup = renderToStaticMarkup(scenario.render());
+    assert.equal(markup.includes("Previous question"), false);
+    assert.equal(markup.includes("Test answer"), false);
+    assert.equal(markup.includes("답변을 불러오지 못했어요"), false);
   });
 
-  test("권한 해제 시 기존 대화를 비우고 재조회 동안 질문을 차단하며 유효한 매장으로 갱신한다", () => {
-    assert.match(source, /payload\.code === "STORE_FORBIDDEN"\) \{[\s\S]*?resetConversation\(\);[\s\S]*?reloadStores\(\);\s*return/);
-    assert.match(shell, /const reloadStores[\s\S]*?isStoresLoading: true, storesError: ""[\s\S]*?setReloadToken/);
-    assert.match(shell, /stores\.find\(\(store\) => store\.id === storedStoreId\) \?\?[\s\S]*?stores\[0\] \?\?\s*null/);
-    assert.match(source, /if \(previousStoreIdRef\.current !== selectedStore\.id\) return/);
-    assert.match(source, /if \(controller\.signal\.aborted\) return;\s*restoreCheckedRef\.current = true/);
+  test("매장 변경 전에 보낸 질문의 늦은 응답을 새 대화에 추가하지 않는다", async () => {
+    const scenario = staffScenario();
+    await scenario.ready();
+    scenario.holdChat();
+    await scenario.ask("Previous pending question");
+    await scenario.refreshShell().saveStorePreferences({ defaultStoreId: "store-b", order: [] });
+    scenario.refreshShell();
+    scenario.render();
+    await scenario.releaseChat();
+    const markup = renderToStaticMarkup(scenario.render());
+    assert.equal(markup.includes("Previous pending question"), false);
+    assert.equal(markup.includes("Test answer"), false);
+    assert.equal(scenario.conversationId(), null);
+  });
+
+  test("매장 변경으로 취소된 이전 대화 복원 응답을 무시한다", async () => {
+    const scenario = staffScenario(true);
+    await scenario.ready();
+    await scenario.refreshShell().saveStorePreferences({ defaultStoreId: "store-b", order: [] });
+    scenario.refreshShell();
+    scenario.render();
+    await scenario.releaseRestore();
+    assert.equal(renderToStaticMarkup(scenario.render()).includes("Previous store restored answer"), false);
+    assert.equal(scenario.conversationId(), null);
+  });
+
+  test("같은 매장 재선택 시 대화와 입력을 보존한다", async () => {
+    const scenario = staffScenario();
+    await scenario.ready();
+    await scenario.ask("Previous question");
+    scenario.type("Unsent input");
+    await scenario.refreshShell().saveStorePreferences({ defaultStoreId: "store-a", order: [] });
+    scenario.refreshShell();
+    assert.equal(scenario.input().props.value, "Unsent input");
+    assert.equal(scenario.conversationId(), "conversation-a");
+    assert.ok(renderToStaticMarkup(scenario.render()).includes("Previous question"));
+    await scenario.ask("Follow-up");
+    assert.equal(scenario.questions[1].conversationId, "conversation-a");
+  });
+
+  test("첫 매장 조회 중 로딩 안내를 표시하고 선택을 차단한다", () => {
+    const scenario = storeSelectorScenario([], true);
+    assert.ok(renderToStaticMarkup(scenario.render()).includes("매장 불러오는 중..."));
+    assert.equal(scenario.buttons()[0].props.disabled, true);
+    scenario.click(scenario.buttons()[0]);
+    assert.deepEqual(scenario.selections, []);
+    assert.equal(scenario.buttons().length, 1);
+  });
+
+  test("메뉴가 열린 상태로 재조회하면 매장 선택을 차단한다", () => {
+    const scenario = storeSelectorScenario();
+    scenario.click(scenario.buttons()[0]);
+    scenario.props.isStoresLoading = true;
+    assert.ok(renderToStaticMarkup(scenario.render()).includes("매장 불러오는 중..."));
+    assert.ok(scenario.buttons().every((button) => button.props.disabled));
+    scenario.buttons().forEach(scenario.click);
+    assert.deepEqual(scenario.selections, []);
+  });
+
+  test("매장 조회 중 입력·전송·예시 질문을 차단한다", async () => {
+    const scenario = staffScenario();
+    assert.equal(scenario.input().props.disabled, true);
+    const submit = scenario.elements().find((element) => element.props.type === "submit");
+    assert.equal(submit?.props.disabled, true);
+    const quickQuestions = scenario.elements().find((element) => Array.isArray(element.props.questions));
+    assert.equal(quickQuestions?.props.canAsk, false);
+    await (quickQuestions?.props.onSelectQuestion as (question: string) => Promise<void>)("Blocked question");
+    assert.deepEqual(scenario.questions, []);
+    await scenario.ready();
+    assert.equal(scenario.input().props.disabled, false);
+  });
+
+  test("목록 조회 실패와 승인 매장 없음을 구분하고 질문을 차단한다", async () => {
+    const failed = staffScenario();
+    failed.failStores();
+    await failed.ready();
+    const failedMarkup = renderToStaticMarkup(failed.render());
+    assert.ok(failedMarkup.includes("승인된 근무 매장을 불러오지 못했습니다"));
+    assert.equal(failedMarkup.includes("승인된 근무 매장이 없습니다"), false);
+    assert.equal(failed.input().props.disabled, true);
+    const empty = staffScenario();
+    empty.setStores([]);
+    await empty.ready();
+    const emptyMarkup = renderToStaticMarkup(empty.render());
+    assert.ok(emptyMarkup.includes("승인된 근무 매장이 없습니다"));
+    assert.equal(emptyMarkup.includes("불러오지 못했습니다"), false);
+    assert.equal(empty.input().props.disabled, true);
+  });
+
+  test("STORE_FORBIDDEN 이후 대화를 비우고 재조회 동안 질문을 차단하며 승인 매장으로 갱신한다", async () => {
+    const scenario = staffScenario();
+    await scenario.ready();
+    await scenario.ask("Previous question");
+    scenario.forbidStore();
+    scenario.setStores([{ id: "store-b", name: "Store B" }]);
+    await scenario.ask("Forbidden question");
+    assert.equal(scenario.conversationId(), null);
+    const shell = scenario.refreshShell();
+    assert.equal(shell.isStoresLoading, true);
+    assert.equal(scenario.storeRequests(), 2);
+    assert.equal(scenario.input().props.disabled, true);
+    assert.equal(renderToStaticMarkup(scenario.render()).includes("Previous question"), false);
+    await scenario.ask("Blocked during reload");
+    assert.equal(scenario.questions.length, 2);
+    await scenario.releaseStores();
+    const refreshed = scenario.refreshShell();
+    assert.equal(refreshed.selectedStore?.id, "store-b");
+    assert.deepEqual(refreshed.stores.map((store) => store.id), ["store-b"]);
+    scenario.render();
+    assert.equal(scenario.input().props.disabled, false);
   });
 });
 
