@@ -12,7 +12,7 @@ interface HQHeaderProps {
   onLogout: () => void;
 }
 
-export default function HQHeader({ userName, franchiseName, onLogout }: HQHeaderProps) {
+export default function HQHeader({ userName, franchiseName, onLogout: _onLogout }: HQHeaderProps) {
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -75,9 +75,7 @@ export default function HQHeader({ userName, franchiseName, onLogout }: HQHeader
             userName={userName}
             subtitle={`${franchiseName} · 본사 관리자`}
             roleLabel="본사 관리자"
-            settingsHref="/hq/settings"
             avatarUrl={avatarUrl}
-            onLogout={onLogout}
           />
         </div>
       </div>
