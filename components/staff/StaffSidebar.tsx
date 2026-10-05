@@ -43,19 +43,19 @@ export default function StaffSidebar({
       {/* Mobile Menu Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="fixed top-4 left-4 z-50 lg:hidden bg-white rounded-lg p-2 border border-[var(--color-border)]"
+        className="fixed top-4 left-4 z-50 lg:hidden bg-white rounded-lg p-2 border border-(--color-border)"
       >
         {isOpen ? <X size={24} /> : <Menu size={24} />}
       </button>
 
       {/* Sidebar */}
       <aside
-        className={`fixed left-0 top-0 h-screen bg-white border-r border-[var(--color-border)] flex flex-col transition-transform duration-300 w-64 lg:w-[240px] z-40 ${
+        className={`fixed left-0 top-0 h-screen bg-white border-r border-(--color-border) flex flex-col transition-transform duration-300 w-64 lg:w-[240px] z-40 ${
           isOpen ? "translate-x-0" : "-translate-x-full"
         } lg:translate-x-0`}
       >
         {/* Logo Section - aligned with header */}
-        <div className="flex items-center px-6 h-16 border-b border-[var(--color-border)]">
+        <div className="flex items-center px-6 h-16 border-b border-(--color-border)">
           <Link href="/staff" aria-label="AI 챗봇으로 이동" onClick={() => setIsOpen(false)}>
             <Image
               src="/logo/ilitda-wordmark.png"
@@ -75,8 +75,8 @@ export default function StaffSidebar({
               index > 0 ? "mt-1" : ""
             } ${
               isActive
-                ? "bg-[var(--color-primary-light)]/30 text-[var(--color-primary)]"
-                : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                ? "bg-(--color-primary-light)/30 text-(--color-primary)"
+                : "text-(--color-text-secondary) hover:text-(--color-text-primary)"
             }`;
 
             return (
@@ -96,7 +96,7 @@ export default function StaffSidebar({
 
         {/* Bottom Menu */}
         {/* data-app-sidebar-footer: 하단 고정 Action Bar가 이 영역 높이에 맞춰 상단 구분선을 이어 붙인다. */}
-        <div data-app-sidebar-footer className="py-3 px-3 border-t border-[var(--color-border)]">
+        <div data-app-sidebar-footer className="py-3 px-3 border-t border-(--color-border)">
           {bottomMenuItems.map((item) => (
             <Link
               key={item.id}
@@ -105,8 +105,8 @@ export default function StaffSidebar({
               aria-current={activeMenu === item.id ? "page" : undefined}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium transition-colors ${
                 activeMenu === item.id
-                  ? "bg-[var(--color-primary-light)]/30 text-[var(--color-primary)]"
-                  : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                  ? "bg-(--color-primary-light)/30 text-(--color-primary)"
+                  : "text-(--color-text-secondary) hover:text-(--color-text-primary)"
               }`}
             >
               <item.icon size={20} />
@@ -115,13 +115,13 @@ export default function StaffSidebar({
           ))}
 
           {/* Divider */}
-          <div className="my-1 mx-2 border-t border-[var(--color-border)]" />
+          <div className="my-1 mx-2 border-t border-(--color-border)" />
 
           {/* Logout Button */}
           {onLogout && (
             <button
               onClick={onLogout}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium text-[var(--color-text-secondary)] hover:text-red-600 transition-colors"
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium text-(--color-text-secondary) hover:text-red-600 transition-colors"
             >
               <LogOut size={20} />
               <span>로그아웃</span>
