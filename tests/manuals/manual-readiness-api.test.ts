@@ -222,9 +222,10 @@ describe("재인덱싱 라우트 (HQ / 점주)", () => {
 describe("청크 중복 방지 계약 (기존 구현 재사용)", () => {
   const source = readSource("lib/rag/index-approved-manual.ts");
 
-  test("indexManualById가 쓰는 색인 경로는 unique(manual_id, chunk_index) upsert + stale 삭제를 유지한다", () => {
-    assert.match(source, /\.upsert\(rows, \{ onConflict: "manual_id,chunk_index" \}\)/);
-    assert.match(source, /\.delete\(\)\s*\n\s*\.eq\("manual_id", manual\.id\)\s*\n\s*\.gte\("chunk_index", chunks\.length\)/);
+  test("indexManualById는 버전 검사 후 전체 청크를 원자 교체한다", () => {
+    assert.match(source, /\.rpc\("replace_manual_chunks_if_current"/);
+    assert.match(source, /p_expected_snapshot: manual/);
+    assert.equal(source.includes('.from("manual_chunks")'), false);
   });
 
   test("상태 조회는 범위 안 id를 한 번에 조회해 N+1 질의를 만들지 않는다", () => {
@@ -321,8 +322,9 @@ describe("기존 화면/계약 회귀 없음", () => {
 
   test("저장 완료 문구가 검색 준비 완료를 뜻하지 않도록 안내한다", () => {
     for (const relative of ["app/hq/manuals/onboarding/page.tsx", "app/boss/store-manuals/page.tsx"]) {
-      assert.match(readSource(relative), /저장했어요\. 검색 준비 상태를 확인해 주세요\./);
+      assert.match(readSource(relative), /manualSaveMessage\(data\)/);
     }
+    assert.match(readSource("lib/manuals/manual-save-result.ts"), /본문은 저장되었지만 일부 검색 반영에 실패/);
   });
 
   test("HQ 지점 매뉴얼 화면은 프랜차이즈별 지점 요약과 선택 지점 ID를 사용한다", () => {
@@ -392,7 +394,7 @@ describe("기존 화면/계약 회귀 없음", () => {
       // batch guard 도입 후 재전송은 200으로 응답하지만 body shape({ manuals })은 그대로다.
       assert.match(
         readSource(relative),
-        /NextResponse\.json\(\{ manuals: result\.manuals \}, \{ status: result\.kind === "saved" \? 201 : 200 \}\)/,
+        /NextResponse\.json\(\{ manuals: result\.manuals, \.\.\.manualSaveResult\(result.manuals\) \}, \{ status: result\.kind === "saved" \? 201 : 200 \}\)/,
       );
     }
   });

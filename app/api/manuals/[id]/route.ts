@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireHqUser } from "@/lib/supabase/hq-auth";
-import { indexManualById } from "@/lib/rag/index-manual";
+import { requireManualWriteContract, MANUAL_FEATURE_PENDING } from "@/lib/manuals/manual-write-contract";
+import { indexSavedManuals } from "@/lib/manuals/index-saved-manuals";
+import { validateManualEdit } from "@/lib/manuals/validate-manual-edit";
 import type { ManualRecord } from "@/lib/types/manual";
 
 export const runtime = "nodejs";
@@ -14,13 +16,13 @@ type UpdateManualRequestBody = {
 };
 
 type UpdateManualResponse = {
+  saveStatus?: string;
+  searchStatus?: string;
+  searchResults?: { manualId: string; status: string }[];
+  message?: string;
   manual?: ManualRecord;
   error?: string;
 };
-
-function getString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
 
 export async function PATCH(
   request: Request,
@@ -42,22 +44,16 @@ export async function PATCH(
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const update: Record<string, string> = {};
-  const title = getString(body.title);
-  const category = getString(body.category);
-  const content = getString(body.content);
-
-  if (title) update.title = title;
-  if (category) update.category = category;
-  if (content) update.content = content;
-
-  if (Object.keys(update).length === 0) {
-    return NextResponse.json({ error: "수정할 내용이 없습니다." }, { status: 400 });
-  }
+  const validation = validateManualEdit(body);
+  if (!validation.valid) return NextResponse.json({ error: validation.error }, { status: 400 });
+  const update = validation.update;
 
   update.updated_at = new Date().toISOString();
 
   const supabase = createAdminClient();
+  let context;
+  try { context = await requireManualWriteContract(supabase); }
+  catch { return NextResponse.json({ error: MANUAL_FEATURE_PENDING }, { status: 503 }); }
 
   // Scope the update to the caller's own franchise (or brand_name for legacy rows without franchise_id).
   let query = supabase.from("manuals").update(update).eq("id", id);
@@ -79,27 +75,11 @@ export async function PATCH(
 
   const updatedManual = data as ManualRecord;
 
-  // manual_chunks RAG 데이터 동기화: 기존 청크를 지우고 chunk_index=0으로 다시 생성한다 (임베딩은 일단 null).
-  try {
-    await supabase.from("manual_chunks").delete().eq("manual_id", updatedManual.id);
-    await supabase.from("manual_chunks").insert({
-      manual_id: updatedManual.id,
-      chunk_index: 0,
-      content: `${updatedManual.title} - ${updatedManual.content}`,
-      embedding: null,
-    });
-  } catch (chunkError) {
-    console.error("[MANUALS] chunk sync failed:", chunkError);
-  }
-
-  // 수정된 내용에 대해 임베딩을 즉시 재생성한다 (OpenAI 호출 실패해도 수정 자체는 유지).
-  try {
-    await indexManualById(updatedManual.id);
-  } catch (indexError) {
-    console.error("[MANUALS] re-embedding failed:", indexError);
-  }
-
-  return NextResponse.json({ manual: updatedManual });
+  const search = await indexSavedManuals([updatedManual], context).catch(() => ({
+    saveStatus: "saved", searchStatus: "incomplete", searchResults: [],
+    message: "본문은 저장되었지만 검색 반영 결과를 확인하지 못했습니다. 검색 준비 상태에서 다시 처리해 주세요.",
+  }));
+  return NextResponse.json({ manual: updatedManual, ...search });
 }
 
 type DeleteManualResponse = {

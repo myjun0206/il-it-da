@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireHqUser } from "@/lib/supabase/hq-auth";
-import { indexManualById } from "@/lib/rag/index-manual";
+import { requireManualWriteContract, MANUAL_FEATURE_PENDING } from "@/lib/manuals/manual-write-contract";
+import { indexSavedManuals } from "@/lib/manuals/index-saved-manuals";
+import { validateManualEdit } from "@/lib/manuals/validate-manual-edit";
 import type { ManualRecord } from "@/lib/types/manual";
 
 export const runtime = "nodejs";
@@ -18,6 +20,11 @@ type BatchUpdateRequestBody = {
 };
 
 type BatchUpdateResponse = {
+  saveStatus?: string;
+  searchStatus?: string;
+  searchResults?: { manualId: string; status: string }[];
+  message?: string;
+  failedIds?: string[];
   manuals?: ManualRecord[];
   error?: string;
 };
@@ -40,7 +47,7 @@ function parseBatchItems(
     const title = getString(raw?.title);
     const content = getString(raw?.content);
 
-    if (!id || !title || !content) {
+    if (!id || !title || !content || !validateManualEdit({ title, content }).valid) {
       return null;
     }
 
@@ -72,6 +79,9 @@ export async function POST(request: Request): Promise<NextResponse<BatchUpdateRe
   }
 
   const supabase = createAdminClient();
+  let context;
+  try { context = await requireManualWriteContract(supabase); }
+  catch { return NextResponse.json({ error: MANUAL_FEATURE_PENDING }, { status: 503 }); }
   const updatedManuals: ManualRecord[] = [];
   const failedIds: string[] = [];
 
@@ -98,27 +108,6 @@ export async function POST(request: Request): Promise<NextResponse<BatchUpdateRe
     updatedManuals.push(data as ManualRecord);
   }
 
-  // manual_chunks RAG 동기화: 각 매뉴얼의 기존 청크를 지우고 chunk_index=0으로 다시 생성한다 (임베딩은 일단 null).
-  for (const manual of updatedManuals) {
-    try {
-      await supabase.from("manual_chunks").delete().eq("manual_id", manual.id);
-      await supabase.from("manual_chunks").insert({
-        manual_id: manual.id,
-        chunk_index: 0,
-        content: `${manual.title} - ${manual.content}`,
-        embedding: null,
-      });
-    } catch (chunkError) {
-      console.error("[MANUALS_BATCH] chunk sync failed:", chunkError);
-    }
-
-    try {
-      await indexManualById(manual.id);
-    } catch (indexError) {
-      console.error("[MANUALS_BATCH] re-embedding failed:", indexError);
-    }
-  }
-
   if (updatedManuals.length === 0) {
     return NextResponse.json({ error: "저장할 수 있는 매뉴얼이 없습니다." }, { status: 404 });
   }
@@ -127,5 +116,10 @@ export async function POST(request: Request): Promise<NextResponse<BatchUpdateRe
     console.error("[MANUALS_BATCH] skipped ids outside scope:", failedIds);
   }
 
-  return NextResponse.json({ manuals: updatedManuals });
+  const search = await indexSavedManuals(updatedManuals, context).catch(() => ({
+    saveStatus: "saved", searchStatus: "incomplete", searchResults: [],
+    message: "본문 저장 후 검색 반영 결과를 확인하지 못했습니다. 검색 준비 상태에서 다시 처리해 주세요.",
+  }));
+  return NextResponse.json({ manuals: updatedManuals, ...search, failedIds, saveStatus: failedIds.length ? "partial" : "saved",
+    message: failedIds.length ? "일부 항목을 저장하지 못했습니다. 저장된 항목의 검색 준비 상태도 확인해 주세요." : search.message });
 }

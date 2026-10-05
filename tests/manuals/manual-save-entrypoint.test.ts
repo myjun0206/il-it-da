@@ -74,6 +74,10 @@ function fakeClient(
   }
 
   const client = {
+    rpc: async (name: string) => {
+      assert.equal(name, "check_manual_write_contract");
+      return { data: 2, error: null };
+    },
     from(table: string) {
       if (table === "manual_chunks") {
         return {
@@ -491,7 +495,9 @@ describe("매뉴얼 라우트 오류 응답에 원본 예외 message를 담지 �
 
     const detail = readSource("app/api/store-manuals/[id]/route.ts");
     assert.match(detail, /\{ error: "매뉴얼을 찾을 수 없습니다\." \}, \{ status: 404 \}/);
-    assert.match(detail, /\{ error: "수정할 내용이 없습니다\." \}, \{ status: 400 \}/);
+    assert.match(detail, /saveStoreManualEdit\(adminClient/);
+    assert.match(readSource("lib/manuals/validate-manual-edit.ts"), /error: "수정할 내용이 없습니다\."/);
+    assert.match(readSource("lib/manuals/save-store-manual-edit.ts"), /status: 400, body: \{ error: validation.error \}/);
 
     const items = readSource("app/api/store-manuals/[id]/items/route.ts");
     assert.match(items, /\{ error: "추가할 내용을 입력해주세요\." \}, \{ status: 400 \}/);
@@ -639,7 +645,8 @@ describe("HQ 확정 저장 경로 시나리오 (실제 함수 실행, 가짜 cli
     assert.equal(result.kind, "saved");
     const children = manuals.filter((row) => row.parent_manual_id !== null);
     assert.equal(manuals.length, 3);
-    assert.equal(chunks.length, 2);
+    assert.equal(chunks.length, 0);
+    assert.equal(children.every((row) => row.search_status === "ready"), true);
     assert.deepEqual(indexed.sort(), children.map((row) => row.id).sort());
     for (const row of manuals) {
       assert.equal(row.franchise_id, "franchise-1");
@@ -726,7 +733,7 @@ describe("HQ 확정 저장 경로 시나리오 (실제 함수 실행, 가짜 cli
     assert.equal(batches[0].manual_count, 1);
   });
 
-  test("임베딩 실패: 저장은 성공하고 청크는 embedding=null 상태로 남아 '검색 준비 필요'가 된다", async () => {
+  test("임베딩 실패: 저장은 성공하고 청크가 없어 검색 제외이며 실패 상태를 반환한다", async () => {
     const { client, manuals, chunks } = fakeClient({ modelCompletedLookup: true });
     const result = await silence(() =>
       saveManualGroupsWithBatchGuard(client, {
@@ -742,7 +749,7 @@ describe("HQ 확정 저장 경로 시나리오 (실제 함수 실행, 가짜 cli
 
     assert.equal(result.kind, "saved");
     assert.equal(manuals.length, 3);
-    assert.equal(chunks.length, 2);
-    assert.equal(chunks.every((chunk) => chunk.embedding === null), true);
+    assert.equal(chunks.length, 0);
+    assert.equal(manuals.filter((row) => row.parent_manual_id !== null).every((row) => row.search_status === "failed"), true);
   });
 });
