@@ -115,7 +115,7 @@ export async function searchManualChunks(
 
   if (error) {
     console.error("RAG store-scoped hybrid search failed.");
-    throw new Error("Supabase store-scoped hybrid search failed.");
+    throw Object.assign(new Error("Supabase store-scoped hybrid search failed."), { diagnosticService: "search_rpc" });
   }
 
   const matches = parseChunkMatches(data);

@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
+import { ManualWriteUnavailableError, MANUAL_FEATURE_PENDING } from "@/lib/manuals/manual-write-contract";
 
 import { indexApprovedManual } from "@/lib/rag/index-approved-manual";
 
@@ -114,6 +115,7 @@ export async function POST(
       { status: 200 },
     );
   } catch (error) {
+    if (error instanceof ManualWriteUnavailableError) return NextResponse.json({ error: MANUAL_FEATURE_PENDING }, { status: 503 });
     const errorMessage = error instanceof Error ? error.message : "";
 
     if (

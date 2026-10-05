@@ -9,6 +9,7 @@ import { createClient } from "@/lib/supabase/client";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
 import { ManualSearchReadinessPanel } from "@/components/manuals/ManualSearchReadinessPanel";
+import { manualSaveMessage } from "@/lib/manuals/manual-save-result";
 import type { ManualRecord } from "@/lib/types/manual";
 
 type ManualGroup = {
@@ -144,6 +145,15 @@ export default function ManualDashboardPage() {
   const [isDeletingAll, setIsDeletingAll] = useState(false);
   const [deleteAllError, setDeleteAllError] = useState("");
   const [toastMessage, setToastMessage] = useState("");
+  const [saveNotice, setSaveNotice] = useState("");
+  const [readinessRevision, setReadinessRevision] = useState(0);
+  useEffect(() => {
+    try {
+      const message = sessionStorage.getItem("ilitda:manual-upload-notice")
+        || (new URLSearchParams(window.location.search).has("saved") ? "검색 반영 결과를 확인하지 못했습니다. 검색 준비 상태를 다시 확인해 주세요." : "");
+      if (message) { queueMicrotask(() => setSaveNotice(message)); sessionStorage.removeItem("ilitda:manual-upload-notice"); }
+    } catch { queueMicrotask(() => setSaveNotice("검색 반영 결과를 확인하지 못했습니다. 검색 준비 상태를 다시 확인해 주세요.")); }
+  }, []);
 
   const showToast = (message: string) => {
     setToastMessage(message);
@@ -365,6 +375,8 @@ export default function ManualDashboardPage() {
       setShowCategoryModal(false);
       await refetchManuals();
       showToast("카테고리가 추가되었습니다.");
+      setSaveNotice(manualSaveMessage(data));
+      setReadinessRevision((value) => value + 1);
     } catch (e) {
       setCategoryError(e instanceof Error ? e.message : "카테고리 저장 중 오류가 발생했습니다.");
     } finally {
@@ -408,6 +420,8 @@ export default function ManualDashboardPage() {
         setSelectedCategoryName(newCategory);
       }
       showToast("카테고리 이름이 변경되었습니다.");
+      setSaveNotice(manualSaveMessage(data));
+      setReadinessRevision((value) => value + 1);
     } catch (e) {
       setEditCategoryError(e instanceof Error ? e.message : "카테고리 이름 변경 중 오류가 발생했습니다.");
     } finally {
@@ -498,6 +512,8 @@ export default function ManualDashboardPage() {
         setView("titles");
       }
       showToast("타이틀이 추가되었습니다.");
+      setSaveNotice(manualSaveMessage(data));
+      setReadinessRevision((value) => value + 1);
     } catch (e) {
       setTitleError(e instanceof Error ? e.message : "타이틀 저장 중 오류가 발생했습니다.");
     } finally {
@@ -535,6 +551,8 @@ export default function ManualDashboardPage() {
       await refetchManuals();
       setSelectedTitleId(updatedTitleId);
       showToast("타이틀 이름이 변경되었습니다.");
+      setSaveNotice(manualSaveMessage(data));
+      setReadinessRevision((value) => value + 1);
     } catch (e) {
       setEditTitleError(e instanceof Error ? e.message : "타이틀 이름 변경 중 오류가 발생했습니다.");
     } finally {
@@ -608,6 +626,8 @@ export default function ManualDashboardPage() {
       setShowItemModal(false);
       await refetchManuals();
       showToast("세부 매뉴얼이 추가되었습니다.");
+      setSaveNotice(manualSaveMessage(data));
+      setReadinessRevision((value) => value + 1);
     } catch (e) {
       setItemError(e instanceof Error ? e.message : "세부 매뉴얼 저장 중 오류가 발생했습니다.");
     } finally {
@@ -653,6 +673,8 @@ export default function ManualDashboardPage() {
       cancelEditItem();
       await refetchManuals();
       showToast("매뉴얼 내용이 저장되었습니다.");
+      setSaveNotice(manualSaveMessage(data));
+      setReadinessRevision((value) => value + 1);
     } catch (e) {
       setItemEditError(e instanceof Error ? e.message : "매뉴얼 저장 중 오류가 발생했습니다.");
     } finally {
@@ -796,9 +818,11 @@ export default function ManualDashboardPage() {
           )}
 
           <ManualSearchReadinessPanel
+            key={readinessRevision}
             readinessUrl="/api/manuals/search-readiness"
             reindexUrl="/api/manuals/search-readiness/reindex"
           />
+          {saveNotice && <p role="status" className="mb-5 whitespace-pre-wrap break-words border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{saveNotice}</p>}
 
           {isLoadingManuals ? (
             <p className="text-sm text-[var(--color-text-secondary)]">불러오는 중...</p>
@@ -1388,6 +1412,8 @@ export default function ManualDashboardPage() {
           onClose={() => setSelectedGroup(null)}
           onSaved={async (message) => {
             await refetchManuals();
+            setSaveNotice(message);
+            setReadinessRevision((value) => value + 1);
             showToast(message);
           }}
         />
@@ -1479,7 +1505,7 @@ function ManualGroupModal({
         throw new Error(data.error || "주제 저장 중 오류가 발생했습니다.");
       }
 
-      await onSaved("주제가 저장되었습니다.");
+      await onSaved(manualSaveMessage(data));
     } catch (e) {
       setError(e instanceof Error ? e.message : "주제 저장 중 오류가 발생했습니다.");
     } finally {
@@ -1493,6 +1519,7 @@ function ManualGroupModal({
 
     try {
       const existingItems = items.filter((item) => !item.isNew);
+      const notices: string[] = [];
       const newItems = items.filter((item) => item.isNew && item.content.trim());
 
       if (existingItems.length > 0) {
@@ -1508,6 +1535,7 @@ function ManualGroupModal({
         if (!response.ok) {
           throw new Error(data.error || "일괄 저장 중 오류가 발생했습니다.");
         }
+        notices.push(manualSaveMessage(data));
       }
 
       if (newItems.length > 0) {
@@ -1523,6 +1551,7 @@ function ManualGroupModal({
         }
 
         const created = data.manuals ?? [];
+        notices.push(manualSaveMessage(data));
         setItems((prev) => {
           let createdIndex = 0;
           return prev.map((item) => {
@@ -1536,7 +1565,7 @@ function ManualGroupModal({
         });
       }
 
-      await onSaved("변경사항이 모두 저장되었습니다.");
+      await onSaved(notices.join("\n") || "저장 결과를 검색 준비 상태에서 확인해 주세요.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "일괄 저장 중 오류가 발생했습니다.");
     } finally {

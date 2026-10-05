@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { requireManualWriteContract } from "@/lib/manuals/manual-write-contract";
 
 export interface ManualChunkRow {
   content: string;
@@ -21,19 +22,10 @@ export async function persistManualChunks(
   supabase: SupabaseClient,
   manualId: string,
   chunks: readonly ManualChunkRow[],
+  expectedSnapshot?: Record<string, unknown>,
 ): Promise<PersistManualChunksResult> {
-  if (chunks.length === 0) {
-    const { error: deleteAllError } = await supabase
-      .from("manual_chunks")
-      .delete()
-      .eq("manual_id", manualId);
-
-    if (deleteAllError) {
-      throw new Error("CHUNK_PERSIST_FAILED");
-    }
-
-    return { chunkCount: 0 };
-  }
+  if (!expectedSnapshot || chunks.length === 0) throw new Error("CHUNK_PERSIST_FAILED");
+  await requireManualWriteContract(supabase);
 
   const rows = chunks.map((chunk, index) => ({
     manual_id: manualId,
@@ -42,21 +34,10 @@ export async function persistManualChunks(
     embedding: chunk.embedding,
   }));
 
-  const { error: upsertError } = await supabase
-    .from("manual_chunks")
-    .upsert(rows, { onConflict: "manual_id,chunk_index" });
-
-  if (upsertError) {
-    throw new Error("CHUNK_PERSIST_FAILED");
-  }
-
-  const { error: deleteStaleError } = await supabase
-    .from("manual_chunks")
-    .delete()
-    .eq("manual_id", manualId)
-    .gte("chunk_index", chunks.length);
-
-  if (deleteStaleError) {
+  const { error } = await supabase.rpc("replace_manual_chunks_if_current", {
+    p_manual_id: manualId, p_expected_snapshot: expectedSnapshot, p_chunks: rows,
+  });
+  if (error) {
     throw new Error("CHUNK_PERSIST_FAILED");
   }
 

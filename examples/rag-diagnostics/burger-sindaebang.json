@@ -1,0 +1,7 @@
+{
+  "storeId": "REPLACE_WITH_BURGER_SINDAEBANG_STORE_UUID",
+  "cases": [
+    { "question": "B 패밀리팩의 전체 구성과 수량은 무엇인가요?" },
+    { "question": "패밀리팩 주문 들어왔는데 버거랑 사이드랑 음료 몇 개씩 챙겨요?" }
+  ]
+}

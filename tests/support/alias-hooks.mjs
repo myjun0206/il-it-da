@@ -13,6 +13,9 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../
 const CANDIDATE_SUFFIXES = ["", ".ts", ".tsx", "/index.ts"];
 
 export async function resolve(specifier, context, nextResolve) {
+  if (specifier === "server-only" && context.conditions.includes("react-server")) {
+    return nextResolve("next/dist/compiled/server-only/empty.js", context);
+  }
   if (specifier === "next/server") {
     return nextResolve("next/server.js", context);
   }

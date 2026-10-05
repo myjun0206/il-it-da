@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
 import { resolveOwnerCurrentStore } from "@/lib/owner/current-store";
-import { BOSS_QUESTIONS_PATH, pickQuestionsStore } from "@/lib/owner/boss-questions-view";
+import { buildBossQuestionsUrl, pickQuestionsStore } from "@/lib/owner/boss-questions-view";
 import type { RepeatedQuestionAlertView } from "@/lib/owner/repeated-question-alerts";
 
 interface RepeatedQuestionViewProps {
@@ -173,11 +173,9 @@ export default function RepeatedQuestionView({ storeId, alertId }: RepeatedQuest
                 <p className="text-xs text-[var(--color-text-tertiary)]">
                   반복 횟수·기간·분류는 알림 발송 당시 값이며, 이후 들어온 같은 질문은 반영되지 않습니다. 표현이 다른 비슷한 질문은 합산하지 않습니다.
                 </p>
-                {state.alert.statusCounts.insufficient > 0 && (
-                  <Link href={BOSS_QUESTIONS_PATH} className="inline-block text-sm font-medium text-[var(--color-primary)] hover:underline">
-                    근거 부족으로 보류된 질문 보기
-                  </Link>
-                )}
+                <Link href={buildBossQuestionsUrl(state.alert.storeId)} className="inline-block text-sm font-medium text-[var(--color-primary)] hover:underline">
+                  보류·반복 질문 처리 화면으로 이동
+                </Link>
               </section>
             )}
           </div>

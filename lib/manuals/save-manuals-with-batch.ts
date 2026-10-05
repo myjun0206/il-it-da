@@ -12,6 +12,7 @@ import { CLAIM_BLOCKED_RESPONSES } from "@/lib/manuals/manual-upload-batch-messa
 import { saveManualGroupsWithChunks, type ManualGroupInput } from "@/lib/rag/save-manual-sections";
 import type { HqAuthResult } from "@/lib/supabase/hq-auth";
 import type { ManualRecord } from "@/lib/types/manual";
+import { requireManualWriteContract, MANUAL_FEATURE_PENDING } from "@/lib/manuals/manual-write-contract";
 
 export const MANUAL_SELECT_COLUMNS =
   "id, brand_name, franchise_id, store_id, parent_manual_id, title, category, content, status, created_at, updated_at";
@@ -54,6 +55,9 @@ export async function saveManualGroupsWithBatchGuard(
   if (scope.scopeType === "hq" && !scope.franchiseId) {
     return { kind: "blocked", status: 403, error: HQ_BRAND_REQUIRED_MESSAGE };
   }
+  let context;
+  try { context = await requireManualWriteContract(client); }
+  catch { return { kind: "blocked", status: 503, error: MANUAL_FEATURE_PENDING }; }
 
   const contentHash = buildManualContentFingerprint(scope, groups);
   // 미리보기가 없는 경로는 요청마다 새 key를 쓴다. 같은 내용을 다시 보내면 key가 달라도
@@ -111,7 +115,7 @@ export async function saveManualGroupsWithBatchGuard(
   }
 
   try {
-    const manuals = await saveManualGroupsWithChunks(client, auth, groups, storeId, input.indexManual, claim.batchId);
+    const manuals = await saveManualGroupsWithChunks(client, auth, groups, storeId, input.indexManual, claim.batchId, context);
     await completeManualUploadBatch(client, claim.batchId, manuals.length);
     return { kind: "saved", manuals };
   } catch (e) {

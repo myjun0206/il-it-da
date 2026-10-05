@@ -6,6 +6,11 @@
     "noEmit": true
   },
   "include": [
+    "tests/manuals/manual-write-contract.test.ts",
+    "tests/manuals/validate-manual-edit.test.ts",
+    "tests/manuals/save-store-manual-edit.test.ts",
+    "tests/manuals/atomic-manual-index.test.ts",
+    "tests/owner/question-manual-context.test.ts",
     "tests/rag/answer-prompt.test.ts",
     "tests/rag/chunk-manual.test.ts",
     "tests/rag/search-query.test.ts",

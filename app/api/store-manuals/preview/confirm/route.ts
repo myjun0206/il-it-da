@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { manualSaveResult } from "@/lib/manuals/manual-save-result";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -108,5 +109,5 @@ export async function POST(request: Request): Promise<NextResponse<ConfirmManual
   }
 
   // 같은 요청이 이미 성공했다면 그때 만든 행을 그대로 돌려준다(새 행을 만들지 않는다).
-  return NextResponse.json({ manuals: result.manuals }, { status: result.kind === "saved" ? 201 : 200 });
+  return NextResponse.json({ manuals: result.manuals, ...manualSaveResult(result.manuals) }, { status: result.kind === "saved" ? 201 : 200 });
 }

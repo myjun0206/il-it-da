@@ -158,7 +158,7 @@ export const AppShell = React.forwardRef<HTMLDivElement, AppShellProps>(
     };
 
     return (
-      <div ref={ref} className="min-h-screen bg-[var(--color-bg-default)]">
+      <div ref={ref} className="min-h-screen bg-(--color-bg-default)">
         {/* Header */}
         <Header
           userRole={userRole}
