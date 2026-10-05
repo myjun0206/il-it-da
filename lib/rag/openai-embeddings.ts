@@ -160,7 +160,9 @@ export async function createEmbeddings(inputs: string[]): Promise<number[][]> {
     });
 
     if (!response.ok) {
-      throw new Error(`OpenAI Embeddings API request failed with status ${response.status}.`);
+      throw Object.assign(new Error(`OpenAI Embeddings API request failed with status ${response.status}.`), {
+        diagnosticService: "embedding", diagnosticHttpStatus: response.status,
+      });
     }
 
     const payload: unknown = await response.json();

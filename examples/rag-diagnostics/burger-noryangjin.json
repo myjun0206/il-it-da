@@ -1,0 +1,7 @@
+{
+  "storeId": "REPLACE_WITH_BURGER_NORYANGJIN_STORE_UUID",
+  "cases": [
+    { "question": "튀김기 청소 어떻게 해?" },
+    { "question": "튀김기 청소는 어떻게 하면 좋아?" }
+  ]
+}
