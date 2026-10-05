@@ -4,6 +4,7 @@ import { POST as ragQuery } from "@/app/api/rag/query/route";
 import { buildConversationTitle, isMissingConversationTable } from "@/lib/staff/conversations";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { conversationTraceTag } from "@/lib/rag/trace-identifiers";
 
 export const runtime = "nodejs";
 
@@ -54,12 +55,20 @@ export async function POST(request: Request): Promise<NextResponse> {
     storeId = conversation.store_id;
   }
 
+  if (process.env.NODE_ENV === "development" && process.env.RAG_TRACE === "1") {
+    console.info("[STAFF_CHAT_TRACE]", { requestOrigin: new URL(request.url).origin,
+      phase: "request", conversationTag: conversationTraceTag(conversationId),
+      requestedStoreId: typeof body.storeId === "string" && /^[0-9a-f-]{36}$/i.test(body.storeId) ? body.storeId : null,
+      effectiveStoreId: /^[0-9a-f-]{36}$/i.test(storeId) ? storeId : null, storeSource: conversationId ? "saved_conversation" : "new_request",
+      expectedIsuStore: storeId === "7b151c36-4e24-4516-93b1-5b1c1ceac6cc" });
+  }
+
   // 기존 RAG 경로 재사용 (인증/매장 승인 검증/검색/답변/질문 로그)
   const ragResponse = await ragQuery(
     new Request(new URL("/api/rag/query", request.url), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, storeId }),
+      body: JSON.stringify({ question, storeId, conversationId }),
     }),
   );
   const ragBody = (await ragResponse.json()) as {
@@ -141,6 +150,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
   }
 
+  if (process.env.NODE_ENV === "development" && process.env.RAG_TRACE === "1") {
+    console.info("[STAFF_CHAT_TRACE]", { phase: "response", conversationTag: conversationTraceTag(conversationId),
+      storeId, historyAvailable, newConversation: isNewConversation, status: ragBody.status });
+  }
   return NextResponse.json({
     answer: ragBody.answer,
     status: ragBody.status,

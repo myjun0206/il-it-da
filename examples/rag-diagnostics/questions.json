@@ -1,0 +1,12 @@
+{
+  "storeId": "REPLACE_WITH_SELECTED_STORE_UUID",
+  "cases": [
+    { "question": "HOT 카페라떼의 우유량과 스팀 온도는 얼마인가요?" },
+    { "question": "따뜻한 라떼 우유 얼마나 넣고 몇 도까지 데워요?" },
+    { "question": "우유가 거의 없는데 제가 바로 주문 넣어도 돼요?" },
+    { "question": "B 패밀리팩의 전체 구성과 수량은 무엇인가요?" },
+    { "question": "패밀리팩 주문 들어왔는데 버거랑 사이드랑 음료 몇 개씩 챙겨요?" },
+    { "question": "튀김기 청소 어떻게 해?" },
+    { "question": "튀김기 청소는 어떻게 하면 좋아?" }
+  ]
+}

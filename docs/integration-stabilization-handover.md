@@ -1,5 +1,7 @@
 # Integration And Stabilization Handover
 
+Current integration verification is recorded at the end under **Merged Worktree Verification**. Earlier sections are historical precommit snapshots, not the current merge status. This update exists only in the integration worktree.
+
 ## Status And Boundaries
 
 2026-10-05. User-confirmed core escalation/RAG behavior is recorded separately from this local verification. No features were added during stabilization. No git add/commit/push, stash modification, shared DB/037 execution, paid API, threshold/model/manual-data changes were performed.
@@ -329,3 +331,65 @@ PR description:
 - 037 already applied and contract2 confirmed; no reapplication/reindex/data migration in this PR procedure.
 - Attach individual gate results now; attach actual integration gate results only after user commits and merge.
 - Disclose IDE metadata/118 historical truncated messages, the fixed-set260 to89 observations (79 stale messages plus10 retained current-source suggestions), and real authenticated UI verification rather than claiming zero Problems or fully verified live quality.
+
+## Merged Worktree Verification
+
+2026-10-05. User supplied and authorized the following commits:
+
+| Commit | SHA | Parent |
+| --- | --- | --- |
+| Escalation | aad70395816ab63312cc71b390e826d6e785d547 | 420ec1bbe590bfc6e65ee3901ebd8015742f42fd |
+| Style | 74627fdad8a4adff428f795c44335288817dc6d8 | aad70395816ab63312cc71b390e826d6e785d547 |
+| RAG | 64740f593ecf598ead30dd974abc4b6fceb337f0 | 420ec1bbe590bfc6e65ee3901ebd8015742f42fd |
+
+Created C:/Users/myeon/il-it-da-integration on integration/owner-escalation-rag from the style SHA after confirming neither path nor branch existed. Executed only the authorized `merge --no-ff --no-commit` of the RAG SHA. The merge succeeded without conflicts. HEAD remains the style SHA and MERGE_HEAD is the RAG SHA; there is no merge commit yet.
+
+No conflict-resolution files or manual staging for conflict repair are needed. Git merge automatically staged19 changed/added RAG paths relative to the style HEAD; no git add command was executed. The shared detect-manual-item helper is already present identically in both parents and therefore is not an additional changed path. It occurs exactly once; checkout CRLF/LF was normalized only for comparison. All six pure-style files and package.json/package-lock.json remain identical to the style commit.
+
+Installed510 packages using `npm ci --ignore-scripts --no-audit --no-fund`, without changing dependency manifests. Deprecation notices for node-domexception, ESLint9 and @langchain/community were not hidden or addressed with unrelated upgrades. Confirmed `.env.local` is untracked and ignored by `.gitignore` `.env*`, then copied it from the original source worktree without printing values. No runtime investigation files were copied. No source dev server was stopped.
+
+### Combined Gates
+
+Every command below ran in the integration worktree, not in either source worktree. No tests were skipped or failed in the reported test suites.
+
+| Command | Result |
+| --- | --- |
+| npm run typecheck | PASS, Next typegen and tsc --noEmit |
+| npm run test:rag | 1,422/1,422 |
+| npm run test:auth | 241/241 |
+| npm run test:integration | 79/79 |
+| npm run test:rag-eval | 239/239, offline tool regressions |
+| npm run check:integration | PASS, errors0/warnings0, existing014/015 prefix-gap info2 |
+| npm run check:frontend | 5/5, frontend101/101, production build PASS, lint errors0/warnings65 |
+| npm run test:owner-escalation | 440/440 |
+| npm run test:owner-followup-ui | 9/9, newly built production CSS and mocked owner/HQ/staff components |
+| node scripts/check-git-whitespace.mjs | PASS, worktree and staged diff |
+| Untracked-file whitespace | PASS, zero nonignored untracked files before this tracked document update |
+
+The UI tests exercise desktop/mobile selection, editor targeting, disclosures, copy/retry/error/409 states, manual completion and Sidebar responsiveness. Auth/API are mocked, screenshots are temporary, and external requests are blocked. This is not real authenticated dashboard/manual-editor evidence or a complete dark-theme/live RAG acceptance run. CLI PASS is not an IDE Problems0 claim; the earlier native diagnostic metadata limitations still apply.
+
+### User Finalization
+
+This report is the only additional unstaged tracked edit after the automatic merge. Inspect it and the automatically staged merge locally. The following are user-only commands and were not executed by the assistant:
+
+```powershell
+Set-Location C:/Users/myeon/il-it-da-integration
+git status -sb
+git diff -- docs/integration-stabilization-handover.md
+git diff --cached --stat
+git --literal-pathspecs add -- 'docs/integration-stabilization-handover.md'
+git diff --cached --check
+git diff --cached
+```
+
+The user retains control of the final merge commit and any push. Do not accidentally run a second merge or overwrite an existing integration worktree. No conflict repair remains pending.
+
+### Remaining Real Acceptance
+
+- Actual authenticated HQ/owner/staff desktop/mobile navigation and dark theme.
+- Owner question to exact child editor, explicit saved/search-ready state, return to question and manual completion; loading/error/disabled/409 behavior with real sessions.
+- Stock shortage, family-pack and latte grounded answers; ambiguous recipes clarify without unsupported amounts. Explicit pack kind followed by a referential question uses only the same owned store conversation.
+- Different-store/brand isolation and session/role boundaries under real accounts.
+- Live chat/model checks require separate operator approval. No paid calls, shared DB changes, 037 reapplication, reindexing or manual/QA-data changes were performed by this verification. The user-confirmed applied037/contract2 state was not independently rechecked against the shared DB.
+
+Original source HEADs/branches, excluded investigation files and backup stash are preserved. Final preservation checks compare the pre-merge snapshot of status, untracked file hashes and stash identity without exposing runtime contents or environment values.

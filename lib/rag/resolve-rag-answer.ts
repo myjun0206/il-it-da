@@ -6,6 +6,7 @@
  * 돌려주므로, 호출부가 이를 insufficient로 위장해 점주에게 알리지 않는다.
  */
 import { applyEvidenceGate, type EvidenceGateThresholds } from "@/lib/rag/evidence-gate";
+import { buildMenuClarification, canUseFamilyPackHistory, isFamilyPackFollowUp, selectMenuCandidates } from "@/lib/rag/manual-menu-intent";
 import {
   StructuredAnswerParseError,
   parseStructuredAnswer,
@@ -21,12 +22,14 @@ import type {
 
 export type RagAnswerDeps = {
   search: (question: string) => Promise<ManualChunkMatch[]>;
+  onDiagnostic?: (event: { stage: string; [key: string]: unknown }) => void;
   /** 구조화 JSON 문자열을 그대로 돌려준다. 파싱·검증은 이 모듈이 한다. */
-  generate: (question: string, chunks: ManualChunkMatch[]) => Promise<string>;
+  generate: (question: string, chunks: ManualChunkMatch[], familyPackVariant?: string) => Promise<string>;
 };
 
 export type RagAnswerInput = {
   question: string;
+  familyPackVariant?: string;
   thresholds: EvidenceGateThresholds;
   noManualAnswer: string;
   cautionNotice: string;
@@ -62,15 +65,34 @@ export async function resolveRagAnswer(
   deps: RagAnswerDeps,
 ): Promise<RagAnswerOutcome> {
   let searchResults: ManualChunkMatch[];
-
-  try {
-    searchResults = await deps.search(input.question);
-  } catch {
-    return { kind: "system_error", code: "SEARCH_FAILED" };
+  const familyPackVariant = canUseFamilyPackHistory(input.question) && /^[A-Z0-9]+$/.test(input.familyPackVariant ?? "") ? input.familyPackVariant : undefined;
+  const selectionQuestion = familyPackVariant ? `${input.question} ${familyPackVariant} 패밀리팩` : input.question;
+  const trace = (event: { stage: string; [key: string]: unknown }) => { try { deps.onDiagnostic?.(event); } catch {} };
+  trace({ stage: "family_pack_context", applied: Boolean(familyPackVariant) });
+  if (isFamilyPackFollowUp(input.question) && !familyPackVariant) {
+    trace({ stage: "final", status: "insufficient", reason: "FOLLOW_UP_TARGET_UNRESOLVED" });
+    return { kind: "resolved", escalate: true, response: {
+      answer: "어떤 메뉴나 항목을 말씀하시나요? 대상을 알려주세요.", similarity: null,
+      source: null, sources: [], status: "insufficient", matches: [],
+    } };
   }
 
+  try {
+    searchResults = await deps.search(selectionQuestion);
+  } catch {
+    trace({ stage: "search", reason: "SEARCH_FAILED" });
+    return { kind: "system_error", code: "SEARCH_FAILED" };
+  }
+  trace({ stage: "search", candidateCount: searchResults.length });
+
   const matches = searchResults.map(toRagSearchMatch);
-  const gate = applyEvidenceGate(searchResults, input.thresholds);
+  const candidateSelection = selectMenuCandidates(selectionQuestion, searchResults);
+  const gate = applyEvidenceGate(candidateSelection.matches, input.thresholds);
+  trace({ stage: "menu_filter", beforeCount: searchResults.length, afterCount: candidateSelection.matches.length,
+    requestedMenuCount: candidateSelection.requestedMenus.length, requestedPackVariantCount: candidateSelection.requestedPackVariants.length,
+    excludedChunkIds: candidateSelection.rejectedChunkIds,
+    reason: candidateSelection.rejectedChunkIds.length ? "explicit_menu_conflict" : "no_menu_exclusions" });
+  trace({ stage: "evidence_gate", providedCount: gate.usableChunks.length, status: gate.searchStatus, topEvidenceScore: gate.topEvidenceScore });
 
   const insufficient = (similarity: number | null): RagAnswerOutcome => ({
     kind: "resolved",
@@ -86,6 +108,8 @@ export async function resolveRagAnswer(
   });
 
   if (gate.searchStatus === "insufficient") {
+    trace({ stage: "final", status: "insufficient", reason: searchResults.length === 0 ? "NO_SEARCH_CANDIDATES"
+      : candidateSelection.matches.length === 0 ? "ALL_MENU_CANDIDATES_EXCLUDED" : "BELOW_EVIDENCE_THRESHOLD" });
     return insufficient(gate.topEvidenceScore);
   }
 
@@ -93,8 +117,11 @@ export async function resolveRagAnswer(
   let rawGeneration: string;
 
   try {
-    rawGeneration = await deps.generate(input.question, providedChunks);
+    const clarification = buildMenuClarification(selectionQuestion, providedChunks);
+    trace({ stage: "generation", mode: clarification ? clarification.answerable ? "menu_clarification" : "unresolved_menu_abstention" : "model" });
+    rawGeneration = clarification ? JSON.stringify(clarification) : await deps.generate(input.question, providedChunks, familyPackVariant);
   } catch {
+    trace({ stage: "final", reason: "GENERATION_FAILED" });
     return { kind: "system_error", code: "GENERATION_FAILED" };
   }
 
@@ -103,6 +130,7 @@ export async function resolveRagAnswer(
     structured = parseStructuredAnswer(rawGeneration);
   } catch (error) {
     if (error instanceof StructuredAnswerParseError) {
+      trace({ stage: "final", reason: "GENERATION_UNPARSABLE" });
       return { kind: "system_error", code: "GENERATION_UNPARSABLE" };
     }
     return { kind: "system_error", code: "GENERATION_FAILED" };
@@ -111,6 +139,7 @@ export async function resolveRagAnswer(
   const evidenceScore = gate.usableChunks[0].evidenceScore;
 
   if (!structured.answerable) {
+    trace({ stage: "final", status: "insufficient", reason: buildMenuClarification(selectionQuestion, providedChunks) ? "NO_RELEVANT_MENU_EVIDENCE" : "MODEL_NOT_ANSWERABLE" });
     return insufficient(evidenceScore);
   }
 
@@ -121,20 +150,24 @@ export async function resolveRagAnswer(
 
   // 모델이 답할 수 있다고 해도, 실제로 제공한 근거를 지목하지 못하면 확정 답변으로 쓰지 않는다.
   if (validChunkIds.length === 0) {
+    trace({ stage: "final", status: "insufficient", reason: "NO_VALID_CITED_CHUNKS" });
     return insufficient(evidenceScore);
   }
 
-  const usedChunks = providedChunks.filter((chunk) => validChunkIds.includes(chunk.chunk_id));
+  const usedEvidence = gate.usableChunks.filter((chunk) => validChunkIds.includes(chunk.match.chunk_id));
+  const usedChunks = usedEvidence.map((chunk) => chunk.match);
+  const usedEvidenceScore = Math.min(...usedEvidence.map((chunk) => chunk.evidenceScore));
   const sources = usedChunks.map(toRagSource);
-  const status = gate.searchStatus;
+  const status = usedEvidenceScore >= input.thresholds.answered ? "answered" : "cautious";
   const answer = status === "cautious" ? `${structured.answer}${input.cautionNotice}` : structured.answer;
+  trace({ stage: "final", status, reason: "SUPPORTED_ANSWER", usedChunkIds: validChunkIds, evidenceScore: usedEvidenceScore });
 
   return {
     kind: "resolved",
     escalate: false,
     response: {
       answer,
-      similarity: evidenceScore,
+      similarity: usedEvidenceScore,
       source: sources[0],
       sources,
       status,

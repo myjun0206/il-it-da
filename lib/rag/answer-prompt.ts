@@ -12,6 +12,11 @@ export const ANSWER_SYSTEM_PROMPT = [
   "근거에 여러 시간, 위치, 조건이 있으면 질문과 관련된 항목을 빠짐없이 답변하라.",
   "숫자, 시간, 위치를 축약하거나 생략하지 말고 근거에 나온 값을 그대로 포함하라.",
   "근거에 없는 행동을 추론하여 지시하지 마라.",
+  "일반 청소와 내부 부품 분해는 다른 작업이다. 일반 청소 질문을 내부 분해 대응 방침만으로 대체하지 마라. 근거가 특정 부위나 분해 대응만 다루고 질문의 청소 범위가 불명확하면 청소할 부위를 되물어라.",
+  "금지·부정·허용 조건을 보존하라. 점주 보고나 직원 임의 발주 금지 정책을 직원의 발주 허가로 바꾸거나, 분해 금지 정책에서 분해 순서를 만들어 내지 마라.",
+  "근거에 서로 다른 메뉴 구성이나 일반·라지 등 규격이 있고 질문에서 구분하지 않았으면 어느 메뉴·규격인지 되물어라. 특정 구성이나 수량을 임의로 선택하지 마라.",
+  "본문 항목 제목의 카페라떼·바닐라라떼·딸기라떼 같은 메뉴는 서로 다른 근거다. 다른 메뉴의 우유량·시럽·온도 지침을 섞지 마라. '라떼'만으로 카페라떼를 확정하지 말고 정확한 메뉴를 확인하라. HOT/ICE 조건과 부정·수량 조건은 원문과 근거대로 보존하라.",
+  "펌프 수를 ml나 g로 환산할 때 근거에 펌프당 용량이 없으면 환산 값을 확정하지 말고 펌프 용량을 확인하도록 질문하라.",
   "사용자가 매뉴얼과 다른 현장 상황이나 위치 변경을 언급하면 임의로 이동하거나 복구하라고 지시하지 말고 매장 관리자에게 확인하도록 안내하라.",
   "매뉴얼의 최신 상태가 불확실하면 기존 위치로 되돌리라고 지시하지 마라.",
   "정보가 부족하여 답변할 수 없으면 매장 관리자에게 확인하도록 안내하라.",
@@ -50,6 +55,7 @@ export const GROUNDED_ANSWER_SYSTEM_PROMPT = [
   "usedChunkIds: 답변에 실제로 사용한 근거의 [근거 id] 값만 담는다. 제공되지 않은 id를 지어내지 마라.",
   "근거의 단어만 질문과 겹치고 실제로 묻는 내용이 없으면 answerable을 false로 하라.",
   "매뉴얼이 '점주(매장 관리자)에게 확인하라'는 절차를 명시하고 있으면, 그 절차 자체가 근거이므로 answerable을 true로 두고 그 절차를 안내하라.",
+  "관련 근거의 조건·규격을 구분하기 위한 확인 질문만 가능한 경우에는 answerable을 true로 두고 확인 질문과 그 근거 id만 반환하라. 관련 근거 자체가 없으면 확인 질문을 핑계로 answerable을 true로 바꾸지 마라.",
 ].join(" ");
 
 /** 모델이 근거를 id로 지목할 수 있도록 청크 id를 함께 넘긴다. */
@@ -64,12 +70,13 @@ export function buildGroundedManualContext(
 export function buildGroundedAnswerMessages(
   question: string,
   chunks: Pick<ManualChunkMatch, "chunk_id" | "title" | "content">[],
+  familyPackVariant?: string,
 ): AnswerPromptMessage[] {
   return [
     { role: "system", content: GROUNDED_ANSWER_SYSTEM_PROMPT },
     {
       role: "user",
-      content: `[참고 매뉴얼]\n${buildGroundedManualContext(chunks)}\n\n[직원 질문]\n${question}`,
+      content: `[참고 매뉴얼]\n${buildGroundedManualContext(chunks)}${familyPackVariant ? `\n\n[서버가 확인한 직전 사용자 질문의 종류]\n${familyPackVariant} 패밀리팩. 수량과 절차는 참고 매뉴얼로만 확인하세요.` : ""}\n\n[직원 질문]\n${question}`,
     },
   ];
 }
