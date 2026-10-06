@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* dark: 유틸리티가 OS 설정이 아니라 html.dark(테마 선택)를 따르도록 한다. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   /* Primary Colors (Green) */
   --color-primary: #1c6b52;
@@ -48,6 +51,8 @@
 
 /* Dark mode */
 html.dark {
+  color-scheme: dark;
+
   /* Primary Colors (Green - adjusted for dark background) */
   --color-primary: #2db88f;
   --color-primary-hover: #23986b;
@@ -170,4 +175,117 @@ html.dark .chat-shell {
 
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
+}
+
+/*
+ * Dark theme remap for hard-coded Tailwind palette utilities.
+ * 여러 화면이 bg-white, bg-amber-100 같은 고정 색을 직접 쓰고 있어 다크 테마에서
+ * 흰 카드/밝은 배지가 그대로 남는다. 페이지마다 고치지 않고 여기서 테마 토큰으로 한 번에 매핑한다.
+ */
+html.dark .bg-white,
+html.dark .hover\:bg-white:hover {
+  background-color: var(--color-bg-surface);
+}
+
+/* 다크 테마의 밝은 primary 위에서는 흰 글자 대비가 낮아 inverse 텍스트를 쓴다. */
+html.dark .bg-\[var\(--color-primary\)\].text-white {
+  color: var(--color-text-inverse);
+}
+
+html.dark .bg-amber-50,
+html.dark .bg-amber-100 {
+  background-color: rgb(245 185 70 / 0.15);
+}
+
+html.dark .text-amber-600,
+html.dark .text-amber-800 {
+  color: var(--color-status-warning);
+}
+
+html.dark .bg-red-50,
+html.dark .hover\:bg-red-50:hover {
+  background-color: rgb(232 82 82 / 0.14);
+}
+
+html.dark .text-red-600,
+html.dark .text-red-700,
+html.dark .text-red-800,
+html.dark .hover\:text-red-600:hover {
+  color: var(--color-status-error);
+}
+
+html.dark .border-red-200,
+html.dark .border-red-300 {
+  border-color: rgb(232 82 82 / 0.4);
+}
+
+html.dark .bg-blue-100 {
+  background-color: rgb(77 148 255 / 0.15);
+}
+
+html.dark .text-blue-600 {
+  color: var(--color-status-info);
+}
+
+html.dark .border-green-200 {
+  border-color: var(--color-border);
+}
+
+html.dark .from-green-50 {
+  --tw-gradient-from: var(--color-bg-light-mint);
+}
+
+html.dark .to-emerald-50 {
+  --tw-gradient-to: var(--color-bg-light-mint);
+}
+
+html.dark .from-red-50 {
+  --tw-gradient-from: rgb(232 82 82 / 0.12);
+}
+
+html.dark .to-rose-50 {
+  --tw-gradient-to: rgb(232 82 82 / 0.08);
+}
+
+html.dark .bg-gray-50,
+html.dark .bg-green-50,
+html.dark .bg-blue-50,
+html.dark .bg-purple-50,
+html.dark .bg-orange-50 {
+  background-color: var(--color-bg-light-mint);
+}
+
+html.dark .border-gray-200,
+html.dark .border-blue-200,
+html.dark .border-purple-200,
+html.dark .border-orange-200 {
+  border-color: var(--color-border);
+}
+
+html.dark .text-gray-700 {
+  color: var(--color-text-secondary);
+}
+
+html.dark .text-green-700 {
+  color: var(--color-status-success);
+}
+
+html.dark .text-blue-700 {
+  color: var(--color-status-info);
+}
+
+html.dark .text-orange-700 {
+  color: var(--color-status-warning);
+}
+
+html.dark .text-purple-700 {
+  color: var(--color-status-info);
+}
+
+html.dark .hover\:bg-red-100:hover {
+  background-color: rgb(232 82 82 / 0.2);
+}
+
+html.dark .hover\:text-red-700:hover {
+  color: var(--color-status-error);
 }

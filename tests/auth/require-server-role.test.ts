@@ -115,6 +115,21 @@ describe("decideServerRoleAccess (pure role decision)", () => {
 });
 
 describe("requireServerRole (injected Supabase clients, no network)", () => {
+  test("treats AuthSessionMissingError as unauthenticated without logging an auth failure", async () => {
+    const { calls, logAuthError } = spyLogAuthError();
+    const missingSessionError = Object.assign(new Error("Auth session missing"), {
+      name: "AuthSessionMissingError",
+    });
+    const result = await requireServerRole("hq", {
+      getSessionClient: async () => fakeSessionClient({ userError: missingSessionError }),
+      getAdminClient: () => fakeAdminClient({ role: "hq" }),
+      logAuthError,
+    });
+
+    assert.deepEqual(result, { status: "UNAUTHENTICATED" });
+    assert.equal(calls.length, 0);
+  });
+
   test("rejects when there is no session user", async () => {
     const result = await requireServerRole("hq", {
       getSessionClient: async () => fakeSessionClient({ user: null }),

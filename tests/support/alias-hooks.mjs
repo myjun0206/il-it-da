@@ -4,20 +4,27 @@
 // still imports a same-repo sibling via "@/..." (only Next.js's webpack/tsc understand that
 // alias; plain `node --test` does not). It never changes what gets loaded - same file, same
 // contents - it only teaches Node how to find it. No production code or behavior is touched.
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")), "../..");
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 const CANDIDATE_SUFFIXES = ["", ".ts", ".tsx", "/index.ts"];
 
 export async function resolve(specifier, context, nextResolve) {
+  if (specifier === "server-only" && context.conditions.includes("react-server")) {
+    return nextResolve("next/dist/compiled/server-only/empty.js", context);
+  }
+  if (specifier === "next/server") {
+    return nextResolve("next/server.js", context);
+  }
   if (specifier.startsWith("@/")) {
     const rest = specifier.slice(2);
     for (const suffix of CANDIDATE_SUFFIXES) {
       const candidate = path.join(repoRoot, `${rest}${suffix}`);
-      if (existsSync(candidate)) {
+      // "@/lib/notifications"체럼 디렉터리명과 같은 경로는 빈 suffix가 먼저 맞아 EISDIR가 난다.
+      if (existsSync(candidate) && statSync(candidate).isFile()) {
         return { url: pathToFileURL(candidate).href, shortCircuit: true };
       }
     }

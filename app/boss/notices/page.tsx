@@ -1,16 +1,28 @@
 "use client";
 
 import React, { useEffect, useLayoutEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Search, X } from "lucide-react";
+import { Megaphone, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
-import { Input } from "@/components/common/Input";
-import { Button } from "@/components/common/Button";
+import { NoticeReadStatus } from "@/components/notices/NoticeReadStatus";
+import { NoticeDetailDialog } from "@/components/notices/NoticeDetailDialog";
+import { NoticeEditDialog } from "@/components/notices/NoticeEditDialog";
+import { NoticeFilter, type NoticeFilterOption } from "@/components/notices/NoticeFilter";
+import { NoticePageHeader } from "@/components/notices/NoticePageHeader";
+import { getNoticeViewCountIncrement, markNoticeAsRead } from "@/lib/notices/mark-notice-read";
+import { resolveOwnerCurrentStore } from "@/lib/owner/current-store";
+
+const stateBoxClass = "rounded-xl border border-[var(--color-border)] bg-white p-8 text-center";
 
 interface Notice {
   id: string;
+  isMine: boolean;
+  isRead: boolean;
+  viewCount: number;
   title: string;
   content: string;
   category: "운영 안내" | "매뉴얼" | "교육" | "시스템" | "기타";
@@ -28,35 +40,13 @@ interface NoticesData {
   };
 }
 
-interface ModalState {
-  isOpen: boolean;
-  notice: Notice | null;
-}
+type OwnerNoticeFilter = "all" | "hq" | "mine";
 
-// 날짜 포맷팅
-function formatDate(dateString: string): string {
-  try {
-    const date = new Date(dateString);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${year}.${month}.${day}`;
-  } catch {
-    return "";
-  }
-}
-
-// 카테고리별 색상
-function getCategoryColor(category: string): string {
-  const colors: Record<string, string> = {
-    "운영 안내": "bg-blue-50 text-blue-700 border border-blue-200",
-    "매뉴얼": "bg-green-50 text-green-700 border border-green-200",
-    "교육": "bg-purple-50 text-purple-700 border border-purple-200",
-    "시스템": "bg-orange-50 text-orange-700 border border-orange-200",
-    "기타": "bg-gray-50 text-gray-700 border border-gray-200",
-  };
-  return colors[category] || colors["기타"];
-}
+const OWNER_NOTICE_FILTERS: readonly NoticeFilterOption<OwnerNoticeFilter>[] = [
+  { value: "all", label: "전체" },
+  { value: "hq", label: "본사 공지" },
+  { value: "mine", label: "내 공지" },
+];
 
 export default function NoticesPage() {
   const router = useRouter();
@@ -70,9 +60,13 @@ export default function NoticesPage() {
   });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
+  const [sourceFilter, setSourceFilter] = useState<OwnerNoticeFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("전체");
-  const [modal, setModal] = useState<ModalState>({ isOpen: false, notice: null });
+  const [selectedNotice, setSelectedNotice] = useState<Notice | null>(null);
+  const [editingNotice, setEditingNotice] = useState<Notice | null>(null);
+  const [deletingNotice, setDeletingNotice] = useState<Notice | null>(null);
+  const [isDeletingNotice, setIsDeletingNotice] = useState(false);
 
   // Categories available
   const categories = ["전체", "운영 안내", "매뉴얼", "교육", "시스템", "기타"];
@@ -106,53 +100,28 @@ export default function NoticesPage() {
         const supabase = createClient();
         const { data } = await supabase.auth.getSession();
 
-        if (!data.session?.user) return;
+        if (!data.session?.user) {
+          setIsLoading(false);
+          return;
+        }
 
         const name = data.session.user.user_metadata?.name || "점주";
         setUserName(name);
 
-        // sessionStorage에서 선택된 매장 정보
-        const storedStoreId = sessionStorage.getItem("selectedStoreId") || "";
-        const storedStoreName = sessionStorage.getItem("selectedStoreName") || "";
-
-        // 서버 검증
-        try {
-          const response = await fetch("/api/signup/store-membership");
-          const result = (await response.json()) as {
-            success?: boolean;
-            data?: Array<{ storeId: string; storeName: string; status: string; role: string }>;
-          };
-
-          if (response.ok && result.data) {
-            const approvedStores = result.data.filter(
-              (m) => m.status === "approved" && m.role === "owner",
-            );
-
-            if (approvedStores.length === 0) {
-              setError("승인된 매장이 없습니다.");
-              setIsLoading(false);
-              return;
-            }
-
-            let storeId = storedStoreId;
-            let storeName = storedStoreName;
-
-            if (!storeId || !approvedStores.some((s) => s.storeId === storeId)) {
-              storeId = approvedStores[0]?.storeId || "";
-              storeName = approvedStores[0]?.storeName || "";
-              sessionStorage.setItem("selectedStoreId", storeId);
-              sessionStorage.setItem("selectedStoreName", storeName);
-            }
-
-            setSelectedStoreId(storeId);
-            setStoreName(storeName);
-          }
-        } catch (e) {
-          console.error("Failed to fetch store membership:", e);
+        // 점주 공통 현재 매장 결정 (approved owner membership → store)
+        const resolution = await resolveOwnerCurrentStore();
+        if (resolution.status === "error") {
           setError("매장 정보를 불러올 수 없습니다.");
           setIsLoading(false);
           return;
         }
+        if (!resolution.current) {
+          setError("승인된 매장이 없습니다.");
+          setIsLoading(false);
+          return;
+        }
+        setSelectedStoreId(resolution.current.storeId);
+        setStoreName(resolution.current.storeName);
       } catch (e) {
         console.error("Failed to load user info:", e);
         setIsLoading(false);
@@ -192,6 +161,56 @@ export default function NoticesPage() {
     fetchNotices();
   }, [selectedStoreId]);
 
+  const updateNotice = async (title: string, content: string) => {
+    if (!editingNotice) return;
+    const response = await fetch("/api/boss/notices", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ id: editingNotice.id, title, content }),
+    });
+    const result = (await response.json()) as { error?: string };
+    if (!response.ok) throw new Error(result.error || "공지를 수정하지 못했습니다.");
+
+    setNotices((current) => ({
+      ...current,
+      notices: current.notices.map((notice) =>
+        notice.id === editingNotice.id ? { ...notice, title, content } : notice,
+      ),
+    }));
+    setEditingNotice(null);
+  };
+
+  const deleteNotice = async () => {
+    if (!deletingNotice || isDeletingNotice) return;
+    setIsDeletingNotice(true);
+    try {
+      const response = await fetch("/api/boss/notices", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ id: deletingNotice.id }),
+      });
+      const result = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(result.error || "공지를 삭제하지 못했습니다.");
+
+      setNotices((current) => ({
+        summary: {
+          total: Math.max(0, current.summary.total - 1),
+          important: Math.max(0, current.summary.important - Number(deletingNotice.isImportant)),
+        },
+        notices: current.notices.filter((notice) => notice.id !== deletingNotice.id),
+      }));
+      setSelectedNotice(null);
+      setDeletingNotice(null);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "공지를 삭제하지 못했습니다.");
+      setDeletingNotice(null);
+    } finally {
+      setIsDeletingNotice(false);
+    }
+  };
+
   // 로그아웃
   const handleLogout = async () => {
     try {
@@ -206,6 +225,9 @@ export default function NoticesPage() {
 
   // 검색 및 필터링
   const filteredNotices = notices.notices.filter((notice) => {
+    if (sourceFilter === "hq" && notice.isMine) return false;
+    if (sourceFilter === "mine" && !notice.isMine) return false;
+
     // 카테고리 필터
     if (categoryFilter !== "전체" && notice.category !== categoryFilter) {
       return false;
@@ -221,28 +243,50 @@ export default function NoticesPage() {
     );
   });
 
-  // 중요 공지와 일반 공지 분리
-  const importantNotices = filteredNotices.filter((n) => n.isImportant);
-  const regularNotices = filteredNotices.filter((n) => !n.isImportant);
-
   // 모달 열기
   const handleOpenModal = (notice: Notice) => {
-    setModal({ isOpen: true, notice });
+    setSelectedNotice(notice);
+    if (notice.isRead) return;
+
+    void markNoticeAsRead(notice.id).then((result) => {
+      if (!result.succeeded) return;
+      const viewCountIncrement = getNoticeViewCountIncrement(result);
+      setNotices((current) => ({
+        ...current,
+        notices: current.notices.map((currentNotice) =>
+          currentNotice.id === notice.id
+            ? { ...currentNotice, isRead: true, viewCount: currentNotice.viewCount + viewCountIncrement }
+            : currentNotice,
+        ),
+      }));
+      setSelectedNotice((current) => current?.id === notice.id
+        ? { ...current, isRead: true, viewCount: current.viewCount + viewCountIncrement }
+        : current,
+      );
+    });
   };
 
   // 모달 닫기
   const handleCloseModal = () => {
-    setModal({ isOpen: false, notice: null });
+    setSelectedNotice(null);
   };
 
   if (!isReady || isLoading) {
     return (
       <div className="min-h-screen bg-[var(--color-bg-default)] flex">
         <OwnerSidebar activeMenu="notice" onLogout={handleLogout} />
-        <div className="flex-1 ml-0 lg:ml-[240px] flex flex-col">
-          <OwnerHeader userName={userName} storeName={storeName} />
-          <main className="flex-1 p-8">
-            <div className="text-center">로딩 중...</div>
+        <div className="flex-1 min-w-0 ml-0 lg:ml-[240px] flex flex-col">
+          <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
+          <main className="flex-1 overflow-y-auto p-6 lg:p-8">
+            <div className="mx-auto max-w-7xl">
+              <div className="mb-6">
+                <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">공지사항</h1>
+                <p className="text-base text-[var(--color-text-secondary)]">본사 공지와 현재 매장의 직원 공지를 확인하세요.</p>
+              </div>
+              <div className={stateBoxClass}>
+                <p className="text-base text-[var(--color-text-secondary)]" role="status">공지사항을 불러오는 중...</p>
+              </div>
+            </div>
           </main>
         </div>
       </div>
@@ -253,228 +297,193 @@ export default function NoticesPage() {
     <div className="min-h-screen bg-[var(--color-bg-default)] flex">
       <OwnerSidebar activeMenu="notice" onLogout={handleLogout} />
 
-      <div className="flex-1 ml-0 lg:ml-[240px] flex flex-col">
-        <OwnerHeader userName={userName} storeName={storeName} />
+      <div className="flex-1 min-w-0 ml-0 lg:ml-[240px] flex flex-col">
+        <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
 
         {/* Main Content */}
-        <main className="flex-1 overflow-y-auto">
-          <div className="px-5 sm:px-8 lg:px-12 xl:px-16 py-8 lg:py-12">
-            {/* 페이지 제목 */}
-            <div className="mb-8">
-              <h1 className="text-3xl lg:text-4xl font-bold text-[var(--color-text-primary)] mb-2">
-                공지사항
-              </h1>
-              <p className="text-lg text-[var(--color-text-secondary)]">
-                본사에서 전달한 공지사항과 운영 안내를 확인하세요.
-              </p>
-            </div>
-
-            {/* 현재 매장 */}
-            <div className="mb-8">
-              <p className="text-sm font-semibold text-[var(--color-text-secondary)] mb-2">
-                현재 매장
-              </p>
-              <p className="text-base lg:text-lg font-semibold text-[var(--color-text-primary)]">
-                {storeName}
-              </p>
-            </div>
+        <main className="flex-1 overflow-y-auto p-6 lg:p-8">
+          <div className="mx-auto max-w-7xl">
+            <NoticePageHeader
+              title="공지사항"
+              description={storeName ? `본사 공지와 ${storeName}의 직원 공지를 확인하세요.` : "본사 공지와 현재 매장의 직원 공지를 확인하세요."}
+              action={selectedStoreId ? (
+                <Link
+                  href="/boss/notices/new"
+                  className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg bg-[var(--color-primary)] px-4 text-sm font-semibold text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2"
+                >
+                  <Plus size={18} aria-hidden="true" /> 직원 공지 작성
+                </Link>
+              ) : undefined}
+            />
 
             {/* 에러 메시지 */}
             {error && (
-              <div className="mb-8 p-4 bg-red-50 border border-red-200 rounded-lg">
+              <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-5" role="alert">
                 <p className="text-sm text-red-700">{error}</p>
               </div>
             )}
 
-            {/* 중요 공지 */}
-            {importantNotices.length > 0 && (
-              <section className="mb-12">
-                <h2 className="text-xl lg:text-2xl font-bold text-[var(--color-text-primary)] mb-6">
-                  중요 공지
-                </h2>
-                <div className="space-y-3">
-                  {importantNotices.map((notice) => (
-                    <div
-                      key={notice.id}
-                      onClick={() => handleOpenModal(notice)}
-                      className="bg-white border border-[var(--color-border)] rounded-lg p-4 lg:p-6 cursor-pointer hover:shadow-md hover:border-[var(--color-primary)] transition-all group"
-                    >
-                      <div className="flex items-start gap-3 mb-3">
-                        <span className="text-xs font-bold text-[var(--color-primary)] bg-[var(--color-primary-light)]/20 px-2 py-1 rounded flex-shrink-0">
-                          중요
-                        </span>
-                        <span className={`text-xs font-medium px-2 py-1 rounded flex-shrink-0 ${getCategoryColor(notice.category)}`}>
-                          {notice.category}
-                        </span>
-                      </div>
-                      <h3 className="text-base lg:text-lg font-semibold text-[var(--color-text-primary)] mb-2 group-hover:text-[var(--color-primary)] transition-colors line-clamp-2">
-                        {notice.title}
-                      </h3>
-                      <p className="text-sm text-[var(--color-text-secondary)]">
-                        {formatDate(notice.createdAt)}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
-
             {/* 공지사항 목록 */}
-            <section>
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-xl lg:text-2xl font-bold text-[var(--color-text-primary)]">
-                  공지사항
-                </h2>
-                {notices.summary.total > 0 && (
-                  <span className="text-sm font-semibold text-[var(--color-text-secondary)]">
-                    총 {notices.summary.total}개
-                  </span>
+            <section aria-label="공지사항 목록">
+              {/* 검색 */}
+              <div className="mb-6 relative">
+                <Search
+                  size={18}
+                  className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]"
+                  aria-hidden="true"
+                />
+                <input
+                  type="search"
+                  placeholder="공지사항 검색"
+                  aria-label="공지사항 검색"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="h-12 w-full rounded-lg border border-[var(--color-border)] bg-white pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
+                />
+              </div>
+
+              {/* 출처 필터 + 분류 */}
+              <div className="mb-5 flex flex-wrap items-center gap-2">
+                {notices.notices.length > 0 && (
+                  <NoticeFilter
+                    ariaLabel="공지 출처"
+                    appearance="chip"
+                    value={sourceFilter}
+                    options={OWNER_NOTICE_FILTERS}
+                    onChange={setSourceFilter}
+                  />
                 )}
+                <select
+                  value={categoryFilter}
+                  onChange={(e) => setCategoryFilter(e.target.value)}
+                  aria-label="공지 분류 필터"
+                  className="ml-auto min-h-[36px] rounded-lg border border-[var(--color-border)] bg-white px-3 text-sm font-medium text-[var(--color-text-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                >
+                  {categories.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat === "전체" ? "전체 분류" : cat}
+                    </option>
+                  ))}
+                </select>
               </div>
 
-              {/* 검색 및 필터 */}
-              <div className="mb-6 flex flex-col lg:flex-row gap-3">
-                <div className="flex-1 relative">
-                  <Search
-                    size={20}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)]"
-                  />
-                  <Input
-                    type="text"
-                    placeholder="공지사항을 검색해보세요."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-10 h-12"
-                  />
-                </div>
-
-                <div className="flex-shrink-0">
-                  <select
-                    value={categoryFilter}
-                    onChange={(e) => setCategoryFilter(e.target.value)}
-                    className="h-12 px-4 border border-[var(--color-border)] rounded-lg bg-white text-[var(--color-text-primary)] font-medium hover:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-                  >
-                    {categories.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+              <p className="mb-4 text-sm text-[var(--color-text-secondary)]">
+                공지사항 <span className="font-bold text-[var(--color-text-primary)]">{filteredNotices.length}</span>개
+              </p>
 
               {/* 공지 목록 */}
               {filteredNotices.length === 0 ? (
-                <div className="bg-white border border-[var(--color-border)] rounded-lg p-12 text-center">
+                <div className={stateBoxClass}>
                   {notices.notices.length === 0 ? (
                     <>
-                      <p className="text-base font-semibold text-[var(--color-text-primary)] mb-1">
+                      <Megaphone size={28} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+                      <p className="text-base font-semibold text-[var(--color-text-primary)]">
                         등록된 공지사항이 없습니다.
                       </p>
-                      <p className="text-sm text-[var(--color-text-secondary)]">
+                      <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
                         본사에서 새로운 공지를 등록하면 이곳에서 확인할 수 있습니다.
                       </p>
                     </>
                   ) : (
                     <>
-                      <p className="text-base font-semibold text-[var(--color-text-primary)] mb-1">
+                      <Search size={28} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+                      <p className="text-base font-semibold text-[var(--color-text-primary)]">
                         검색 결과가 없습니다.
                       </p>
-                      <p className="text-sm text-[var(--color-text-secondary)]">
-                        다른 검색어를 입력해보세요.
+                      <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
+                        필터 또는 검색 조건을 바꿔보세요.
                       </p>
                     </>
                   )}
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {regularNotices.map((notice) => (
-                    <div
-                      key={notice.id}
-                      onClick={() => handleOpenModal(notice)}
-                      className="bg-white border border-[var(--color-border)] rounded-lg p-4 lg:p-6 cursor-pointer hover:shadow-md hover:border-[var(--color-primary)] transition-all group"
-                    >
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-2">
-                            <span className={`text-xs font-medium px-2 py-1 rounded flex-shrink-0 ${getCategoryColor(notice.category)}`}>
-                              {notice.category}
-                            </span>
-                          </div>
-                          <h3 className="text-base lg:text-lg font-semibold text-[var(--color-text-primary)] group-hover:text-[var(--color-primary)] transition-colors line-clamp-2 mb-2">
-                            {notice.title}
-                          </h3>
-                        </div>
-                        <div className="flex-shrink-0 text-right">
-                          <p className="text-sm text-[var(--color-text-secondary)] whitespace-nowrap">
-                            {formatDate(notice.createdAt)}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
+                <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {filteredNotices.map((notice) => (
+                    <li key={notice.id} className="min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenModal(notice)}
+                        className="flex h-full w-full flex-col items-start rounded-xl border border-[var(--color-border)] bg-white p-5 text-left transition-colors hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                      >
+                        <span className="mb-3 flex flex-wrap items-center gap-2">
+                          <span className="inline-flex rounded-full bg-[var(--color-primary-light)]/40 px-2.5 py-0.5 text-xs font-semibold text-[var(--color-primary)]">
+                            {notice.isMine ? "내 공지" : "본사"}
+                          </span>
+                          <NoticeReadStatus isRead={notice.isRead} />
+                        </span>
+                        <span className="w-full text-base font-semibold text-[var(--color-text-primary)] break-keep line-clamp-2">
+                          {notice.title}
+                        </span>
+                        <span className="mt-1 w-full text-sm text-[var(--color-text-secondary)] break-words line-clamp-2">
+                          {notice.content}
+                        </span>
+                        <span className="mt-auto pt-3 text-xs text-[var(--color-text-tertiary)]">
+                          {notice.category} · {notice.createdAt.split("T")[0]} · 조회 {notice.viewCount}
+                        </span>
+                      </button>
+                    </li>
                   ))}
-                </div>
+                </ul>
               )}
             </section>
           </div>
         </main>
       </div>
 
-      {/* Detail Modal */}
-      {modal.isOpen && modal.notice && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end lg:items-center justify-center p-0">
-          <div className="bg-white w-full lg:max-w-2xl lg:rounded-lg rounded-t-2xl max-h-[90vh] lg:max-h-[80vh] flex flex-col overflow-hidden">
-            {/* Sticky Header */}
-            <div className="sticky top-0 border-b border-[var(--color-border)] bg-white p-6 flex items-center justify-between">
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  {modal.notice.isImportant && (
-                    <span className="text-xs font-bold text-[var(--color-primary)] bg-[var(--color-primary-light)]/20 px-2 py-1 rounded">
-                      중요
-                    </span>
-                  )}
-                  <span className={`text-xs font-medium px-2 py-1 rounded ${getCategoryColor(modal.notice.category)}`}>
-                    {modal.notice.category}
-                  </span>
-                </div>
-                <h2 className="text-xl lg:text-2xl font-bold text-[var(--color-text-primary)]">
-                  {modal.notice.title}
-                </h2>
-              </div>
+      {selectedNotice && (
+        <NoticeDetailDialog
+          notice={{
+            ...selectedNotice,
+            sourceLabel: selectedNotice.isMine
+              ? `점주 공지 · ${storeName} · ${selectedNotice.category}`
+              : `본사 공지 · ${storeName} · ${selectedNotice.category}`,
+          }}
+          onClose={handleCloseModal}
+          actions={selectedNotice.isMine ? (
+            <>
               <button
-                onClick={handleCloseModal}
-                className="flex-shrink-0 p-2 hover:bg-[var(--color-bg-surface)] rounded-lg transition-colors"
-                aria-label="닫기"
+                type="button"
+                onClick={() => {
+                  setEditingNotice(selectedNotice);
+                  handleCloseModal();
+                }}
+                className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg border border-[var(--color-border)] px-4 text-sm font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-bg-default)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
               >
-                <X size={24} className="text-[var(--color-text-secondary)]" />
+                <Pencil size={16} aria-hidden="true" /> 수정
               </button>
-            </div>
-
-            {/* Scrollable Content */}
-            <div className="flex-1 overflow-y-auto p-6">
-              <p className="text-sm text-[var(--color-text-secondary)] mb-6 pb-6 border-b border-[var(--color-border)]">
-                {formatDate(modal.notice.createdAt)}
-              </p>
-
-              <div className="prose prose-sm max-w-none text-[var(--color-text-primary)]">
-                <div className="whitespace-pre-wrap text-base leading-relaxed">
-                  {modal.notice.content}
-                </div>
-              </div>
-            </div>
-
-            {/* Sticky Footer */}
-            <div className="sticky bottom-0 border-t border-[var(--color-border)] bg-white p-6">
-              <Button
-                onClick={handleCloseModal}
-                className="w-full h-12"
+              <button
+                type="button"
+                onClick={() => {
+                  setDeletingNotice(selectedNotice);
+                  handleCloseModal();
+                }}
+                className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg border border-red-200 px-4 text-sm font-medium text-red-700 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600"
               >
-                닫기
-              </Button>
-            </div>
-          </div>
-        </div>
+                <Trash2 size={16} aria-hidden="true" /> 삭제
+              </button>
+            </>
+          ) : undefined}
+        />
       )}
+      {editingNotice && (
+        <NoticeEditDialog
+          key={editingNotice.id}
+          notice={editingNotice}
+          onClose={() => setEditingNotice(null)}
+          onSave={updateNotice}
+        />
+      )}
+      <ConfirmDialog
+        isOpen={Boolean(deletingNotice)}
+        title="공지 삭제"
+        description="이 공지를 삭제하시겠습니까? 삭제한 공지는 복구할 수 없습니다."
+        confirmText="삭제"
+        cancelText="취소"
+        isDangerous
+        isLoading={isDeletingNotice}
+        onConfirm={() => void deleteNotice()}
+        onCancel={() => setDeletingNotice(null)}
+      />
     </div>
   );
 }

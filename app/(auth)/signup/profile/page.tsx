@@ -100,6 +100,8 @@ function HQSignupProfile() {
   const [isLoading, setIsLoading] = useState(false);
   const [role, setRole] = useState<"hq" | "owner" | "staff" | null>(null);
   const [emailAlreadyRegistered, setEmailAlreadyRegistered] = useState(false);
+  // 계정은 만들어졌지만 자동 로그인에 실패한 상태. 같은 이메일로 다시 제출하지 않도록 제출 버튼을 막는다.
+  const [accountCreatedWithoutSession, setAccountCreatedWithoutSession] = useState(false);
 
   // owner/staff 전용: 간단한 프로필 폼
   const [ownerStaffFormData, setOwnerStaffFormData] = useState({
@@ -666,7 +668,13 @@ function HQSignupProfile() {
           brandId: franchise.id,
         }),
       });
-      const data = (await response.json()) as { userId?: string; error?: string; detail?: string; code?: string };
+      const data = (await response.json()) as {
+        userId?: string;
+        error?: string;
+        detail?: string;
+        code?: string;
+        sessionEstablished?: boolean;
+      };
 
       if (data.code === "email_exists") {
         setEmailAlreadyRegistered(true);
@@ -677,6 +685,13 @@ function HQSignupProfile() {
 
       if (!response.ok || !data.userId) {
         throw new Error(data.detail || data.error || "회원가입 중 오류가 발생했습니다.");
+      }
+
+      // 세션 없이 /hq로 가면 서버 가드가 설명 없이 로그인 화면으로 돌려보내므로, 여기서 재로그인을 안내한다.
+      if (data.sessionEstablished === false) {
+        setAccountCreatedWithoutSession(true);
+        setIsLoading(false);
+        return;
       }
 
       // 가입 직후 세션이 이미 발급되므로 재로그인 없이 매뉴얼 온보딩으로 이동한다.
@@ -1106,11 +1121,28 @@ function HQSignupProfile() {
                 </div>
               )}
 
+              {accountCreatedWithoutSession && (
+                <div role="status" className="mb-4 text-center">
+                  <p className="text-sm text-[var(--color-text-primary)]">
+                    계정이 생성됐지만 자동 로그인에 실패했습니다. 가입한 이메일과 비밀번호로 로그인해 주세요.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => router.push("/")}
+                    className="mt-2"
+                  >
+                    로그인하러 가기
+                  </Button>
+                </div>
+              )}
+
               {/* Next Button */}
               <div className="flex justify-center pt-8">
                 <Button
                   onClick={handleContinue}
-                  disabled={isLoading || !isHQFormComplete()}
+                  disabled={isLoading || accountCreatedWithoutSession || !isHQFormComplete()}
                   variant="primary"
                   size="lg"
                   className="w-full sm:w-auto min-h-14 lg:min-h-16 px-8 lg:px-12 text-lg lg:text-xl font-semibold"

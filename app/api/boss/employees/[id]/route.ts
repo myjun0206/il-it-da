@@ -3,6 +3,9 @@ import type { NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { createNotification } from "@/lib/notifications";
+import { buildMasterApprovalUpdate } from "@/lib/signup/approval-recovery";
+import { ensureBrandProfileForApprovedMembership, MembershipAuthNotReadyError, requireConfirmedMembershipAuthUser } from "@/lib/signup/store-membership-service";
+import { removeStaffMembershipByOwner, type RemoveStaffMembershipResult } from "@/lib/owner/remove-staff-membership";
 
 export const runtime = "nodejs";
 
@@ -19,25 +22,17 @@ interface UpdateMembershipResponse {
 async function syncProfileApprovalStatus(adminClient: ReturnType<typeof createAdminClient>, userId: string): Promise<void> {
   const { data: memberships, error } = await adminClient
     .from("store_memberships")
-    .select("status, approved_at, approved_by")
+    .select("id, status, approved_at, approved_by")
     .eq("user_id", userId);
 
+  // 조회 실패는 빈 목록으로 바꾸지 않는다(그대로 두면 rejected를 잘못 기록하게 된다).
   if (error) {
     throw error;
   }
 
-  const hasApproved = (memberships ?? []).some((membership) => membership.status === "approved");
-  const hasPending = (memberships ?? []).some((membership) => membership.status === "pending");
-  const firstApproved = (memberships ?? []).find((membership) => membership.status === "approved");
-  const approvalStatus = hasApproved ? "approved" : hasPending ? "pending" : "rejected";
-
   const { error: profileUpdateError } = await adminClient
     .from("profiles")
-    .update({
-      approval_status: approvalStatus,
-      approved_at: approvalStatus === "approved" ? firstApproved?.approved_at ?? new Date().toISOString() : null,
-      approved_by: approvalStatus === "approved" ? firstApproved?.approved_by ?? null : null,
-    })
+    .update(buildMasterApprovalUpdate(memberships ?? []))
     .eq("id", userId);
 
   if (profileUpdateError) {
@@ -104,6 +99,20 @@ export async function PUT(
         { status: 404 }
       );
     }
+    if (membership.role !== "staff") {
+      return NextResponse.json(
+        { success: false, error: "직원 멤버십만 처리할 수 있습니다." },
+        { status: 400 },
+      );
+    }
+
+    // 점주는 직원(staff) membership만 승인/거절한다. (점주 승인은 HQ 권한)
+    if (membership.role !== "staff") {
+      return NextResponse.json(
+        { success: false, error: "이 직원을 관리할 권한이 없습니다." },
+        { status: 403 }
+      );
+    }
 
     // 4. 현재 owner가 해당 store의 approved owner인지 검증 (store_id 기준)
     const { data: ownerMembership, error: ownerError } = await adminClient
@@ -130,6 +139,18 @@ export async function PUT(
       );
     }
 
+    if (newStatus === "approved") {
+      try {
+        await requireConfirmedMembershipAuthUser(adminClient, membership.user_id);
+      } catch (authError) {
+        if (authError instanceof MembershipAuthNotReadyError) {
+          return NextResponse.json({ success: false, error: authError.message }, { status: 409 });
+        }
+        console.error("[PUT /api/boss/employees/[id]] Auth user lookup failed");
+        return NextResponse.json({ success: false, error: "승인 대상 계정을 확인하지 못했습니다." }, { status: 500 });
+      }
+    }
+
     // 5. membership 상태 업데이트
     const updateData: Record<string, unknown> = {
       status: newStatus,
@@ -140,15 +161,22 @@ export async function PUT(
     if (newStatus === "approved") {
       updateData.approved_at = new Date().toISOString();
       updateData.approved_by = user.id;
+      updateData.rejected_at = null;
+      updateData.rejected_by = null;
     } else if (newStatus === "rejected") {
       updateData.rejected_at = new Date().toISOString();
       updateData.rejected_by = user.id;
+      updateData.approved_at = null;
+      updateData.approved_by = null;
     }
 
     const { error: updateError } = await adminClient
       .from("store_memberships")
       .update(updateData)
-      .eq("id", membershipId);
+      .eq("id", membershipId)
+      .eq("store_id", membership.store_id)
+      .eq("role", "staff")
+      .eq("status", membership.status);
 
     if (updateError) {
       console.error("[PUT /api/boss/employees/[id]] Update error:", updateError);
@@ -160,7 +188,26 @@ export async function PUT(
 
     try {
       await syncProfileApprovalStatus(adminClient, membership.user_id);
+      if (newStatus === "approved") {
+        const brandProfileSynced = await ensureBrandProfileForApprovedMembership(
+          adminClient,
+          membership.user_id,
+          membership.store_id,
+        );
+        if (!brandProfileSynced) {
+          return NextResponse.json(
+            { success: false, error: "브랜드 프로필 동기화에 실패했습니다." },
+            { status: 500 },
+          );
+        }
+      }
     } catch (profileUpdateError) {
+      if (profileUpdateError instanceof MembershipAuthNotReadyError) {
+        return NextResponse.json(
+          { success: false, error: profileUpdateError.message },
+          { status: 409 },
+        );
+      }
       console.error("[PUT /api/boss/employees/[id]] Profile approval sync error:", profileUpdateError);
       return NextResponse.json(
         { success: false, error: "프로필 승인 상태 변경 중 오류가 발생했습니다." },
@@ -169,10 +216,17 @@ export async function PUT(
     }
 
     // Generate notification for staff approval decision (async)
-    const title = newStatus === "approved" ? "직원 승인이 완료되었습니다." : "직원 승인이 거절되었습니다.";
+    // 알림 문구에는 매장 UUID 대신 실제 매장명을 쓴다. (조회 실패 시 일반 문구)
+    const { data: store } = await adminClient
+      .from("stores")
+      .select("store_name")
+      .eq("id", membership.store_id)
+      .maybeSingle<{ store_name: string | null }>();
+    const storeLabel = store?.store_name?.trim() || "매장";
+    const title = newStatus === "approved" ? "근무 매장 승인이 완료되었습니다." : "근무 매장 신청이 거절되었습니다.";
     const message = newStatus === "approved"
-      ? `${membership.store_id}에서 당신의 가입 신청을 승인했습니다.`
-      : `${membership.store_id}에서 당신의 가입 신청을 거절했습니다.`;
+      ? `${storeLabel}에서 근무 신청을 승인했습니다.`
+      : `${storeLabel}에서 근무 신청을 거절했습니다.`;
 
     createNotification({
       recipientUserId: membership.user_id,
@@ -194,4 +248,44 @@ export async function PUT(
       { status: 500 }
     );
   }
+}
+
+/**
+ * 점주가 자기 매장(storeId)의 승인된 직원 소속을 해제한다.
+ * 권한과 대상은 세션 사용자와 서버 조회로만 판단한다(body에서는 storeId만 읽는다).
+ */
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<NextResponse<RemoveStaffMembershipResult["body"] | { success: false; error: string }>> {
+  const { id: membershipId } = await params;
+
+  const serverClient = await createClient();
+  const { data: { user }, error: userError } = await serverClient.auth.getUser();
+  if (userError || !user) {
+    return NextResponse.json({ success: false, error: "인증이 필요합니다." }, { status: 401 });
+  }
+
+  let body: { storeId?: unknown } = {};
+  try {
+    body = (await request.json()) as { storeId?: unknown };
+  } catch {
+    return NextResponse.json({ success: false, error: "요청 본문 형식이 올바르지 않습니다." }, { status: 400 });
+  }
+
+  let adminClient;
+  try {
+    adminClient = createAdminClient();
+  } catch {
+    console.error("[DELETE /api/boss/employees/[id]] Admin client unavailable");
+    return NextResponse.json({ success: false, error: "서버 설정 오류입니다." }, { status: 500 });
+  }
+
+  const result = await removeStaffMembershipByOwner(adminClient, {
+    ownerUserId: user.id,
+    membershipId: membershipId ?? "",
+    storeId: typeof body.storeId === "string" ? body.storeId : "",
+  });
+
+  return NextResponse.json(result.body, { status: result.status });
 }

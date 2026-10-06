@@ -39,6 +39,13 @@ export function isManualItemLine(rawLine: string): boolean {
   return isPlainNumberBoundaryLine(rawLine);
 }
 
+export function getNumberedManualItemHeading(content: string): string | null {
+  const firstLine = splitTextIntoManualItems(content)[0]?.split(/\r?\n/)[0]?.trim();
+  return firstLine && (SUB_NUMBERED_LINE_PATTERN.test(firstLine) || LEADING_NUMBER_LINE_PATTERN.test(firstLine))
+    ? firstLine
+    : null;
+}
+
 /**
  * 텍스트(셀 내용 또는 타이틀 본문)를 세부 매뉴얼 항목 배열로 나눈다.
  * - 맨 앞 단독 숫자("1.", "2." 등) 줄을 만날 때마다 기본적으로 새 항목을 시작한다.

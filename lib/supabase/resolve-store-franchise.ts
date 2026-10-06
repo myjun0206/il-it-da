@@ -1,15 +1,61 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { createDiagnosticRequestId, logDiagnosticError } from "@/lib/auth/diagnostic-error-log";
+
+type FranchiseCandidate = { id: string; name: string | null };
+
+export function normalizeStoreFranchiseName(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLocaleLowerCase("ko-KR")
+    .replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+function levenshteinDistance(left: string, right: string): number {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    const current = [leftIndex];
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      current[rightIndex] = Math.min(
+        current[rightIndex - 1] + 1,
+        previous[rightIndex] + 1,
+        previous[rightIndex - 1] + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1),
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+
+  return previous[right.length];
+}
+
+function fuzzyPrefixScore(storeName: string, franchiseName: string): number {
+  if (franchiseName.length < 3) return 0;
+
+  const minimumLength = Math.max(2, franchiseName.length - 2);
+  const maximumLength = Math.min(storeName.length, franchiseName.length + 2);
+  let bestScore = 0;
+
+  for (let length = minimumLength; length <= maximumLength; length += 1) {
+    const prefix = storeName.slice(0, length);
+    const distance = levenshteinDistance(prefix, franchiseName);
+    const similarity = 1 - distance / Math.max(prefix.length, franchiseName.length);
+    bestScore = Math.max(bestScore, similarity);
+  }
+
+  return bestScore;
+}
 
 /**
- * 매장명(예: "버거킹 종로구청점")이 어느 프랜차이즈 소속인지 public.franchises 이름과
- * 대조해 자동으로 찾는다. 가장 긴 이름이 매칭되도록 정렬해 "BHC"/"BHC 치킨"처럼
- * 이름이 겹치는 브랜드가 있어도 더 구체적인 쪽을 우선 선택한다.
+ * 매장명과 프랜차이즈명을 정규화해 정확한 접두어를 우선 매칭한다.
+ * 정확히 맞지 않는 경우에도 충분히 높은 단일 유사 후보만 반환하며,
+ * 모호한 후보는 임의 연결하지 않고 null을 반환해 수동 선택을 유도한다.
  */
 export async function resolveFranchiseIdForStoreName(
   supabase: SupabaseClient,
   storeName: string,
+  diagnostics: { requestId?: string; userId?: string | null } = {},
 ): Promise<string | null> {
-  const normalizedStoreName = storeName.trim().toLowerCase();
+  const normalizedStoreName = normalizeStoreFranchiseName(storeName);
 
   if (!normalizedStoreName) {
     return null;
@@ -19,18 +65,48 @@ export async function resolveFranchiseIdForStoreName(
     .from("franchises")
     .select("id, name");
 
-  if (error || !franchises) {
+  if (error) {
+    logDiagnosticError("STORE_FRANCHISE_RESOLVE", "franchises.lookup", error, {
+      requestId: diagnostics.requestId ?? createDiagnosticRequestId(),
+      userId: diagnostics.userId,
+      storeName,
+      sessionPresent: Boolean(diagnostics.userId),
+    });
+    throw error;
+  }
+
+  if (!franchises) {
     return null;
   }
 
-  const matches = (franchises as { id: string; name: string | null }[])
-    // 이름이 비어있는(공백) franchise row는 제외한다 - 그대로 두면 모든 store가
-    // `"anything".startsWith("")`에 걸려 이 브랜드로 잘못 몰리게 된다(브랜드 쏠림 버그).
-    .filter((franchise) => {
-      const normalizedFranchiseName = franchise.name?.trim().toLowerCase();
-      return !!normalizedFranchiseName && normalizedStoreName.startsWith(normalizedFranchiseName);
-    })
-    .sort((a, b) => (b.name?.trim().length ?? 0) - (a.name?.trim().length ?? 0));
+  const candidates = (franchises as FranchiseCandidate[])
+    .map((franchise) => ({
+      ...franchise,
+      normalizedName: franchise.name ? normalizeStoreFranchiseName(franchise.name) : "",
+    }))
+    .filter((franchise) => franchise.normalizedName.length > 0);
 
-  return matches[0]?.id ?? null;
+  const exactMatches = candidates
+    .filter((franchise) => normalizedStoreName.startsWith(franchise.normalizedName))
+    .sort((a, b) => b.normalizedName.length - a.normalizedName.length);
+
+  if (exactMatches[0]) {
+    return exactMatches[0].id;
+  }
+
+  const fuzzyMatches = candidates
+    .map((franchise) => ({
+      ...franchise,
+      score: fuzzyPrefixScore(normalizedStoreName, franchise.normalizedName),
+    }))
+    .filter((franchise) => franchise.score >= 0.78)
+    .sort((a, b) => b.score - a.score || b.normalizedName.length - a.normalizedName.length);
+
+  const bestMatch = fuzzyMatches[0];
+  const secondBestScore = fuzzyMatches[1]?.score ?? 0;
+  if (!bestMatch || (fuzzyMatches[1] && bestMatch.score - secondBestScore < 0.08)) {
+    return null;
+  }
+
+  return bestMatch.id;
 }

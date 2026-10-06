@@ -3,8 +3,8 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { requireStoreOwner } from "@/lib/manuals/store-manual-auth";
+import { saveStoreManualEdit, type StoreManualEditResult } from "@/lib/manuals/save-store-manual-edit";
 import { indexManualById } from "@/lib/rag/index-manual";
-import type { ManualRecord } from "@/lib/types/manual";
 
 export const runtime = "nodejs";
 
@@ -13,12 +13,10 @@ type UpdateStoreManualRequestBody = {
   title?: unknown;
   category?: unknown;
   content?: unknown;
+  expectedUpdatedAt?: unknown;
 };
 
-type UpdateStoreManualResponse = {
-  manual?: ManualRecord;
-  error?: string;
-};
+type UpdateStoreManualResponse = StoreManualEditResult["body"];
 
 type DeleteStoreManualResponse = {
   success?: boolean;
@@ -54,6 +52,9 @@ export async function PATCH(
       return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
     }
 
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: "매뉴얼 수정 내용은 객체 형식으로 보내 주세요." }, { status: 400 });
+    }
     const storeId = getString(body.storeId);
 
     if (!storeId) {
@@ -61,71 +62,17 @@ export async function PATCH(
     }
 
     const adminClient = createAdminClient();
-    const storeAuth = await requireStoreOwner(adminClient, userData.user.id, storeId);
-
-    if (!storeAuth) {
-      return NextResponse.json({ error: "이 지점에 대한 접근 권한이 없습니다." }, { status: 403 });
-    }
-
-    const update: Record<string, string> = {};
-    const title = getString(body.title);
-    const category = getString(body.category);
-    const content = getString(body.content);
-
-    if (title) update.title = title;
-    if (category) update.category = category;
-    if (content) update.content = content;
-
-    if (Object.keys(update).length === 0) {
-      return NextResponse.json({ error: "수정할 내용이 없습니다." }, { status: 400 });
-    }
-
-    update.updated_at = new Date().toISOString();
-
-    const { data, error } = await adminClient
-      .from("manuals")
-      .update(update)
-      .eq("id", id)
-      .eq("store_id", storeId)
-      .select(
-        "id, brand_name, franchise_id, store_id, parent_manual_id, title, category, content, status, created_at, updated_at",
-      )
-      .maybeSingle();
-
-    if (error) {
-      return NextResponse.json({ error: "매뉴얼 수정 중 오류가 발생했습니다." }, { status: 500 });
-    }
-
-    if (!data) {
-      return NextResponse.json({ error: "매뉴얼을 찾을 수 없습니다." }, { status: 404 });
-    }
-
-    const updatedManual = data as ManualRecord;
-
-    // manual_chunks RAG 데이터 동기화: 기존 청크를 지우고 chunk_index=0으로 다시 생성한다 (임베딩은 일단 null).
-    try {
-      await adminClient.from("manual_chunks").delete().eq("manual_id", updatedManual.id);
-      await adminClient.from("manual_chunks").insert({
-        manual_id: updatedManual.id,
-        chunk_index: 0,
-        content: `${updatedManual.title} - ${updatedManual.content}`,
-        embedding: null,
-      });
-    } catch (chunkError) {
-      console.error("[STORE-MANUALS] chunk sync failed:", chunkError);
-    }
-
-    try {
-      await indexManualById(updatedManual.id);
-    } catch (indexError) {
-      console.error("[STORE-MANUALS] re-embedding failed:", indexError);
-    }
-
-    return NextResponse.json({ manual: updatedManual });
+    const result = await saveStoreManualEdit(adminClient, {
+      ...body,
+      userId: userData.user.id,
+      storeId,
+      manualId: id,
+    }, indexManualById);
+    return NextResponse.json(result.body, { status: result.status });
   } catch (e) {
     console.error("PATCH /api/store-manuals/[id] error:", e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "서버 오류가 발생했습니다." },
+      { error: "서버 오류가 발생했습니다." },
       { status: 500 },
     );
   }
@@ -196,7 +143,7 @@ export async function DELETE(
   } catch (e) {
     console.error("DELETE /api/store-manuals/[id] error:", e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "서버 오류가 발생했습니다." },
+      { error: "서버 오류가 발생했습니다." },
       { status: 500 },
     );
   }

@@ -69,6 +69,7 @@ export function ManualSearchReadinessPanel({ readinessUrl, reindexUrl, storeId }
       })
       .catch((e: unknown) => {
         if (cancelled) return;
+        setReport(null);
         setError(e instanceof Error ? e.message : "검색 준비 상태를 불러오지 못했어요.");
       })
       .finally(() => {
@@ -151,7 +152,7 @@ export function ManualSearchReadinessPanel({ readinessUrl, reindexUrl, storeId }
         </dl>
       ) : null}
 
-      {summary && !needsAttention && (
+      {summary && summary.totalDetailManualCount > 0 && !needsAttention && summary.notSearchableCount === 0 && !error && (
         <p className="mt-3 text-sm font-semibold text-[var(--color-text-primary)]">
           모든 매뉴얼이 검색 준비를 마쳤어요.
         </p>

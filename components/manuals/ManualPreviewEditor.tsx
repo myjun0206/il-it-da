@@ -21,8 +21,7 @@ export interface ManualPreviewEditorProps {
 
 /**
  * 상위 카테고리별로 세부 매뉴얼을 접기/펼치기, 이름/제목 수정, 카테고리 이동, 제외/복구를
- * 할 수 있는 미리보기 편집 UI. HQ(app/hq/manuals/onboarding)와 점주
- * (app/boss/store-manuals/upload) 업로드 화면이 이 컴포넌트를 그대로 공유한다 - 인증/저장
+ * 할 수 있는 분류 편집 UI. HQ 온보딩과 점주 매뉴얼 관리 화면이 이 컴포넌트를 공유한다 - 인증/저장
  * 경계는 각 페이지가 각자 책임지고, 이 컴포넌트는 이미 받은 preview를 화면에 그리고
  * 편집 이벤트만 위로 올려보낸다(자체적으로 API를 호출하지 않는다).
  */

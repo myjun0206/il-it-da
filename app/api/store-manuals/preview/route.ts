@@ -1,14 +1,15 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { requireStoreOwner } from "@/lib/manuals/store-manual-auth";
 import {
-  extractManualGroups,
   getFileExtension,
   TEXT_EXTENSIONS,
   XLSX_EXTENSIONS,
 } from "@/lib/manuals/extract-manual-groups";
+import { extractStoreManualGroups } from "@/lib/manuals/extract-store-manual-groups";
 import { isFileSizeWithinLimit, isPlausibleXlsxMimeType } from "@/lib/manuals/upload-limits";
 import { buildManualPreview, type ManualUploadPreview } from "@/lib/manuals/build-manual-preview";
 
@@ -16,6 +17,7 @@ export const runtime = "nodejs";
 
 type PreviewManualsResponse = {
   preview?: ManualUploadPreview;
+  idempotencyKey?: string;
   error?: string;
 };
 
@@ -97,7 +99,7 @@ export async function POST(request: Request): Promise<NextResponse<PreviewManual
   let groups;
 
   try {
-    groups = await extractManualGroups(file, extension);
+    groups = await extractStoreManualGroups(file, extension);
   } catch (parseError) {
     console.error("[STORE_MANUALS_PREVIEW] parse failed:", parseError);
     const message =
@@ -117,5 +119,6 @@ export async function POST(request: Request): Promise<NextResponse<PreviewManual
   // storeAuth.storeId (server-verified), never the raw request value, decides scopeType "store".
   const preview = buildManualPreview(groups, { storeId: storeAuth.storeId });
 
-  return NextResponse.json({ preview }, { status: 200 });
+  // 이 미리보기 세션 1회당 1개. 같은 저장 요청이 재전송돼도 같은 key로 묶여 한 번만 저장된다.
+  return NextResponse.json({ preview, idempotencyKey: randomUUID() }, { status: 200 });
 }

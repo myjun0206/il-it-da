@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
+import { ManualWriteUnavailableError, MANUAL_FEATURE_PENDING } from "@/lib/manuals/manual-write-contract";
 
 import { indexManualById } from "@/lib/rag/index-manual";
 
@@ -94,6 +95,7 @@ export async function POST(
     await indexManualById(manualId);
     return NextResponse.json({ success: true, manualId }, { status: 200 });
   } catch (error) {
+    if (error instanceof ManualWriteUnavailableError) return NextResponse.json({ success: false, error: MANUAL_FEATURE_PENDING }, { status: 503 });
     console.error("Manual indexing webhook failed", {
       manualId,
       ...getSafeErrorDetails(error),

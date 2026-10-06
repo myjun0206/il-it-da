@@ -61,10 +61,26 @@ describe("components/manuals/ManualPreviewEditor.tsx (shared preview editor acce
 describe("app/hq/manuals/onboarding/page.tsx (preview screen usability contract)", () => {
   const source = readSource("app/hq/manuals/onboarding/page.tsx");
 
-  test("shows the three required plain-language summary lines after a successful preview", () => {
-    assert.match(source, /세부 매뉴얼 \{preview\.totalDetailManualCount\}개를 찾았습니다\./);
-    assert.match(source, /\{preview\.topCategoryCount\}개의 항목으로 정리했습니다\./);
-    assert.match(source, /내용을 확인한 후 저장해 주세요\./);
+  test("renders the preview in a centered, scrollable dialog with a close button", () => {
+    const previewModal = source.slice(source.indexOf("{step === \"review\" && preview && ("), source.indexOf("{/* 승인 전 정리 결과를 버리고 나갈 때 확인 모달 */}"));
+    assert.match(previewModal, /className="fixed inset-0 z-50[^\"]*bg-black\/40/);
+    assert.match(previewModal, /role="dialog"/);
+    assert.match(previewModal, /aria-modal="true"/);
+    assert.match(previewModal, /max-h-\[88vh\]/);
+    assert.match(previewModal, /overflow-y-auto/);
+    assert.match(previewModal, /aria-label="미리보기 닫기"/);
+    assert.match(previewModal, /세부 매뉴얼 \{preview\.totalDetailManualCount\}개/);
+    assert.match(previewModal, /카테고리 \{preview\.topCategoryCount\}개/);
+  });
+
+  test("modal footer contains only cancel and green primary batch-register actions", () => {
+    const previewModal = source.slice(source.indexOf("{step === \"review\" && preview && ("), source.indexOf("{/* 승인 전 정리 결과를 버리고 나갈 때 확인 모달 */}"));
+    const footer = previewModal.slice(previewModal.indexOf("shrink-0 border-t"));
+    assert.equal((footer.match(/<Button/g) ?? []).length, 2);
+    assert.match(footer, />\s*취소\s*</);
+    assert.match(footer, /variant="primary"[\s\S]*?>\s*일괄 등록\s*</);
+    assert.match(footer, /onClick=\{handleSave\}/);
+    assert.match(footer, /onClick=\{handleReupload\}/);
   });
 
   test("reuses the shared ManualPreviewEditor component instead of duplicating the editing UI", () => {
@@ -80,7 +96,7 @@ describe("app/hq/manuals/onboarding/page.tsx (preview screen usability contract)
 
   test("handleSave has an in-flight guard (isSubmittingRef) in addition to the isSaving disabled state", () => {
     assert.match(source, /isSubmittingRef\.current/);
-    assert.match(source, /if \(!preview \|\| isSubmittingRef\.current\) return;/);
+    assert.match(source, /if \(!preview \|\| !idempotencyKey \|\| isSubmittingRef\.current\) return;/);
   });
 
   test("save success/failure feedback uses plain Korean sentences, and errors are announced (role=alert)", () => {

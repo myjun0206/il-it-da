@@ -1,12 +1,53 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import {
+  isSupabaseSessionInvalidationError,
+  SESSION_EXPIRED_QUERY_PARAM,
+  SESSION_EXPIRED_QUERY_VALUE,
+} from "@/lib/auth/session-expiration";
+import {
+  isLegacySupabaseAuthCookie,
+  SUPABASE_SESSION_COOKIE_OPTIONS,
+  isSupabaseSessionCookie,
+  SESSION_MODE_COOKIE,
+} from "@/lib/supabase/session-cookies";
+import { applySessionCookiePolicy, clearSessionPolicyCookies, readSessionPolicy, sessionPolicyCookieOptions } from "@/lib/supabase/session-policy";
+import { createDiagnosticRequestId, logDiagnosticError } from "@/lib/auth/diagnostic-error-log";
+
+function copyCookies(source: NextResponse, target: NextResponse): void {
+  for (const cookie of source.cookies.getAll()) {
+    target.cookies.set(cookie);
+  }
+}
+
+function createNextResponse(request: NextRequest, requestId: string): NextResponse {
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-proxy-request-id", requestId);
+
+  const response = NextResponse.next({
+    request: { headers: requestHeaders },
+  });
+  response.headers.set("X-Proxy-Request-Id", requestId);
+  return response;
+}
+
+function expireLegacySupabaseCookies(request: NextRequest, response: NextResponse): void {
+  request.cookies.getAll().forEach(({ name }) => {
+    if (isLegacySupabaseAuthCookie(name)) {
+      response.cookies.set(name, "", { path: "/", maxAge: 0, sameSite: "lax" });
+    }
+  });
+}
 
 /**
  * 매 요청마다 Supabase 세션 쿠키를 갱신한다. 이 갱신이 없으면 access token이 만료된 뒤
  * 클라이언트가 보낸 쿠키가 서버에서 계속 유효하지 않아 API 라우트가 401을 반환하게 된다.
  */
 export async function updateSession(request: NextRequest): Promise<NextResponse> {
-  let response = NextResponse.next({ request });
+  const proxyRequestId = createDiagnosticRequestId();
+  const hasSessionCookie = request.cookies.getAll().some(({ name }) => name === SUPABASE_SESSION_COOKIE_OPTIONS.name || name.startsWith(`${SUPABASE_SESSION_COOKIE_OPTIONS.name}.`));
+  let refreshedCookieCount = 0;
+  let response = createNextResponse(request, proxyRequestId);
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -15,22 +56,94 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
     return response;
   }
 
+  const policy = readSessionPolicy(request.cookies.getAll());
+  const isSessionEstablishment = request.nextUrl.pathname === "/api/auth/session" && request.method === "POST";
+  const rejectedCookies = hasSessionCookie && !policy && !isSessionEstablishment
+    ? request.cookies.getAll().filter(({ name }) => isSupabaseSessionCookie(name))
+    : [];
+  rejectedCookies.forEach(({ name }) => request.cookies.delete(name));
+  if (policy) {
+    request.cookies.set(SESSION_MODE_COOKIE, policy.rememberMe ? "persistent" : "session");
+  }
+  response = createNextResponse(request, proxyRequestId);
+  const policyCleanup = rejectedCookies.length || (!hasSessionCookie && !policy)
+    ? [...rejectedCookies.map(({ name }) => ({ name, value: "", options: { path: "/", maxAge: 0 } })), ...clearSessionPolicyCookies()]
+    : [];
+  const applyPolicyState = () => {
+    policyCleanup.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
+    if (policy) {
+      const mode = policy.rememberMe ? "persistent" : "session";
+      response.cookies.set(SESSION_MODE_COOKIE, mode, sessionPolicyCookieOptions(policy.rememberMe, false));
+    }
+  };
+  applyPolicyState();
+
+  if (!hasSessionCookie) {
+    expireLegacySupabaseCookies(request, response);
+    return response;
+  }
+
   const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
+    cookieOptions: SUPABASE_SESSION_COOKIE_OPTIONS,
     cookies: {
       getAll() {
         return request.cookies.getAll();
       },
-      setAll(cookiesToSet) {
-        cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-        response = NextResponse.next({ request });
-        cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
+      setAll(cookiesToSet, headers) {
+        refreshedCookieCount += cookiesToSet.length;
+        const writes = applySessionCookiePolicy(request.cookies.getAll(), cookiesToSet, policy?.rememberMe ?? false);
+        writes.forEach(({ name, value }) => value ? request.cookies.set(name, value) : request.cookies.delete(name));
+        response = createNextResponse(request, proxyRequestId);
+        applyPolicyState();
+        writes.forEach(({ name, value, options }) => {
+          response.cookies.set(name, value, options);
+        });
+        Object.entries(headers).forEach(([name, value]) => response.headers.set(name, value));
       },
     },
   });
 
   // getUser()를 호출해야 만료된 access token이 refresh token으로 갱신되고,
   // 갱신된 쿠키가 setAll을 통해 response에 반영된다.
-  await supabase.auth.getUser();
+  const { error } = await supabase.auth.getUser();
 
+  if (error) {
+    logDiagnosticError("SUPABASE_PROXY_SESSION", "auth.get_user", error, {
+      requestId: proxyRequestId,
+      path: request.nextUrl.pathname,
+      hasSessionCookie,
+      refreshedCookieCount,
+      sessionPresent: hasSessionCookie,
+    });
+  }
+
+  if (isSupabaseSessionInvalidationError(error) && request.nextUrl.pathname !== "/api/auth/login") {
+    try {
+      await supabase.auth.signOut({ scope: "local" });
+    } catch {
+      // The session may already have been removed by Supabase Auth.
+    }
+
+    if (request.nextUrl.pathname.startsWith("/api/")) {
+      const expiredResponse = NextResponse.json(
+        { error: "세션이 만료되었습니다. 다시 로그인해 주세요.", code: "SESSION_EXPIRED" },
+        { status: 401 },
+      );
+      copyCookies(response, expiredResponse);
+      expireLegacySupabaseCookies(request, expiredResponse);
+      return expiredResponse;
+    }
+
+    const loginUrl = request.nextUrl.clone();
+    loginUrl.pathname = "/";
+    loginUrl.search = "";
+    loginUrl.searchParams.set(SESSION_EXPIRED_QUERY_PARAM, SESSION_EXPIRED_QUERY_VALUE);
+    const redirectResponse = NextResponse.redirect(loginUrl);
+    copyCookies(response, redirectResponse);
+    expireLegacySupabaseCookies(request, redirectResponse);
+    return redirectResponse;
+  }
+
+  expireLegacySupabaseCookies(request, response);
   return response;
 }

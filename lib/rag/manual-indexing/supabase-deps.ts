@@ -2,13 +2,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { chunkManualText } from "@/lib/rag/chunk-manual";
 import { createEmbeddings } from "@/lib/rag/openai-embeddings";
+import { requireManualWriteContract } from "@/lib/manuals/manual-write-contract";
 
 import { persistManualChunks } from "./persist-chunks";
 import { validateManualBatch } from "./validate";
 import type { ManualIndexingDeps, PersistManualFn } from "./pipeline";
 
 const MANUAL_SELECT_COLUMNS =
-  "id, franchise_id, store_id, parent_manual_id, title, category, content, status";
+  "id, brand_name, franchise_id, store_id, scope_type, parent_manual_id, title, category, content, status, updated_at";
 
 /**
  * Real production wiring for ManualIndexingDeps (chunkManualText, OpenAI
@@ -21,6 +22,7 @@ const MANUAL_SELECT_COLUMNS =
  */
 export function createSupabaseManualIndexingDeps(supabase: SupabaseClient): ManualIndexingDeps {
   const persistManual: PersistManualFn = async (args) => {
+    await requireManualWriteContract(supabase);
     const row = {
       franchise_id: args.franchiseId,
       store_id: args.storeId,
@@ -38,6 +40,9 @@ export function createSupabaseManualIndexingDeps(supabase: SupabaseClient): Manu
         .from("manuals")
         .update(row)
         .eq("id", args.existingManualId)
+        .filter("store_id", args.storeId === null ? "is" : "eq", args.storeId)
+        .filter("franchise_id", args.franchiseId === null ? "is" : "eq", args.franchiseId)
+        .filter("parent_manual_id", args.parentManualId === null ? "is" : "eq", args.parentManualId)
         .select(MANUAL_SELECT_COLUMNS)
         .maybeSingle();
 
@@ -47,7 +52,7 @@ export function createSupabaseManualIndexingDeps(supabase: SupabaseClient): Manu
       if (!data) {
         throw new Error("EXISTING_MANUAL_NOT_FOUND");
       }
-      return { id: data.id as string };
+      return { id: data.id as string, publicationSnapshot: data };
     }
 
     const { data, error } = await supabase
@@ -59,14 +64,14 @@ export function createSupabaseManualIndexingDeps(supabase: SupabaseClient): Manu
     if (error || !data) {
       throw new Error("MANUAL_PERSIST_FAILED");
     }
-    return { id: data.id as string };
+    return { id: data.id as string, publicationSnapshot: data };
   };
 
   return {
     validate: validateManualBatch,
     persistManual,
     createEmbeddings,
-    persistChunks: (manualId, chunks) => persistManualChunks(supabase, manualId, chunks),
+    persistChunks: (manualId, chunks, snapshot) => persistManualChunks(supabase, manualId, chunks, snapshot),
     chunkText: chunkManualText,
   };
 }

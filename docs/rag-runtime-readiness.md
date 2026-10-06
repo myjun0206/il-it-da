@@ -23,6 +23,7 @@
 
 전부 `SELECT`뿐이며 `INSERT`/`UPDATE`/`DELETE`/`TRUNCATE`/`ALTER`/`DROP`/`CREATE`는 없다.
 결과는 개수(count)와 boolean만 나오며, UUID·이메일·매뉴얼 본문·질문/답변 원문은 어디에도 없다.
+이 성질은 `npm run check:integration`의 `checkReadinessSqlSafety`가 문서를 정적으로 검사해 유지한다.
 
 ```sql
 -- 2-1. scoped RPC가 실제로 배포됐는지 (pg_proc/pg_namespace만 읽음, 실행하지 않음)
@@ -123,9 +124,23 @@ select
   ) as child_manuals_with_ready_chunks
 from public.manuals m
 where m.status = 'approved';
+
+-- 2-10. 배포된 RPC의 인자 이름이 TypeScript 호출부와 같은지 (인자 목록만 읽고 실행하지 않음)
+select
+  count(*) as scoped_rpc_overload_count,
+  bool_or(
+    p.proargnames @> array[
+      'query_embedding', 'query_text', 'query_keywords',
+      'target_store_id', 'target_franchise_id', 'match_count'
+    ]::text[]
+  ) as scoped_rpc_params_match_call_site
+from pg_catalog.pg_proc p
+join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname = 'match_manual_chunks_hybrid_scoped';
 ```
 
-**판정 기준**: `scoped_rpc_exists = true` 이고 `hq_common_manuals_search_ready > 0`(또는 검증하려는
+**판정 기준**: `scoped_rpc_exists = true`, `scoped_rpc_params_match_call_site = true` 이고 `hq_common_manuals_search_ready > 0`(또는 검증하려는
 franchise 최소 1건) 이고 `store_manuals_search_ready > 0`(검증하려는 store 최소 1건)이면 RAG 검색을
 실행할 준비가 된 것으로 본다. `stores_missing_franchise_id`, `manuals_with_unexpected_scope_type`,
 `approved_manuals_without_chunks`, `approved_manual_chunks_with_null_embedding`이 0보다 크면 해당
@@ -138,13 +153,13 @@ franchise 최소 1건) 이고 `store_manuals_search_ready > 0`(검증하려는 s
 1. `supabase projects list` 또는 `supabase status`로 **현재 연결된 프로젝트**가 맞는지 확인한다.
 2. `supabase db diff` 또는 `supabase migration list`로 **적용 예정 migration 목록**에 `018_scoped_hybrid_manual_search.sql`이 포함돼 있는지 확인한다(이미 적용된 항목과 구분).
 3. 팀의 기존 배포 절차대로 `018`을 적용한다(예: `supabase db push`) — 이 문서는 실행 여부만 안내하며 실제로 실행하지 않는다.
-4. 적용 후 위 2-1 SQL(`scoped_rpc_exists`)을 다시 실행해 `true`가 나오는지 확인한다.
+4. 적용 후 위 2-1 SQL(`scoped_rpc_exists`)과 2-10 SQL(`scoped_rpc_params_match_call_site`)을 다시 실행해 둘 다 `true`가 나오는지 확인한다.
 
 ### B. Supabase Dashboard SQL Editor를 사용할 때
 
 1. `supabase/migrations/018_scoped_hybrid_manual_search.sql` 파일 내용을 저장소에서 그대로 열어 검토한다(수정하지 않음).
 2. Dashboard의 SQL Editor에 파일 내용을 그대로 붙여넣고 실행한다(파일 내용 자체가 이미 `create or replace function`이라 재실행해도 안전하다 — 새 함수를 drop/recreate하는 별도 문장을 추가하지 않는다).
-3. 실행 후 Database → Functions(또는 2-1 SQL)로 `match_manual_chunks_hybrid_scoped` 함수와 6개 인자가 보이는지 확인한다.
+3. 실행 후 Database → Functions(또는 2-1·2-10 SQL)로 `match_manual_chunks_hybrid_scoped` 함수와 6개 인자가 보이는지 확인한다.
 4. 2절의 점검 SQL 전체를 다시 실행해 개수/boolean이 기대와 맞는지 확인한다.
 
 **주의**: 이미 운영 DB에 존재하는 함수를 임의로 `drop`하거나 `db reset`을 실행하라고 제안하지

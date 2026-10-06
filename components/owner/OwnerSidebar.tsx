@@ -8,7 +8,9 @@ import {
   BookOpen,
   FileText,
   Users,
+  Store,
   Bell,
+  MessageCircleQuestionMark,
   Settings,
   LogOut,
   Menu,
@@ -28,9 +30,11 @@ export default function OwnerSidebar({
 
   const menuItems = [
     { id: "home", label: "홈", icon: House, href: "/boss" },
-    { id: "manual-common", label: "공통 매뉴얼", icon: BookOpen, href: "/boss/manuals" },
+    { id: "manual-common", label: "공통 매뉴얼 관리", icon: BookOpen, href: "/boss/manuals" },
     { id: "manual-store", label: "지점 매뉴얼 관리", icon: FileText, href: "/boss/store-manuals" },
     { id: "staff", label: "직원 관리", icon: Users, href: "/boss/employees" },
+    { id: "questions", label: "보류 질문", icon: MessageCircleQuestionMark, href: "/boss/questions" },
+    { id: "stores", label: "운영 매장", icon: Store, href: "/boss/stores" },
     { id: "notice", label: "공지사항", icon: Bell, href: "/boss/notices" },
   ];
 
@@ -42,27 +46,32 @@ export default function OwnerSidebar({
     <>
       {/* Mobile Menu Button */}
       <button
+        type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="fixed top-4 left-4 z-50 lg:hidden bg-white rounded-lg p-2 border border-[var(--color-border)]"
+        aria-label={isOpen ? "메뉴 닫기" : "메뉴 열기"}
+        aria-expanded={isOpen}
+        className="fixed top-4 left-4 z-50 lg:hidden bg-white rounded-lg p-2 border border-(--color-border)"
       >
         {isOpen ? <X size={24} /> : <Menu size={24} />}
       </button>
 
       {/* Sidebar */}
       <aside
-        className={`fixed left-0 top-0 h-screen bg-white border-r border-[var(--color-border)] flex flex-col transition-transform duration-300 lg:translate-x-0 ${
+        className={`fixed left-0 top-0 h-screen bg-white border-r border-(--color-border) flex flex-col transition-transform duration-300 lg:translate-x-0 ${
           isOpen ? "translate-x-0" : "-translate-x-full"
         } lg:w-[240px] w-64 z-40`}
       >
         {/* Logo Section - aligned with header */}
-        <div className="flex items-center px-6 h-16 border-b border-[var(--color-border)]">
-          <Image
-            src="/logo/ilitda-wordmark.png"
-            alt="일잉다"
-            width={687}
-            height={253}
-            className="h-8 w-auto object-contain"
-          />
+        <div className="flex items-center px-6 h-16 border-b border-(--color-border)">
+          <Link href="/boss" aria-label="홈으로 이동" onClick={() => setIsOpen(false)}>
+            <Image
+              src="/logo/ilitda-wordmark.png"
+              alt="일잉다"
+              width={687}
+              height={253}
+              className="h-8 w-auto object-contain"
+            />
+          </Link>
         </div>
 
         {/* Menu Section */}
@@ -81,6 +90,7 @@ export default function OwnerSidebar({
               <Link
                 key={item.id}
                 href={item.href}
+                aria-current={isActive ? "page" : undefined}
                 className={buttonClass}
                 onClick={() => setIsOpen(false)}
               >
@@ -92,7 +102,8 @@ export default function OwnerSidebar({
         </nav>
 
         {/* Bottom Menu */}
-        <div className="py-3 px-3 border-t border-[var(--color-border)]">
+        {/* data-app-sidebar-footer: 하단 고정 Action Bar가 이 영역 높이에 맞춰 상단 구분선을 이어 붙인다. */}
+        <div data-app-sidebar-footer className="py-3 px-3 border-t border-(--color-border)">
           {bottomMenuItems.map((item) => {
             const isActive = activeMenu === item.id;
             const itemClass = `w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium transition-colors ${
@@ -106,6 +117,7 @@ export default function OwnerSidebar({
                 <Link
                   key={item.id}
                   href={item.href}
+                  aria-current={isActive ? "page" : undefined}
                   className={itemClass}
                   onClick={() => setIsOpen(false)}
                 >
@@ -127,13 +139,14 @@ export default function OwnerSidebar({
           })}
 
           {/* Divider */}
-          <div className="my-1 mx-2 border-t border-[var(--color-border)]" />
+          <div className="my-1 mx-2 border-t border-(--color-border)" />
 
           {/* Logout Button */}
           {onLogout && (
             <button
+              type="button"
               onClick={onLogout}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium text-[var(--color-text-secondary)] hover:text-red-600 transition-colors"
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium text-(--color-text-secondary) hover:text-red-600 transition-colors"
             >
               <LogOut size={20} />
               <span>로그아웃</span>

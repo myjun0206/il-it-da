@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
+import { requireManualWriteContract, MANUAL_FEATURE_PENDING } from "@/lib/manuals/manual-write-contract";
+import { manualSaveResult } from "@/lib/manuals/manual-save-result";
+import { indexSavedManuals } from "@/lib/manuals/index-saved-manuals";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { requireStoreOwner } from "@/lib/manuals/store-manual-auth";
 import { STORE_MANUAL_CATEGORY_PLACEHOLDER_CONTENT } from "@/lib/manuals/constants";
-import { saveManualGroupsWithChunks, type ManualItemInput } from "@/lib/rag/save-manual-sections";
+import { type ManualItemInput } from "@/lib/rag/save-manual-sections";
+import { saveManualGroupsWithBatchGuard } from "@/lib/manuals/save-manuals-with-batch";
 import type { ManualRecord } from "@/lib/types/manual";
 
 export const runtime = "nodejs";
@@ -174,6 +178,8 @@ export async function POST(request: Request): Promise<NextResponse<CreateStoreMa
         return NextResponse.json({ error: "카테고리를 입력해주세요." }, { status: 400 });
       }
 
+      try { await requireManualWriteContract(adminClient); }
+      catch { return NextResponse.json({ error: MANUAL_FEATURE_PENDING }, { status: 503 }); }
       const { data, error } = await adminClient
         .from("manuals")
         .insert({
@@ -194,7 +200,7 @@ export async function POST(request: Request): Promise<NextResponse<CreateStoreMa
         return NextResponse.json({ error: "카테고리 저장 중 오류가 발생했습니다." }, { status: 500 });
       }
 
-      return NextResponse.json({ manuals: [data as ManualRecord] }, { status: 201 });
+      return NextResponse.json({ manuals: [data as ManualRecord], ...manualSaveResult([{ ...data, search_status: "not_searchable" } as ManualRecord]) }, { status: 201 });
     }
 
     if (!topic || !items) {
@@ -207,12 +213,28 @@ export async function POST(request: Request): Promise<NextResponse<CreateStoreMa
       return NextResponse.json({ error: "카테고리를 선택해주세요." }, { status: 400 });
     }
 
-    const manuals = await saveManualGroupsWithChunks(adminClient, storeAuth, [{ category, topic, items }], storeId);
-    return NextResponse.json({ manuals }, { status: 201 });
+    // 단건 작성에는 미리보기 단계가 없어 발급된 key가 없다. guard가 요청단위 key를 만들고,
+    // 같은 내용의 재전송은 content fingerprint로 걸러낸다.
+    const result = await saveManualGroupsWithBatchGuard(adminClient, {
+      auth: storeAuth,
+      groups: [{ category, topic, items }],
+      storeId: storeAuth.storeId,
+      scope: { scopeType: "store", franchiseId: storeAuth.franchiseId, storeId: storeAuth.storeId },
+    });
+
+    if (result.kind === "blocked") {
+      return NextResponse.json({ error: result.error }, { status: result.status });
+    }
+
+    if (result.kind === "save_failed") {
+      return NextResponse.json({ error: result.error }, { status: 500 });
+    }
+
+    return NextResponse.json({ manuals: result.manuals, ...manualSaveResult(result.manuals) }, { status: result.kind === "saved" ? 201 : 200 });
   } catch (e) {
     console.error("POST /api/store-manuals error:", e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "지점 매뉴얼 저장 중 오류가 발생했습니다." },
+      { error: "지점 매뉴얼 저장 중 오류가 발생했습니다." },
       { status: 500 },
     );
   }
@@ -309,6 +331,9 @@ export async function PATCH(request: Request): Promise<NextResponse<UpdateStoreM
       return NextResponse.json({ error: "새 카테고리를 입력해주세요." }, { status: 400 });
     }
 
+    let context;
+    try { context = await requireManualWriteContract(adminClient); }
+    catch { return NextResponse.json({ error: MANUAL_FEATURE_PENDING }, { status: 503 }); }
     const { data, error } = await adminClient
       .from("manuals")
       .update({ category: newCategory, updated_at: new Date().toISOString() })
@@ -320,7 +345,9 @@ export async function PATCH(request: Request): Promise<NextResponse<UpdateStoreM
       return NextResponse.json({ error: "카테고리 이름 변경 중 오류가 발생했습니다." }, { status: 500 });
     }
 
-    return NextResponse.json({ manuals: (data ?? []) as ManualRecord[], updatedCount: (data ?? []).length });
+    const manuals = (data ?? []) as ManualRecord[];
+    const search = await indexSavedManuals(manuals, context).catch(() => manualSaveResult(manuals));
+    return NextResponse.json({ manuals, updatedCount: manuals.length, ...search });
   } catch (e) {
     console.error("PATCH /api/store-manuals error:", e);
     return NextResponse.json({ error: "서버 오류가 발생했습니다." }, { status: 500 });

@@ -1,8 +1,9 @@
 "use client";
+import { manualSaveMessage } from "@/lib/manuals/manual-save-result";
 
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { UploadCloud, Loader2, ArrowLeft, Download, Check } from "lucide-react";
+import { UploadCloud, Loader2, ArrowLeft, Download, Check, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { ManualPreviewEditor, type ManualEditState } from "@/components/manuals/ManualPreviewEditor";
 import { createClient } from "@/lib/supabase/client";
@@ -19,7 +20,7 @@ const MAX_UPLOAD_MB = Math.round(MAX_UPLOAD_FILE_SIZE_BYTES / (1024 * 1024));
 // 매뉴얼 관리 화면(app/hq/manuals/page.tsx)과 같은 키를 사용한다.
 const MANUAL_UPLOAD_NOTICE_KEY = "ilitda:manual-upload-notice";
 
-const STEPS = ["파일 올리기", "내용 확인", "승인"] as const;
+const STEPS = ["파일 선택", "내용 확인", "저장 완료"] as const;
 
 function setUploadNotice(message: string) {
   try {
@@ -45,6 +46,7 @@ export default function ManualOnboardingPage() {
   const [categoryLabels, setCategoryLabels] = useState<Record<string, string>>({});
   const [manualEdits, setManualEdits] = useState<Record<string, ManualEditState>>({});
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+  const [idempotencyKey, setIdempotencyKey] = useState("");
   const [error, setError] = useState("");
   // 매뉴얼 관리 화면의 "파일로 매뉴얼 추가"로 들어왔는지(true) 회원가입 직후 온보딩인지(false).
   // hq 레이아웃이 force-dynamic이라 Suspense 없이 useSearchParams를 써도 된다.
@@ -140,14 +142,19 @@ export default function ManualOnboardingPage() {
           method: "POST",
           body: formData,
         });
-        const data = (await response.json()) as { preview?: ManualUploadPreview; error?: string };
+        const data = (await response.json()) as {
+          preview?: ManualUploadPreview;
+          idempotencyKey?: string;
+          error?: string;
+        };
 
-        if (!response.ok || !data.preview) {
+        if (!response.ok || !data.preview || !data.idempotencyKey) {
           throw new Error(data.error || "파일을 분석하는 중 오류가 발생했습니다.");
         }
 
         const nextPreview = data.preview;
         setPreview(nextPreview);
+        setIdempotencyKey(data.idempotencyKey);
         setCategoryLabels(
           Object.fromEntries(nextPreview.categories.map((category) => [category.tempId, category.label])),
         );
@@ -187,6 +194,7 @@ export default function ManualOnboardingPage() {
 
   const resetToUpload = () => {
     setPreview(null);
+    setIdempotencyKey("");
     setCategoryLabels({});
     setManualEdits({});
     setCollapsedCategories(new Set());
@@ -230,7 +238,7 @@ export default function ManualOnboardingPage() {
   };
 
   const handleSave = async () => {
-    if (!preview || isSubmittingRef.current) return;
+    if (!preview || !idempotencyKey || isSubmittingRef.current) return;
 
     setError("");
 
@@ -250,7 +258,7 @@ export default function ManualOnboardingPage() {
       const response = await fetch("/api/manuals/preview/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ manuals: payloadManuals }),
+        body: JSON.stringify({ manuals: payloadManuals, idempotencyKey }),
       });
       const data = (await response.json()) as { error?: string };
 
@@ -258,9 +266,9 @@ export default function ManualOnboardingPage() {
         throw new Error(data.error || "매뉴얼 저장 중 오류가 발생했습니다.");
       }
 
-      setUploadNotice(`세부 매뉴얼 ${includedCount}개를 저장했어요. 검색 준비 상태를 확인해 주세요.`);
+      setUploadNotice(manualSaveMessage(data));
       isLeavingRef.current = true;
-      router.replace("/hq/manuals");
+      router.replace("/hq/manuals/common?saved=1");
     } catch (e) {
       setError(e instanceof Error ? e.message : "매뉴얼 저장 중 오류가 발생했습니다.");
       setIsSaving(false);
@@ -269,9 +277,6 @@ export default function ManualOnboardingPage() {
   };
 
   const currentStepIndex = step === "upload" ? 0 : 1;
-  const includedManualCount = preview
-    ? preview.manuals.filter((manual) => !(manualEdits[manual.tempId]?.excluded ?? false)).length
-    : 0;
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-default)]">
@@ -348,7 +353,7 @@ export default function ManualOnboardingPage() {
             })}
           </ol>
 
-          {step === "upload" ? (
+          {step === "upload" && (
             <>
               <div className="text-center mb-8 break-keep">
                 {!fromManuals && (
@@ -453,68 +458,77 @@ export default function ManualOnboardingPage() {
                 </a>
               </p>
             </>
-          ) : (
-            <>
-              <div className="text-center mb-8 break-keep">
-                <h1 className="text-2xl sm:text-3xl font-bold text-[var(--color-text-primary)] mb-3">
-                  매뉴얼을 정리했어요
-                </h1>
-                {preview && (
-                  <div className="text-[var(--color-text-secondary)] space-y-1">
-                    <p>세부 매뉴얼 {preview.totalDetailManualCount}개를 찾았습니다.</p>
-                    <p>{preview.topCategoryCount}개의 항목으로 정리했습니다.</p>
-                    <p className="font-semibold text-[var(--color-text-primary)]">
-                      내용을 확인한 후 저장해 주세요.
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {preview && (
-                <ManualPreviewEditor
-                  preview={preview}
-                  categoryLabels={categoryLabels}
-                  manualEdits={manualEdits}
-                  collapsedCategories={collapsedCategories}
-                  onCategoryLabelChange={handleCategoryLabelChange}
-                  onManualTitleChange={handleManualTitleChange}
-                  onManualCategoryMove={handleManualCategoryMove}
-                  onManualExcludeToggle={handleManualExcludeToggle}
-                  onToggleCategoryCollapsed={toggleCategoryCollapsed}
-                />
-              )}
-
-              {error && (
-                <p role="alert" className="mt-4 text-center text-sm text-[var(--color-status-error)] break-keep">
-                  {error}
-                </p>
-              )}
-
-              <div className="flex flex-col-reverse sm:flex-row justify-center gap-3 mt-8">
-                <Button
-                  variant="outline"
-                  size="lg"
-                  onClick={handleReupload}
-                  disabled={isSaving}
-                  className="w-full sm:w-auto px-8"
-                >
-                  다시 올리기
-                </Button>
-                <Button
-                  variant="primary"
-                  size="lg"
-                  isLoading={isSaving}
-                  disabled={isSaving}
-                  onClick={handleSave}
-                  className="w-full sm:w-auto px-12"
-                >
-                  세부 매뉴얼 {includedManualCount}개 저장하기
-                </Button>
-              </div>
-            </>
           )}
         </div>
       </main>
+
+      {step === "review" && preview && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-4 sm:px-6"
+          onClick={() => handleReupload()}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="manual-preview-title"
+            className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={handleReupload}
+              disabled={isSaving}
+              aria-label="미리보기 닫기"
+              className="absolute right-4 top-4 z-10 rounded-md p-1 text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-default)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+            >
+              <X size={20} aria-hidden="true" />
+            </button>
+
+            <div className="shrink-0 border-b border-[var(--color-border)] px-5 py-4 pr-14 sm:px-6">
+              <h2 id="manual-preview-title" className="mb-1 text-lg font-bold text-[var(--color-text-primary)]">
+                AI 분석 결과 미리보기
+              </h2>
+              <p className="text-sm text-[var(--color-text-secondary)]">
+                세부 매뉴얼 {preview.totalDetailManualCount}개 · 카테고리 {preview.topCategoryCount}개
+              </p>
+            </div>
+
+            <p role="status" aria-live="polite" className="sr-only">
+              {isSaving ? "매뉴얼을 저장하고 있어요." : ""}
+            </p>
+
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 overscroll-contain sm:px-6 sm:py-5">
+              <ManualPreviewEditor
+                preview={preview}
+                categoryLabels={categoryLabels}
+                manualEdits={manualEdits}
+                collapsedCategories={collapsedCategories}
+                onCategoryLabelChange={handleCategoryLabelChange}
+                onManualTitleChange={handleManualTitleChange}
+                onManualCategoryMove={handleManualCategoryMove}
+                onManualExcludeToggle={handleManualExcludeToggle}
+                onToggleCategoryCollapsed={toggleCategoryCollapsed}
+              />
+              {error && (
+                <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-[var(--color-status-error)] break-keep">
+                  {error}
+                </p>
+              )}
+            </div>
+
+            <div className="shrink-0 border-t border-[var(--color-border)] bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:px-6 sm:py-4">
+              <div className="flex gap-3">
+                <Button variant="ghost" className="flex-1" onClick={handleReupload} disabled={isSaving}>
+                  취소
+                </Button>
+                <Button variant="primary" className="flex-1" isLoading={isSaving} disabled={isSaving} onClick={handleSave}>
+                  일괄 등록
+                </Button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
 
       {/* 승인 전 정리 결과를 버리고 나갈 때 확인 모달 */}
       {pendingLeave && (

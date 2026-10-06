@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
+import { RequestStatusBadge } from "@/components/common/ResultPanel";
 import { createClient } from "@/lib/supabase/client";
 
 type ApprovalStatus = "pending" | "approved" | "rejected";
@@ -26,21 +27,6 @@ type StatusResult = {
   }>;
   error?: string;
 };
-
-const statusView = {
-  pending: {
-    title: "승인 대기 중",
-    className: "border-orange-200 bg-orange-50 text-orange-700",
-  },
-  approved: {
-    title: "승인 완료",
-    className: "border-green-200 bg-green-50 text-green-700",
-  },
-  rejected: {
-    title: "승인 거절",
-    className: "border-red-200 bg-red-50 text-red-700",
-  },
-} as const;
 
 function formatDate(value: string | null): string {
   if (!value) return "-";
@@ -164,7 +150,6 @@ function SignupApprovalStatusContent() {
           <div className="mt-6 space-y-3">
             <h2 className="text-sm font-bold text-[var(--color-text-primary)]">점포별 신청 상태</h2>
             {result.memberships.map((membership) => {
-              const view = statusView[membership.status];
               return (
                 <div key={membership.membershipId} className="rounded-lg border border-[var(--color-border)] p-4">
                   <div className="flex items-start justify-between gap-3">
@@ -174,14 +159,13 @@ function SignupApprovalStatusContent() {
                         {membership.brandName || "브랜드 미지정"}
                       </p>
                     </div>
-                    <span className={`rounded-full px-3 py-1 text-xs font-bold ${view.className}`}>
-                      {view.title}
-                    </span>
+                    {/* 상태 색상·아이콘은 신청 결과 화면 공통 배지를 쓴다. */}
+                    <RequestStatusBadge status={membership.status} />
                   </div>
                   <p className="mt-3 text-xs text-[var(--color-text-secondary)]">
                     신청: {formatDate(membership.requestedAt)}
                     {membership.status === "approved" ? ` · 승인: ${formatDate(membership.approvedAt)}` : ""}
-                    {membership.status === "rejected" ? ` · 취소/거절: ${formatDate(membership.rejectedAt)}` : ""}
+                    {membership.status === "rejected" ? ` · 반려: ${formatDate(membership.rejectedAt)}` : ""}
                   </p>
                 </div>
               );
@@ -204,6 +188,9 @@ function SignupApprovalStatusContent() {
           >
             {isSigningOut ? "로그아웃 중..." : "로그인으로 돌아가기"}
           </button>
+          <Link href="/staff/stores/add" className="font-semibold text-[var(--color-primary)] hover:underline">
+            근무 매장 신청
+          </Link>
           <Link href="/signup/role" className="text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]">
             회원가입
           </Link>

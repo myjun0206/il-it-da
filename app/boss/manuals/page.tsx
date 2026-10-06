@@ -2,13 +2,13 @@
 
 import React, { useEffect, useLayoutEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BookOpen, FileText } from "lucide-react";
+import { ArrowLeft, BookOpen, FileText, Search } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
-import { Input } from "@/components/common/Input";
 import type { ManualRecord } from "@/lib/types/manual";
+import { resolveOwnerCurrentStore } from "@/lib/owner/current-store";
 
 type ManualGroup = {
   id: string;
@@ -27,6 +27,34 @@ type ManualView = "categories" | "titles" | "items";
 
 const UUID_LIKE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const INTERNAL_ID_LIKE_PATTERN = /^[A-Za-z0-9_-]{16,}$/;
+
+const cardButtonClass =
+  "flex h-full w-full flex-col items-start rounded-xl border border-[var(--color-border)] bg-white p-5 text-left transition-colors hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]";
+const badgeClass =
+  "mb-3 inline-flex max-w-full truncate rounded-full bg-[var(--color-primary-light)]/40 px-2.5 py-0.5 text-xs font-semibold text-[var(--color-primary)]";
+const stateBoxClass = "rounded-xl border border-[var(--color-border)] bg-white p-8 text-center";
+const backButtonClass =
+  "-ml-2 mb-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]";
+
+function SearchField({ value, onChange, label }: { value: string; onChange: (value: string) => void; label: string }) {
+  return (
+    <div className="mb-6 relative">
+      <Search
+        size={18}
+        className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]"
+        aria-hidden="true"
+      />
+      <input
+        type="search"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={label}
+        aria-label={label}
+        className="h-12 w-full rounded-lg border border-[var(--color-border)] bg-white pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
+      />
+    </div>
+  );
+}
 
 function getManualCategory(manual: ManualRecord): string {
   return manual.category?.trim() || "미분류";
@@ -84,6 +112,7 @@ export default function OwnerManualsPage() {
   const [isReady, setIsReady] = useState(false);
   const [userName, setUserName] = useState("");
   const [storeName, setStoreName] = useState("");
+  const [selectedStoreId, setSelectedStoreId] = useState("");
   const [manuals, setManuals] = useState<ManualRecord[]>([]);
   const [isLoadingManuals, setIsLoadingManuals] = useState(true);
   const [error, setError] = useState("");
@@ -109,6 +138,23 @@ export default function OwnerManualsPage() {
           router.push("/signup/approval-status");
           return;
         }
+
+        const storeResolution = await resolveOwnerCurrentStore();
+        if (storeResolution.status !== "ready") {
+          setError("운영 매장 정보를 확인하지 못했습니다.");
+          setIsLoadingManuals(false);
+          setIsReady(true);
+          return;
+        }
+        if (!storeResolution.current) {
+          setError("승인된 운영 매장이 없습니다.");
+          setIsLoadingManuals(false);
+          setIsReady(true);
+          return;
+        }
+
+        setSelectedStoreId(storeResolution.current.storeId);
+        setStoreName(storeResolution.current.storeName);
 
         setIsReady(true);
       } catch (e) {
@@ -143,16 +189,15 @@ export default function OwnerManualsPage() {
     setUserInfo();
   }, []);
 
-  // 매뉴얼 조회 - /api/manuals는 owner role일 때 이미 storeId=null(본사 공통 매뉴얼)만,
-  // 로그인 계정의 franchise_id(또는 legacy brand_name)로 스코핑해서 내려준다.
+  // 현재 선택된 점주 매장의 franchise에 해당하는 본사 공통 매뉴얼만 조회한다.
   useEffect(() => {
-    if (!isReady) return;
+    if (!isReady || !selectedStoreId) return;
 
     const fetchManuals = async () => {
       setIsLoadingManuals(true);
       setError("");
       try {
-        const response = await fetch("/api/manuals");
+        const response = await fetch(`/api/manuals?storeId=${encodeURIComponent(selectedStoreId)}`);
         const data = (await response.json()) as { manuals?: ManualRecord[]; error?: string };
 
         if (!response.ok || !data.manuals) {
@@ -170,7 +215,7 @@ export default function OwnerManualsPage() {
     };
 
     void fetchManuals();
-  }, [isReady]);
+  }, [isReady, selectedStoreId]);
 
   const handleLogout = async () => {
     try {
@@ -229,12 +274,12 @@ export default function OwnerManualsPage() {
       <OwnerSidebar activeMenu="manual-common" onLogout={handleLogout} />
 
       <div className="lg:ml-[240px]">
-        <OwnerHeader userName={userName} storeName={storeName} />
+        <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
 
         <main className="p-6 lg:p-8 max-w-7xl mx-auto">
           <div className="mb-6">
             <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
-              공통 매뉴얼
+              공통 매뉴얼 관리
             </h1>
             <p className="text-base text-[var(--color-text-secondary)]">
               본사에서 배포한 카테고리 → 타이틀 → 세부 매뉴얼 순서로 확인할 수 있습니다. (조회 전용)
@@ -242,176 +287,154 @@ export default function OwnerManualsPage() {
           </div>
 
           {error && !isLoadingManuals && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-              <p className="text-sm text-red-600">{error}</p>
+            <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-5" role="alert">
+              <p className="text-sm text-red-700">{error}</p>
             </div>
           )}
 
           {isLoadingManuals ? (
-            <div className="flex flex-col items-center justify-center py-12">
-              <div className="w-8 h-8 border-3 border-[var(--color-border)] border-t-[var(--color-primary)] rounded-full animate-spin" />
-              <p className="mt-4 text-[var(--color-text-secondary)]">매뉴얼 로딩 중...</p>
+            <div className={stateBoxClass}>
+              <p className="text-base text-[var(--color-text-secondary)]" role="status">매뉴얼을 불러오는 중...</p>
             </div>
           ) : view === "categories" ? (
-            <section>
-              <div className="mb-6 w-full lg:max-w-md">
-                <Input
-                  label="검색"
-                  placeholder="카테고리 검색하기"
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                />
-              </div>
+            <section aria-label="카테고리">
+              <SearchField value={searchQuery} onChange={setSearchQuery} label="카테고리 검색" />
 
               {!error && (
-                <div className="mb-4 text-sm text-[var(--color-text-secondary)]">
+                <p className="mb-3 text-sm text-[var(--color-text-secondary)]">
                   카테고리 <span className="font-bold text-[var(--color-text-primary)]">{categories.length}</span>개 · 타이틀{" "}
                   <span className="font-bold text-[var(--color-text-primary)]">{groups.length}</span>개
-                </div>
+                </p>
               )}
 
               {visibleCategories.length === 0 ? (
-                <div className="rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-bg-surface)] p-12 text-center shadow-md">
-                  <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[var(--color-primary-light)]">
-                    <BookOpen size={32} className="text-[var(--color-primary)]" />
-                  </div>
-                  <p className="mb-2 text-base text-[var(--color-text-secondary)]">
+                <div className={stateBoxClass}>
+                  <BookOpen size={28} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+                  <p className="text-base font-semibold text-[var(--color-text-primary)]">
                     {categories.length === 0 ? "등록된 공통 매뉴얼이 없습니다." : "검색 결과가 없습니다."}
                   </p>
-                  <p className="text-sm text-[var(--color-text-tertiary)]">
+                  <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
                     본사에서 매뉴얼을 배포하면 이곳에서 확인할 수 있습니다.
                   </p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {visibleCategories.map((category, index) => (
-                    <button
-                      key={category.category}
-                      type="button"
-                      onClick={() => {
-                        setSelectedCategoryName(category.category);
-                        setSelectedTitleId(null);
-                        setTitleSearchQuery("");
-                        setView("titles");
-                      }}
-                      className="rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-bg-surface)] p-6 text-left shadow-md transition-all hover:border-[var(--color-primary)] hover:bg-white hover:shadow-lg"
-                    >
-                      <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--color-primary-light)] text-sm font-bold text-[var(--color-primary)]">
-                        {index + 1}
-                      </div>
-                      <p className="mb-2 text-lg font-bold text-[var(--color-text-primary)]">
-                        {getDisplayCategoryName(category.category)}
-                      </p>
-                      <p className="text-sm text-[var(--color-text-secondary)]">
-                        타이틀 {category.groups.length}개 · 세부 매뉴얼 {category.itemCount}개
-                      </p>
-                    </button>
+                <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {visibleCategories.map((category) => (
+                    <li key={category.category} className="min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedCategoryName(category.category);
+                          setSelectedTitleId(null);
+                          setTitleSearchQuery("");
+                          setView("titles");
+                        }}
+                        className={cardButtonClass}
+                      >
+                        <span className={badgeClass}>카테고리</span>
+                        <span className="w-full text-base font-semibold text-[var(--color-text-primary)] break-keep line-clamp-2">
+                          {getDisplayCategoryName(category.category)}
+                        </span>
+                        <span className="mt-auto pt-3 text-xs text-[var(--color-text-tertiary)]">
+                          타이틀 {category.groups.length}개 · 세부 매뉴얼 {category.itemCount}개
+                        </span>
+                      </button>
+                    </li>
                   ))}
-                </div>
+                </ul>
               )}
             </section>
           ) : view === "titles" ? (
-            <section>
-              <div className="mb-6 w-full lg:max-w-md">
-                <Input
-                  label="검색"
-                  placeholder="타이틀 검색하기"
-                  value={titleSearchQuery}
-                  onChange={(event) => setTitleSearchQuery(event.target.value)}
-                />
-              </div>
+            <section aria-label="타이틀">
+              <button
+                type="button"
+                onClick={() => {
+                  setTitleSearchQuery("");
+                  setView("categories");
+                }}
+                className={backButtonClass}
+              >
+                <ArrowLeft size={16} aria-hidden="true" /> 카테고리 목록
+              </button>
+              {selectedCategory && (
+                <h2 className="mb-4 text-lg font-bold text-[var(--color-text-primary)] break-keep">
+                  {getDisplayCategoryName(selectedCategory.category)}
+                </h2>
+              )}
+              <SearchField value={titleSearchQuery} onChange={setTitleSearchQuery} label="타이틀 검색" />
 
               {!selectedCategory || visibleTitleGroups.length === 0 ? (
-                <div className="rounded-xl border-2 border-dashed border-[var(--color-border)] bg-[var(--color-bg-surface)] p-12 text-center text-sm text-[var(--color-text-secondary)] shadow-sm">
-                  검색 결과가 없습니다.
+                <div className={stateBoxClass}>
+                  <FileText size={28} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+                  <p className="text-base text-[var(--color-text-secondary)]">검색 결과가 없습니다.</p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {visibleTitleGroups.map((group, index) => (
-                    <button
-                      key={group.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedTitleId(group.id);
-                        setItemSearchQuery("");
-                        setView("items");
-                      }}
-                      className="rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-bg-surface)] p-6 text-left shadow-md transition-all hover:border-[var(--color-primary)] hover:bg-white hover:shadow-lg"
-                    >
-                      <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--color-primary-light)] text-sm font-bold text-[var(--color-primary)]">
-                        {index + 1}
-                      </div>
-                      <p className="mb-2 text-lg font-bold text-[var(--color-text-primary)]">{group.title}</p>
-                      <p className="text-sm text-[var(--color-text-secondary)]">세부 매뉴얼 {group.items.length}개</p>
-                    </button>
+                <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {visibleTitleGroups.map((group) => (
+                    <li key={group.id} className="min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedTitleId(group.id);
+                          setItemSearchQuery("");
+                          setView("items");
+                        }}
+                        className={cardButtonClass}
+                      >
+                        <span className={badgeClass}>{getDisplayCategoryName(group.category)}</span>
+                        <span className="w-full text-base font-semibold text-[var(--color-text-primary)] break-keep line-clamp-2">{group.title}</span>
+                        <span className="mt-auto pt-3 text-xs text-[var(--color-text-tertiary)]">세부 매뉴얼 {group.items.length}개</span>
+                      </button>
+                    </li>
                   ))}
-                </div>
+                </ul>
               )}
-
-              <div className="fixed bottom-6 right-6 z-40 rounded-full border border-[var(--color-border)] bg-white p-2 shadow-lg lg:right-8">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTitleSearchQuery("");
-                    setView("categories");
-                  }}
-                  className="rounded-full bg-[var(--color-primary)] px-5 py-2 text-sm font-bold text-white shadow-sm transition-colors hover:bg-[var(--color-primary-hover)]"
-                >
-                  ← 카테고리 목록
-                </button>
-              </div>
             </section>
           ) : (
-            <section>
-              <div className="mb-6 w-full lg:max-w-md">
-                <Input
-                  label="검색"
-                  placeholder="매뉴얼 검색하기"
-                  value={itemSearchQuery}
-                  onChange={(event) => setItemSearchQuery(event.target.value)}
-                />
-              </div>
+            <section aria-label="세부 매뉴얼">
+              <button
+                type="button"
+                onClick={() => {
+                  setItemSearchQuery("");
+                  setView("titles");
+                }}
+                className={backButtonClass}
+              >
+                <ArrowLeft size={16} aria-hidden="true" /> 타이틀 목록
+              </button>
+              {selectedTitle && (
+                <div className="mb-4">
+                  <span className={badgeClass}>{getDisplayCategoryName(selectedTitle.category)}</span>
+                  <h2 className="text-lg font-bold text-[var(--color-text-primary)] break-keep">{selectedTitle.title}</h2>
+                </div>
+              )}
+              <SearchField value={itemSearchQuery} onChange={setItemSearchQuery} label="세부 매뉴얼 검색" />
 
               {selectedTitle ? (
                 <div className="space-y-4">
                   {visibleManualItems.map((item, index) => (
                     <article
                       key={item.id}
-                      className="rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-bg-surface)] p-5 shadow-md"
+                      className="rounded-xl border border-[var(--color-border)] bg-white p-5 lg:p-6"
                     >
-                      <div className="mb-3 flex items-center gap-3">
-                        <p className="text-sm font-bold text-[var(--color-primary)]">매뉴얼 {index + 1}</p>
-                      </div>
-                      <p className="whitespace-pre-wrap text-sm leading-6 text-[var(--color-text-primary)]">
+                      <h3 className="mb-2 text-base font-semibold text-[var(--color-text-primary)]">세부 매뉴얼 {index + 1}</h3>
+                      <p className="whitespace-pre-wrap break-words text-base leading-7 text-[var(--color-text-primary)]">
                         {item.content}
                       </p>
                     </article>
                   ))}
                   {visibleManualItems.length === 0 && (
-                    <div className="rounded-xl border-2 border-dashed border-[var(--color-border)] bg-[var(--color-bg-surface)] p-12 text-center text-sm text-[var(--color-text-secondary)] shadow-sm">
-                      <FileText size={32} className="mx-auto mb-3 text-[var(--color-border)]" />
-                      검색 결과가 없습니다.
+                    <div className={stateBoxClass}>
+                      <FileText size={28} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+                      <p className="text-base text-[var(--color-text-secondary)]">검색 결과가 없습니다.</p>
                     </div>
                   )}
                 </div>
               ) : (
-                <div className="rounded-xl border-2 border-dashed border-[var(--color-border)] bg-[var(--color-bg-surface)] p-12 text-center text-sm text-[var(--color-text-secondary)] shadow-sm">
-                  타이틀을 선택하면 세부 매뉴얼이 표시됩니다.
+                <div className={stateBoxClass}>
+                  <p className="text-base text-[var(--color-text-secondary)]">타이틀을 선택하면 세부 매뉴얼이 표시됩니다.</p>
                 </div>
               )}
-
-              <div className="fixed bottom-6 right-6 z-40 rounded-full border border-[var(--color-border)] bg-white p-2 shadow-lg lg:right-8">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setItemSearchQuery("");
-                    setView("titles");
-                  }}
-                  className="rounded-full bg-[var(--color-primary)] px-5 py-2 text-sm font-bold text-white shadow-sm transition-colors hover:bg-[var(--color-primary-hover)]"
-                >
-                  ← 타이틀 목록
-                </button>
-              </div>
             </section>
           )}
         </main>

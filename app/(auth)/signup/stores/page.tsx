@@ -142,6 +142,7 @@ export default function SignupStoresPage() {
       const storeDataArray: SelectedStore[] = selectedStores.map((store) => ({
         storeId: store.id,
         franchiseName: store.brandName,
+        franchiseId: store.franchiseId,
         storeName: store.name,
         address: store.address,
       }));

@@ -40,9 +40,10 @@ describe("lib/rag/save-manual-sections.ts (static contract)", () => {
     assert.match(source, /const category = group\.category\?\.trim\(\) \|\| "미분류";/);
   });
 
-  test("chunk sync failures are logged and swallowed, never thrown, so manual saving itself is not blocked", () => {
-    assert.match(source, /logSafeManualError\("MANUAL_CHUNKS_INSERT_FAILED", chunkError\)/);
-    assert.match(source, /logSafeManualError\("MANUAL_CHUNKING_FAILED", chunkParseError\)/);
+  test("chunk failures are explicit per-manual results without unsafe placeholder writes", () => {
+    assert.equal(source.includes('.from("manual_chunks")'), false);
+    assert.match(source, /manual.search_status = results.find/);
+    assert.match(source, /requireManualWriteContract\(supabase\)/);
   });
 
   test("re-embedding is delegated to reembedApprovedManuals, which isolates per-manual embedding failures", () => {

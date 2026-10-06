@@ -6,6 +6,7 @@ export interface Store {
   id: string;
   brandId: string;
   brandName: string;
+  franchiseId?: string;
   name: string;
   address: string;
   latitude?: number;
@@ -24,4 +25,14 @@ export interface StoreMarker {
   latitude: number;
   longitude: number;
   selected?: boolean;
+}
+
+/** 본사 지점 관리(GET /api/hq/stores) 응답 항목 */
+export interface HqStoreSummary {
+  id: string;
+  name: string;
+  createdAt: string | null;
+  ownerNames: string[];
+  staffCount: number;
+  manualCount: number;
 }

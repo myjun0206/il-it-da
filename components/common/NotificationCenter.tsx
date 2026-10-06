@@ -1,8 +1,12 @@
 "use client";
 
 import React, { useEffect, useState, useRef } from "react";
-import { Bell } from "lucide-react";
+import { Bell, Info } from "lucide-react";
+import Link from "next/link";
 import { formatNotificationTime } from "@/lib/notifications";
+import { NOTIFICATIONS_CHANGED_EVENT } from "@/lib/notifications/escalation-popup";
+import { resolveNotificationClick } from "@/lib/notifications/notification-href";
+import { createClient } from "@/lib/supabase/client";
 
 interface Notification {
   id: string;
@@ -18,19 +22,21 @@ interface Notification {
 
 interface NotificationCenterProps {
   className?: string;
+  notificationPageUrl?: string;
 }
 
 interface NavigationState {
   targetUrl: string | null;
 }
 
-export default function NotificationCenter({ className = "" }: NotificationCenterProps) {
+export default function NotificationCenter({ className = "", notificationPageUrl = "/notifications" }: NotificationCenterProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [navigationTarget, setNavigationTarget] = useState<NavigationState>({ targetUrl: null });
+  const [toastMessage, setToastMessage] = useState("");
   const panelRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
@@ -41,6 +47,51 @@ export default function NotificationCenter({ className = "" }: NotificationCente
     }
   }, [navigationTarget]);
 
+  useEffect(() => {
+    if (!toastMessage) return;
+    const timer = setTimeout(() => setToastMessage(""), 2500);
+    return () => clearTimeout(timer);
+  }, [toastMessage]);
+
+  // 종 아이콘 badge: 패널을 열기 전에도 실제 읽지 않은 알림 수로 표시한다. (없으면 badge 없음)
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadUnreadCount = () => {
+      void (async () => {
+        try {
+          const { data, error: sessionError } = await createClient().auth.getSession();
+          if (isCancelled) return;
+          if (sessionError || !data.session) {
+            setUnreadCount(0);
+            return;
+          }
+
+          const response = await fetch("/api/notifications?limit=1", { credentials: "include" });
+          if (isCancelled) return;
+          if (response.status === 401) {
+            setUnreadCount(0);
+            return;
+          }
+          const result = (await response.json()) as { success?: boolean; data?: { unreadCount?: number } };
+          if (response.ok && result.success && typeof result.data?.unreadCount === "number") {
+            setUnreadCount(result.data.unreadCount);
+          }
+        } catch {
+          // 배지 조회 실패는 생략한다. 패널을 열면 다시 조회한다.
+        }
+      })();
+    };
+
+    loadUnreadCount();
+    // 팝업 등 다른 화면에서 읽음 처리하면 배지를 다시 맞춘다.
+    window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, loadUnreadCount);
+    return () => {
+      isCancelled = true;
+      window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, loadUnreadCount);
+    };
+  }, []);
+
   // Fetch notifications when panel opens
   useEffect(() => {
     if (!isOpen) return;
@@ -50,7 +101,19 @@ export default function NotificationCenter({ className = "" }: NotificationCente
       setError("");
 
       try {
-        const response = await fetch("/api/notifications?limit=15");
+        const { data: sessionData, error: sessionError } = await createClient().auth.getSession();
+        if (sessionError || !sessionData.session) {
+          setNotifications([]);
+          setUnreadCount(0);
+          return;
+        }
+
+        const response = await fetch("/api/notifications?limit=15", { credentials: "include" });
+        if (response.status === 401) {
+          setNotifications([]);
+          setUnreadCount(0);
+          return;
+        }
         const data = (await response.json()) as {
           success: boolean;
           data?: { notifications: Notification[]; unreadCount: number };
@@ -63,8 +126,7 @@ export default function NotificationCenter({ className = "" }: NotificationCente
         } else {
           setError(data.error || "알림을 불러올 수 없습니다.");
         }
-      } catch (e) {
-        console.error("Failed to fetch notifications:", e);
+      } catch {
         setError("알림을 불러올 수 없습니다.");
       } finally {
         setIsLoading(false);
@@ -81,28 +143,33 @@ export default function NotificationCenter({ className = "" }: NotificationCente
       try {
         await fetch(`/api/notifications/${notification.id}/mark-read`, {
           method: "PUT",
+          credentials: "include",
         });
-      } catch (e) {
-        console.error("Failed to mark notification as read:", e);
+      } catch {
+        // 읽음 처리에 실패해도 상세 화면 이동은 계속한다.
       }
+      setNotifications((prev) => prev.map((n) => (n.id === notification.id ? { ...n, isRead: true } : n)));
+      setUnreadCount((count) => Math.max(0, count - 1));
     }
 
-    // Navigate if targetUrl exists
-    if (notification.targetUrl) {
-      setNavigationTarget({ targetUrl: notification.targetUrl });
+    const action = resolveNotificationClick(notification);
+    if (action.kind === "navigate") {
+      setNavigationTarget({ targetUrl: action.href });
+    } else if (action.kind === "notice") {
+      setToastMessage(action.message);
     }
   };
 
   // Handle mark all as read
   const handleMarkAllRead = async () => {
     try {
-      await fetch("/api/notifications/read-all", { method: "PUT" });
+      await fetch("/api/notifications/read-all", { method: "PUT", credentials: "include" });
       setUnreadCount(0);
       setNotifications((prev) =>
         prev.map((n) => ({ ...n, isRead: true }))
       );
-    } catch (e) {
-      console.error("Failed to mark all as read:", e);
+    } catch {
+      // 실패하면 기존 배지 상태를 유지한다.
     }
   };
 
@@ -143,13 +210,18 @@ export default function NotificationCenter({ className = "" }: NotificationCente
         ref={buttonRef}
         onClick={() => setIsOpen(!isOpen)}
         className="relative p-2 rounded-lg hover:bg-[var(--color-bg-surface)] transition-colors"
-        aria-label="알림"
+        aria-label={unreadCount > 0 ? `알림 (읽지 않은 알림 ${unreadCount}개)` : "알림"}
         aria-expanded={isOpen}
         aria-haspopup="dialog"
       >
         <Bell size={20} className="text-[var(--color-text-secondary)]" />
         {unreadCount > 0 && (
-          <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
+          <span
+            className="absolute -top-0.5 -right-0.5 min-w-[20px] h-5 bg-red-500 text-white text-xs font-semibold rounded-full flex items-center justify-center"
+            aria-label={`${unreadCount > 99 ? '99+' : unreadCount}개의 읽지 않은 알림`}
+          >
+            {unreadCount > 99 ? '99+' : unreadCount}
+          </span>
         )}
       </button>
 
@@ -157,7 +229,7 @@ export default function NotificationCenter({ className = "" }: NotificationCente
       {isOpen && (
         <div
           ref={panelRef}
-          className="absolute right-0 top-full mt-2 w-96 max-w-[calc(100vw-1rem)] bg-white border border-[var(--color-border)] rounded-lg shadow-lg z-50 max-h-96 flex flex-col"
+          className="fixed inset-x-2 top-16 mt-2 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:w-96 sm:max-w-[calc(100vw-1rem)] bg-white border border-[var(--color-border)] rounded-lg shadow-lg z-50 max-h-96 flex flex-col"
           role="dialog"
           aria-label="알림 목록"
         >
@@ -185,8 +257,17 @@ export default function NotificationCenter({ className = "" }: NotificationCente
                 {error}
               </div>
             ) : notifications.length === 0 ? (
-              <div className="p-8 text-center text-[var(--color-text-secondary)] text-sm">
-                새로운 알림이 없습니다.
+              <div className="flex flex-col items-center justify-center py-8 px-4 gap-4">
+                <p className="text-center text-[var(--color-text-secondary)] text-sm">
+                  새로운 알림이 없습니다.
+                </p>
+                <Link
+                  href={notificationPageUrl}
+                  className="inline-flex items-center justify-center rounded-md px-3 h-8 text-sm font-medium border border-[var(--color-border)] text-[var(--color-primary)] bg-white hover:bg-[var(--color-primary-light)]/10 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
+                  onClick={() => setIsOpen(false)}
+                >
+                  지난 알림 보기
+                </Link>
               </div>
             ) : (
               <div className="divide-y divide-[var(--color-border)]">
@@ -227,11 +308,24 @@ export default function NotificationCenter({ className = "" }: NotificationCente
           {/* Footer */}
           {notifications.length > 0 && (
             <div className="sticky bottom-0 px-4 py-3 border-t border-[var(--color-border)] bg-white rounded-b-lg text-center">
-              <button className="text-sm font-medium text-[var(--color-primary)] hover:opacity-80 transition-opacity">
+              <Link
+                href={notificationPageUrl}
+                className="text-sm font-medium text-[var(--color-primary)] hover:opacity-80 transition-opacity inline-block"
+              >
                 알림 전체보기
-              </button>
+              </Link>
             </div>
           )}
+        </div>
+      )}
+
+      {toastMessage && (
+        <div
+          role="status"
+          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-lg bg-[var(--color-text-primary)] px-4 py-3 text-sm font-medium text-[var(--color-bg-surface)] shadow-md lg:left-[calc(50%+120px)]"
+        >
+          <Info size={16} aria-hidden="true" />
+          {toastMessage}
         </div>
       )}
     </div>

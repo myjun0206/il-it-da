@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { manualSaveResult } from "@/lib/manuals/manual-save-result";
+import { ManualWriteUnavailableError, MANUAL_FEATURE_PENDING } from "@/lib/manuals/manual-write-contract";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireHqUser } from "@/lib/supabase/hq-auth";
@@ -88,10 +90,12 @@ export async function POST(
 
   try {
     const manuals = await addItemsToManualGroup(supabase, parent as ManualRecord, items);
-    return NextResponse.json({ manuals }, { status: 201 });
+    return NextResponse.json({ manuals, ...manualSaveResult(manuals) }, { status: 201 });
   } catch (e) {
+    if (e instanceof ManualWriteUnavailableError) return NextResponse.json({ error: MANUAL_FEATURE_PENDING }, { status: 503 });
+    console.error("POST /api/manuals/[id]/items error:", { name: e instanceof Error ? e.name : "UnknownError" });
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "세부 내용 추가 중 오류가 발생했습니다." },
+      { error: "세부 내용 추가 중 오류가 발생했습니다." },
       { status: 500 },
     );
   }

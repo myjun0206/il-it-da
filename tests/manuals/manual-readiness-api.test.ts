@@ -61,6 +61,69 @@ describe("app/api/manuals/search-readiness/route.ts (HQ 상태 조회)", () => {
   });
 });
 
+describe("app/api/manuals/route.ts (HQ 전체 삭제 범위)", () => {
+  const source = readSource("app/api/manuals/route.ts");
+  const deleteHandler = source.slice(source.indexOf("export async function DELETE()"));
+
+  test("삭제 전에 같은 HQ 범위의 store_id NULL 대상 ID만 조회한다", () => {
+    assert.match(deleteHandler, /\.select\("id"\)\s*\.is\("store_id", null\)/);
+    assert.match(deleteHandler, /targetQuery\.eq\("franchise_id", hqUser\.franchiseId\)/);
+    assert.match(deleteHandler, /targetQuery\.eq\("brand_name", hqUser\.brandName\)/);
+  });
+
+  test("삭제 대상 ID를 로그로 남기고 같은 ID 및 store_id NULL 조건을 삭제에 재적용한다", () => {
+    const logIndex = deleteHandler.indexOf("target_ids: targetIds");
+    const deleteIndex = deleteHandler.indexOf('.from("manuals")\n    .delete()');
+    assert.ok(logIndex >= 0 && deleteIndex > logIndex, "target IDs must be logged before deletion");
+    assert.match(deleteHandler, /\.in\("id", targetIds\)\s*\.is\("store_id", null\)/);
+  });
+
+  test("삭제 직후 동일한 HQ 조건으로 잔존 행을 확인하고 결과 수를 로그/응답한다", () => {
+    assert.match(deleteHandler, /remainingQuery[\s\S]*?\.in\("id", targetIds\)[\s\S]*?\.is\("store_id", null\)/);
+    assert.match(deleteHandler, /deleted_count: deletedCount/);
+    assert.match(deleteHandler, /remaining_count: remainingCount/);
+    assert.match(deleteHandler, /remainingCount,\s*verified/);
+  });
+
+  test("공통 부모를 참조하는 지점 행은 cascade 삭제 전에 parent 연결을 분리한다", () => {
+    assert.match(deleteHandler, /\.in\("parent_manual_id", targetIds\)/);
+    assert.match(deleteHandler, /\.filter\(\(id\) => !targetIdSet\.has\(id\)\)/);
+    assert.match(deleteHandler, /\.update\(\{ parent_manual_id: null/);
+    assert.match(deleteHandler, /\.in\("id", branchChildIds\)/);
+  });
+});
+
+describe("app/api/manuals/route.ts (점주 공통 매뉴얼 브랜드 범위)", () => {
+  const source = readSource("app/api/manuals/route.ts");
+  const getHandler = source.slice(source.indexOf("export async function GET"), source.indexOf("export async function POST"));
+  const ownerPage = readSource("app/boss/manuals/page.tsx");
+
+  test("점주 조회는 storeId를 필수로 받고 해당 승인 membership의 단일 franchise로 제한한다", () => {
+    assert.match(getHandler, /profile\.role === "owner" && !storeIdParam/);
+    assert.match(getHandler, /membership\.store_id === storeIdParam/);
+    assert.match(getHandler, /franchiseIdByStoreId\.get\(storeIdParam\) !== selectedFranchiseId/);
+    assert.match(getHandler, /ownerFranchiseIds = \[selectedFranchiseId\]/);
+    assert.match(getHandler, /query\.in\("franchise_id", ownerFranchiseIds\)/);
+  });
+
+  test("점주 공통 매뉴얼 화면은 선택된 운영 storeId를 API에 보낸다", () => {
+    assert.match(ownerPage, /resolveOwnerCurrentStore\(\)/);
+    assert.match(ownerPage, /setSelectedStoreId\(storeResolution\.current\.storeId\)/);
+    assert.match(ownerPage, /fetch\(`\/api\/manuals\?storeId=\$\{encodeURIComponent\(selectedStoreId\)\}`\)/);
+    assert.match(ownerPage, /\}, \[isReady, selectedStoreId\]\);/);
+  });
+});
+
+describe("app/hq/manuals/common/page.tsx (HQ 전체 삭제 결과 확인)", () => {
+  const source = readSource("app/hq/manuals/common/page.tsx");
+  const deleteHandler = source.slice(source.indexOf("const handleDeleteAll = async () =>"));
+
+  test("UI는 API의 DB 검증 성공과 잔존 0건을 확인한 경우에만 완료 처리한다", () => {
+    assert.match(deleteHandler, /if \(!data\.verified \|\| data\.remainingCount !== 0\)/);
+    assert.match(deleteHandler, /showToast\(`본사 공통 매뉴얼 \$\{data\.deletedCount \?\? 0\}건이 삭제되었습니다\.\`\)/);
+  });
+});
+
 describe("app/api/store-manuals/search-readiness/route.ts (점주 상태 조회)", () => {
   const source = readSource("app/api/store-manuals/search-readiness/route.ts");
 
@@ -159,9 +222,10 @@ describe("재인덱싱 라우트 (HQ / 점주)", () => {
 describe("청크 중복 방지 계약 (기존 구현 재사용)", () => {
   const source = readSource("lib/rag/index-approved-manual.ts");
 
-  test("indexManualById가 쓰는 색인 경로는 unique(manual_id, chunk_index) upsert + stale 삭제를 유지한다", () => {
-    assert.match(source, /\.upsert\(rows, \{ onConflict: "manual_id,chunk_index" \}\)/);
-    assert.match(source, /\.delete\(\)\s*\n\s*\.eq\("manual_id", manual\.id\)\s*\n\s*\.gte\("chunk_index", chunks\.length\)/);
+  test("indexManualById는 버전 검사 후 전체 청크를 원자 교체한다", () => {
+    assert.match(source, /\.rpc\("replace_manual_chunks_if_current"/);
+    assert.match(source, /p_expected_snapshot: manual/);
+    assert.equal(source.includes('.from("manual_chunks")'), false);
   });
 
   test("상태 조회는 범위 안 id를 한 번에 조회해 N+1 질의를 만들지 않는다", () => {
@@ -241,13 +305,16 @@ describe("components/manuals/ManualSearchReadinessPanel.tsx (관리자 화면 �
 });
 
 describe("기존 화면/계약 회귀 없음", () => {
-  test("HQ와 점주 매뉴얼 화면이 같은 상태 컴포넌트를 재사용한다", () => {
+  test("HQ 화면은 상태 패널을 쓰고, 점주 지점 화면은 패널 없이 저장 안내 안에서 재처리한다", () => {
     const hqPage = readSource("app/hq/manuals/common/page.tsx");
     const storePage = readSource("app/boss/store-manuals/page.tsx");
     assert.match(hqPage, /<ManualSearchReadinessPanel/);
-    assert.match(storePage, /<ManualSearchReadinessPanel/);
     assert.match(hqPage, /readinessUrl="\/api\/manuals\/search-readiness"/);
-    assert.match(storePage, /readinessUrl=\{`\/api\/store-manuals\/search-readiness\?storeId=\$\{selectedStoreId\}`\}/);
+    assert.doesNotMatch(storePage, /ManualSearchReadinessPanel/);
+    assert.match(storePage, /const STORE_REINDEX_URL = "\/api\/store-manuals\/search-readiness\/reindex";/);
+    assert.match(storePage, /body: JSON\.stringify\(\{ storeId: selectedStoreId, manualId \}\)/);
+    assert.match(storePage, /setSearchRetryIds\(searchRetryManualIds\(data\)\)/);
+    assert.match(storePage, /item\.status === "failed" \|\| item\.status === "unknown"/);
   });
 
   test("기존 목록 조회/업로드 호출부는 그대로 남아 있다", () => {
@@ -257,9 +324,69 @@ describe("기존 화면/계약 회귀 없음", () => {
   });
 
   test("저장 완료 문구가 검색 준비 완료를 뜻하지 않도록 안내한다", () => {
-    for (const relative of ["app/hq/manuals/onboarding/page.tsx", "app/boss/store-manuals/upload/page.tsx"]) {
-      assert.match(readSource(relative), /저장했어요\. 검색 준비 상태를 확인해 주세요\./);
+    for (const relative of ["app/hq/manuals/onboarding/page.tsx", "app/boss/store-manuals/page.tsx"]) {
+      assert.match(readSource(relative), /manualSaveMessage\(data\)/);
     }
+    assert.match(readSource("lib/manuals/manual-save-result.ts"), /본문은 저장되었지만 일부 검색 반영에 실패/);
+  });
+
+  test("HQ 지점 매뉴얼 화면은 프랜차이즈별 지점 요약과 선택 지점 ID를 사용한다", () => {
+    const page = readSource("app/hq/manuals/stores/page.tsx");
+    assert.match(page, /fetch\("\/api\/hq\/stores"\)/);
+    assert.match(page, /new URLSearchParams\(window\.location\.search\)\.get\("storeId"\)/);
+    assert.match(page, /fetch\(`\/api\/manuals\?storeId=\$\{encodeURIComponent\(selectedStoreId\)\}&scope=store`/);
+    assert.match(page, /onClick=\{\(\) => openStoreManuals\(store\.id\)\}/);
+    assert.equal(page.includes('fetch("/api/manuals")'), false);
+  });
+
+  test("HQ의 지점 매뉴얼 조회는 동일 franchise 소속을 검증하고 store_id만 반환한다", () => {
+    const route = readSource("app/api/manuals/route.ts");
+    assert.match(route, /const storeOnly = profile\.role === "hq" && searchParams\.get\("scope"\) === "store"/);
+    assert.match(route, /\.from\("stores"\)[\s\S]*?\.eq\("id", storeIdParam\)[\s\S]*?\.eq\("franchise_id", franchiseId\)/);
+    assert.match(route, /if \(!selectedStore\)[\s\S]*?status: 403/);
+    assert.match(route, /query\.eq\("store_id", storeId as string\)/);
+  });
+
+  test("manuals RLS는 클라이언트 직접 접근을 계속 제한하고 HQ 서비스 API가 권한을 검사한다", () => {
+    const schema = readSource("supabase/migrations/001_initial_rag_schema.sql");
+    const staffPolicy = readSource("supabase/migrations/029_staff_hq_manual_read_access.sql");
+    const adminClient = readSource("lib/supabase/admin.ts");
+    const hqStoresRoute = readSource("app/api/hq/stores/route.ts");
+    assert.match(schema, /alter table public\.manuals enable row level security/);
+    assert.match(staffPolicy, /store_id is null/);
+    assert.match(adminClient, /SUPABASE_SERVICE_ROLE_KEY/);
+    assert.match(hqStoresRoute, /requireHqUser\(\)/);
+  });
+
+  test("HQ 공통 매뉴얼 조회는 no-store이며 요청별 진단과 오류 재시도 UI를 제공한다", () => {
+    const route = readSource("app/api/manuals/route.ts");
+    const page = readSource("app/hq/manuals/common/page.tsx");
+    const proxy = readSource("lib/supabase/middleware.ts");
+    assert.match(route, /"Cache-Control": "private, no-store, max-age=0"/);
+    assert.match(route, /Vary: "Cookie"/);
+    assert.match(route, /"X-Request-Id": requestId/);
+    assert.match(route, /logDiagnosticError\("MANUALS_GET"/);
+    assert.match(route, /request\.headers\.get\("x-proxy-request-id"\)/);
+    assert.match(route, /franchiseError \|\| !franchise/);
+    assert.match(proxy, /requestHeaders\.set\("x-proxy-request-id", requestId\)/);
+    assert.match(proxy, /NextResponse\.next\(\{\s*request: \{ headers: requestHeaders \}/);
+    assert.match(proxy, /refreshedCookieCount/);
+    assert.match(proxy, /logDiagnosticError\("SUPABASE_PROXY_SESSION"/);
+    assert.match(page, /cache: "no-store"/);
+    assert.match(page, /manualsLoadError/);
+    assert.match(page, /다시 시도/);
+  });
+
+  test("HQ brand_id 누락은 고유 franchise 이름으로만 복구하고, 조회 실패를 빈 지점 목록으로 숨기지 않는다", () => {
+    const route = readSource("app/api/hq/stores/route.ts");
+    const page = readSource("app/hq/manuals/stores/page.tsx");
+    assert.match(route, /normalizeFranchiseName\(franchise\.name\) === normalizedBrandName/);
+    assert.match(route, /matchingFranchises\.length !== 1/);
+    assert.match(route, /\.eq\("franchise_id", franchiseId\)/);
+    assert.equal(route.includes("if (!hqUser.franchiseId)"), false);
+    assert.match(page, /setStoreListError\(e instanceof Error \? e\.message/);
+    assert.match(page, /\) : storeListError \?/);
+    assert.match(page, /setReloadStoreList\(\(current\) => current \+ 1\)/);
   });
 
   test("확정 저장 API의 성공 응답 shape({ manuals })는 바뀌지 않았다", () => {
@@ -267,7 +394,11 @@ describe("기존 화면/계약 회귀 없음", () => {
       "app/api/manuals/preview/confirm/route.ts",
       "app/api/store-manuals/preview/confirm/route.ts",
     ]) {
-      assert.match(readSource(relative), /NextResponse\.json\(\{ manuals \}, \{ status: 201 \}\)/);
+      // batch guard 도입 후 재전송은 200으로 응답하지만 body shape({ manuals })은 그대로다.
+      assert.match(
+        readSource(relative),
+        /NextResponse\.json\(\{ manuals: result\.manuals, \.\.\.manualSaveResult\(result.manuals\) \}, \{ status: result\.kind === "saved" \? 201 : 200 \}\)/,
+      );
     }
   });
 

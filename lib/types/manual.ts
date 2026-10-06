@@ -21,4 +21,5 @@ export interface ManualRecord {
   status: "draft" | "approved";
   created_at: string;
   updated_at: string;
+  search_status?: "ready" | "failed" | "not_searchable" | "parent_only" | "unknown";
 }

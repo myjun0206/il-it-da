@@ -51,12 +51,12 @@ export default function SignupStartPage() {
 
   // 로딩 중 표시
   return (
-    <div className="min-h-screen bg-[var(--color-bg-default)] flex items-center justify-center">
+    <div className="min-h-screen bg-(--color-bg-default) flex items-center justify-center">
       <div className="text-center">
         <div className="mb-4 animate-spin">
-          <div className="w-8 h-8 border-4 border-[var(--color-border-light)] border-t-[var(--color-primary)] rounded-full" />
+          <div className="w-8 h-8 border-4 border-(--color-border-light) border-t-(--color-primary) rounded-full" />
         </div>
-        <p className="text-[var(--color-text-secondary)]">로딩 중...</p>
+        <p className="text-(--color-text-secondary)">로딩 중...</p>
       </div>
     </div>
   );
