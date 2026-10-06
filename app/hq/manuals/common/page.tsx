@@ -1,13 +1,10 @@
 "use client";
 
-import React, { useEffect, useLayoutEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, ArrowLeft, FileText, Pencil, Plus, RefreshCw, Search, Upload, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
-import { createClient } from "@/lib/supabase/client";
-import HQSidebar from "@/components/hq/HQSidebar";
-import HQHeader from "@/components/hq/HQHeader";
 import { ManualSearchReadinessPanel } from "@/components/manuals/ManualSearchReadinessPanel";
 import type { ManualRecord } from "@/lib/types/manual";
 
@@ -96,8 +93,6 @@ function groupByCategory(manuals: ManualRecord[], groups: ManualGroup[]): Manual
 
 export default function ManualDashboardPage() {
   const router = useRouter();
-  const [userName, setUserName] = useState("본사 관리자");
-  const [franchiseName, setFranchiseName] = useState("메가MGC커피");
   const [isReady, setIsReady] = useState(false);
   const [manuals, setManuals] = useState<ManualRecord[]>([]);
   const [isLoadingManuals, setIsLoadingManuals] = useState(true);
@@ -150,47 +145,8 @@ export default function ManualDashboardPage() {
     setTimeout(() => setToastMessage(""), 2500);
   };
 
-  useLayoutEffect(() => {
-    const checkAuth = async () => {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-
-        if (!data.session?.user || data.session.user.user_metadata?.role !== "hq") {
-          router.push("/");
-          return;
-        }
-      } catch (e) {
-        console.error("Auth check failed:", e);
-        router.push("/");
-      }
-    };
-
-    checkAuth();
-  }, [router]);
-
   useEffect(() => {
-    const setUserInfo = async () => {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-
-        if (!data.session?.user) return;
-
-        const name = data.session.user.user_metadata?.name;
-        if (name) {
-          setUserName(name);
-          if (name.includes(" ")) {
-            const [first] = name.split(" ");
-            if (first) setFranchiseName(first);
-          }
-        }
-      } finally {
-        setIsReady(true);
-      }
-    };
-
-    setUserInfo();
+    setIsReady(true);
   }, []);
 
   const fetchManualsData = async (): Promise<ManualRecord[]> => {
@@ -237,17 +193,6 @@ export default function ManualDashboardPage() {
         : "네트워크 문제로 공통 매뉴얼을 불러오지 못했습니다. 다시 시도해 주세요."))
       .finally(() => setIsLoadingManuals(false));
   }, [manualsReloadKey]);
-
-  const handleLogout = async () => {
-    try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
-      router.push("/");
-    } catch (e) {
-      console.error("Logout failed:", e);
-      router.push("/");
-    }
-  };
 
   const groups = groupByParent(manuals);
   const categories = groupByCategory(manuals, groups);
@@ -754,18 +699,8 @@ export default function ManualDashboardPage() {
         : null;
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-default)]">
-      <HQSidebar
-        userName={userName}
-        franchiseName={franchiseName}
-        onLogout={handleLogout}
-        activeMenu="manual-common"
-      />
-
-      <div className="lg:ml-[240px]">
-        <HQHeader userName={userName} franchiseName={franchiseName} onLogout={handleLogout} />
-
-        <main className="p-6 lg:p-8 max-w-7xl mx-auto">
+    <>
+      <main className="p-6 lg:p-8 max-w-7xl mx-auto">
           {detailHeader ? (
             <>
               <div className="mb-8 flex items-start gap-3">
@@ -1111,7 +1046,6 @@ export default function ManualDashboardPage() {
             </section>
           )}
         </main>
-      </div>
 
       {/* Delete All Manuals Confirm Modal */}
       {showDeleteAllConfirm && (
@@ -1388,7 +1322,7 @@ export default function ManualDashboardPage() {
           {toastMessage}
         </div>
       )}
-    </div>
+    </>
   );
 }
 
