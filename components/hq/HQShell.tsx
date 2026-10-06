@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import React, { useEffect, useState, useMemo } from "react";
+import { useRouter, usePathname } from "next/navigation";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
 import { createClient } from "@/lib/supabase/client";
@@ -22,14 +22,54 @@ interface HQShellProps {
  * 이 컴포넌트는 모든 HQ 페이지의 레이아웃을 통일합니다.
  * 각 페이지에서는 content만 관리하면 됩니다.
  */
-export default function HQShell({ children, activeMenu = "home" }: HQShellProps) {
+export default function HQShell({ children, activeMenu: propActiveMenu }: HQShellProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [userName, setUserName] = useState("본사 관리자");
   const [franchiseName, setFranchiseName] = useState("메가MGC커피");
   const [stores, setStores] = useState<HqStoreSummary[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
   const [isStoresLoading, setIsStoresLoading] = useState(false);
   const [isReady, setIsReady] = useState(false);
+
+  /**
+   * URL pathname을 기반으로 activeMenu를 자동으로 판별합니다.
+   * HQSidebar의 실제 menu id를 기준으로 매핑합니다.
+   */
+  const computedActiveMenu = useMemo(() => {
+    // propActiveMenu가 명시적으로 전달된 경우, 그것을 우선 사용
+    if (propActiveMenu) {
+      return propActiveMenu;
+    }
+
+    // pathname 기반 자동 판별
+    if (pathname === "/hq" || pathname === "/hq/") {
+      return "home";
+    }
+
+    // /hq/manuals로 시작하는 모든 경로 → "manual"
+    if (pathname.startsWith("/hq/manuals")) {
+      return "manual";
+    }
+
+    // /hq/stores로 시작하는 모든 경로 → "store"
+    if (pathname.startsWith("/hq/stores")) {
+      return "store";
+    }
+
+    // /hq/communication으로 시작하는 모든 경로 (게시글 작성 포함) → "notice"
+    if (pathname.startsWith("/hq/communication")) {
+      return "notice";
+    }
+
+    // /hq/settings → "settings"
+    if (pathname.startsWith("/hq/settings")) {
+      return "settings";
+    }
+
+    // 기타 (approvals, notifications 등) → 기본값 "home"
+    return "home";
+  }, [pathname, propActiveMenu]);
 
   // 사용자 정보 로드
   useEffect(() => {
@@ -135,7 +175,7 @@ export default function HQShell({ children, activeMenu = "home" }: HQShellProps)
           userName={userName}
           franchiseName={franchiseName}
           onLogout={handleLogout}
-          activeMenu={activeMenu}
+          activeMenu={computedActiveMenu}
         />
       </div>
 

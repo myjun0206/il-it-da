@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { requireServerRole } from "@/lib/auth/require-server-role";
+import HQShell from "@/components/hq/HQShell";
 
 // profiles.role은 요청 시점에만 판정할 수 있으므로,
 // 빌드 시 정적 사전 렌더링되지 않게 한다.
@@ -21,5 +22,9 @@ export default async function HqLayout({
     redirect("/");
   }
 
-  return <>{children}</>;
+  return (
+    <HQShell>
+      {children}
+    </HQShell>
+  );
 }
