@@ -2,15 +2,11 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Megaphone, Pencil, Plus, Search, Trash2 } from "lucide-react";
-import HQSidebar from "@/components/hq/HQSidebar";
-import HQHeader from "@/components/hq/HQHeader";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { NoticeDetailDialog } from "@/components/notices/NoticeDetailDialog";
 import { NoticeEditDialog } from "@/components/notices/NoticeEditDialog";
 import { NoticeFilter, type NoticeFilterOption } from "@/components/notices/NoticeFilter";
-import { createClient } from "@/lib/supabase/client";
 import type { HqNoticeItem } from "@/lib/types/notice";
 
 // 목록 표시용 형태. /api/hq/notices 응답에서 대상 라벨을 계산해 만든다.
@@ -69,9 +65,6 @@ function toNoticeRow(notice: HqNoticeItem): HqNotice {
 }
 
 export default function CommunicationPage() {
-  const router = useRouter();
-  const [userName, setUserName] = useState("본사 관리자");
-  const [franchiseName, setFranchiseName] = useState("프랜차이즈");
   const [isReady, setIsReady] = useState(false);
   const [notices, setNotices] = useState<HqNotice[]>([]);
   const [isLoadingNotices, setIsLoadingNotices] = useState(true);
@@ -85,46 +78,8 @@ export default function CommunicationPage() {
   const [isDeletingNotice, setIsDeletingNotice] = useState(false);
 
   useEffect(() => {
-    const setUserInfo = async () => {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getUser();
-
-        if (!data.user) {
-          router.push("/");
-          return;
-        }
-
-        const name = data.user.user_metadata?.name;
-
-        if (name) {
-          setUserName(name);
-        }
-
-        // 기존에 저장된 프랜차이즈 이름이 있으면 화면 표시용으로 사용
-        const savedFranchiseName = sessionStorage.getItem(
-          "loggedInFranchiseName"
-        );
-
-        if (savedFranchiseName) {
-          setFranchiseName(savedFranchiseName);
-        } else if (name && name.includes(" ")) {
-          const parts = name.split(" ");
-
-          if (parts[0]) {
-            setFranchiseName(parts[0]);
-          }
-        }
-
-        setIsReady(true);
-      } catch (error) {
-        console.error("Set user info failed:", error);
-        router.push("/");
-      }
-    };
-
-    setUserInfo();
-  }, [router]);
+    setIsReady(true);
+  }, []);
 
   useEffect(() => {
     if (!isReady) return;
@@ -148,17 +103,7 @@ export default function CommunicationPage() {
     void loadNotices();
   }, [isReady]);
 
-  const handleLogout = async () => {
-    try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
-      sessionStorage.clear();
-      router.push("/");
-    } catch (error) {
-      console.error("Logout failed:", error);
-      router.push("/");
-    }
-  };
+
 
   const updateNotice = async (title: string, content: string) => {
     if (!editingNotice) return;
@@ -228,22 +173,8 @@ export default function CommunicationPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-default)]">
-      {/* Sidebar */}
-      <HQSidebar
-        userName={userName}
-        franchiseName={franchiseName}
-        onLogout={handleLogout}
-        activeMenu="notice"
-      />
-
-      {/* Main Content */}
-      <div className="lg:ml-[240px]">
-        {/* Header */}
-        <HQHeader userName={userName} franchiseName={franchiseName} onLogout={handleLogout} />
-
-        {/* Content */}
-        <main className="p-6 lg:p-8 max-w-7xl mx-auto">
+    <>
+    <main className="p-6 lg:p-8 max-w-7xl mx-auto">
           {/* 페이지 헤더 */}
           <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -377,7 +308,6 @@ export default function CommunicationPage() {
             )}
           </section>
         </main>
-      </div>
 
       {/* 상세 보기 다이얼로그 */}
       {selectedNotice && (
@@ -433,6 +363,6 @@ export default function CommunicationPage() {
         onConfirm={() => void deleteNotice()}
         onCancel={() => setDeletingNotice(null)}
       />
-    </div>
+    </>
   );
 }

@@ -1,11 +1,8 @@
 "use client";
 
-import React, { useEffect, useLayoutEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, RefreshCw, Store, ExternalLink, Search, FileText } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
-import HQSidebar from "@/components/hq/HQSidebar";
-import HQHeader from "@/components/hq/HQHeader";
 import type { ManualRecord } from "@/lib/types/manual";
 import type { HqStoreSummary } from "@/lib/types/store";
 
@@ -37,8 +34,6 @@ async function readJsonResponse<T>(response: Response, fallbackMessage: string):
 
 export default function StoreManualViewPage() {
   const router = useRouter();
-  const [userName, setUserName] = useState("본사 관리자");
-  const [franchiseName, setFranchiseName] = useState("메가MGC커피");
   const [isReady, setIsReady] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [storeListError, setStoreListError] = useState("");
@@ -57,47 +52,8 @@ export default function StoreManualViewPage() {
   const [storeSearchQuery, setStoreSearchQuery] = useState("");
   const [selectedManualCategory, setSelectedManualCategory] = useState<string | null>(null);
 
-  useLayoutEffect(() => {
-    const checkAuth = async () => {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-
-        if (!data.session?.user || data.session.user.user_metadata?.role !== "hq") {
-          router.push("/");
-          return;
-        }
-      } catch (e) {
-        console.error("Auth check failed:", e);
-        router.push("/");
-      }
-    };
-
-    checkAuth();
-  }, [router]);
-
   useEffect(() => {
-    const setUserInfo = async () => {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-
-        if (!data.session?.user) return;
-
-        const name = data.session.user.user_metadata?.name;
-        if (name) {
-          setUserName(name);
-          if (name.includes(" ")) {
-            const [first] = name.split(" ");
-            if (first) setFranchiseName(first);
-          }
-        }
-      } finally {
-        setIsReady(true);
-      }
-    };
-
-    setUserInfo();
+    setIsReady(true);
   }, []);
 
   useEffect(() => {
@@ -163,17 +119,6 @@ export default function StoreManualViewPage() {
     return () => controller.abort();
   }, [selectedStoreId]);
 
-  const handleLogout = async () => {
-    try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
-      router.push("/");
-    } catch (e) {
-      console.error("Logout failed:", e);
-      router.push("/");
-    }
-  };
-
   const filteredStores = stores.filter((store) =>
     store.name.toLowerCase().includes(searchQuery.toLowerCase()),
   );
@@ -201,18 +146,8 @@ export default function StoreManualViewPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-default)]">
-      <HQSidebar
-        userName={userName}
-        franchiseName={franchiseName}
-        onLogout={handleLogout}
-        activeMenu="manual-store"
-      />
-
-      <div className="lg:ml-[240px]">
-        <HQHeader userName={userName} franchiseName={franchiseName} onLogout={handleLogout} />
-
-        <main className="p-6 lg:p-8 max-w-7xl mx-auto">
+    <>
+    <main className="p-6 lg:p-8 max-w-7xl mx-auto">
           {/* Header */}
           <div className="mb-8">
             <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
@@ -541,7 +476,6 @@ export default function StoreManualViewPage() {
             </section>
           )}
         </main>
-      </div>
-    </div>
+    </>
   );
 }
