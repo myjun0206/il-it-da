@@ -4,10 +4,7 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AlertCircle, ArrowLeft } from "lucide-react";
-import HQSidebar from "@/components/hq/HQSidebar";
-import HQHeader from "@/components/hq/HQHeader";
 import { buildHqNoticeTarget, type HqNoticeAudience } from "@/lib/notices/build-hq-notice-target";
-import { createClient } from "@/lib/supabase/client";
 import type { HqStoreSummary } from "@/lib/types/store";
 
 type TargetType = "all" | "store";
@@ -21,8 +18,6 @@ const fieldClass =
 
 export default function NewNoticePage() {
   const router = useRouter();
-  const [userName, setUserName] = useState("본사 관리자");
-  const [franchiseName, setFranchiseName] = useState("프랜차이즈");
   const [stores, setStores] = useState<HqStoreSummary[]>([]);
   const [storesError, setStoresError] = useState("");
   const [targetType, setTargetType] = useState<TargetType>("all");
@@ -34,16 +29,7 @@ export default function NewNoticePage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    const loadPage = async () => {
-      const supabase = createClient();
-      const { data } = await supabase.auth.getSession();
-      const name = data.session?.user?.user_metadata?.name;
-      if (name) {
-        setUserName(name);
-        const firstName = name.split(" ")[0];
-        if (firstName) setFranchiseName(firstName);
-      }
-
+    const loadStores = async () => {
       // 특정 지점 선택지는 서버에서 franchise 범위로 제한된 지점 목록만 사용한다.
       try {
         const response = await fetch("/api/hq/stores");
@@ -55,17 +41,8 @@ export default function NewNoticePage() {
       }
     };
 
-    void loadPage();
+    void loadStores();
   }, []);
-
-  const handleLogout = async () => {
-    try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
-    } finally {
-      router.push("/");
-    }
-  };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -111,18 +88,7 @@ export default function NewNoticePage() {
   };
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-default)]">
-      <HQSidebar
-        userName={userName}
-        franchiseName={franchiseName}
-        onLogout={handleLogout}
-        activeMenu="notice"
-      />
-
-      <div className="lg:ml-[240px]">
-        <HQHeader userName={userName} franchiseName={franchiseName} onLogout={handleLogout} />
-
-        <main className="p-6 lg:p-8 max-w-7xl mx-auto">
+    <main className="p-6 lg:p-8 max-w-7xl mx-auto">
           <Link
             href={NOTICE_LIST_HREF}
             aria-label="공지사항 목록으로 돌아가기"
@@ -321,8 +287,6 @@ export default function NewNoticePage() {
               </button>
             </div>
           </form>
-        </main>
-      </div>
-    </div>
+    </main>
   );
 }
