@@ -45,6 +45,10 @@ const STOPWORDS = new Set([
 ]);
 const TRAILING_PARTICLES = /(에서는|에는|에서|으로|로|은|는|이|가|을|를|에|의|도)$/u;
 const MAX_KEYWORD_COUNT = 16;
+const STOCK_SHORTAGE_PATTERN = /부족|(?:재고|재료|물품|소모품|비품).{0,30}(?:없|떨어)|거의\s*(?:없|안\s*남)|얼마\s*안\s*남|다\s*떨어/u;
+const PROCUREMENT_REQUEST_PATTERN = /발주|주문(?:을|은)?\s*(?:(?:바로|직접|먼저|좀)\s*)?(?:넣|해|하|할)/u;
+const BUNDLE_PATTERN = /세트|팩|묶음|콤보/u;
+const QUANTITY_INTENT_PATTERN = /구성|수량|몇\s*(?:개|잔|인분)|개씩|얼마나\s*(?:챙|담)/u;
 
 function getIntentExpansions(question: string): string[] {
   const intentExpansions = INTENT_EXPANSIONS
@@ -53,8 +57,21 @@ function getIntentExpansions(question: string): string[] {
   const domainExpansions = DOMAIN_EXPANSIONS
     .filter(([keyword]) => question.includes(keyword))
     .flatMap(([, terms]) => terms);
+  const contextualExpansions: string[] = [];
+  if (STOCK_SHORTAGE_PATTERN.test(question) && PROCUREMENT_REQUEST_PATTERN.test(question)) {
+    contextualExpansions.push("재고", "재고 확인", "발주", "입고");
+  }
+  if (BUNDLE_PATTERN.test(question) && QUANTITY_INTENT_PATTERN.test(question)) {
+    contextualExpansions.push("구성", "수량");
+  }
+  const beverageRecipe = /라떼|우유|음료/u.test(question) && /양|얼마|몇|온도|스팀|데우|데워|제조|만들/u.test(question);
+  const contrasted = /말고|아니|않|금지|안\s|하지\s*마/u.test(question);
+  if (beverageRecipe && !contrasted) {
+    if (/따뜻|뜨거|\bHOT\b/iu.test(question)) contextualExpansions.push("HOT", "따뜻한");
+    if (/스팀|우유.{0,20}(?:데우|데워)|몇\s*도.{0,12}(?:데우|데워)/u.test(question)) contextualExpansions.push("스팀", "우유 데우기", "스팀 온도");
+  }
 
-  return [...new Set([...intentExpansions, ...domainExpansions])];
+  return [...new Set([...intentExpansions, ...domainExpansions, ...contextualExpansions])];
 }
 
 function removeTrailingParticles(token: string): string {

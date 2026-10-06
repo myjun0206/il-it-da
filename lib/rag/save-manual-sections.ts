@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { chunkManualText } from "@/lib/rag/chunk-manual";
+import { requireManualWriteContract, type ManualWriteContext } from "@/lib/manuals/manual-write-contract";
 import { indexManualById } from "@/lib/rag/index-manual";
 import { reembedApprovedManuals } from "@/lib/rag/manual-indexing/reembed-approved-manuals";
 import type { HqAuthResult } from "@/lib/supabase/hq-auth";
@@ -36,36 +36,14 @@ function logSafeManualError(code: string, error: unknown): void {
 async function syncChunksForManuals(
   supabase: SupabaseClient,
   manuals: ManualRecord[],
-  indexManual: (manualId: string) => Promise<unknown> = indexManualById,
+  indexManual: (manualId: string, expectedUpdatedAt?: string) => Promise<unknown> = indexManualById,
 ): Promise<void> {
   if (manuals.length === 0) {
     return;
   }
 
-  try {
-    const chunkRows = manuals.flatMap((manual) =>
-      chunkManualText(`${manual.title}\n\n${manual.content}`).map((content, index) => ({
-        manual_id: manual.id,
-        chunk_index: index,
-        content,
-        embedding: null,
-      })),
-    );
-
-    if (chunkRows.length > 0) {
-      const { error: chunkError } = await supabase.from("manual_chunks").insert(chunkRows);
-
-      if (chunkError) {
-        logSafeManualError("MANUAL_CHUNKS_INSERT_FAILED", chunkError);
-      }
-    }
-  } catch (chunkParseError) {
-    logSafeManualError("MANUAL_CHUNKING_FAILED", chunkParseError);
-  }
-
-  // 위 insert는 embedding=null placeholder만 남기므로, RAG 검색에 잡힐 수 있도록
-  // 실제 embedding을 즉시 재생성한다([id]/route.ts, batch-update/route.ts와 동일한 재사용 패턴).
-  await reembedApprovedManuals(manuals, indexManual, logSafeManualError);
+  const results = await reembedApprovedManuals(manuals, indexManual, logSafeManualError);
+  for (const manual of manuals) manual.search_status = results.find((item) => item.manualId === manual.id)?.status ?? "unknown";
 }
 
 /**
@@ -80,9 +58,12 @@ export async function saveManualGroupsWithChunks(
   hqUser: HqAuthResult,
   groups: ManualGroupInput[],
   storeId?: string,
-  indexManual: (manualId: string) => Promise<unknown> = indexManualById,
+  indexManual: (manualId: string, expectedUpdatedAt?: string) => Promise<unknown> = indexManualById,
   uploadBatchId?: string | null,
+  prepared?: ManualWriteContext,
 ): Promise<ManualRecord[]> {
+  const context = prepared?.client === supabase ? prepared : await requireManualWriteContract(supabase);
+  if (indexManual === indexManualById) indexManual = (id, revision) => indexManualById(id, revision, context);
   const scopeType = storeId ? "store" : "hq";
   const allManuals: ManualRecord[] = [];
 
@@ -119,6 +100,7 @@ export async function saveManualGroupsWithChunks(
     }
 
     const parent = parentData as ManualRecord;
+    parent.search_status = "parent_only";
     allManuals.push(parent);
 
     const { data: childrenData, error: childrenError } = await supabase
@@ -164,11 +146,13 @@ export async function addItemsToManualGroup(
   supabase: SupabaseClient,
   parent: ManualRecord,
   items: string[],
-  indexManual: (manualId: string) => Promise<unknown> = indexManualById,
+  indexManual: (manualId: string, expectedUpdatedAt?: string) => Promise<unknown> = indexManualById,
 ): Promise<ManualRecord[]> {
   if (items.length === 0) {
     return [];
   }
+  const context = await requireManualWriteContract(supabase);
+  if (indexManual === indexManualById) indexManual = (id, revision) => indexManualById(id, revision, context);
 
   const { data, error } = await supabase
     .from("manuals")

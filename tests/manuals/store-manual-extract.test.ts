@@ -63,6 +63,9 @@ function fakeDb() {
   const tables: Record<string, Row[]> = { manuals: [], manual_chunks: [], manual_upload_batches: [] };
   let sequence = 0;
   const client = {
+    rpc: async (name: string) => {
+      assert.equal(name, "check_manual_write_contract"); return { data: 2, error: null };
+    },
     from(table: string) {
       const filters: [string, unknown][] = [];
       let mode: "select" | "insert" | "update" = "select";
@@ -193,7 +196,8 @@ describe("지점 매뉴얼 파일 → 미리보기 → 확정 payload → 저장
       assert.equal(row.scope_type, "store");
       assert.equal(row.status, "approved");
     }
-    assert.equal(db.tables.manual_chunks.length, EXPECTED.items);
+    assert.equal(db.tables.manual_chunks.length, 0);
+    assert.equal(children.every((row) => row.search_status === "ready"), true);
   });
 
   test("점주 목록 변환은 카테고리 3 · 타이틀 4 · 항목 7이고 다른 지점 행은 섞이지 않는다", async () => {

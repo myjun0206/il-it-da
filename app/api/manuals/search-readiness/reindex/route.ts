@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { ManualWriteUnavailableError, MANUAL_FEATURE_PENDING } from "@/lib/manuals/manual-write-contract";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireHqUser } from "@/lib/supabase/hq-auth";
@@ -90,6 +91,7 @@ export async function POST(request: Request): Promise<NextResponse<ReindexRespon
     await indexManualById(manualId);
     return NextResponse.json({ reindexed: true });
   } catch (e) {
+    if (e instanceof ManualWriteUnavailableError) return NextResponse.json({ error: MANUAL_FEATURE_PENDING }, { status: 503 });
     console.error("[MANUALS_REINDEX] failed:", { name: e instanceof Error ? e.name : "UnknownError" });
     return NextResponse.json({ error: REINDEX_FAILED_MESSAGE }, { status: 500 });
   }

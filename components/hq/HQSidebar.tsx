@@ -78,7 +78,7 @@ export default function HQSidebar({
       {/* Mobile Menu Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="fixed top-4 left-4 z-50 lg:hidden bg-white rounded-lg p-2 border border-[var(--color-border)]"
+        className="fixed top-4 left-4 z-50 lg:hidden bg-white rounded-lg p-2 border border-(--color-border)"
       >
         {isOpen ? <X size={24} /> : <Menu size={24} />}
       </button>
@@ -86,12 +86,12 @@ export default function HQSidebar({
       {/* Sidebar */}
       <aside
         aria-label={`${franchiseName} · ${userName} 사이드바`}
-        className={`fixed left-0 top-0 h-screen bg-white border-r border-[var(--color-border)] flex flex-col transition-transform duration-300 lg:translate-x-0 ${
+        className={`fixed left-0 top-0 h-screen bg-white border-r border-(--color-border) flex flex-col transition-transform duration-300 lg:translate-x-0 ${
           isOpen ? "translate-x-0" : "-translate-x-full"
         } lg:w-[240px] w-64 z-40`}
       >
         {/* Logo Section - aligned with header */}
-        <div className="flex items-center px-6 h-16 border-b border-[var(--color-border)]">
+        <div className="flex items-center px-6 h-16 border-b border-(--color-border)">
           <Link href="/hq" aria-label="홈으로 이동" onClick={() => setIsOpen(false)}>
             <Image
               src="/logo/ilitda-wordmark.png"
@@ -115,10 +115,10 @@ export default function HQSidebar({
               index > 0 ? "mt-1" : ""
             } ${
               isActive
-                ? "bg-[var(--color-primary-light)]/30 text-[var(--color-primary)]"
+                ? "bg-(--color-primary-light)/30 text-(--color-primary)"
                 : hasActiveSubmenu
-                  ? "bg-[var(--color-primary-light)]/15 text-[var(--color-text-primary)]"
-                  : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                  ? "bg-(--color-primary-light)/15 text-(--color-text-primary)"
+                  : "text-(--color-text-secondary) hover:text-(--color-text-primary)"
             }`;
 
             return (
@@ -142,8 +142,8 @@ export default function HQSidebar({
                       const isSubActive = sub.id === activeMenu;
                       const subClass = `w-full block text-left px-4 py-3 text-sm font-medium rounded transition-colors ${
                         isSubActive
-                          ? "bg-[var(--color-primary-light)]/25 text-[var(--color-primary)]"
-                          : "text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
+                          ? "bg-(--color-primary-light)/25 text-(--color-primary)"
+                          : "text-(--color-text-secondary) hover:text-(--color-primary)"
                       }`;
 
                       return sub.href ? (
@@ -168,8 +168,8 @@ export default function HQSidebar({
           {bottomMenuItems.map((item) => {
             const bottomClass = `w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium transition-colors ${
               activeMenu === item.id
-                ? "bg-[var(--color-primary-light)]/30 text-[var(--color-primary)]"
-                : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                ? "bg-(--color-primary-light)/30 text-(--color-primary)"
+                : "text-(--color-text-secondary) hover:text-(--color-text-primary)"
             }`;
 
             return item.href ? (
@@ -186,11 +186,11 @@ export default function HQSidebar({
           })}
           
           {/* Divider between actions */}
-          <div className="border-t border-[var(--color-border)] my-1" />
+          <div className="border-t border-(--color-border) my-1" />
 
           <button
             onClick={onLogout}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium text-[var(--color-text-secondary)] hover:text-red-600 transition-colors"
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium text-(--color-text-secondary) hover:text-red-600 transition-colors"
           >
             <LogOut size={20} />
             <span>로그아웃</span>

@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+import { requireManualWriteContract, MANUAL_FEATURE_PENDING } from "@/lib/manuals/manual-write-contract";
+import { manualSaveResult } from "@/lib/manuals/manual-save-result";
+import { indexSavedManuals } from "@/lib/manuals/index-saved-manuals";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -404,6 +407,8 @@ export async function POST(request: Request): Promise<NextResponse<CreateManuals
     }
 
     const supabase = createAdminClient();
+    try { await requireManualWriteContract(supabase); }
+    catch { return NextResponse.json({ error: MANUAL_FEATURE_PENDING }, { status: 503 }); }
     const { data, error } = await supabase
       .from("manuals")
       .insert({
@@ -424,7 +429,7 @@ export async function POST(request: Request): Promise<NextResponse<CreateManuals
       return NextResponse.json({ error: "카테고리 저장 중 오류가 발생했습니다." }, { status: 500 });
     }
 
-    return NextResponse.json({ manuals: [data as ManualRecord] }, { status: 201 });
+    return NextResponse.json({ manuals: [data as ManualRecord], ...manualSaveResult([{ ...data, search_status: "not_searchable" } as ManualRecord]) }, { status: 201 });
   }
 
   if (!topic || !items) {
@@ -448,7 +453,7 @@ export async function POST(request: Request): Promise<NextResponse<CreateManuals
     return NextResponse.json({ error: result.error }, { status: 500 });
   }
 
-  return NextResponse.json({ manuals: result.manuals }, { status: result.kind === "saved" ? 201 : 200 });
+  return NextResponse.json({ manuals: result.manuals, ...manualSaveResult(result.manuals) }, { status: result.kind === "saved" ? 201 : 200 });
 }
 
 export async function PATCH(request: Request): Promise<NextResponse<UpdateManualsResponse>> {
@@ -532,6 +537,9 @@ export async function PATCH(request: Request): Promise<NextResponse<UpdateManual
     return NextResponse.json({ error: "새 카테고리를 입력해주세요." }, { status: 400 });
   }
 
+  let context;
+  try { context = await requireManualWriteContract(supabase); }
+  catch { return NextResponse.json({ error: MANUAL_FEATURE_PENDING }, { status: 503 }); }
   let query = supabase
     .from("manuals")
     .update({ category: newCategory, updated_at: new Date().toISOString() })
@@ -548,7 +556,9 @@ export async function PATCH(request: Request): Promise<NextResponse<UpdateManual
     return NextResponse.json({ error: "카테고리 이름 변경 중 오류가 발생했습니다." }, { status: 500 });
   }
 
-  return NextResponse.json({ manuals: (data ?? []) as ManualRecord[], updatedCount: (data ?? []).length });
+  const manuals = (data ?? []) as ManualRecord[];
+  const search = await indexSavedManuals(manuals, context).catch(() => manualSaveResult(manuals));
+  return NextResponse.json({ manuals, updatedCount: manuals.length, ...search });
 }
 
 type DeleteAllManualsResponse = {

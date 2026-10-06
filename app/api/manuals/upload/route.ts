@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { manualSaveResult } from "@/lib/manuals/manual-save-result";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireHqUser } from "@/lib/supabase/hq-auth";
@@ -118,5 +119,5 @@ export async function POST(request: Request): Promise<NextResponse<UploadManuals
     return NextResponse.json({ error: result.error }, { status: 500 });
   }
 
-  return NextResponse.json({ manuals: result.manuals }, { status: result.kind === "saved" ? 201 : 200 });
+  return NextResponse.json({ manuals: result.manuals, ...manualSaveResult(result.manuals) }, { status: result.kind === "saved" ? 201 : 200 });
 }

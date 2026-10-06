@@ -131,11 +131,15 @@ export default function OwnerHeader({
     window.location.reload();
   };
 
+  const activeStoreName = currentStoreName || storeName;
+
+  // 배치·간격은 직원 Header(StaffHeader)와 같다: 알림 → 매장 → 프로필 순으로 오른쪽 정렬.
   return (
-    <header className="sticky top-0 z-50 bg-white border-b border-[var(--color-border)] h-16 shrink-0">
-      <div className="flex items-center justify-between gap-4 pl-16 pr-6 h-full lg:pl-6">
-        {/* Left: 현재 운영 매장 빠른 전환 */}
-        <div className="w-full max-w-xs">
+    <>
+      <header className="sticky top-0 z-20 bg-white border-b border-(--color-border) h-16 shrink-0">
+        <div className="flex items-center justify-end gap-0 sm:gap-2 pl-16 pr-4 sm:pr-6 h-full lg:pl-6">
+          <NotificationCenter notificationPageUrl="/boss/notifications" />
+
           <StoreSwitcher
             compact
             label="현재 운영 매장"
@@ -147,32 +151,26 @@ export default function OwnerHeader({
             onSelect={handleSelectStore}
             onManageStores={() => router.push("/boss/stores")}
           />
-        </div>
 
-        {/* Right */}
-        <div className="flex shrink-0 items-center gap-6">
-          {/* Notification Center */}
-          <NotificationCenter notificationPageUrl="/boss/notifications" />
-
-          {/* Profile */}
           <ProfileMenu
             userName={userName}
-            subtitle={currentStoreName || storeName ? `${currentStoreName || storeName} · 점주` : "점주"}
+            subtitle="점주"
             roleLabel="점주"
             avatarUrl={avatarUrl}
+            context={activeStoreName ? { label: "현재 운영 매장", value: activeStoreName } : undefined}
           />
         </div>
-      </div>
+      </header>
 
       {toastMessage && (
         <div
           role="status"
-          className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-lg bg-[var(--color-text-primary)] px-4 py-3 text-sm font-medium text-[var(--color-bg-surface)] shadow-md lg:left-[calc(50%+120px)]"
+          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-lg bg-(--color-text-primary) px-4 py-3 text-sm font-medium text-(--color-bg-surface) shadow-md lg:left-[calc(50%+120px)]"
         >
           <CheckCircle2 size={16} aria-hidden="true" />
           {toastMessage}
         </div>
       )}
-    </header>
+    </>
   );
 }

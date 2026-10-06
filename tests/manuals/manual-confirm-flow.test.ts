@@ -40,6 +40,9 @@ function fakeSaveClient(options: { failParentInsert?: boolean } = {}) {
   let sequence = 0;
 
   const client = {
+    rpc: async (name: string) => {
+      assert.equal(name, "check_manual_write_contract"); return { data: 2, error: null };
+    },
     from(table: string) {
       if (table === "manuals") {
         return {
@@ -220,7 +223,8 @@ describe("saveManualGroupsWithChunks contract used by both confirm routes (fake 
     const parent = manualRows.find((row) => row.parent_manual_id === null);
     const children = manualRows.filter((row) => row.parent_manual_id === parent?.id);
     assert.equal(children.length, 2);
-    assert.deepEqual([...new Set(chunkRows.map((row) => row.manual_id))], children.map((c) => c.id));
+    assert.deepEqual(chunkRows, []);
+    assert.equal(children.every((row) => row.search_status === "ready"), true);
     assert.deepEqual(indexed, children.map((c) => c.id));
   });
 
@@ -236,6 +240,7 @@ describe("saveManualGroupsWithChunks contract used by both confirm routes (fake 
 
     assert.equal(saved.length, manualRows.length);
     assert.equal(indexed.length, 1);
+    assert.equal(saved.filter((row) => row.search_status === "failed").length, 1);
     assert.equal(JSON.stringify(consoleErrors).includes("owner@example.com"), false);
   });
 

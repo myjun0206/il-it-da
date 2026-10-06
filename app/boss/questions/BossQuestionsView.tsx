@@ -2,11 +2,10 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BookOpen, Repeat2 } from "lucide-react";
+import { BookOpen, MessageCircleQuestionMark, RefreshCw, Repeat2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
-import { Button } from "@/components/common/Button";
 import {
   type OwnerStore,
   persistSelectedStore,
@@ -38,6 +37,9 @@ type StoreState =
   | { status: "ready"; store: OwnerStore; requestedStoreRejected: boolean };
 
 const QUESTION_LIMIT = 20;
+
+const actionButtonClass =
+  "inline-flex min-h-[36px] items-center justify-center rounded-lg px-3 text-xs font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-50";
 
 const RESOLUTION_FILTER_TABS: Array<{ id: QuestionResolutionFilter; label: string }> = [
   { id: "active", label: "확인 필요" },
@@ -77,9 +79,9 @@ function formatDateTime(value: string): string {
 function Notice({ tone, children }: { tone: "info" | "error"; children: React.ReactNode }) {
   const toneClass = tone === "error"
     ? "bg-red-50 border-red-200 text-red-700"
-    : "bg-[var(--color-bg-surface)] border-[var(--color-border)] text-[var(--color-text-secondary)]";
+    : "bg-white border-[var(--color-border)] text-[var(--color-text-secondary)]";
   return (
-    <div role={tone === "error" ? "alert" : "status"} className={`p-4 border rounded-lg text-sm ${toneClass}`}>
+    <div role={tone === "error" ? "alert" : "status"} className={`rounded-xl border px-5 py-4 text-sm ${toneClass}`}>
       {children}
     </div>
   );
@@ -275,22 +277,27 @@ export default function BossQuestionsView({
     <div className="min-h-screen bg-[var(--color-bg-default)] flex">
       <OwnerSidebar activeMenu="questions" onLogout={handleLogout} />
 
-      <div className="flex-1 ml-0 lg:ml-[240px] flex flex-col">
+      <div className="flex-1 min-w-0 ml-0 lg:ml-[240px] flex flex-col">
         {storeState.status === "resolving" ? (
-          <div className="sticky top-0 z-50 bg-white border-b border-[var(--color-border)] h-16 shrink-0" />
+          <div className="sticky top-0 z-20 bg-white border-b border-[var(--color-border)] h-16 shrink-0" />
         ) : (
           <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
         )}
 
         <main className="flex-1 overflow-y-auto">
-          <div className="px-5 sm:px-8 lg:px-12 xl:px-16 py-8 lg:py-12">
-            <div className="mb-8">
-              <h1 className="text-3xl lg:text-4xl font-bold text-[var(--color-text-primary)] mb-2">
+          <div className="p-6 lg:p-8 max-w-7xl mx-auto">
+            <div className="mb-6">
+              <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
                 확인이 필요한 직원 질문
               </h1>
-              <p className="text-lg text-[var(--color-text-secondary)]">
+              <p className="text-base text-[var(--color-text-secondary)]">
                 매뉴얼 근거가 부족한 질문과 최근 7일간 반복된 질문입니다. 최근 {QUESTION_LIMIT}건까지 표시합니다.
               </p>
+              {storeState.status === "ready" && (
+                <p className="mt-1 text-sm text-[var(--color-text-tertiary)]">
+                  현재 매장 · <span className="font-semibold text-[var(--color-text-secondary)]">{storeName}</span>
+                </p>
+              )}
             </div>
 
             {storeState.status === "resolving" && <Notice tone="info">매장 정보를 불러오는 중...</Notice>}
@@ -299,11 +306,6 @@ export default function BossQuestionsView({
 
             {storeState.status === "ready" && visible && (
               <>
-                <div className="mb-8">
-                  <p className="text-sm font-semibold text-[var(--color-text-secondary)] mb-2">현재 매장</p>
-                  <p className="text-base lg:text-lg font-semibold text-[var(--color-text-primary)]">{storeName}</p>
-                </div>
-
                 {storeState.requestedStoreRejected && (
                   <div className="mb-6">
                     <Notice tone="info">
@@ -320,35 +322,34 @@ export default function BossQuestionsView({
                   </div>
                 )}
 
-                {/* 상태 필터 탭 */}
-                <div className="mb-6 border-b border-[var(--color-border)]">
-                  <div className="flex gap-2 overflow-x-auto pb-px">
-                    {RESOLUTION_FILTER_TABS.map((tab) => {
-                      const isSelected = activeFilter === tab.id;
-                      return (
-                        <button
-                          key={tab.id}
-                          type="button"
-                          onClick={() => {
-                            if (activeFilter !== tab.id) {
-                              setActiveFilter(tab.id);
-                              setQuestionsState(null);
-                            }
-                          }}
-                          className={`px-4 py-2.5 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
-                            isSelected
-                              ? "border-[var(--color-primary)] text-[var(--color-primary)] font-semibold"
-                              : "border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
-                          }`}
-                        >
-                          {tab.label}
-                        </button>
-                      );
-                    })}
-                  </div>
+                {/* 상태 필터 (직원 카테고리 칩과 같은 스타일) */}
+                <div className="mb-5 flex flex-wrap gap-2" role="group" aria-label="처리 상태">
+                  {RESOLUTION_FILTER_TABS.map((tab) => {
+                    const isSelected = activeFilter === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        aria-pressed={isSelected}
+                        onClick={() => {
+                          if (activeFilter !== tab.id) {
+                            setActiveFilter(tab.id);
+                            setQuestionsState(null);
+                          }
+                        }}
+                        className={`min-h-[36px] rounded-full border px-3.5 text-sm font-medium whitespace-nowrap transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${
+                          isSelected
+                            ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/40 text-[var(--color-primary)]"
+                            : "border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]/50 hover:text-[var(--color-text-primary)]"
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
+                    );
+                  })}
                 </div>
 
-                {updateSuccess && <Notice tone="info">{updateSuccess}</Notice>}
+                {updateSuccess && <div className="mb-4"><Notice tone="info">{updateSuccess}</Notice></div>}
 
                 {visible.kind === "loading" && <Notice tone="info">질문을 불러오는 중...</Notice>}
 
@@ -357,20 +358,25 @@ export default function BossQuestionsView({
                 )}
 
                 {visible.kind === "error" && (
-                  <div className="space-y-3">
-                    <Notice tone="error">질문 목록을 불러오지 못했습니다.</Notice>
-                    <Button type="button" variant="secondary" onClick={handleRetry}>
-                      다시 시도
-                    </Button>
+                  <div className="flex flex-wrap items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-5" role="alert">
+                    <p className="flex-1 text-sm text-red-700">질문 목록을 불러오지 못했습니다.</p>
+                    <button
+                      type="button"
+                      onClick={handleRetry}
+                      className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-[var(--color-primary)] hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                    >
+                      <RefreshCw size={16} aria-hidden="true" /> 다시 시도
+                    </button>
                   </div>
                 )}
 
                 {visible.kind === "ready" && visible.questions.length === 0 && (
-                  <div className="bg-white border border-[var(--color-border)] rounded-lg p-12 text-center">
-                    <p className="text-base font-semibold text-[var(--color-text-primary)] mb-1">
+                  <div className="rounded-xl border border-[var(--color-border)] bg-white p-8 text-center">
+                    <MessageCircleQuestionMark size={28} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+                    <p className="text-base font-semibold text-[var(--color-text-primary)]">
                       보류된 질문이 없습니다.
                     </p>
-                    <p className="text-sm text-[var(--color-text-secondary)]">
+                    <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
                       매뉴얼 근거 부족 또는 반복 질문이 있으면 이곳에 표시됩니다.
                     </p>
                   </div>
@@ -383,6 +389,9 @@ export default function BossQuestionsView({
                         <Notice tone="info">알림의 질문을 이 매장의 보류 질문에서 찾을 수 없습니다.</Notice>
                       </div>
                     )}
+                    <p className="mb-3 text-sm text-[var(--color-text-secondary)]">
+                      질문 <span className="font-bold text-[var(--color-text-primary)]">{visible.questions.length}</span>건
+                    </p>
                     <ul className="space-y-3">
                       {visible.questions.map((question) => {
                         const isHighlighted = highlightFound && question.id === highlightQuestionId;
@@ -404,7 +413,7 @@ export default function BossQuestionsView({
                               event.preventDefault();
                               router.push(detailUrl);
                             } : undefined}
-                            className={`bg-white border rounded-lg p-4 lg:p-6 transition-all ${isInProgress ? "cursor-pointer hover:border-[var(--color-primary)] hover:bg-[var(--color-bg-surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-primary)]" : ""} ${
+                            className={`rounded-xl border bg-white px-5 py-4 lg:p-5 transition-colors ${isInProgress ? "cursor-pointer hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-primary)]" : ""} ${
                               isHighlighted
                                 ? "border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/20"
                                 : "border-[var(--color-border)]"
@@ -429,7 +438,7 @@ export default function BossQuestionsView({
                                       type="button"
                                       disabled={isUpdating || !visible.resolutionFeatureAvailable}
                                       onClick={() => handleStartProcessing(question)}
-                                      className="px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-surface)] disabled:opacity-50 transition-colors"
+                                      className={`${actionButtonClass} border border-[var(--color-border)] bg-white text-[var(--color-text-primary)] hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-bg-default)]`}
                                     >
                                       {isUpdating ? "처리 중..." : "처리 시작"}
                                     </button>
@@ -443,7 +452,7 @@ export default function BossQuestionsView({
                                         event.stopPropagation();
                                         void handleUpdateStatus(question, "resolved");
                                       }}
-                                      className="px-3 py-1.5 text-xs font-medium rounded-md bg-[var(--color-primary)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+                                      className={`${actionButtonClass} bg-[var(--color-primary)] text-white hover:opacity-90`}
                                     >
                                       {isUpdating ? "변경 중..." : "처리 완료"}
                                     </button>
@@ -457,7 +466,7 @@ export default function BossQuestionsView({
                                         event.stopPropagation();
                                         void handleUpdateStatus(question, "in_progress");
                                       }}
-                                      className="px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-surface)] disabled:opacity-50 transition-colors"
+                                      className={`${actionButtonClass} border border-[var(--color-border)] bg-white text-[var(--color-text-primary)] hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-bg-default)]`}
                                     >
                                       {isUpdating ? "변경 중..." : "다시 열기"}
                                     </button>
@@ -466,7 +475,7 @@ export default function BossQuestionsView({
                               )}
                             </div>
 
-                            <p className="text-base font-medium text-[var(--color-text-primary)] whitespace-pre-wrap break-words mb-2">
+                            <p className="text-base font-semibold text-[var(--color-text-primary)] whitespace-pre-wrap break-words mb-2">
                               {question.question}
                             </p>
 
@@ -489,7 +498,7 @@ export default function BossQuestionsView({
                             )}
 
                             <div className="mt-4 flex items-end justify-between gap-3">
-                              <time dateTime={question.createdAt} className="text-sm text-[var(--color-text-secondary)]">
+                              <time dateTime={question.createdAt} className="text-xs text-[var(--color-text-tertiary)]">
                                 {formatDateTime(question.createdAt)}
                               </time>
                               {question.originReason === "frequent_question" ? (

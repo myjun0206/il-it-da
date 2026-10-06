@@ -30,11 +30,12 @@ export interface PersistManualArgs {
 
 export interface PersistedManual {
   id: string;
+  publicationSnapshot?: Record<string, unknown>;
 }
 
 export type PersistManualFn = (args: PersistManualArgs) => Promise<PersistedManual>;
 export type CreateEmbeddingsFn = (inputs: string[]) => Promise<number[][]>;
-export type PersistChunksFn = (manualId: string, chunks: ManualChunkRow[]) => Promise<{ chunkCount: number }>;
+export type PersistChunksFn = (manualId: string, chunks: ManualChunkRow[], snapshot?: Record<string, unknown>) => Promise<{ chunkCount: number }>;
 export type ChunkTextFn = (text: string) => string[];
 export type ValidateFn = (inputs: readonly NormalizedManualInput[]) => ManualBatchValidationResult;
 
@@ -115,6 +116,7 @@ export async function runManualIndexingPipeline(
   for (const item of [...roots, ...children]) {
     // Stage: persist manual
     let manualId: string;
+    let snapshot: Record<string, unknown> | undefined;
     try {
       const parentManualId = item.parentExternalId
         ? (persistedIdByExternalId.get(item.parentExternalId) ?? null)
@@ -133,6 +135,7 @@ export async function runManualIndexingPipeline(
         brandName: item.brandName ?? null,
       });
       manualId = persisted.id;
+      snapshot = persisted.publicationSnapshot;
       persistedIdByExternalId.set(item.externalId, manualId);
     } catch (error) {
       const code = toPipelineErrorCode(error, "MANUAL_PERSIST_FAILED");
@@ -184,7 +187,7 @@ export async function runManualIndexingPipeline(
     // Stage: persist chunks
     try {
       const chunkRows: ManualChunkRow[] = chunks.map((content, index) => ({ content, embedding: embeddings[index] }));
-      const { chunkCount } = await deps.persistChunks(manualId, chunkRows);
+      const { chunkCount } = await deps.persistChunks(manualId, chunkRows, snapshot);
       items.push({ externalId: item.externalId, manualId, status: "indexed", chunkCount });
     } catch (error) {
       const code: ManualIndexingErrorCode = "CHUNK_PERSIST_FAILED";

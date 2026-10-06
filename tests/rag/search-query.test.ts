@@ -8,6 +8,74 @@ import {
 } from "../../lib/rag/search-query.ts";
 
 describe("Korean RAG search query expansion", () => {
+  test("beverage temperature and steaming hints preserve the question without assigning a latte menu", () => {
+    const question = "따뜻한 라떼 우유 얼마나 넣고 몇 도까지 데워요?";
+    const expanded = expandSearchQuestion(question);
+    assert.ok(expanded.startsWith(question));
+    assert.ok(expanded.includes("HOT"));
+    assert.ok(expanded.includes("스팀 온도"));
+    for (const menu of ["카페라떼", "바닐라라떼", "딸기라떼"]) assert.equal(expanded.includes(menu), false);
+    const exact = "HOT 카페라떼 우유 240ml를 60~65℃로 스팀하나요?";
+    assert.ok(expandSearchQuestion(exact).startsWith(exact));
+    assert.ok(expandSearchQuestion(exact).includes("우유 데우기"));
+  });
+
+  test("negation, ICE contrast, flavor and unrelated tasks do not acquire HOT steaming assumptions", () => {
+    for (const question of ["따뜻한 라떼 말고 ICE 바닐라라떼 우유 얼마나 넣어요?", "우유를 데우지 않고 딸기라떼를 만들어요?", "우유가 거의 없는데 주문 넣어도 돼요?", "튀김기 청소 어떻게 해?"]) {
+      const expanded = expandSearchQuestion(question);
+      assert.ok(expanded.startsWith(question));
+      assert.equal(expanded.includes("HOT"), false);
+      assert.equal(expanded.includes("스팀 온도"), false);
+    }
+  });
+
+  test("stock shortage plus procurement wording retrieves inventory intent without rewriting authorization", () => {
+    for (const question of [
+      "우유가 거의 없는데 제가 바로 주문 넣어도 돼요?",
+      "컵이 얼마 안 남았어요. 주문을 해도 되나요?",
+      "소모품이 부족한데 발주해도 되나요?",
+      "시럽이 부족한데 주문을 좀 넣어도 돼요?",
+    ]) {
+      const keywords = extractSearchKeywords(question);
+      assert.ok(keywords.includes("재고"), question);
+      assert.ok(keywords.includes("발주"), question);
+      assert.ok(formatSearchEmbeddingInput(question).includes(question));
+    }
+    assert.equal(extractSearchKeywords("우유를 데워도 돼요?").includes("발주"), false);
+    assert.equal(extractSearchKeywords("패밀리팩 주문 들어왔어요").includes("재고 확인"), false);
+    assert.equal(extractSearchKeywords("직원이 부족한데 패밀리팩 주문이 들어왔어요").includes("재고 확인"), false);
+  });
+
+  test("bundle counts expand only the requested composition, never a specific menu or size", () => {
+    for (const question of [
+      "패밀리팩 주문 들어왔는데 버거랑 사이드랑 음료 몇 개씩 챙겨요?",
+      "커플 콤보 음료 몇 잔 담아요?",
+      "피크닉 묶음은 몇 개 챙기나요?",
+    ]) {
+      const keywords = extractSearchKeywords(question);
+      assert.ok(keywords.includes("구성"), question);
+      assert.ok(keywords.includes("수량"), question);
+      const expanded = expandSearchQuestion(question);
+      assert.ok(expanded.startsWith(question));
+      assert.equal(expanded.includes("B 패밀리팩"), false);
+      assert.equal(expanded.includes("라지"), false);
+    }
+    assert.equal(extractSearchKeywords("패밀리팩 환불할 수 있나요?").includes("구성"), false);
+    assert.equal(extractSearchKeywords("시럽은 몇 펌프 넣나요?").includes("구성"), false);
+  });
+
+  test("colloquial cleaning keeps its target and never acquires disassembly intent", () => {
+    for (const question of ["튀김기 청소 어떻게 해?", "튀김기 청소는 어떻게 하면 좋아?", "오븐 청소 어떻게 해요?"]) {
+      const keywords = extractSearchKeywords(question);
+      assert.ok(keywords.includes("청소"));
+      assert.ok(keywords.includes(question.startsWith("튀김기") ? "튀김기" : "오븐"));
+      assert.equal(expandSearchQuestion(question).includes("분해"), false);
+    }
+    const question = "노량진역점 튀김기 내부 부품을 임의로 분해하지 않고 청소할 수 있나요?";
+    assert.ok(formatSearchEmbeddingInput(question).includes(question));
+    assert.ok(extractSearchKeywords(question).includes("내부"));
+  });
+
   test("expands the Isu weekday business-hours question", () => {
     const question = "이수점은 평일에 언제부터 언제까지 하나요?";
     const expanded = formatSearchEmbeddingInput(question);

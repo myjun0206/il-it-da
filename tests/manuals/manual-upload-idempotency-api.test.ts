@@ -158,7 +158,7 @@ describe("confirm 라우트의 중복 방지 계약", () => {
 
   test("성공 응답 shape({ manuals })는 그대로 유지된다", () => {
     for (const source of [hq, store]) {
-      assert.match(source, /NextResponse\.json\(\{ manuals: result\.manuals \}, \{ status: result\.kind === "saved" \? 201 : 200 \}\)/);
+      assert.match(source, /NextResponse\.json\(\{ manuals: result\.manuals, \.\.\.manualSaveResult\(result.manuals\) \}, \{ status: result\.kind === "saved" \? 201 : 200 \}\)/);
     }
   });
 
