@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
 
     // 4. Admin SDK를 통한 비밀번호 변경 (fetch 대신 Supabase admin SDK 사용)
     const adminClient = createAdminClient();
-    
+
     const { data, error: updateError } = await adminClient.auth.admin.updateUserById(userId, {
       password: newPassword,
     });

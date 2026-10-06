@@ -57,20 +57,20 @@ function extractMatchedPreview(text: string, query: string, maxLength: number = 
   const lowerText = text.toLowerCase();
   const lowerQuery = query.toLowerCase();
   const matchIndex = lowerText.indexOf(lowerQuery);
-  
+
   if (matchIndex === -1) return "";
-  
+
   // 검색어를 중심으로 앞뒤 30자씩 추출하되, 단어 경계 존중
   const start = Math.max(0, matchIndex - 15);
   const end = Math.min(text.length, matchIndex + query.length + 30);
-  
+
   let preview = text.substring(start, end).trim();
-  
+
   // 너무 길면 말줄임
   if (preview.length > maxLength) {
     preview = preview.substring(0, maxLength).trim() + "…";
   }
-  
+
   return preview;
 }
 

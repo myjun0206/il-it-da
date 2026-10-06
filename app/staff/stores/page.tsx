@@ -500,7 +500,7 @@ function PendingRow({
 }) {
   const requestedDate = formatRequestDate(request.requestedAt);
   const isPending = request.status === "pending";
-  
+
   return (
     <li className={`${storeRowClass} py-4`}>
       <div className={storeRowMainClass}>

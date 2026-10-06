@@ -494,9 +494,9 @@ export default function StaffPage() {
                 const prevMessage = index > 0 ? messages[index - 1] : null;
                 const isConsecutiveAI = prevMessage?.from === "ai" && message.from === "ai";
                 return (
-                  <MessageBubble 
-                    key={`${message.time}-${index}`} 
-                    message={message} 
+                  <MessageBubble
+                    key={`${message.time}-${index}`}
+                    message={message}
                     showIcon={!isConsecutiveAI}
                   />
                 );
@@ -618,7 +618,7 @@ function MessageBubble({ message, showIcon = true }: { message: Message; showIco
             <div className="flex gap-4 items-start">
               {/* Left Accent Line */}
               <div className="w-0.5 bg-[var(--color-primary)] flex-shrink-0" />
-              
+
               {/* AI Answer Content */}
               <div className="flex-1 flex flex-col">
                 {/* Status Badge - Small label */}
@@ -691,7 +691,7 @@ function TypingIndicator() {
         <div role="status" aria-label="AI가 답변을 작성 중" className="flex gap-4 items-start">
           {/* Accent line placeholder for alignment */}
           <div className="w-0.5 bg-transparent flex-shrink-0" />
-          
+
           {/* Loading content - SAME STRUCTURE as MessageBubble text wrapper */}
           <div className="flex-1 flex flex-col">
             {/* Match MessageBubble's text wrapper structure exactly */}
