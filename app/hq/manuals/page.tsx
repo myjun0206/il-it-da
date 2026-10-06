@@ -267,26 +267,22 @@ export default function ManualOverviewPage() {
 
           {/* Manual management navigation cards */}
           <section aria-labelledby="manual-management-heading">
-            <h2 id="manual-management-heading" className="mb-4 text-lg font-bold text-[var(--color-text-primary)]">
+            <h2 id="manual-management-heading" className="sr-only">
               매뉴얼 관리
             </h2>
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               {[
                 {
                   href: "/hq/manuals/common",
                   title: "공통 매뉴얼",
-                  description: "모든 지점에서 공통으로 사용하는 본사 매뉴얼입니다.",
                   count: summary.commonManuals,
-                  action: "공통 매뉴얼 관리",
                   Icon: BookOpen,
                   iconClassName: "bg-[var(--color-primary-light)] text-[var(--color-primary)]",
                 },
                 {
                   href: "/hq/manuals/stores",
                   title: "지점 매뉴얼",
-                  description: "각 지점에서 등록한 매뉴얼을 확인할 수 있습니다.",
                   count: summary.storeManuals,
-                  action: "지점 매뉴얼 보기",
                   Icon: Store,
                   iconClassName: "bg-amber-100 text-amber-600",
                 },
@@ -294,23 +290,20 @@ export default function ManualOverviewPage() {
                 <Link
                   key={card.href}
                   href={card.href}
-                  className="group flex h-full flex-col rounded-xl border border-[var(--color-border)] bg-white p-6 shadow-sm transition-colors hover:border-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2"
+                  className="group flex items-center justify-between rounded-xl border border-[var(--color-border)] bg-white p-5 shadow-sm transition-colors hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                 >
-                  <div className="mb-3 flex items-center gap-3">
-                    <span className={`flex h-10 w-10 items-center justify-center rounded-lg ${card.iconClassName}`}>
+                  <div className="flex items-center gap-4 flex-1 min-w-0">
+                    <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${card.iconClassName}`}>
                       <card.Icon size={20} aria-hidden="true" />
                     </span>
-                    <h3 className="text-lg font-bold text-[var(--color-text-primary)]">{card.title}</h3>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-base font-semibold text-[var(--color-text-primary)]">{card.title}</h3>
+                      <p className="text-sm font-medium text-[var(--color-text-secondary)] mt-1">
+                        {isLoadingSummary ? "-" : `${card.count}개`}
+                      </p>
+                    </div>
                   </div>
-                  <p className="mb-6 text-sm text-[var(--color-text-secondary)]">{card.description}</p>
-                  <p className="text-xl font-bold text-[var(--color-text-primary)]">
-                    {isLoadingSummary ? "-" : `${card.count}개`}
-                  </p>
-                  <p className="mb-6 text-sm text-[var(--color-text-secondary)]">등록된 매뉴얼</p>
-                  <span className="mt-auto inline-flex items-center gap-1 border-t border-[var(--color-border)] pt-4 text-sm font-semibold text-[var(--color-primary)]">
-                    {card.action}
-                    <ArrowRight size={16} aria-hidden="true" className="transition-transform group-hover:translate-x-0.5" />
-                  </span>
+                  <ArrowRight size={20} aria-hidden="true" className="shrink-0 ml-2 text-[var(--color-text-tertiary)] transition-transform group-hover:translate-x-0.5" />
                 </Link>
               ))}
             </div>

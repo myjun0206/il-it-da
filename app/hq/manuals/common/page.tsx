@@ -821,8 +821,8 @@ export default function ManualDashboardPage() {
           ) : view === "categories" ? (
             <section>
               {/* Toolbar: 왼쪽 검색 / 오른쪽 [위험] [보조] [주요] 액션. 좌우 끝이 아래 grid와 같은 기준선이다. */}
-              <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-                <div className="relative w-full md:w-[420px] md:flex-none">
+              <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center">
+                <div className="relative flex-1 min-w-0">
                   <Search
                     size={18}
                     aria-hidden="true"
@@ -837,7 +837,7 @@ export default function ManualDashboardPage() {
                     className="h-11 w-full rounded-lg border-2 border-[var(--color-border)] bg-white pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/30"
                   />
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
                   <button
                     type="button"
                     disabled={categories.length === 0}
@@ -864,18 +864,7 @@ export default function ManualDashboardPage() {
                   <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[var(--color-primary-light)]">
                     <FileText size={32} className="text-[var(--color-primary)]" aria-hidden="true" />
                   </div>
-                  <p className="mb-2 text-base text-[var(--color-text-secondary)]">등록된 공통 매뉴얼이 없습니다.</p>
-                  <p className="mb-6 text-sm text-[var(--color-text-tertiary)]">
-                    매뉴얼 파일을 업로드하거나 첫 카테고리를 추가해보세요.
-                  </p>
-                  <div className="flex flex-wrap justify-center gap-2">
-                    <Button variant="outline" className="min-h-[44px]" onClick={goToManualUpload}>
-                      <Upload size={16} className="mr-2" aria-hidden="true" /> 매뉴얼 파일 업로드
-                    </Button>
-                    <Button variant="primary" className="min-h-[44px]" onClick={() => setShowCategoryModal(true)}>
-                      <Plus size={16} className="mr-2" aria-hidden="true" /> 첫 카테고리 추가
-                    </Button>
-                  </div>
+                  <p className="text-base text-[var(--color-text-secondary)]">등록된 공통 매뉴얼이 없습니다.</p>
                 </div>
               ) : (
                 <>
@@ -944,8 +933,8 @@ export default function ManualDashboardPage() {
             </section>
           ) : view === "titles" ? (
             <section>
-              <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-                <div className="relative w-full md:w-[420px] md:flex-none">
+              <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center">
+                <div className="relative flex-1 min-w-0">
                   <Search
                     size={18}
                     aria-hidden="true"
@@ -962,7 +951,7 @@ export default function ManualDashboardPage() {
                 </div>
                 <Button
                   variant="primary"
-                  className="min-h-[44px]"
+                  className="min-h-[44px] shrink-0"
                   onClick={() => setShowTitleModal(true)}
                   disabled={!selectedCategory}
                 >
@@ -1022,8 +1011,8 @@ export default function ManualDashboardPage() {
             </section>
           ) : (
             <section>
-              <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-                <div className="relative w-full md:w-[420px] md:flex-none">
+              <div className="mb-6">
+                <div className="relative">
                   <Search
                     size={18}
                     aria-hidden="true"
