@@ -73,7 +73,7 @@ const MAX_ACTIVITIES = 3;
 
 const cardClass = "bg-white border border-[var(--color-border)] rounded-xl p-6 shadow-sm";
 const linkCardClass =
-  "transition-colors hover:border-[var(--color-primary)] hover:bg-[var(--color-bg-surface)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2";
+  "transition-colors hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2";
 
 function manualUpdatedAt(manual: StoreManual): string {
   return manual.updated_at || manual.created_at;
@@ -370,7 +370,7 @@ export default function OwnerDashboardPage() {
       <OwnerSidebar activeMenu="home" onLogout={handleLogout} />
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col lg:ml-[240px]">
+      <div className="flex-1 min-w-0 flex flex-col lg:ml-[240px]">
         {/* Header */}
         <OwnerHeader userName={userName} storeName={selectedStoreName} onLogout={handleLogout} />
 

@@ -3,14 +3,13 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, ArrowLeft, ArrowRight, BookOpen, FileText, Pencil, Plus, RefreshCw, Search, Sparkles, Store, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, FileText, Pencil, Plus, RefreshCw, Search, Sparkles, Store, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
 import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
-import { ManualSearchReadinessPanel } from "@/components/manuals/ManualSearchReadinessPanel";
 import { ManualPreviewEditor, type ManualEditState } from "@/components/manuals/ManualPreviewEditor";
 import type { ManualRecord } from "@/lib/types/manual";
 import { resolveOwnerCurrentStore } from "@/lib/owner/current-store";
@@ -40,6 +39,17 @@ const SUPPORTED_ANALYZE_EXTENSIONS = [".txt", ".md", ".docx", ".csv", ".xlsx", "
 const STORE_MANUAL_CATEGORY_PLACEHOLDER_CONTENT = "__STORE_MANUAL_CATEGORY_PLACEHOLDER__";
 const UUID_LIKE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const INTERNAL_ID_LIKE_PATTERN = /^[A-Za-z0-9_-]{16,}$/;
+const STORE_REINDEX_URL = "/api/store-manuals/search-readiness/reindex";
+
+// 저장 응답의 searchResults 중 검색 반영이 실패했거나 확인되지 않은 항목만 다시 처리 대상으로 삼는다.
+function searchRetryManualIds(body: unknown): string[] {
+  const results = (body as { searchResults?: unknown } | null)?.searchResults;
+  if (!Array.isArray(results)) return [];
+  return results
+    .filter((item): item is { manualId: string; status: string } =>
+      typeof item?.manualId === "string" && (item.status === "failed" || item.status === "unknown"))
+    .map((item) => item.manualId);
+}
 
 function isCategoryPlaceholder(manual: ManualRecord): boolean {
   return !manual.parent_manual_id && manual.status === "draft" && manual.content === STORE_MANUAL_CATEGORY_PLACEHOLDER_CONTENT;
@@ -153,7 +163,8 @@ export default function StoreManualsManagementPage() {
   const [itemEditError, setItemEditError] = useState("");
   const [questionReturnId, setQuestionReturnId] = useState<string | null>(null);
   const [manualSaveNotice, setManualSaveNotice] = useState("");
-  const [readinessRevision, setReadinessRevision] = useState(0);
+  const [searchRetryIds, setSearchRetryIds] = useState<string[]>([]);
+  const [isRetryingSearch, setIsRetryingSearch] = useState(false);
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
   const [isDeletingAll, setIsDeletingAll] = useState(false);
   const [deleteAllError, setDeleteAllError] = useState("");
@@ -425,7 +436,7 @@ export default function StoreManualsManagementPage() {
       await refetchManuals();
       showToast("카테고리가 추가되었습니다.");
       setManualSaveNotice(manualSaveMessage(data));
-      setReadinessRevision((value) => value + 1);
+      setSearchRetryIds(searchRetryManualIds(data));
     } catch (e) {
       setCategoryError(e instanceof Error ? e.message : "카테고리 저장 중 오류가 발생했습니다.");
     } finally {
@@ -471,7 +482,7 @@ export default function StoreManualsManagementPage() {
       }
       showToast("카테고리 이름이 변경되었습니다.");
       setManualSaveNotice(manualSaveMessage(data));
-      setReadinessRevision((value) => value + 1);
+      setSearchRetryIds(searchRetryManualIds(data));
     } catch (e) {
       setEditCategoryError(e instanceof Error ? e.message : "카테고리 이름 변경 중 오류가 발생했습니다.");
     } finally {
@@ -561,7 +572,7 @@ export default function StoreManualsManagementPage() {
       }
       showToast("타이틀이 추가되었습니다.");
       setManualSaveNotice(manualSaveMessage(data));
-      setReadinessRevision((value) => value + 1);
+      setSearchRetryIds(searchRetryManualIds(data));
     } catch (e) {
       setTitleError(e instanceof Error ? e.message : "타이틀 저장 중 오류가 발생했습니다.");
     } finally {
@@ -600,7 +611,7 @@ export default function StoreManualsManagementPage() {
       setSelectedTitleId(updatedTitleId);
       showToast("타이틀 이름이 변경되었습니다.");
       setManualSaveNotice(manualSaveMessage(data));
-      setReadinessRevision((value) => value + 1);
+      setSearchRetryIds(searchRetryManualIds(data));
     } catch (e) {
       setEditTitleError(e instanceof Error ? e.message : "타이틀 이름 변경 중 오류가 발생했습니다.");
     } finally {
@@ -675,7 +686,7 @@ export default function StoreManualsManagementPage() {
       await refetchManuals();
       showToast("세부 매뉴얼이 추가되었습니다.");
       setManualSaveNotice(manualSaveMessage(data));
-      setReadinessRevision((value) => value + 1);
+      setSearchRetryIds(searchRetryManualIds(data));
     } catch (e) {
       setItemError(e instanceof Error ? e.message : "세부 매뉴얼 저장 중 오류가 발생했습니다.");
     } finally {
@@ -707,6 +718,29 @@ export default function StoreManualsManagementPage() {
     } catch { setItemEditError("최신 본문을 불러오지 못했습니다."); }
   };
 
+  const retrySearchIndexing = async () => {
+    if (!selectedStoreId || searchRetryIds.length === 0 || isRetryingSearch) return;
+    setIsRetryingSearch(true);
+    const stillFailed: string[] = [];
+    for (const manualId of searchRetryIds) {
+      try {
+        const response = await fetch(STORE_REINDEX_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ storeId: selectedStoreId, manualId }),
+        });
+        if (!response.ok) stillFailed.push(manualId);
+      } catch {
+        stillFailed.push(manualId);
+      }
+    }
+    setSearchRetryIds(stillFailed);
+    setManualSaveNotice(stillFailed.length === 0
+      ? "검색 반영을 다시 처리했습니다. 질문은 자동 완료되지 않습니다."
+      : `검색 반영 ${stillFailed.length}건을 다시 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.`);
+    setIsRetryingSearch(false);
+  };
+
   const handleSaveItem = async (item: ManualRecord) => {
     const content = editingItemContent.trim();
     setItemEditError("");
@@ -719,6 +753,7 @@ export default function StoreManualsManagementPage() {
 
     setSavingItemId(item.id);
     setManualSaveNotice("");
+    setSearchRetryIds([]);
 
     try {
       const response = await fetch(`/api/store-manuals/${item.id}`, {
@@ -734,9 +769,9 @@ export default function StoreManualsManagementPage() {
 
       cancelEditItem();
       await refetchManuals();
-      setReadinessRevision((value) => value + 1);
+      setSearchRetryIds(data.searchStatus === "ready" || data.searchStatus === "not_searchable" ? [] : [item.id]);
       const searchNotice = data.searchStatus === "ready" ? "검색 반영이 완료되었습니다."
-        : data.searchStatus === "failed" ? "검색 반영에 실패했습니다. 검색 준비 상태를 확인하고 다시 처리해 주세요."
+        : data.searchStatus === "failed" ? "검색 반영에 실패했습니다. 아래 버튼으로 다시 처리해 주세요."
         : data.searchStatus === "not_searchable" ? "아직 승인되지 않아 검색 대상이 아닙니다."
         : "검색 반영 완료를 확인하지 못했습니다.";
       setManualSaveNotice(`본문 저장 성공. ${searchNotice} 질문은 자동 완료되지 않습니다.`);
@@ -920,7 +955,7 @@ export default function StoreManualsManagementPage() {
       closeAnalyzeReview();
       await refetchManuals();
       setManualSaveNotice(manualSaveMessage(data));
-      setReadinessRevision((value) => value + 1);
+      setSearchRetryIds(searchRetryManualIds(data));
     } catch (e) {
       setAnalysisSaveError(e instanceof Error ? e.message : "매뉴얼 저장 중 오류가 발생했습니다.");
     } finally {
@@ -969,7 +1004,7 @@ export default function StoreManualsManagementPage() {
       <div className="lg:ml-[240px]">
         <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
 
-        <main className="p-6 pb-32 lg:p-8 lg:pb-28 max-w-7xl mx-auto">
+        <main className="p-6 lg:p-8 max-w-7xl mx-auto">
           {detailHeader ? (
             <div className="mb-8 flex items-start gap-3">
               <button
@@ -1012,32 +1047,38 @@ export default function StoreManualsManagementPage() {
           />
 
           {analyzeError && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-              <p className="text-sm text-red-600">{analyzeError}</p>
+            <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-5" role="alert">
+              <p className="text-sm text-red-700">{analyzeError}</p>
             </div>
           )}
 
-          {selectedStoreId && (
-            <ManualSearchReadinessPanel
-              key={`${selectedStoreId}:${readinessRevision}`}
-              readinessUrl={`/api/store-manuals/search-readiness?storeId=${selectedStoreId}`}
-              reindexUrl="/api/store-manuals/search-readiness/reindex"
-              storeId={selectedStoreId}
-            />
-          )}
-
           {questionReturnId && selectedStoreId && (
-            <div className="mb-5 border-b border-(--color-border) pb-4 text-sm">
+            <div className="mb-5 rounded-xl border border-(--color-primary)/30 bg-(--color-primary-light)/15 px-5 py-4 text-sm">
               <Link href={buildBossQuestionDetailUrl(questionReturnId, selectedStoreId)} className="inline-flex items-center gap-2 font-semibold text-(--color-primary)">
                 <ArrowLeft size={16} aria-hidden="true" />질문으로 돌아가 해결 여부 확인
               </Link>
               <p className="mt-2 text-(--color-text-secondary)">부족한 본문만 수정해 주세요. 저장·승인·검색 준비 완료와 질문 해결은 서로 다릅니다.</p>
             </div>
           )}
-          {manualSaveNotice && <p role="status" className="mb-5 whitespace-pre-wrap wrap-break-word border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{manualSaveNotice}</p>}
+          {manualSaveNotice && (
+            <div role="status" className="mb-5 flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 sm:flex-row sm:items-center sm:justify-between">
+              <p className="min-w-0 whitespace-pre-wrap wrap-break-word">{manualSaveNotice}</p>
+              {searchRetryIds.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => void retrySearchIndexing()}
+                  disabled={isRetryingSearch}
+                  className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-1.5 self-start rounded-lg border-2 border-amber-300 bg-white px-4 text-sm font-semibold text-amber-900 transition-colors hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-600 disabled:cursor-not-allowed disabled:opacity-60 sm:self-auto"
+                >
+                  <RefreshCw size={16} className={isRetryingSearch ? "animate-spin" : ""} aria-hidden="true" />
+                  {isRetryingSearch ? "다시 처리 중..." : "검색 반영 다시 처리"}
+                </button>
+              )}
+            </div>
+          )}
 
           {storeStatus === "loading" || (storeStatus === "ready" && isLoadingManuals) ? (
-            <div className="bg-white border border-(--color-border) rounded-xl p-8 shadow-sm text-center">
+            <div className="bg-white border border-(--color-border) rounded-xl p-8 text-center">
               <p className="text-base text-(--color-text-secondary)" role="status">
                 불러오는 중...
               </p>
@@ -1057,7 +1098,7 @@ export default function StoreManualsManagementPage() {
               </button>
             </div>
           ) : storeStatus === "none" ? (
-            <div className="flex items-start gap-3 bg-white border border-(--color-border) rounded-xl p-6 shadow-sm">
+            <div className="flex items-start gap-3 bg-white border border-(--color-border) rounded-xl p-5">
               <Store size={20} className="mt-0.5 shrink-0 text-(--color-text-tertiary)" aria-hidden="true" />
               <div>
                 <p className="text-base font-semibold text-(--color-text-primary)">아직 연결된 매장이 없습니다.</p>
@@ -1068,14 +1109,6 @@ export default function StoreManualsManagementPage() {
             </div>
           ) : view === "categories" ? (
             <section>
-              <div className="mb-6 flex flex-wrap items-center gap-3 bg-white border border-(--color-border) rounded-xl px-6 py-4 shadow-sm">
-                <p className="text-sm font-medium text-(--color-text-secondary)">현재 매장</p>
-                <p className="text-base font-bold text-(--color-text-primary)">{storeName}</p>
-                <span className="inline-flex items-center rounded-full bg-(--color-primary-light)/40 px-2.5 py-0.5 text-sm font-medium text-(--color-primary)">
-                  승인 완료
-                </span>
-              </div>
-
               <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
                 <div className="relative w-full md:w-[420px] md:flex-none">
                   <Search
@@ -1089,7 +1122,7 @@ export default function StoreManualsManagementPage() {
                     onChange={(event) => setSearchQuery(event.target.value)}
                     placeholder="카테고리 검색"
                     aria-label="카테고리 검색"
-                    className="h-11 w-full rounded-lg border-2 border-(--color-border) bg-white pl-11 pr-4 text-base text-(--color-text-primary) placeholder-(--color-text-tertiary) focus:outline-none focus:border-(--color-primary) focus:ring-2 focus:ring-(--color-primary)/30"
+                    className="h-12 w-full rounded-lg border border-(--color-border) bg-white pl-11 pr-4 text-base text-(--color-text-primary) placeholder:text-(--color-text-tertiary) focus:border-(--color-primary) focus:outline-none focus:ring-2 focus:ring-(--color-primary)/20"
                   />
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -1121,7 +1154,7 @@ export default function StoreManualsManagementPage() {
               </div>
 
               {visibleCategories.length === 0 ? (
-                <div className="rounded-xl border-2 border-(--color-border) bg-(--color-bg-surface) p-12 text-center shadow-md">
+                <div className="rounded-xl border border-(--color-border) bg-white p-12 text-center">
                   <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-(--color-primary-light)">
                     <FileText size={32} className="text-(--color-primary)" />
                   </div>
@@ -1141,7 +1174,7 @@ export default function StoreManualsManagementPage() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {visibleCategories.map((category, index) => (
+                  {visibleCategories.map((category) => (
                     <button
                       key={category.category}
                       type="button"
@@ -1151,7 +1184,7 @@ export default function StoreManualsManagementPage() {
                         setTitleSearchQuery("");
                         setView("titles");
                       }}
-                      className="relative rounded-xl border-2 border-(--color-border) bg-(--color-bg-surface) p-6 text-left shadow-md transition-all hover:border-(--color-primary) hover:bg-white hover:shadow-lg"
+                      className="relative rounded-xl border border-(--color-border) bg-white p-5 text-left transition-colors hover:border-(--color-primary) hover:bg-(--color-primary-light)/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-primary)"
                     >
                       <span
                         role="button"
@@ -1172,11 +1205,11 @@ export default function StoreManualsManagementPage() {
                       >
                         <Pencil size={15} />
                       </span>
-                      <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-lg bg-(--color-primary-light) text-sm font-bold text-(--color-primary)">
-                        {index + 1}
-                      </div>
-                      <p className="mb-2 text-lg font-bold text-(--color-text-primary)">{getDisplayCategoryName(category.category)}</p>
-                      <p className="text-sm text-(--color-text-secondary)">
+                      <span className="mb-3 inline-flex rounded-full bg-(--color-primary-light)/40 px-2.5 py-0.5 text-xs font-semibold text-(--color-primary)">
+                        카테고리
+                      </span>
+                      <p className="pr-10 text-base font-semibold text-(--color-text-primary) break-keep line-clamp-2">{getDisplayCategoryName(category.category)}</p>
+                      <p className="pt-3 text-xs text-(--color-text-tertiary)">
                         타이틀 {category.groups.length}개 · 세부 매뉴얼 {category.itemCount}개
                       </p>
                     </button>
@@ -1200,7 +1233,7 @@ export default function StoreManualsManagementPage() {
                     onChange={(event) => setTitleSearchQuery(event.target.value)}
                     placeholder="타이틀 검색"
                     aria-label="타이틀 검색"
-                    className="h-11 w-full rounded-lg border-2 border-(--color-border) bg-white pl-11 pr-4 text-base text-(--color-text-primary) placeholder-(--color-text-tertiary) focus:outline-none focus:border-(--color-primary) focus:ring-2 focus:ring-(--color-primary)/30"
+                    className="h-12 w-full rounded-lg border border-(--color-border) bg-white pl-11 pr-4 text-base text-(--color-text-primary) placeholder:text-(--color-text-tertiary) focus:border-(--color-primary) focus:outline-none focus:ring-2 focus:ring-(--color-primary)/20"
                   />
                 </div>
                 <div className="flex items-center justify-end">
@@ -1211,14 +1244,14 @@ export default function StoreManualsManagementPage() {
               </div>
 
               {!selectedCategory || visibleTitleGroups.length === 0 ? (
-                <div className="rounded-xl border-2 border-dashed border-(--color-border) bg-(--color-bg-surface) p-12 text-center text-sm text-(--color-text-secondary) shadow-sm">
+                <div className="rounded-xl border border-dashed border-(--color-border) bg-white p-12 text-center text-sm text-(--color-text-secondary)">
                   {selectedCategory && selectedCategory.groups.length > 0
                     ? "검색 결과가 없습니다."
                     : "아직 등록된 타이틀이 없습니다. 타이틀을 추가해 첫 세부 매뉴얼을 등록하세요."}
                 </div>
               ) : (
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {visibleTitleGroups.map((group, index) => (
+                  {visibleTitleGroups.map((group) => (
                     <button
                       key={group.id}
                       type="button"
@@ -1228,7 +1261,7 @@ export default function StoreManualsManagementPage() {
                         cancelEditItem();
                         setView("items");
                       }}
-                      className="relative rounded-xl border-2 border-(--color-border) bg-(--color-bg-surface) p-6 text-left shadow-md transition-all hover:border-(--color-primary) hover:bg-white hover:shadow-lg"
+                      className="relative rounded-xl border border-(--color-border) bg-white p-5 text-left transition-colors hover:border-(--color-primary) hover:bg-(--color-primary-light)/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-primary)"
                     >
                       <span
                         role="button"
@@ -1249,11 +1282,11 @@ export default function StoreManualsManagementPage() {
                       >
                         <Pencil size={15} />
                       </span>
-                      <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-lg bg-(--color-primary-light) text-sm font-bold text-(--color-primary)">
-                        {index + 1}
-                      </div>
-                      <p className="mb-2 text-lg font-bold text-(--color-text-primary)">{group.title}</p>
-                      <p className="text-sm text-(--color-text-secondary)">세부 매뉴얼 {group.items.length}개</p>
+                      <span className="mb-3 inline-flex max-w-[calc(100%-2.5rem)] truncate rounded-full bg-(--color-primary-light)/40 px-2.5 py-0.5 text-xs font-semibold text-(--color-primary)">
+                        {getDisplayCategoryName(group.category)}
+                      </span>
+                      <p className="pr-10 text-base font-semibold text-(--color-text-primary) break-keep line-clamp-2">{group.title}</p>
+                      <p className="pt-3 text-xs text-(--color-text-tertiary)">세부 매뉴얼 {group.items.length}개</p>
                     </button>
                   ))}
                 </div>
@@ -1274,14 +1307,14 @@ export default function StoreManualsManagementPage() {
                   onChange={(event) => setItemSearchQuery(event.target.value)}
                   placeholder="세부 매뉴얼 검색"
                   aria-label="세부 매뉴얼 검색"
-                  className="h-11 w-full rounded-lg border-2 border-(--color-border) bg-white pl-11 pr-4 text-base text-(--color-text-primary) placeholder-(--color-text-tertiary) focus:outline-none focus:border-(--color-primary) focus:ring-2 focus:ring-(--color-primary)/30"
+                  className="h-12 w-full rounded-lg border border-(--color-border) bg-white pl-11 pr-4 text-base text-(--color-text-primary) placeholder:text-(--color-text-tertiary) focus:border-(--color-primary) focus:outline-none focus:ring-2 focus:ring-(--color-primary)/20"
                 />
               </div>
 
               {selectedTitle ? (
                 <div className="space-y-4">
                   {visibleManualItems.map((item, index) => (
-                    <article key={item.id} className="rounded-xl border-2 border-(--color-border) bg-(--color-bg-surface) p-5 shadow-md">
+                    <article key={item.id} className="rounded-xl border border-(--color-border) bg-white p-5">
                       <div className="mb-3 flex items-center justify-between gap-3">
                         <div>
                           <p className="text-sm font-bold text-(--color-primary)">매뉴얼 {index + 1}</p>
@@ -1347,20 +1380,20 @@ export default function StoreManualsManagementPage() {
                     </article>
                   ))}
                   {visibleManualItems.length === 0 && (
-                    <div className="rounded-xl border-2 border-dashed border-(--color-border) bg-(--color-bg-surface) p-12 text-center text-sm text-(--color-text-secondary) shadow-sm">
+                    <div className="rounded-xl border border-dashed border-(--color-border) bg-white p-12 text-center text-sm text-(--color-text-secondary)">
                       검색 결과가 없습니다.
                     </div>
                   )}
                   <button
                     type="button"
                     onClick={() => setShowItemModal(true)}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-(--color-border) bg-(--color-bg-surface) py-4 text-sm font-bold text-(--color-text-secondary) shadow-sm transition-colors hover:border-(--color-primary) hover:bg-white hover:text-(--color-primary)"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-(--color-border) bg-white py-4 text-sm font-bold text-(--color-text-secondary) transition-colors hover:border-(--color-primary) hover:bg-(--color-primary-light)/10 hover:text-(--color-primary) focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-primary)"
                   >
                     매뉴얼 추가하기 <Plus size={16} />
                   </button>
                 </div>
               ) : (
-                <div className="rounded-xl border-2 border-dashed border-(--color-border) bg-(--color-bg-surface) p-12 text-center text-sm text-(--color-text-secondary) shadow-sm">
+                <div className="rounded-xl border border-dashed border-(--color-border) bg-white p-12 text-center text-sm text-(--color-text-secondary)">
                   타이틀을 선택하면 세부 매뉴얼이 표시됩니다.
                 </div>
               )}
@@ -1368,19 +1401,6 @@ export default function StoreManualsManagementPage() {
             </section>
           )}
         </main>
-      </div>
-
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-(--color-border) bg-white/95 px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.10)] backdrop-blur supports-backdrop-filter:bg-white/85 lg:left-[240px]">
-        <div className="mx-auto flex max-w-7xl justify-end">
-          <Link
-            href="/boss/manuals"
-            className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-(--color-border) bg-(--color-bg-surface) py-4 text-sm font-bold text-(--color-text-secondary) shadow-sm transition-colors hover:border-(--color-primary) hover:bg-white hover:text-(--color-primary) focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-primary)"
-          >
-            <BookOpen size={18} aria-hidden="true" />
-            <span>본사 공통 매뉴얼 확인</span>
-            <ArrowRight size={16} aria-hidden="true" />
-          </Link>
-        </div>
       </div>
 
       {/* Delete All Manuals Confirm Modal */}

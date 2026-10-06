@@ -104,7 +104,7 @@ export default function OwnerStoresPage() {
     <div className="min-h-screen bg-[var(--color-bg-default)] flex">
       <OwnerSidebar activeMenu="stores" onLogout={handleLogout} />
 
-      <div className="flex-1 flex flex-col lg:ml-[240px]">
+      <div className="flex-1 min-w-0 flex flex-col lg:ml-[240px]">
         <OwnerHeader userName={userName} storeName={currentStoreName} onLogout={handleLogout} />
 
         <main className="flex-1 overflow-y-auto">

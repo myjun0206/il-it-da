@@ -15,7 +15,7 @@ const TITLE_MAX_LENGTH = 200;
 const CONTENT_MAX_LENGTH = 5000;
 
 const fieldClass =
-  "w-full rounded-lg border-2 border-[var(--color-border)] bg-white px-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/30";
+  "w-full rounded-lg border border-[var(--color-border)] bg-white px-4 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20 disabled:opacity-60";
 
 export default function NewOwnerNoticePage() {
   const router = useRouter();
@@ -107,20 +107,21 @@ export default function NewOwnerNoticePage() {
     <div className="min-h-screen bg-[var(--color-bg-default)] flex">
       <OwnerSidebar activeMenu="notice" onLogout={handleLogout} />
 
-      <div className="flex-1 flex flex-col lg:ml-[240px]">
+      <div className="flex-1 min-w-0 flex flex-col lg:ml-[240px]">
         <OwnerHeader userName={userName} storeName={currentStore?.storeName ?? ""} onLogout={handleLogout} />
 
         <main className="flex-1 overflow-y-auto p-6 lg:p-8">
-          <div className="mx-auto max-w-4xl">
+          <div className="mx-auto max-w-7xl">
+           <div className="max-w-4xl">
             <Link
               href={NOTICE_LIST_HREF}
               aria-label="공지사항 목록으로 돌아가기"
-              className="-ml-3 mb-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-3 text-sm font-semibold text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary-light)]/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+              className="-ml-2 mb-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
             >
               <ArrowLeft size={16} aria-hidden="true" /> 공지사항
             </Link>
 
-            <div className="mb-8">
+            <div className="mb-6">
               <h1 className="mb-2 text-2xl font-bold text-[var(--color-text-primary)]">직원 공지 작성</h1>
               <p className="text-base text-[var(--color-text-secondary)]">
                 현재 매장의 승인된 직원에게만 전달됩니다.
@@ -128,14 +129,14 @@ export default function NewOwnerNoticePage() {
             </div>
 
             {isLoadingStore ? (
-              <div className="rounded-lg border border-[var(--color-border)] bg-white p-8 text-center">
-                <p className="text-sm text-[var(--color-text-secondary)]" role="status">현재 매장을 확인하는 중...</p>
+              <div className="rounded-xl border border-[var(--color-border)] bg-white p-8 text-center">
+                <p className="text-base text-[var(--color-text-secondary)]" role="status">현재 매장을 확인하는 중...</p>
               </div>
             ) : (
               <form
                 onSubmit={handleSubmit}
                 noValidate
-                className="w-full rounded-lg border border-[var(--color-border)] bg-white p-6 shadow-sm lg:p-8"
+                className="w-full rounded-xl border border-[var(--color-border)] bg-white p-5 lg:p-6"
               >
                 {currentStore && (
                   <div className="mb-6 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-default)] p-4">
@@ -156,7 +157,7 @@ export default function NewOwnerNoticePage() {
                     onChange={(event) => setTitle(event.target.value)}
                     placeholder="공지 제목을 입력해주세요."
                     aria-required="true"
-                    className={`${fieldClass} h-11`}
+                    className={`${fieldClass} h-12`}
                     disabled={!currentStore}
                   />
                   <p className="mt-1 text-right text-sm text-[var(--color-text-tertiary)]">
@@ -200,13 +201,14 @@ export default function NewOwnerNoticePage() {
                   <button
                     type="submit"
                     disabled={!currentStore || isSubmitting}
-                    className="inline-flex min-h-[44px] items-center justify-center rounded-lg bg-[var(--color-primary)] px-5 text-sm font-medium text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex min-h-[44px] items-center justify-center rounded-lg bg-[var(--color-primary)] px-5 text-sm font-semibold text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {isSubmitting ? "등록 중..." : "직원 공지 등록"}
                   </button>
                 </div>
               </form>
             )}
+           </div>
           </div>
         </main>
       </div>

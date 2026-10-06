@@ -3,11 +3,12 @@
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { ArrowLeft, ArrowRight } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
 import { resolveOwnerCurrentStore } from "@/lib/owner/current-store";
-import { buildBossQuestionsUrl, pickQuestionsStore } from "@/lib/owner/boss-questions-view";
+import { BOSS_QUESTIONS_PATH, buildBossQuestionsUrl, pickQuestionsStore } from "@/lib/owner/boss-questions-view";
 import type { RepeatedQuestionAlertView } from "@/lib/owner/repeated-question-alerts";
 
 interface RepeatedQuestionViewProps {
@@ -103,42 +104,53 @@ export default function RepeatedQuestionView({ storeId, alertId }: RepeatedQuest
     <div className="min-h-screen bg-[var(--color-bg-default)] flex">
       <OwnerSidebar activeMenu="questions" onLogout={handleLogout} />
 
-      <div className="flex-1 ml-0 lg:ml-[240px] flex flex-col">
+      <div className="flex-1 min-w-0 ml-0 lg:ml-[240px] flex flex-col">
         <OwnerHeader userName={userName} storeName={state.kind === "ready" ? state.storeName : ""} onLogout={handleLogout} />
 
         <main className="flex-1 overflow-y-auto">
-          <div className="px-5 sm:px-8 lg:px-12 xl:px-16 py-8 lg:py-12 max-w-4xl">
-            <h1 className="text-3xl lg:text-4xl font-bold text-[var(--color-text-primary)] mb-2">반복 질문</h1>
-            <p className="text-lg text-[var(--color-text-secondary)] mb-8">
-              같은 매장에서 같은 질문이 반복된 내용입니다. 근거 부족으로 보류된 질문 목록과는 별개입니다.
-            </p>
+          <div className="p-6 lg:p-8 max-w-7xl mx-auto">
+           <div className="max-w-4xl">
+            <Link
+              href={BOSS_QUESTIONS_PATH}
+              className="-ml-2 mb-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+            >
+              <ArrowLeft size={16} aria-hidden="true" /> 보류 질문
+            </Link>
+            <div className="mb-6">
+              <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">반복 질문</h1>
+              <p className="text-base text-[var(--color-text-secondary)]">
+                같은 매장에서 같은 질문이 반복된 내용입니다. 근거 부족으로 보류된 질문 목록과는 별개입니다.
+              </p>
+            </div>
 
             {state.kind === "loading" && (
-              <p role="status" className="text-sm text-[var(--color-text-secondary)]">불러오는 중...</p>
+              <div className="rounded-xl border border-[var(--color-border)] bg-white p-8 text-center">
+                <p role="status" className="text-base text-[var(--color-text-secondary)]">반복 질문을 불러오는 중...</p>
+              </div>
             )}
             {state.kind === "forbidden" && (
-              <p role="alert" className="p-4 border rounded-lg text-sm bg-red-50 border-red-200 text-red-700">
+              <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
                 이 매장의 반복 질문을 볼 권한이 없습니다.
               </p>
             )}
             {state.kind === "not-found" && (
-              <p role="status" className="p-4 border rounded-lg text-sm border-[var(--color-border)] text-[var(--color-text-secondary)]">
+              <p role="status" className="rounded-xl border border-[var(--color-border)] bg-white p-8 text-center text-base text-[var(--color-text-secondary)]">
                 반복 질문 알림을 찾을 수 없습니다.
               </p>
             )}
             {state.kind === "error" && (
-              <p role="alert" className="p-4 border rounded-lg text-sm bg-red-50 border-red-200 text-red-700">
+              <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
                 반복 질문 정보를 불러오지 못했습니다.
               </p>
             )}
 
             {state.kind === "ready" && (
-              <section className="bg-white border border-[var(--color-border)] rounded-lg p-6 space-y-4">
-                <p className="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[var(--color-bg-surface)] border border-[var(--color-border)] text-[var(--color-text-secondary)]">
+              <section className="rounded-xl border border-[var(--color-border)] bg-white p-5 lg:p-6 space-y-4">
+                <p className="inline-flex rounded-full bg-[var(--color-primary-light)]/40 px-2.5 py-0.5 text-xs font-semibold text-[var(--color-primary)]">
                   알림 발송 시점 집계 · {formatDate(state.alert.alertedAt)}
                 </p>
                 {state.alert.analysisLimited === true && (
-                  <p role="status" className="p-3 border rounded-lg text-sm bg-amber-50 border-amber-200 text-amber-800">
+                  <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
                     이 기간의 질문이 너무 많아 최근 질문 일부만 집계했습니다. 실제 반복 횟수는 더 많을 수 있습니다.
                   </p>
                 )}
@@ -173,11 +185,15 @@ export default function RepeatedQuestionView({ storeId, alertId }: RepeatedQuest
                 <p className="text-xs text-[var(--color-text-tertiary)]">
                   반복 횟수·기간·분류는 알림 발송 당시 값이며, 이후 들어온 같은 질문은 반영되지 않습니다. 표현이 다른 비슷한 질문은 합산하지 않습니다.
                 </p>
-                <Link href={buildBossQuestionsUrl(state.alert.storeId)} className="inline-block text-sm font-medium text-[var(--color-primary)] hover:underline">
-                  보류·반복 질문 처리 화면으로 이동
+                <Link
+                  href={buildBossQuestionsUrl(state.alert.storeId)}
+                  className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg bg-[var(--color-primary)] px-4 text-sm font-semibold text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2"
+                >
+                  보류·반복 질문 처리 화면으로 이동 <ArrowRight size={16} aria-hidden="true" />
                 </Link>
               </section>
             )}
+           </div>
           </div>
         </main>
       </div>

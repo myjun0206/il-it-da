@@ -205,25 +205,26 @@ export default function BossQuestionDetailView({
       <OwnerSidebar activeMenu="questions" onLogout={handleLogout} />
       <div className="min-h-0 min-w-0 flex-1 ml-0 lg:ml-[240px] flex flex-col">
         {detail.kind === "loading" ? (
-          <div className="sticky top-0 z-50 bg-white border-b border-(--color-border) h-16 shrink-0" />
+          <div className="sticky top-0 z-20 bg-white border-b border-(--color-border) h-16 shrink-0" />
         ) : (
           <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
         )}
 
         <main className="min-h-0 flex-1 overflow-y-auto">
-          <div className="px-5 sm:px-8 lg:px-12 xl:px-16 py-8 lg:py-12 max-w-5xl">
+          <div className="p-6 lg:p-8 max-w-7xl mx-auto">
+           <div className="max-w-5xl">
             <button
               type="button"
               onClick={() => router.push(detail.kind === "ready" ? buildBossQuestionsUrl(detail.store.storeId) : "/boss/questions")}
-              className="mb-6 inline-flex items-center gap-2 text-sm font-medium text-(--color-text-secondary) hover:text-(--color-text-primary) focus-visible:outline-2 focus-visible:outline-(--color-primary)"
+              className="-ml-2 mb-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:text-(--color-primary) focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-primary)"
             >
               <ArrowLeft size={16} aria-hidden="true" /> 보류 질문으로 돌아가기
             </button>
 
-            {detail.kind === "loading" && <p role="status" className="text-sm text-(--color-text-secondary)">질문을 불러오는 중...</p>}
-            {detail.kind === "forbidden" && <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">이 매장의 질문을 볼 권한이 없습니다.</p>}
-            {detail.kind === "error" && <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">질문 정보를 불러오지 못했습니다. 다시 시도해 주세요.</p>}
-            {detail.kind === "not-found" && <p role="status" className="rounded-md border border-(--color-border) bg-white p-4 text-sm text-(--color-text-secondary)">질문을 찾을 수 없습니다.</p>}
+            {detail.kind === "loading" && <p role="status" className="rounded-xl border border-(--color-border) bg-white p-8 text-center text-base text-(--color-text-secondary)">질문을 불러오는 중...</p>}
+            {detail.kind === "forbidden" && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">이 매장의 질문을 볼 권한이 없습니다.</p>}
+            {detail.kind === "error" && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">질문 정보를 불러오지 못했습니다. 다시 시도해 주세요.</p>}
+            {detail.kind === "not-found" && <p role="status" className="rounded-xl border border-(--color-border) bg-white p-8 text-center text-base text-(--color-text-secondary)">질문을 찾을 수 없습니다.</p>}
 
             {detail.kind === "ready" && (
               <article className="space-y-6">
@@ -259,14 +260,17 @@ export default function BossQuestionDetailView({
 
               </article>
             )}
+           </div>
           </div>
         </main>
         {detail.kind === "ready" && (
-                <footer aria-label="질문 처리 상태 변경" className="shrink-0 space-y-3 border-t border-(--color-border) bg-(--color-bg-default) px-5 sm:px-8 lg:px-12 xl:px-16 max-w-5xl pb-[max(1rem,env(safe-area-inset-bottom))] pt-4">
-                {error && <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</p>}
-                {notice && <p role="status" className="rounded-md border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{notice}</p>}
+                <footer aria-label="질문 처리 상태 변경" className="shrink-0 border-t border-(--color-border) bg-(--color-bg-default) px-6 lg:px-8 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4">
+                <div className="mx-auto max-w-7xl">
+                <div className="max-w-5xl space-y-3">
+                {error && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</p>}
+                {notice && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{notice}</p>}
                 {!detail.resolutionFeatureAvailable && (
-                  <p role="status" className="rounded-md border border-(--color-border) bg-white p-4 text-sm text-(--color-text-secondary)">
+                  <p role="status" className="rounded-lg border border-(--color-border) bg-white p-4 text-sm text-(--color-text-secondary)">
                     질문 처리 상태 관리 기능이 아직 준비 중입니다. 현재는 질문 열람만 가능합니다.
                   </p>
                 )}
@@ -279,7 +283,7 @@ export default function BossQuestionDetailView({
                       type="button"
                       disabled={updating || !detail.resolutionFeatureAvailable}
                       onClick={() => void handleStatusChange("in_progress")}
-                      className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-md border border-(--color-border) px-4 py-2.5 text-sm font-medium text-(--color-text-primary) hover:bg-(--color-bg-surface) focus-visible:outline-2 focus-visible:outline-(--color-primary) disabled:opacity-50 sm:flex-none"
+                      className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg border-2 border-(--color-border) bg-white px-4 py-2.5 text-sm font-medium text-(--color-text-primary) hover:border-(--color-primary)/50 hover:bg-(--color-bg-default) focus-visible:outline-2 focus-visible:outline-(--color-primary) disabled:opacity-50 sm:flex-none"
                     >
                       <Check size={16} aria-hidden="true" /> 처리 시작
                     </button>
@@ -289,7 +293,7 @@ export default function BossQuestionDetailView({
                       type="button"
                       disabled={updating || !detail.resolutionFeatureAvailable}
                       onClick={() => void handleStatusChange("resolved")}
-                      className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-md bg-(--color-primary) px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-primary) disabled:opacity-50 sm:flex-none"
+                      className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-(--color-primary) px-4 py-2.5 text-sm font-semibold text-white hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-primary) disabled:opacity-50 sm:flex-none"
                     >
                       <CircleCheck size={16} aria-hidden="true" /> {updating ? "처리 중..." : "처리 완료"}
                     </button>
@@ -299,12 +303,14 @@ export default function BossQuestionDetailView({
                       type="button"
                       disabled={updating || !detail.resolutionFeatureAvailable}
                       onClick={() => void handleStatusChange("in_progress")}
-                      className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-md border border-(--color-border) px-4 py-2.5 text-sm font-medium text-(--color-text-primary) hover:bg-(--color-bg-surface) focus-visible:outline-2 focus-visible:outline-(--color-primary) disabled:opacity-50 sm:flex-none"
+                      className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg border-2 border-(--color-border) bg-white px-4 py-2.5 text-sm font-medium text-(--color-text-primary) hover:border-(--color-primary)/50 hover:bg-(--color-bg-default) focus-visible:outline-2 focus-visible:outline-(--color-primary) disabled:opacity-50 sm:flex-none"
                     >
                       <RotateCcw size={16} aria-hidden="true" /> 다시 처리하기
                     </button>
                   )}
                   </div>
+                </div>
+                </div>
                 </div>
                 </footer>
         )}
