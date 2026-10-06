@@ -24,7 +24,7 @@ interface StoreSwitcherProps {
   onSelect: (storeId: string) => void;
   /** 매장 관리 화면(/staff/stores, /boss/stores)으로 이동 */
   onManageStores: () => void;
-  /** 헤더 등 좁은 높이에 넣을 때: 라벨을 화면에서 숨기고(스크린리더용) 버튼만 보여준다. */
+  /** 헤더용: 라벨은 스크린리더 전용, 직원 Header의 매장 표시와 같은 텍스트형 버튼과 우측 정렬 메뉴를 쓴다. */
   compact?: boolean;
 }
 
@@ -131,7 +131,7 @@ export default function StoreSwitcher({
   };
 
   return (
-    <div ref={containerRef} className="relative">
+    <div ref={containerRef} className={compact ? "relative min-w-0" : "relative"}>
       <span
         id={labelId}
         className={compact ? "sr-only" : "mb-1 block text-xs font-semibold text-[var(--color-text-secondary)]"}
@@ -153,26 +153,42 @@ export default function StoreSwitcher({
             open();
           }
         }}
-        className="flex min-h-[44px] w-full items-center gap-3 rounded-lg border border-[var(--color-border)] bg-white px-3 text-left transition-colors hover:border-[var(--color-primary)]/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-70"
+        className={
+          compact
+            ? "flex min-h-[44px] max-w-full items-center gap-2 rounded-lg px-2 text-left transition-colors hover:bg-[var(--color-primary-light)]/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-70 sm:px-3"
+            : "flex min-h-[44px] w-full items-center gap-3 rounded-lg border border-[var(--color-border)] bg-white px-3 text-left transition-colors hover:border-[var(--color-primary)]/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-70"
+        }
       >
-        <Store size={18} className="shrink-0 text-[var(--color-primary)]" aria-hidden="true" />
+        {!compact && <Store size={18} className="shrink-0 text-[var(--color-primary)]" aria-hidden="true" />}
         <span
           id={`${baseId}-value`}
-          className={`min-w-0 flex-1 truncate text-sm font-semibold ${
-            selectedStore ? "text-[var(--color-text-primary)]" : "text-[var(--color-text-secondary)]"
-          }`}
+          title={compact ? buttonText : undefined}
+          className={`min-w-0 truncate text-sm ${
+            compact ? "max-w-[5.5rem] font-medium min-[360px]:max-w-[8rem] sm:max-w-[200px]" : "flex-1 font-semibold"
+          } ${selectedStore ? "text-[var(--color-text-primary)]" : "text-[var(--color-text-secondary)]"}`}
         >
           {buttonText}
         </span>
         <ChevronDown
-          size={18}
+          size={compact ? 16 : 18}
           aria-hidden="true"
           className={`shrink-0 text-[var(--color-text-secondary)] transition-transform ${isOpen ? "rotate-180" : ""}`}
         />
       </button>
 
       {isOpen && (
-        <div className="absolute left-0 right-0 top-full z-30 mt-2 rounded-xl border border-[var(--color-border)] bg-white p-2 shadow-md">
+        <div
+          className={
+            compact
+              ? "fixed inset-x-2 top-16 z-50 mt-2 rounded-xl border border-[var(--color-border)] bg-white p-2 shadow-md sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:w-[280px]"
+              : "absolute left-0 right-0 top-full z-30 mt-2 rounded-xl border border-[var(--color-border)] bg-white p-2 shadow-md"
+          }
+        >
+          {compact && (
+            <p aria-hidden="true" className="mb-1 border-b border-[var(--color-border)] px-3 pb-3 pt-1 text-sm font-medium text-[var(--color-text-secondary)]">
+              {label}
+            </p>
+          )}
           {stores.length > 0 ? (
             <ul
               ref={listRef}

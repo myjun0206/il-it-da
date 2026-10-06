@@ -424,7 +424,7 @@ export default function SettingsPage() {
       <OwnerSidebar activeMenu="settings" onLogout={handleLogout} />
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col lg:ml-[240px]">
+      <div className="flex-1 min-w-0 flex flex-col lg:ml-[240px]">
         {/* Header */}
         <OwnerHeader userName={userInfo.name} storeName={storeName} onLogout={handleLogout} />
 

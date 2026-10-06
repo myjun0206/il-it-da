@@ -3,19 +3,20 @@
 import React, { useEffect, useLayoutEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { Megaphone, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
-import { NoticeCard } from "@/components/notices/NoticeCard";
+import { NoticeReadStatus } from "@/components/notices/NoticeReadStatus";
 import { NoticeDetailDialog } from "@/components/notices/NoticeDetailDialog";
 import { NoticeEditDialog } from "@/components/notices/NoticeEditDialog";
 import { NoticeFilter, type NoticeFilterOption } from "@/components/notices/NoticeFilter";
 import { NoticePageHeader } from "@/components/notices/NoticePageHeader";
 import { getNoticeViewCountIncrement, markNoticeAsRead } from "@/lib/notices/mark-notice-read";
 import { resolveOwnerCurrentStore } from "@/lib/owner/current-store";
-import { Input } from "@/components/common/Input";
+
+const stateBoxClass = "rounded-xl border border-[var(--color-border)] bg-white p-8 text-center";
 
 interface Notice {
   id: string;
@@ -274,10 +275,18 @@ export default function NoticesPage() {
     return (
       <div className="min-h-screen bg-[var(--color-bg-default)] flex">
         <OwnerSidebar activeMenu="notice" onLogout={handleLogout} />
-        <div className="flex-1 ml-0 lg:ml-[240px] flex flex-col">
+        <div className="flex-1 min-w-0 ml-0 lg:ml-[240px] flex flex-col">
           <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
           <main className="flex-1 overflow-y-auto p-6 lg:p-8">
-            <div className="text-center">로딩 중...</div>
+            <div className="mx-auto max-w-7xl">
+              <div className="mb-6">
+                <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">공지사항</h1>
+                <p className="text-base text-[var(--color-text-secondary)]">본사 공지와 현재 매장의 직원 공지를 확인하세요.</p>
+              </div>
+              <div className={stateBoxClass}>
+                <p className="text-base text-[var(--color-text-secondary)]" role="status">공지사항을 불러오는 중...</p>
+              </div>
+            </div>
           </main>
         </div>
       </div>
@@ -288,7 +297,7 @@ export default function NoticesPage() {
     <div className="min-h-screen bg-[var(--color-bg-default)] flex">
       <OwnerSidebar activeMenu="notice" onLogout={handleLogout} />
 
-      <div className="flex-1 ml-0 lg:ml-[240px] flex flex-col">
+      <div className="flex-1 min-w-0 ml-0 lg:ml-[240px] flex flex-col">
         <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
 
         {/* Main Content */}
@@ -296,7 +305,7 @@ export default function NoticesPage() {
           <div className="mx-auto max-w-7xl">
             <NoticePageHeader
               title="공지사항"
-              description="본사 공지와 현재 매장의 직원 공지를 확인하세요."
+              description={storeName ? `본사 공지와 ${storeName}의 직원 공지를 확인하세요.` : "본사 공지와 현재 매장의 직원 공지를 확인하세요."}
               action={selectedStoreId ? (
                 <Link
                   href="/boss/notices/new"
@@ -307,116 +316,114 @@ export default function NoticesPage() {
               ) : undefined}
             />
 
-            {/* 현재 매장 */}
-            <div className="mb-8">
-              <p className="text-sm font-semibold text-[var(--color-text-secondary)] mb-2">
-                현재 매장
-              </p>
-              <p className="text-base lg:text-lg font-semibold text-[var(--color-text-primary)]">
-                {storeName}
-              </p>
-            </div>
-
-            {notices.notices.length > 0 && (
-              <div className="mb-6">
-                <NoticeFilter
-                  ariaLabel="공지 출처"
-                  value={sourceFilter}
-                  options={OWNER_NOTICE_FILTERS}
-                  onChange={setSourceFilter}
-                />
-              </div>
-            )}
-
             {/* 에러 메시지 */}
             {error && (
-              <div className="mb-8 p-4 bg-red-50 border border-red-200 rounded-lg">
+              <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-5" role="alert">
                 <p className="text-sm text-red-700">{error}</p>
               </div>
             )}
 
             {/* 공지사항 목록 */}
-            <section>
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-xl lg:text-2xl font-bold text-[var(--color-text-primary)]">
-                  공지사항
-                </h2>
-                {notices.summary.total > 0 && (
-                  <span className="text-sm font-semibold text-[var(--color-text-secondary)]">
-                    총 {notices.summary.total}개
-                  </span>
+            <section aria-label="공지사항 목록">
+              {/* 검색 */}
+              <div className="mb-6 relative">
+                <Search
+                  size={18}
+                  className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]"
+                  aria-hidden="true"
+                />
+                <input
+                  type="search"
+                  placeholder="공지사항 검색"
+                  aria-label="공지사항 검색"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="h-12 w-full rounded-lg border border-[var(--color-border)] bg-white pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
+                />
+              </div>
+
+              {/* 출처 필터 + 분류 */}
+              <div className="mb-5 flex flex-wrap items-center gap-2">
+                {notices.notices.length > 0 && (
+                  <NoticeFilter
+                    ariaLabel="공지 출처"
+                    appearance="chip"
+                    value={sourceFilter}
+                    options={OWNER_NOTICE_FILTERS}
+                    onChange={setSourceFilter}
+                  />
                 )}
+                <select
+                  value={categoryFilter}
+                  onChange={(e) => setCategoryFilter(e.target.value)}
+                  aria-label="공지 분류 필터"
+                  className="ml-auto min-h-[36px] rounded-lg border border-[var(--color-border)] bg-white px-3 text-sm font-medium text-[var(--color-text-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                >
+                  {categories.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat === "전체" ? "전체 분류" : cat}
+                    </option>
+                  ))}
+                </select>
               </div>
 
-              {/* 검색 및 필터 */}
-              <div className="mb-6 flex flex-col lg:flex-row gap-3">
-                <div className="flex-1 relative">
-                  <Search
-                    size={20}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)]"
-                  />
-                  <Input
-                    type="text"
-                    placeholder="공지사항을 검색해보세요."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-10 h-12"
-                  />
-                </div>
-
-                <div className="flex-shrink-0">
-                  <select
-                    value={categoryFilter}
-                    onChange={(e) => setCategoryFilter(e.target.value)}
-                    className="h-12 px-4 border border-[var(--color-border)] rounded-lg bg-white text-[var(--color-text-primary)] font-medium hover:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-                  >
-                    {categories.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+              <p className="mb-4 text-sm text-[var(--color-text-secondary)]">
+                공지사항 <span className="font-bold text-[var(--color-text-primary)]">{filteredNotices.length}</span>개
+              </p>
 
               {/* 공지 목록 */}
               {filteredNotices.length === 0 ? (
-                <div className="bg-white border border-[var(--color-border)] rounded-lg p-12 text-center">
+                <div className={stateBoxClass}>
                   {notices.notices.length === 0 ? (
                     <>
-                      <p className="text-base font-semibold text-[var(--color-text-primary)] mb-1">
+                      <Megaphone size={28} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+                      <p className="text-base font-semibold text-[var(--color-text-primary)]">
                         등록된 공지사항이 없습니다.
                       </p>
-                      <p className="text-sm text-[var(--color-text-secondary)]">
+                      <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
                         본사에서 새로운 공지를 등록하면 이곳에서 확인할 수 있습니다.
                       </p>
                     </>
                   ) : (
                     <>
-                      <p className="text-base font-semibold text-[var(--color-text-primary)] mb-1">
+                      <Search size={28} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+                      <p className="text-base font-semibold text-[var(--color-text-primary)]">
                         검색 결과가 없습니다.
                       </p>
-                      <p className="text-sm text-[var(--color-text-secondary)]">
+                      <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
                         필터 또는 검색 조건을 바꿔보세요.
                       </p>
                     </>
                   )}
                 </div>
               ) : (
-                <div className="space-y-3">
+                <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
                   {filteredNotices.map((notice) => (
-                    <NoticeCard
-                      key={notice.id}
-                      title={notice.title}
-                      content={notice.content}
-                      sourceLabel={notice.isMine ? `점주 공지 · ${storeName} · ${notice.category}` : `본사 공지 · ${storeName} · ${notice.category}`}
-                      createdAt={notice.createdAt}
-                      viewCount={notice.viewCount}
-                      isRead={notice.isRead}
-                      onOpen={() => handleOpenModal(notice)}
-                    />
+                    <li key={notice.id} className="min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenModal(notice)}
+                        className="flex h-full w-full flex-col items-start rounded-xl border border-[var(--color-border)] bg-white p-5 text-left transition-colors hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                      >
+                        <span className="mb-3 flex flex-wrap items-center gap-2">
+                          <span className="inline-flex rounded-full bg-[var(--color-primary-light)]/40 px-2.5 py-0.5 text-xs font-semibold text-[var(--color-primary)]">
+                            {notice.isMine ? "내 공지" : "본사"}
+                          </span>
+                          <NoticeReadStatus isRead={notice.isRead} />
+                        </span>
+                        <span className="w-full text-base font-semibold text-[var(--color-text-primary)] break-keep line-clamp-2">
+                          {notice.title}
+                        </span>
+                        <span className="mt-1 w-full text-sm text-[var(--color-text-secondary)] break-words line-clamp-2">
+                          {notice.content}
+                        </span>
+                        <span className="mt-auto pt-3 text-xs text-[var(--color-text-tertiary)]">
+                          {notice.category} · {notice.createdAt.split("T")[0]} · 조회 {notice.viewCount}
+                        </span>
+                      </button>
+                    </li>
                   ))}
-                </div>
+                </ul>
               )}
             </section>
           </div>
