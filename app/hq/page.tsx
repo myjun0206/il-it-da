@@ -1,17 +1,13 @@
 "use client";
 
-import React, { useLayoutEffect, useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   UserCheck,
   MessageSquare,
   Store,
   ChevronRight,
 } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
-import HQSidebar from "@/components/hq/HQSidebar";
-import HQHeader from "@/components/hq/HQHeader";
 
 // Pending tasks configuration (counts will be fetched from DB)
 const pendingTasksConfig = [
@@ -41,10 +37,6 @@ const pendingTasksConfig = [
 ];
 
 export default function HQPage() {
-  const router = useRouter();
-  const [userName, setUserName] = useState("본사 관리자");
-  const [franchiseName, setFranchiseName] = useState("메가MGC커피");
-  const [isReady, setIsReady] = useState(false);
   const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0);
   const [storesWithoutOwnerCount, setStoresWithoutOwnerCount] = useState(0);
   const [storesWithOwnerCount, setStoresWithOwnerCount] = useState(0);
@@ -52,74 +44,6 @@ export default function HQPage() {
   const [commonManualCount, setCommonManualCount] = useState(0);
   const [storesWithManualsCount, setStoresWithManualsCount] = useState(0);
   const [totalStores, setTotalStores] = useState(0);
-
-  useLayoutEffect(() => {
-    // Check Supabase session
-    const checkAuth = async () => {
-      try {
-        const supabase = createClient();
-        const { data, error } = await supabase.auth.getUser();
-        
-        if (error || !data.user) {
-          router.push("/");
-          return;
-        }
-
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("role")
-          .eq("id", data.user.id)
-          .maybeSingle<{ role: string }>();
-
-        // Verify user is HQ
-        if (profile?.role !== "hq") {
-          router.push("/");
-          return;
-        }
-      } catch (e) {
-        console.error("Auth check failed:", e);
-        router.push("/");
-      }
-    };
-
-    checkAuth();
-  }, [router]);
-
-  useEffect(() => {
-    // Set user info from metadata
-    const setUserInfo = async () => {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-        
-        if (!data.session?.user) return;
-
-        const user = data.session.user;
-        const name = user.user_metadata?.name;
-
-        // Set user name from metadata
-        if (name) {
-          setUserName(name);
-        }
-
-        // Extract franchise name from user name or use default
-        // Format: "메가MGC커피 본사 관리자" -> "메가MGC커피"
-        if (name && name.includes(" ")) {
-          const parts = name.split(" ");
-          if (parts[0]) {
-            setFranchiseName(parts[0]);
-          }
-        }
-
-        setIsReady(true);
-      } catch (e) {
-        console.error("Set user info failed:", e);
-        setIsReady(true);
-      }
-    };
-
-    setUserInfo();
-  }, []);
 
   useEffect(() => {
     // Fetch pending approvals count and total stores
@@ -161,57 +85,27 @@ export default function HQPage() {
       }
     };
 
-    if (isReady) {
-      fetchDashboardData();
-    }
-  }, [isReady]);
-
-  const handleLogout = async () => {
-    try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
-      router.push("/");
-    } catch (e) {
-      console.error("Logout failed:", e);
-      router.push("/");
-    }
-  };
-
-  if (!isReady) {
-    return null;
-  }
+    fetchDashboardData();
+  }, []);
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-default)]">
-      {/* Sidebar */}
-      <HQSidebar
-        userName={userName}
-        franchiseName={franchiseName}
-        onLogout={handleLogout}
-        activeMenu="home"
-      />
-      <div className="lg:ml-[240px]">
-        {/* Header */}
-        <HQHeader userName={userName} franchiseName={franchiseName} onLogout={handleLogout} />
+    <main className="p-6 lg:p-8 max-w-7xl mx-auto">
+      {/* Greeting Section */}
+      <div className="mb-9">
+        <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
+          안녕하세요, 본사 관리자님
+        </h1>
+        <p className="text-base text-[var(--color-text-secondary)]">
+          메가MGC커피의 오늘 운영 현황을 확인해보세요.
+        </p>
+      </div>
 
-        {/* Content */}
-        <main className="p-6 lg:p-8 max-w-7xl mx-auto">
-          {/* Greeting Section */}
-          <div className="mb-9">
-            <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
-              안녕하세요, {userName}님
-            </h1>
-            <p className="text-base text-[var(--color-text-secondary)]">
-              {franchiseName}의 오늘 운영 현황을 확인해보세요.
-            </p>
-          </div>
-
-          {/* Pending Tasks Section */}
-          <div className="mb-12">
-            <h2 className="text-base font-bold text-[var(--color-text-primary)] mb-5">
-              확인이 필요한 업무
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+      {/* Pending Tasks Section */}
+      <div className="mb-12">
+        <h2 className="text-base font-bold text-[var(--color-text-primary)] mb-5">
+          확인이 필요한 업무
+        </h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               {pendingTasksConfig.map((task) => {
                 const Icon = task.icon;
                 let count = 0;
@@ -248,22 +142,22 @@ export default function HQPage() {
                   </Link>
                 );
               })}
-            </div>
-          </div>
+        </div>
+      </div>
 
-          {/* Store Status Section - Unified Panel */}
-          <div className="mb-12">
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-base font-bold text-[var(--color-text-primary)]">
-                지점 운영 현황
-              </h2>
-              <Link href="/hq/stores" className="text-sm font-medium text-[var(--color-primary)] hover:underline flex items-center gap-2 px-2 rounded transition-colors min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]">
-                전체 지점 보기 <ChevronRight size={16} aria-hidden="true" />
-              </Link>
-            </div>
-            <div className="bg-white border border-[var(--color-border)] rounded-lg p-6">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-0">
-                {[
+      {/* Store Status Section - Unified Panel */}
+      <div className="mb-12">
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-base font-bold text-[var(--color-text-primary)]">
+            지점 운영 현황
+          </h2>
+          <Link href="/hq/stores" className="text-sm font-medium text-[var(--color-primary)] hover:underline flex items-center gap-2 px-2 rounded transition-colors min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]">
+            전체 지점 보기 <ChevronRight size={16} aria-hidden="true" />
+          </Link>
+        </div>
+        <div className="bg-white border border-[var(--color-border)] rounded-lg p-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-0">
+            {[
                   { label: "전체 지점", value: totalStores },
                   { label: "점주 등록 지점", value: storesWithOwnerCount },
                   { label: "점주 미등록 지점", value: storesWithoutOwnerCount },
@@ -361,8 +255,6 @@ export default function HQPage() {
               </div>
             </div>
           </div>
-        </main>
-      </div>
-    </div>
+    </main>
   );
 }

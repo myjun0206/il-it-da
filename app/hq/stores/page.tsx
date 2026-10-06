@@ -4,10 +4,7 @@ import React, { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowRight, ChevronRight, CircleAlert, CircleCheck, Loader2, Search, Store, Users, X } from "lucide-react";
-import HQSidebar from "@/components/hq/HQSidebar";
-import HQHeader from "@/components/hq/HQHeader";
 import BackToHomeLink from "@/components/hq/BackToHomeLink";
-import { createClient } from "@/lib/supabase/client";
 import type { HqStoreSummary } from "@/lib/types/store";
 
 type OwnerFilter = "all" | "registered" | "unregistered";
@@ -63,8 +60,6 @@ export default function HqStoresPage() {
 function HqStoresContent() {
   const router = useRouter();
   const isNoOwnerView = useSearchParams().get("view") === NO_OWNER_VIEW;
-  const [userName, setUserName] = useState("본사 관리자");
-  const [franchiseName, setFranchiseName] = useState("메가MGC커피");
   const [stores, setStores] = useState<HqStoreSummary[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [ownerFilter, setOwnerFilter] = useState<OwnerFilter>("all");
@@ -78,15 +73,6 @@ function HqStoresContent() {
   useEffect(() => {
     const loadPage = async () => {
       try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-        const user = data.session?.user;
-        if (user?.user_metadata?.name) {
-          setUserName(user.user_metadata.name);
-          const firstName = user.user_metadata.name.split(" ")[0];
-          if (firstName) setFranchiseName(firstName);
-        }
-
         const response = await fetch("/api/hq/stores");
         const result = (await response.json()) as { stores?: HqStoreSummary[]; error?: string };
         if (!response.ok) {
@@ -104,15 +90,6 @@ function HqStoresContent() {
 
     void loadPage();
   }, []);
-
-  const handleLogout = async () => {
-    try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
-    } finally {
-      router.push("/");
-    }
-  };
 
   const handleOpenMembers = async (store: HqStoreSummary) => {
     setSelectedStore(store);
@@ -163,19 +140,9 @@ function HqStoresContent() {
   ];
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-default)]">
-      <HQSidebar
-        userName={userName}
-        franchiseName={franchiseName}
-        onLogout={handleLogout}
-        activeMenu={isNoOwnerView ? "home" : "store-status"}
-      />
-
-      <div className="lg:ml-[240px]">
-        <HQHeader userName={userName} franchiseName={franchiseName} onLogout={handleLogout} />
-
-        <main className="p-6 lg:p-8 max-w-7xl mx-auto">
-          {isNoOwnerView ? (
+    <>
+    <main className="p-6 lg:p-8 max-w-7xl mx-auto">
+      {isNoOwnerView ? (
             <>
               <BackToHomeLink />
               <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -392,7 +359,6 @@ function HqStoresContent() {
             </>
           )}
         </main>
-      </div>
 
       {selectedStore && (
         <div
@@ -463,6 +429,6 @@ function HqStoresContent() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
