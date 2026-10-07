@@ -501,6 +501,122 @@ describe("notice read authorization", () => {
 });
 
 describe("notice isRead/viewCount mapping and GET queries", () => {
+  type ViewFixtureRow = Record<string, unknown>;
+  type ViewQuery = { table: string; columns: string; equals: Record<string, unknown>; includes: Record<string, unknown[]> };
+
+  function hqViewApi(readRows: ViewFixtureRow[] | null, authorized = true) {
+    const queries: ViewQuery[] = [];
+    const tables: Record<string, ViewFixtureRow[] | null> = {
+      notices: [
+        { id: "notice-view", franchise_id: "brand-view", author_id: "hq-view", target_type: "all", target_store_id: null, audience: "owner", title: "View count fixture", content: "Read statistics", created_at: "2026-10-07T00:00:00.000Z" },
+        { id: "foreign-notice", franchise_id: "foreign-brand", author_id: "foreign-hq", target_type: "all", target_store_id: null, audience: "owner", title: "Foreign notice", content: "Not visible", created_at: "2026-10-07T00:00:00.000Z" },
+      ],
+      notice_reads: readRows,
+    };
+    const admin = {
+      from(table: string) {
+        assert.ok(Object.hasOwn(tables, table), `Unexpected table ${table}`);
+        const query: ViewQuery = { table, columns: "", equals: {}, includes: {} };
+        queries.push(query);
+        const builder = {
+          select(columns: string) { query.columns = columns; return builder; },
+          eq(column: string, value: unknown) { query.equals[column] = value; return builder; },
+          in(column: string, values: unknown[]) { query.includes[column] = values; return builder; },
+          order() { return builder; },
+          then(resolve: (result: { data: ViewFixtureRow[] | null; error: null }) => unknown) {
+            const rows = tables[table]?.filter((row) => Object.entries(query.equals).every(([column, value]) => row[column] === value)
+              && Object.entries(query.includes).every(([column, values]) => values.includes(row[column]))) ?? null;
+            return Promise.resolve({ data: rows, error: null }).then(resolve);
+          },
+        };
+        return builder;
+      },
+    };
+    const route = loadComponentModule<{ GET: () => Promise<Response> }>("app/api/hq/notices/route.ts", {
+      "next/server": { NextResponse: { json: (body: unknown, init?: ResponseInit) => Response.json(body, init) } },
+      "@/lib/supabase/admin": { createAdminClient: () => admin },
+      "@/lib/supabase/hq-auth": { requireHqUser: async () => authorized ? { userId: "hq-view", franchiseId: "brand-view" } : null },
+    });
+    return { get: route.GET, queries };
+  }
+
+  async function renderHqApiResponse(response: Response) {
+    const effects: Array<() => void> = [];
+    const requests: string[] = [];
+    const harness = createHookHarness([]);
+    const page = loadComponentModule<{ default: () => ReactNode }>("app/hq/communication/page.tsx", {
+      react: { ...harness.react, useEffect: (effect: () => void) => { effects.push(effect); } },
+      "next/link": { default: (props: { children: ReactNode; href: string }) => createElement("a", { href: props.href }, props.children), __esModule: true },
+    }, {
+      fetch: async (url: string) => { requests.push(url); assert.equal(url, "/api/hq/notices"); return response; },
+    });
+    harness.render(page.default);
+    assert.ok(effects[0]);
+    effects[0]();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const tree = harness.render(page.default);
+    assert.deepEqual(requests, ["/api/hq/notices"]);
+    return { tree, render: () => harness.render(page.default) };
+  }
+
+  for (const scenario of [
+    { name: "zero reads", rows: [] as ViewFixtureRow[], count: 0 },
+    { name: "positive unique reads", rows: [
+      { notice_id: "notice-view", user_id: "reader-one" },
+      { notice_id: "notice-view", user_id: "reader-one" },
+      { notice_id: "notice-view", user_id: "reader-two" },
+      { notice_id: "foreign-notice", user_id: "foreign-reader" },
+    ], count: 2 },
+    { name: "missing read data", rows: null, count: 0 },
+  ]) {
+    test(`HQ ${scenario.name}: actual GET response survives row conversion, card rendering and detail props`, async () => {
+      const api = hqViewApi(scenario.rows);
+      const response = await api.get();
+      assert.equal(response.status, 200);
+      const payload = await response.clone().json() as { notices: Array<{ id: string; viewCount: number }> };
+      assert.equal(payload.notices.length, 1);
+      assert.equal(Object.hasOwn(payload.notices[0], "viewCount"), true);
+      assert.equal(payload.notices[0].viewCount, scenario.count);
+      assert.equal(api.queries[0].equals.franchise_id, "brand-view");
+      assert.deepEqual(api.queries[1], { table: "notice_reads", columns: "notice_id,user_id", equals: {}, includes: { notice_id: ["notice-view"] } });
+      const page = await renderHqApiResponse(response);
+      const markup = renderToStaticMarkup(page.tree);
+      assert.ok(markup.includes(`조회 ${scenario.count}`));
+      assert.equal(markup.includes("Foreign notice"), false);
+      const card = componentElements(page.tree).find((element) => element.type === "button"
+        && renderToStaticMarkup(element).includes("View count fixture"));
+      assert.ok(card);
+      (card.props.onClick as () => void)();
+      const dialog = componentElements(page.render()).find((element) => (element.props.notice as { id?: string } | undefined)?.id === "notice-view");
+      assert.ok(dialog);
+      assert.equal((dialog.props.notice as { viewCount: number }).viewCount, scenario.count);
+      assert.equal((dialog.props.notice as { isRead: unknown }).isRead, null);
+      assert.ok(renderToStaticMarkup(dialog).includes(`조회 ${scenario.count}`));
+      assert.equal(api.queries.length, 2);
+    });
+  }
+
+  test("HQ view-count API rejects callers without HQ authorization before any data query", async () => {
+    const api = hqViewApi([], false);
+    assert.equal((await api.get()).status, 403);
+    assert.deepEqual(api.queries, []);
+  });
+
+  test("a malformed response omitting viewCount is not silently converted into a real zero statistic", async () => {
+    const page = await renderHqApiResponse(Response.json({ notices: [{
+      id: "notice-view", title: "View count fixture", content: "Malformed fixture", targetType: "all", audience: "owner", isMine: false, createdAt: "2026-10-07T00:00:00.000Z",
+    }] }));
+    const card = componentElements(page.tree).find((element) => element.type === "button"
+      && renderToStaticMarkup(element).includes("View count fixture"));
+    assert.ok(card);
+    (card.props.onClick as () => void)();
+    const dialog = componentElements(page.render()).find((element) => (element.props.notice as { id?: string } | undefined)?.id === "notice-view");
+    assert.ok(dialog);
+    assert.equal((dialog.props.notice as { viewCount?: number }).viewCount, undefined);
+    assert.equal(renderToStaticMarkup(card).includes("조회 0"), false);
+    assert.equal(renderToStaticMarkup(dialog).includes("조회 0"), false);
+  });
+
   test("maps only IDs returned for the current user to read notices", () => {
     const notices = [{ id: "hq-notice" }, { id: "owner-staff-notice" }, { id: "unread-notice" }];
     assert.deepEqual(withNoticeReadStatus(notices, ["hq-notice", "owner-staff-notice"]), [
