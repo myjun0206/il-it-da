@@ -14,6 +14,7 @@ import { NoticeFilter, type NoticeFilterOption } from "@/components/notices/Noti
 import { NoticePageHeader } from "@/components/notices/NoticePageHeader";
 import { NoticePagination } from "@/components/notices/NoticePagination";
 import { createClient } from "@/lib/supabase/client";
+import { useClientReady } from "@/lib/hq/use-client-ready";
 import type { HqNoticeItem } from "@/lib/types/notice";
 import type { NoticeSortOrder } from "@/lib/notices/sort-notices";
 import { DEFAULT_NOTICE_LIMIT, DEFAULT_NOTICE_PAGE, type NoticePaginationMetadata } from "@/lib/notices/pagination";
@@ -76,9 +77,9 @@ function toNoticeRow(notice: HqNoticeItem): HqNotice {
 
 export default function CommunicationPage() {
   const router = useRouter();
+  const isReady = useClientReady();
   const [userName, setUserName] = useState("본사 관리자");
   const [franchiseName, setFranchiseName] = useState("프랜차이즈");
-  const [isReady, setIsReady] = useState(false);
   const [notices, setNotices] = useState<HqNotice[]>([]);
   const [targetStores, setTargetStores] = useState<HqTargetStore[]>([]);
   const [pagination, setPagination] = useState<NoticePaginationMetadata>({
@@ -132,7 +133,6 @@ export default function CommunicationPage() {
           }
         }
 
-        setIsReady(true);
       } catch (error) {
         console.error("Set user info failed:", error);
         router.push("/");
