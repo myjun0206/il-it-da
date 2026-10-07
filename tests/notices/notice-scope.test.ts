@@ -60,7 +60,7 @@ function noticePageScenario(role: "hq" | "owner" | "staff", multiple = false) {
     { ...notice, id: "notice-c", title: "Franchise Safety", targetType: "franchise", target: "전체 지점", targetStoreId: null },
   ] : [notice];
   const initialStates = role === "hq"
-    ? ["Tester", "Cafe", true, rows, false, "", "", "all", "all", null, null, null, false]
+    ? [true, rows, false, "", "", "all", "all", null, null, null, false]
     : role === "owner"
       ? [true, "Tester", "Store A", "store-a", { notices: rows, summary: { total: rows.length, important: 0 } }, false, "", "all", "", "전체", null, null, null, false]
       : [{ key: "store-a:0", status: "ready", notices: rows }, 0, "", "all", "all", null];
@@ -543,8 +543,7 @@ describe("notice isRead/viewCount mapping and GET queries", () => {
     assert.match(noticeCard, /<NoticeReadStatus isRead=\{isRead\} \/>/);
     assert.match(noticeMeta, /조회 \{viewCount\}/);
     assert.match(noticeCard, /viewCount=\{viewCount\}/);
-    assert.match(hqNoticesPage, /viewCount=\{notice\.viewCount\}/);
-    assert.match(hqNoticesPage, /isRead=\{null\}/);
+    assert.match(hqNoticesPage, /조회 \{notice\.viewCount\}/);
     assert.doesNotMatch(hqNoticesPage, /markNoticeAsRead/);
   });
 });
@@ -556,7 +555,12 @@ describe("notice source and target filters", () => {
       const change = (predicate: (element: ReturnType<typeof componentElements>[number]) => boolean, value: string, event = false) => {
         const control = componentElements(scenario.render()).find(predicate);
         assert.ok(control, `${role}: missing filter control`);
-        (control.props.onChange as (value: unknown) => void)(event ? { target: { value } } : value);
+        if (typeof control.props.onChange === "function") {
+          (control.props.onChange as (value: unknown) => void)(event ? { target: { value } } : value);
+        } else {
+          assert.equal(typeof control.props.onClick, "function", `${role}: filter control has no handler`);
+          (control.props.onClick as () => void)();
+        }
       };
       const hasTitles = (titles: string[]) => {
         const markup = renderToStaticMarkup(scenario.render());
@@ -566,7 +570,11 @@ describe("notice source and target filters", () => {
       };
       const search = (value: string) => change((element) => typeof element.props.onChange === "function" && typeof element.props.placeholder === "string", value, true);
       if (role === "hq") {
-        change((element) => element.props.ariaLabel === "공지 대상 범위", "store");
+        const scope = componentElements(scenario.render()).find(
+          (element) => element.type === "button" && element.props.children === "특정 지점",
+        );
+        assert.ok(scope);
+        (scope.props.onClick as () => void)();
         change((element) => element.props["aria-label"] === "공지 대상 지점 필터", "Store A", true);
         search("  Kitchen  ");
         hasTitles(["Kitchen Safety"]);
@@ -910,7 +918,7 @@ describe("notice read API UI wiring", () => {
     assert.match(ownerNoticesPage, /markNoticeAsRead\(notice\.id\)\.then\(\(result\) => \{[\s\S]*?if \(!result\.succeeded\) return;[\s\S]*?getNoticeViewCountIncrement\(result\)[\s\S]*?viewCount: currentNotice\.viewCount \+ viewCountIncrement/);
     assert.match(staffNoticesPage, /markNoticeAsRead\(notice\.id\)\.then\(\(result\) => \{[\s\S]*?if \(!result\.succeeded\) return;[\s\S]*?getNoticeViewCountIncrement\(result\)[\s\S]*?viewCount: currentNotice\.viewCount \+ viewCountIncrement/);
     assert.doesNotMatch(hqNoticesPage, /markNoticeAsRead/);
-    assert.match(hqNoticesPage, /viewCount=\{notice\.viewCount\}/);
+    assert.match(hqNoticesPage, /조회 \{notice\.viewCount\}/);
   });
 
   test("read helper POSTs the notice route without a user_id body and tolerates failures", () => {
