@@ -1,13 +1,11 @@
 "use client";
 
-import React, { useEffect, useLayoutEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
+import { useClientReady } from "@/lib/hq/use-client-ready";
 import { useRouter } from "next/navigation";
 import { AlertCircle, ArrowLeft, FileText, Pencil, Plus, RefreshCw, Search, Upload, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
-import { createClient } from "@/lib/supabase/client";
-import HQSidebar from "@/components/hq/HQSidebar";
-import HQHeader from "@/components/hq/HQHeader";
 import { ManualSearchReadinessPanel } from "@/components/manuals/ManualSearchReadinessPanel";
 import { manualSaveMessage } from "@/lib/manuals/manual-save-result";
 import type { ManualRecord } from "@/lib/types/manual";
@@ -97,9 +95,7 @@ function groupByCategory(manuals: ManualRecord[], groups: ManualGroup[]): Manual
 
 export default function ManualDashboardPage() {
   const router = useRouter();
-  const [userName, setUserName] = useState("본사 관리자");
-  const [franchiseName, setFranchiseName] = useState("메가MGC커피");
-  const [isReady, setIsReady] = useState(false);
+  const isReady = useClientReady();
   const [manuals, setManuals] = useState<ManualRecord[]>([]);
   const [isLoadingManuals, setIsLoadingManuals] = useState(true);
   const [manualsLoadError, setManualsLoadError] = useState("");
@@ -160,49 +156,6 @@ export default function ManualDashboardPage() {
     setTimeout(() => setToastMessage(""), 2500);
   };
 
-  useLayoutEffect(() => {
-    const checkAuth = async () => {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-
-        if (!data.session?.user || data.session.user.user_metadata?.role !== "hq") {
-          router.push("/");
-          return;
-        }
-      } catch (e) {
-        console.error("Auth check failed:", e);
-        router.push("/");
-      }
-    };
-
-    checkAuth();
-  }, [router]);
-
-  useEffect(() => {
-    const setUserInfo = async () => {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-
-        if (!data.session?.user) return;
-
-        const name = data.session.user.user_metadata?.name;
-        if (name) {
-          setUserName(name);
-          if (name.includes(" ")) {
-            const [first] = name.split(" ");
-            if (first) setFranchiseName(first);
-          }
-        }
-      } finally {
-        setIsReady(true);
-      }
-    };
-
-    setUserInfo();
-  }, []);
-
   const fetchManualsData = async (): Promise<ManualRecord[]> => {
     const response = await fetch("/api/manuals?includeCategoryPlaceholders=1", {
       cache: "no-store",
@@ -247,17 +200,6 @@ export default function ManualDashboardPage() {
         : "네트워크 문제로 공통 매뉴얼을 불러오지 못했습니다. 다시 시도해 주세요."))
       .finally(() => setIsLoadingManuals(false));
   }, [manualsReloadKey]);
-
-  const handleLogout = async () => {
-    try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
-      router.push("/");
-    } catch (e) {
-      console.error("Logout failed:", e);
-      router.push("/");
-    }
-  };
 
   const groups = groupByParent(manuals);
   const categories = groupByCategory(manuals, groups);
@@ -776,18 +718,8 @@ export default function ManualDashboardPage() {
         : null;
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-default)]">
-      <HQSidebar
-        userName={userName}
-        franchiseName={franchiseName}
-        onLogout={handleLogout}
-        activeMenu="manual-common"
-      />
-
-      <div className="lg:ml-[240px]">
-        <HQHeader userName={userName} franchiseName={franchiseName} onLogout={handleLogout} />
-
-        <main className="p-6 lg:p-8 max-w-7xl mx-auto">
+    <>
+      <main className="p-6 lg:p-8 max-w-7xl mx-auto">
           {detailHeader ? (
             <>
               <div className="mb-8 flex items-start gap-3">
@@ -845,8 +777,8 @@ export default function ManualDashboardPage() {
           ) : view === "categories" ? (
             <section>
               {/* Toolbar: 왼쪽 검색 / 오른쪽 [위험] [보조] [주요] 액션. 좌우 끝이 아래 grid와 같은 기준선이다. */}
-              <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-                <div className="relative w-full md:w-[420px] md:flex-none">
+              <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center">
+                <div className="relative flex-1 min-w-0">
                   <Search
                     size={18}
                     aria-hidden="true"
@@ -861,7 +793,7 @@ export default function ManualDashboardPage() {
                     className="h-11 w-full rounded-lg border-2 border-[var(--color-border)] bg-white pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/30"
                   />
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
                   <button
                     type="button"
                     disabled={categories.length === 0}
@@ -888,18 +820,7 @@ export default function ManualDashboardPage() {
                   <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[var(--color-primary-light)]">
                     <FileText size={32} className="text-[var(--color-primary)]" aria-hidden="true" />
                   </div>
-                  <p className="mb-2 text-base text-[var(--color-text-secondary)]">등록된 공통 매뉴얼이 없습니다.</p>
-                  <p className="mb-6 text-sm text-[var(--color-text-tertiary)]">
-                    매뉴얼 파일을 업로드하거나 첫 카테고리를 추가해보세요.
-                  </p>
-                  <div className="flex flex-wrap justify-center gap-2">
-                    <Button variant="outline" className="min-h-[44px]" onClick={goToManualUpload}>
-                      <Upload size={16} className="mr-2" aria-hidden="true" /> 매뉴얼 파일 업로드
-                    </Button>
-                    <Button variant="primary" className="min-h-[44px]" onClick={() => setShowCategoryModal(true)}>
-                      <Plus size={16} className="mr-2" aria-hidden="true" /> 첫 카테고리 추가
-                    </Button>
-                  </div>
+                  <p className="text-base text-[var(--color-text-secondary)]">등록된 공통 매뉴얼이 없습니다.</p>
                 </div>
               ) : (
                 <>
@@ -968,8 +889,8 @@ export default function ManualDashboardPage() {
             </section>
           ) : view === "titles" ? (
             <section>
-              <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-                <div className="relative w-full md:w-[420px] md:flex-none">
+              <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center">
+                <div className="relative flex-1 min-w-0">
                   <Search
                     size={18}
                     aria-hidden="true"
@@ -986,7 +907,7 @@ export default function ManualDashboardPage() {
                 </div>
                 <Button
                   variant="primary"
-                  className="min-h-[44px]"
+                  className="min-h-[44px] shrink-0"
                   onClick={() => setShowTitleModal(true)}
                   disabled={!selectedCategory}
                 >
@@ -1046,8 +967,8 @@ export default function ManualDashboardPage() {
             </section>
           ) : (
             <section>
-              <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-                <div className="relative w-full md:w-[420px] md:flex-none">
+              <div className="mb-6">
+                <div className="relative">
                   <Search
                     size={18}
                     aria-hidden="true"
@@ -1146,7 +1067,6 @@ export default function ManualDashboardPage() {
             </section>
           )}
         </main>
-      </div>
 
       {/* Delete All Manuals Confirm Modal */}
       {showDeleteAllConfirm && (
@@ -1425,7 +1345,7 @@ export default function ManualDashboardPage() {
           {toastMessage}
         </div>
       )}
-    </div>
+    </>
   );
 }
 

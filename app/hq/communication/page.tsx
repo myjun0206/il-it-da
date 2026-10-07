@@ -1,18 +1,13 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { useClientReady } from "@/lib/hq/use-client-ready";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Megaphone, Pencil, Plus, Search, Trash2 } from "lucide-react";
-import HQSidebar from "@/components/hq/HQSidebar";
-import HQHeader from "@/components/hq/HQHeader";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
-import { NoticeCard } from "@/components/notices/NoticeCard";
 import { NoticeDetailDialog } from "@/components/notices/NoticeDetailDialog";
 import { NoticeEditDialog } from "@/components/notices/NoticeEditDialog";
 import { NoticeFilter, type NoticeFilterOption } from "@/components/notices/NoticeFilter";
-import { NoticePageHeader } from "@/components/notices/NoticePageHeader";
-import { createClient } from "@/lib/supabase/client";
 import type { HqNoticeItem } from "@/lib/types/notice";
 
 // 목록 표시용 형태. /api/hq/notices 응답에서 대상 라벨을 계산해 만든다.
@@ -71,10 +66,7 @@ function toNoticeRow(notice: HqNoticeItem): HqNotice {
 }
 
 export default function CommunicationPage() {
-  const router = useRouter();
-  const [userName, setUserName] = useState("본사 관리자");
-  const [franchiseName, setFranchiseName] = useState("프랜차이즈");
-  const [isReady, setIsReady] = useState(false);
+  const isReady = useClientReady();
   const [notices, setNotices] = useState<HqNotice[]>([]);
   const [isLoadingNotices, setIsLoadingNotices] = useState(true);
   const [noticesError, setNoticesError] = useState("");
@@ -85,48 +77,6 @@ export default function CommunicationPage() {
   const [deletingNotice, setDeletingNotice] = useState<HqNotice | null>(null);
   const [selectedNotice, setSelectedNotice] = useState<HqNotice | null>(null);
   const [isDeletingNotice, setIsDeletingNotice] = useState(false);
-
-  useEffect(() => {
-    const setUserInfo = async () => {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getUser();
-
-        if (!data.user) {
-          router.push("/");
-          return;
-        }
-
-        const name = data.user.user_metadata?.name;
-
-        if (name) {
-          setUserName(name);
-        }
-
-        // 기존에 저장된 프랜차이즈 이름이 있으면 화면 표시용으로 사용
-        const savedFranchiseName = sessionStorage.getItem(
-          "loggedInFranchiseName"
-        );
-
-        if (savedFranchiseName) {
-          setFranchiseName(savedFranchiseName);
-        } else if (name && name.includes(" ")) {
-          const parts = name.split(" ");
-
-          if (parts[0]) {
-            setFranchiseName(parts[0]);
-          }
-        }
-
-        setIsReady(true);
-      } catch (error) {
-        console.error("Set user info failed:", error);
-        router.push("/");
-      }
-    };
-
-    setUserInfo();
-  }, [router]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -150,17 +100,7 @@ export default function CommunicationPage() {
     void loadNotices();
   }, [isReady]);
 
-  const handleLogout = async () => {
-    try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
-      sessionStorage.clear();
-      router.push("/");
-    } catch (error) {
-      console.error("Logout failed:", error);
-      router.push("/");
-    }
-  };
+
 
   const updateNotice = async (title: string, content: string) => {
     if (!editingNotice) return;
@@ -230,27 +170,16 @@ export default function CommunicationPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-default)]">
-      {/* Sidebar */}
-      <HQSidebar
-        userName={userName}
-        franchiseName={franchiseName}
-        onLogout={handleLogout}
-        activeMenu="notice"
-      />
-
-      {/* Main Content */}
-      <div className="lg:ml-[240px]">
-        {/* Header */}
-        <HQHeader userName={userName} franchiseName={franchiseName} onLogout={handleLogout} />
-
-        {/* Content */}
-        <main className="p-6 lg:p-8 max-w-7xl mx-auto">
-          <NoticePageHeader
-            title="공지사항"
-            description="전체 또는 특정 지점에 전달할 공지를 작성하고 관리합니다."
-            action={<CreateNoticeButton label="새 공지 작성" />}
-          />
+    <>
+    <main className="p-6 lg:p-8 max-w-7xl mx-auto">
+          {/* 페이지 헤더 */}
+          <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">공지사항</h1>
+              <p className="text-base text-[var(--color-text-secondary)]">전체 또는 특정 지점에 전달할 공지를 작성하고 관리합니다.</p>
+            </div>
+            <CreateNoticeButton label="새 공지 작성" />
+          </div>
 
           <section aria-label="공지사항 목록">
             {isLoadingNotices ? (
@@ -276,47 +205,68 @@ export default function CommunicationPage() {
               </div>
             ) : (
               <>
-                <div className="mb-4">
-                  <NoticeFilter
-                    ariaLabel="공지 대상 범위"
-                    value={scopeFilter}
-                    options={HQ_NOTICE_FILTERS}
-                    onChange={changeScopeFilter}
-                  />
+                {/* 범위 필터 (chip 스타일) */}
+                <div className="mb-6 flex flex-wrap items-center gap-2" role="group" aria-label="공지 범위">
+                  {HQ_NOTICE_FILTERS.map(({ value, label }) => {
+                    const isActive = scopeFilter === value;
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        aria-pressed={isActive}
+                        onClick={() => changeScopeFilter(value)}
+                        className={`min-h-[36px] rounded-full border px-3.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${
+                          isActive
+                            ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/40 text-[var(--color-primary)]"
+                            : "border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]/50 hover:text-[var(--color-text-primary)]"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
                 </div>
-                {/* Toolbar */}
-                <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div className="relative w-full md:max-w-sm">
-                    <Search
-                      size={18}
-                      aria-hidden="true"
-                      className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]"
-                    />
-                    <input
-                      type="search"
-                      value={searchQuery}
-                      onChange={(event) => setSearchQuery(event.target.value)}
-                      placeholder="공지 제목으로 검색"
-                      aria-label="공지 제목으로 검색"
-                      className="min-h-[44px] w-full rounded-lg border-2 border-[var(--color-border)] bg-white py-2.5 pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/30"
-                    />
+
+                {/* 검색 & 대상 필터 */}
+                <div className="mb-6">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-3">
+                    <div className="relative flex-1">
+                      <Search
+                        size={18}
+                        aria-hidden="true"
+                        className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]"
+                      />
+                      <input
+                        type="search"
+                        value={searchQuery}
+                        onChange={(event) => setSearchQuery(event.target.value)}
+                        placeholder="공지사항 검색"
+                        aria-label="공지사항 검색"
+                        className="min-h-[44px] w-full rounded-lg border border-[var(--color-border)] bg-white pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
+                      />
+                    </div>
+                    {scopeFilter !== "franchise" && targetOptions.length > 0 && (
+                      <select
+                        value={targetFilter}
+                        onChange={(event) => setTargetFilter(event.target.value)}
+                        aria-label="공지 대상 지점 필터"
+                        className="min-h-[44px] rounded-lg border border-[var(--color-border)] bg-white px-4 text-sm font-medium text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                      >
+                        <option value={ALL_TARGETS}>{scopeFilter === "store" ? "모든 특정 지점" : "전체 대상"}</option>
+                        {targetOptions.map((target) => (
+                          <option key={target} value={target}>
+                            {target}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </div>
-                  {scopeFilter !== "franchise" && targetOptions.length > 0 && (
-                    <select
-                      value={targetFilter}
-                      onChange={(event) => setTargetFilter(event.target.value)}
-                      aria-label="공지 대상 지점 필터"
-                      className="min-h-[44px] rounded-lg border-2 border-[var(--color-border)] bg-white px-4 text-sm font-medium text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/30"
-                    >
-                      <option value={ALL_TARGETS}>{scopeFilter === "store" ? "모든 특정 지점" : "전체 대상"}</option>
-                      {targetOptions.map((target) => (
-                        <option key={target} value={target}>
-                          {target}
-                        </option>
-                      ))}
-                    </select>
-                  )}
                 </div>
+
+                {/* 공지사항 개수 */}
+                <p className="mb-4 text-sm text-[var(--color-text-secondary)]">
+                  공지사항 <span className="font-bold text-[var(--color-text-primary)]">{filteredNotices.length}</span>개
+                </p>
 
                 {filteredNotices.length === 0 ? (
                   <div className="bg-white border border-[var(--color-border)] rounded-xl p-12 text-center shadow-sm">
@@ -324,26 +274,39 @@ export default function CommunicationPage() {
                     <p className="text-base text-[var(--color-text-secondary)]">선택한 조건에 맞는 공지사항이 없습니다.</p>
                   </div>
                 ) : (
-                  <div className="space-y-3">
+                  <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
                     {filteredNotices.map((notice) => (
-                      <NoticeCard
-                        key={notice.id}
-                        title={notice.title}
-                        content={notice.content}
-                        sourceLabel={notice.sourceLabel}
-                        createdAt={notice.createdAt}
-                        viewCount={notice.viewCount}
-                        isRead={null}
-                        onOpen={() => setSelectedNotice(notice)}
-                      />
+                      <li key={notice.id} className="min-w-0">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedNotice(notice)}
+                          className="flex h-full w-full flex-col items-start rounded-xl border border-[var(--color-border)] bg-white p-5 text-left transition-colors hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                        >
+                          <div className="mb-3 flex gap-2 items-center">
+                            <span className="inline-flex rounded-full bg-[var(--color-primary-light)]/40 px-2.5 py-0.5 text-xs font-semibold text-[var(--color-primary)]">
+                              본사
+                            </span>
+                          </div>
+                          <h3 className="w-full text-base font-semibold text-[var(--color-text-primary)] break-keep line-clamp-2">
+                            {notice.title}
+                          </h3>
+                          <p className="mt-2 w-full text-sm text-[var(--color-text-secondary)] line-clamp-2">
+                            {notice.content}
+                          </p>
+                          <div className="mt-auto pt-3 text-xs text-[var(--color-text-tertiary)]">
+                            {notice.createdAt.split("T")[0]} · 조회 {notice.viewCount}
+                          </div>
+                        </button>
+                      </li>
                     ))}
-                  </div>
+                  </ul>
                 )}
               </>
             )}
           </section>
         </main>
-      </div>
+
+      {/* 상세 보기 다이얼로그 */}
       {selectedNotice && (
         <NoticeDetailDialog
           notice={{ ...selectedNotice, isRead: null }}
@@ -374,6 +337,8 @@ export default function CommunicationPage() {
           ) : undefined}
         />
       )}
+
+      {/* 수정 다이얼로그 */}
       {editingNotice && (
         <NoticeEditDialog
           key={editingNotice.id}
@@ -382,6 +347,8 @@ export default function CommunicationPage() {
           onSave={updateNotice}
         />
       )}
+
+      {/* 삭제 확인 다이얼로그 */}
       <ConfirmDialog
         isOpen={Boolean(deletingNotice)}
         title="공지 삭제"
@@ -393,6 +360,6 @@ export default function CommunicationPage() {
         onConfirm={() => void deleteNotice()}
         onCancel={() => setDeletingNotice(null)}
       />
-    </div>
+    </>
   );
 }

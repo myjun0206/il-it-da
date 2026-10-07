@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { Script } from "node:vm";
+import ts from "typescript";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -353,7 +356,7 @@ describe("라우트 소스 계약", () => {
   });
 
   test("대상 매장 브랜드는 stores.franchise_id로 정한다", () => {
-    assert.match(storeRequest, /from\("stores"\)\s*\n\s*\.select\("franchise_id"\)\s*\n\s*\.eq\("id", requestedStoreId\)/);
+    assert.match(storeRequest, /from\("stores"\)\s*\n\s*\.select\("store_name, franchise_id"\)\s*\n\s*\.eq\("id", requestedStoreId\)/);
     assert.match(storeRequest, /franchiseId: storeFranchiseId/);
   });
 
@@ -394,5 +397,116 @@ describe("라우트 소스 계약", () => {
       assert.equal(/error: \w*[Ee]rror\.message/.test(source), false);
       assert.equal(/details: \w*[Ee]rror\.details/.test(source), false);
     }
+  });
+});
+
+describe("owner store request POST with injected Auth/DB clients", () => {
+  type QueryCall = { table: string; columns: string; filters: Row };
+  type Submission = { userId: string; storeId: string; storeName: string; franchiseId: string; role: string; currentApprovalStatus: string };
+
+  function handler(options: {
+    authenticated?: boolean;
+    role?: string;
+    approvalStatus?: string;
+    stores?: readonly Row[];
+    storeError?: boolean;
+  } = {}) {
+    const require = createRequire(import.meta.url);
+    const next = require("next/server.js") as typeof import("next/server");
+    const queries: QueryCall[] = [];
+    const submissions: Submission[] = [];
+    const rows: Record<string, Row[]> = {
+      profiles: [{ id: OWNER_ID, role: options.role ?? "owner", approval_status: options.approvalStatus ?? "approved", full_name: "점주" }],
+      stores: (options.stores ?? storeSeed()).map((row) => ({ ...row })),
+    };
+    const admin = {
+      from(table: string) {
+        assert.ok(Object.hasOwn(rows, table), `Unexpected table ${table}`);
+        return {
+          select(columns: string) {
+            const query: QueryCall = { table, columns, filters: {} };
+            queries.push(query);
+            const builder = {
+              eq(column: string, value: unknown) { query.filters[column] = value; return builder; },
+              maybeSingle: async () => {
+                if (table === "stores" && options.storeError) return { data: null, error: { code: "STORE_READ_FAILED" } };
+                const matches = rows[table].filter((row) => Object.entries(query.filters).every(([column, value]) => row[column] === value));
+                if (matches.length !== 1) return { data: null, error: null };
+                const selected = Object.fromEntries(columns.split(",").map((column) => column.trim()).map((column) => [column, matches[0][column]]));
+                return { data: selected, error: null };
+              },
+            };
+            return builder;
+          },
+        };
+      },
+    };
+    const dependencies: Record<string, unknown> = {
+      "next/server": next,
+      "@/lib/auth/diagnostic-error-log": { createDiagnosticRequestId: () => "request-fixture", logDiagnosticError: () => {} },
+      "@/lib/supabase/server": { createClient: async () => ({ auth: { getUser: async () => ({ data: { user: options.authenticated === false ? null : { id: OWNER_ID } }, error: null }) } }) },
+      "@/lib/supabase/admin": { createAdminClient: () => admin },
+      "@/lib/supabase/resolve-store-franchise": { resolveFranchiseIdForStoreName: async () => { throw new Error("store ID requests must not use the name resolver"); } },
+      "@/lib/signup/store-membership-service": { submitStoreMembershipRequest: async (_client: unknown, input: Submission) => {
+        submissions.push(input);
+        return { success: true, status: 200, created: true, membershipStatus: "pending", membershipId: "membership-fixture" };
+      } },
+    };
+    const source = readFileSync(new URL("../../app/api/boss/stores/requests/route.ts", import.meta.url), "utf8");
+    const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+    const route = { exports: {} as { POST: (request: Request) => Promise<Response> } };
+    new Script(compiled, { filename: "actual-owner-store-request.cjs" }).runInNewContext({
+      module: route, exports: route.exports,
+      require: (name: string) => { assert.ok(Object.hasOwn(dependencies, name), `Unmocked route dependency ${name}`); return dependencies[name]; },
+    });
+    return { queries, submissions, post: (body: Row) => route.exports.POST(new next.NextRequest("http://localhost/api/boss/stores/requests", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    })) };
+  }
+
+  test("reads the requested DB store brand/name and session owner, ignoring forged client identity and brand", async () => {
+    const api = handler();
+    const response = await api.post({ storeId: STORE_OTHER_BRAND, storeName: "forged name", franchiseId: BRAND_A, userId: HQ_A, role: "hq", approval_status: "approved" });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).membershipStatus, "pending");
+    assert.deepEqual(api.queries.map((query) => ({ table: query.table, columns: query.columns, filters: query.filters })), [
+      { table: "profiles", columns: "role, approval_status, full_name", filters: { id: OWNER_ID } },
+      { table: "stores", columns: "store_name, franchise_id", filters: { id: STORE_OTHER_BRAND } },
+    ]);
+    assert.equal(api.submissions.length, 1);
+    assert.equal(api.submissions[0].userId, OWNER_ID);
+    assert.equal(api.submissions[0].storeId, STORE_OTHER_BRAND);
+    assert.equal(api.submissions[0].franchiseId, BRAND_B);
+    assert.equal(api.submissions[0].storeName, "브랜드B 1호점");
+    assert.equal(api.submissions[0].role, "owner");
+    assert.equal(api.submissions[0].currentApprovalStatus, "approved");
+  });
+
+  test("denies unauthenticated, wrong-role and unapproved owners before store lookup or submission", async () => {
+    for (const options of [{ authenticated: false }, { role: "staff" }, { role: "hq" }, { approvalStatus: "pending" }, { approvalStatus: "rejected" }]) {
+      const api = handler(options);
+      const response = await api.post({ storeId: STORE_A, storeName: "매장", role: "owner", approval_status: "approved" });
+      assert.equal(response.status, options.authenticated === false ? 401 : 403);
+      assert.equal(api.queries.some((query) => query.table === "stores"), false);
+      assert.equal(api.submissions.length, 0);
+    }
+  });
+
+  test("missing stores, missing brands, read errors and invalid IDs never submit or use a name fallback", async () => {
+    for (const [options, status, code] of [
+      [{ stores: [] }, 404, "STORE_NOT_FOUND"],
+      [{ stores: [{ id: STORE_A, store_name: "매장", franchise_id: null }] }, 400, "STORE_BRAND_UNKNOWN"],
+      [{ storeError: true }, 500, undefined],
+    ] as const) {
+      const api = handler(options);
+      const response = await api.post({ storeId: STORE_A, storeName: "untrusted fallback", franchiseId: BRAND_B });
+      assert.equal(response.status, status);
+      assert.equal((await response.json()).code, code);
+      assert.equal(api.submissions.length, 0);
+    }
+    const api = handler();
+    assert.equal((await api.post({ storeId: "invalid-id", storeName: "매장" })).status, 400);
+    assert.deepEqual(api.queries, []);
+    assert.deepEqual(api.submissions, []);
   });
 });

@@ -624,7 +624,7 @@ export async function submitStoreMembershipRequest(
   // body의 franchiseId는 "실재하는 프랜차이즈인가"만 확인한다. 기존 매장의 브랜드는 이 값으로 정하지 않는다.
   let clientFranchiseId: string | null = null;
 
-  if (franchiseId && !storeFromId) {
+  if (franchiseId) {
     const { data: chosenFranchise, error: chosenFranchiseError } = await adminClient
       .from("franchises")
       .select("id")
@@ -650,8 +650,9 @@ export async function submitStoreMembershipRequest(
         status: 400,
       };
     }
-    if (franchiseId && franchiseId !== storeFromId.franchise_id) {
-      logMapping("client_brand_corrected_from_selected_store", [storeFromId], storeFromId.franchise_id);
+    if (clientFranchiseId && clientFranchiseId !== storeFromId.franchise_id) {
+      logMapping("client_brand_mismatches_selected_store", [storeFromId], storeFromId.franchise_id);
+      return { success: false, error: "매장과 프랜차이즈 정보가 일치하지 않습니다.", status: 400 };
     }
     requestedFranchiseId = storeFromId.franchise_id;
   } else if (resolvedStoreName) {
@@ -692,7 +693,7 @@ export async function submitStoreMembershipRequest(
     ];
 
     if (matchingStores.length > 0) {
-      if (existingBrands.length === 0 && !clientFranchiseId) {
+      if (existingBrands.length === 0) {
         logMapping("named_store_brand_missing", matchingStores);
         return {
           success: false,
@@ -702,6 +703,10 @@ export async function submitStoreMembershipRequest(
         };
       }
       if (clientFranchiseId) {
+        if (!existingBrands.includes(clientFranchiseId)) {
+          logMapping("client_brand_mismatches_named_store", matchingStores, clientFranchiseId);
+          return { success: false, error: "매장과 프랜차이즈 정보가 일치하지 않습니다.", status: 400 };
+        }
         requestedFranchiseId = clientFranchiseId;
       } else if (existingBrands.length === 1) {
         requestedFranchiseId = existingBrands[0];

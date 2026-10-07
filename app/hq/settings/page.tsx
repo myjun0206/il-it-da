@@ -3,8 +3,6 @@
 import React, { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, CheckCircle2, Eye, EyeOff, Trash2 } from "lucide-react";
-import HQSidebar from "@/components/hq/HQSidebar";
-import HQHeader from "@/components/hq/HQHeader";
 import ThemeSelector from "@/components/common/ThemeSelector";
 import ProfileAvatar from "@/components/common/ProfileAvatar";
 import { createClient } from "@/lib/supabase/client";
@@ -164,15 +162,6 @@ export default function HqSettingsPage() {
 
     void loadAccount();
   }, [router]);
-
-  const handleLogout = async () => {
-    try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
-    } finally {
-      router.push("/");
-    }
-  };
 
   const startEditName = () => {
     setNameDraft(account?.name ?? "");
@@ -373,7 +362,6 @@ export default function HqSettingsPage() {
   };
 
   const displayName = account?.name || "본사 관리자";
-  const headerFranchiseName = account?.franchiseName || displayName.split(" ")[0] || "본사";
 
   const readOnlyRows = account
     ? [
@@ -384,18 +372,7 @@ export default function HqSettingsPage() {
     : [];
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-default)]">
-      <HQSidebar
-        userName={displayName}
-        franchiseName={headerFranchiseName}
-        onLogout={handleLogout}
-        activeMenu="settings"
-      />
-
-      <div className="lg:ml-[240px]">
-        <HQHeader userName={displayName} franchiseName={headerFranchiseName} onLogout={handleLogout} />
-
-        <main className="p-6 lg:p-8 max-w-7xl mx-auto">
+    <main className="p-6 lg:p-8 max-w-7xl mx-auto">
           <div className="mb-8">
             <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">환경설정</h1>
             <p className="text-base text-[var(--color-text-secondary)]">
@@ -639,8 +616,6 @@ export default function HqSettingsPage() {
             <p className="text-sm text-[var(--color-text-secondary)] mb-6">일잇다 화면의 테마를 설정합니다.</p>
             <ThemeSelector />
           </section>
-        </main>
-      </div>
-    </div>
+    </main>
   );
 }

@@ -1,12 +1,9 @@
 "use client";
 
-import React, { useLayoutEffect, useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
+import { useClientReady } from "@/lib/hq/use-client-ready";
 import { useRouter } from "next/navigation";
 import { Check, CircleCheck, CircleX, Clock, UserCheck, X } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
-import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
-import HQSidebar from "@/components/hq/HQSidebar";
-import HQHeader from "@/components/hq/HQHeader";
 import BackToHomeLink from "@/components/hq/BackToHomeLink";
 
 interface Membership {
@@ -39,9 +36,7 @@ function isPendingStatus(status: Membership["status"]): boolean {
 
 export default function HQApprovalsPage() {
   const router = useRouter();
-  const [userName, setUserName] = useState("본사 관리자");
-  const [franchiseName, setFranchiseName] = useState("메가MGC커피");
-  const [isReady, setIsReady] = useState(false);
+  const isReady = useClientReady();
   const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
   const [allApprovals, setAllApprovals] = useState<ApprovalItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -57,62 +52,6 @@ export default function HQApprovalsPage() {
     existingOwnerNames?: string[];
   }>({ open: false });
   const [isProcessing, setIsProcessing] = useState(false);
-
-  useLayoutEffect(() => {
-    // Check Supabase session
-    const checkAuth = async () => {
-      try {
-        const supabase = createClient();
-        const profile = await getAuthenticatedProfile(supabase);
-
-        // Verify user is HQ
-        if (profile?.role !== "hq") {
-          router.push("/");
-          return;
-        }
-      } catch (e) {
-        console.error("Auth check failed:", e);
-        router.push("/");
-      }
-    };
-
-    checkAuth();
-  }, [router]);
-
-  useEffect(() => {
-    // Set user info from metadata
-    const setUserInfo = async () => {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-
-        if (!data.session?.user) return;
-
-        const user = data.session.user;
-        const name = user.user_metadata?.name;
-
-        // Set user name from metadata
-        if (name) {
-          setUserName(name);
-        }
-
-        // Extract franchise name from user name
-        if (name && name.includes(" ")) {
-          const parts = name.split(" ");
-          if (parts[0]) {
-            setFranchiseName(parts[0]);
-          }
-        }
-
-        setIsReady(true);
-      } catch (e) {
-        console.error("Set user info failed:", e);
-        setIsReady(true);
-      }
-    };
-
-    setUserInfo();
-  }, []);
 
   const fetchApprovals = async () => {
     setIsLoading(true);
@@ -165,16 +104,7 @@ export default function HQApprovalsPage() {
     }
   }, [isReady]);
 
-  const handleLogout = async () => {
-    try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
-      router.push("/");
-    } catch (e) {
-      console.error("Logout failed:", e);
-      router.push("/");
-    }
-  };
+
 
   const handleApprove = (
     membershipId: string,
@@ -316,22 +246,9 @@ export default function HQApprovalsPage() {
             );
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-default)]">
-      {/* Sidebar */}
-      <HQSidebar
-        userName={userName}
-        franchiseName={franchiseName}
-        onLogout={handleLogout}
-        activeMenu="home"
-      />
-
-      {/* Main Content */}
-      <div className="lg:ml-[240px]">
-        {/* Header */}
-        <HQHeader userName={userName} franchiseName={franchiseName} onLogout={handleLogout} />
-
-        {/* Content */}
-        <main className="p-6 lg:p-8 max-w-7xl mx-auto">
+    <>
+      {/* Content */}
+      <main className="p-6 lg:p-8 max-w-7xl mx-auto">
           {/* Heading Section */}
           <BackToHomeLink />
           <div className="mb-8">
@@ -518,8 +435,7 @@ export default function HQApprovalsPage() {
               </div>
             </div>
           )}
-        </main>
-      </div>
+      </main>
 
       {/* Approval Confirmation Dialog */}
       {confirmDialog.open && confirmDialog.action === "approve" && (
@@ -714,6 +630,6 @@ export default function HQApprovalsPage() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
