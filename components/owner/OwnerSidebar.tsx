@@ -45,15 +45,17 @@ export default function OwnerSidebar({
   return (
     <>
       {/* Mobile Menu Button */}
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        aria-label={isOpen ? "메뉴 닫기" : "메뉴 열기"}
-        aria-expanded={isOpen}
-        className="fixed top-4 left-4 z-50 lg:hidden bg-white rounded-lg p-2 border border-(--color-border)"
-      >
-        {isOpen ? <X size={24} /> : <Menu size={24} />}
-      </button>
+      {!isOpen && (
+        <button
+          type="button"
+          onClick={() => setIsOpen(true)}
+          aria-label="메뉴 열기"
+          aria-expanded={isOpen}
+          className="fixed top-4 left-4 z-50 lg:hidden bg-white rounded-lg p-2 border border-(--color-border)"
+        >
+          <Menu size={24} />
+        </button>
+      )}
 
       {/* Sidebar */}
       <aside
@@ -62,16 +64,25 @@ export default function OwnerSidebar({
         } lg:w-[240px] w-64 z-40`}
       >
         {/* Logo Section - aligned with header */}
-        <div className="flex items-center px-6 h-16 border-b border-(--color-border)">
-          <Link href="/boss" aria-label="홈으로 이동" onClick={() => setIsOpen(false)}>
+        <div className="flex shrink-0 items-center justify-between gap-3 px-6 h-16 border-b border-(--color-border)">
+          <Link href="/boss" aria-label="홈으로 이동" onClick={() => setIsOpen(false)} className="min-w-0">
             <Image
               src="/logo/ilitda-wordmark.png"
               alt="일잉다"
               width={687}
               height={253}
-              className="h-8 w-auto object-contain"
+              className="h-8 w-auto max-w-full object-contain"
             />
           </Link>
+          <button
+            type="button"
+            onClick={() => setIsOpen(false)}
+            aria-label="메뉴 닫기"
+            title="메뉴 닫기"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-(--color-border) bg-white lg:hidden"
+          >
+            <X size={24} aria-hidden="true" />
+          </button>
         </div>
 
         {/* Menu Section */}

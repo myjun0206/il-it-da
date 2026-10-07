@@ -7,7 +7,7 @@ import StoreSelector from "@/components/staff/StoreSelector";
 import { useStaffShell } from "@/components/staff/StaffShellContext";
 import { createClient } from "@/lib/supabase/client";
 
-// 직원 공통 Header: NotificationCenter(알림) + StoreSelector(기본 매장 전환) + ProfileMenu(계정 메뉴)
+// 직원 공통 Header: StoreSelector(기본 매장 전환) + NotificationCenter(알림) + ProfileMenu(계정 메뉴)
 // 이름/역할/근무 매장은 모두 StaffShell 공통 상태에서 읽는다(별도 매장 state 없음).
 export default function StaffHeader() {
   const { userName, roleLabel, isStoresLoading, stores, defaultStoreId, saveStorePreferences } = useStaffShell();
@@ -66,20 +66,19 @@ export default function StaffHeader() {
 
   return (
     <header className="sticky top-0 z-20 bg-white border-b border-[var(--color-border)] h-16 shrink-0">
-      <div className="flex items-center justify-end gap-0 sm:gap-2 pl-16 pr-4 sm:pr-6 h-full lg:pl-6">
-        {/* 알림 */}
-        <NotificationCenter notificationPageUrl="/staff/notifications" />
-
+      <div className="flex min-w-0 items-center justify-end gap-2 pl-16 pr-4 sm:pr-6 h-full lg:pl-6">
         {/* 기본 매장 선택 */}
         <StoreSelector stores={stores} defaultStoreId={defaultStoreId} isStoresLoading={isStoresLoading} onSetDefaultStore={handleSetDefaultStore} />
 
-        {/* 계정 메뉴 */}
-        <ProfileMenu
-          userName={userName || " "}
-          subtitle={roleLabel}
-          roleLabel={roleLabel}
-          avatarUrl={avatarUrl}
-        />
+        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+          <NotificationCenter notificationPageUrl="/staff/notifications" />
+          <ProfileMenu
+            userName={userName || " "}
+            subtitle={roleLabel}
+            roleLabel={roleLabel}
+            avatarUrl={avatarUrl}
+          />
+        </div>
       </div>
     </header>
   );
