@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { useClientReady } from "@/lib/hq/use-client-ready";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, RefreshCw, Store, ExternalLink, Search, FileText } from "lucide-react";
 import type { ManualRecord } from "@/lib/types/manual";
@@ -34,7 +35,7 @@ async function readJsonResponse<T>(response: Response, fallbackMessage: string):
 
 export default function StoreManualViewPage() {
   const router = useRouter();
-  const [isReady, setIsReady] = useState(false);
+  const isReady = useClientReady();
   const [isLoading, setIsLoading] = useState(true);
   const [storeListError, setStoreListError] = useState("");
   const [reloadStoreList, setReloadStoreList] = useState(0);
@@ -51,10 +52,6 @@ export default function StoreManualViewPage() {
   const [storeManualsError, setStoreManualsError] = useState("");
   const [storeSearchQuery, setStoreSearchQuery] = useState("");
   const [selectedManualCategory, setSelectedManualCategory] = useState<string | null>(null);
-
-  useEffect(() => {
-    setIsReady(true);
-  }, []);
 
   useEffect(() => {
     const fetchStoreData = async () => {

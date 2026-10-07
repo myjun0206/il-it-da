@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { useClientReady } from "@/lib/hq/use-client-ready";
 import Link from "next/link";
 import { Megaphone, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
@@ -65,7 +66,7 @@ function toNoticeRow(notice: HqNoticeItem): HqNotice {
 }
 
 export default function CommunicationPage() {
-  const [isReady, setIsReady] = useState(false);
+  const isReady = useClientReady();
   const [notices, setNotices] = useState<HqNotice[]>([]);
   const [isLoadingNotices, setIsLoadingNotices] = useState(true);
   const [noticesError, setNoticesError] = useState("");
@@ -76,10 +77,6 @@ export default function CommunicationPage() {
   const [deletingNotice, setDeletingNotice] = useState<HqNotice | null>(null);
   const [selectedNotice, setSelectedNotice] = useState<HqNotice | null>(null);
   const [isDeletingNotice, setIsDeletingNotice] = useState(false);
-
-  useEffect(() => {
-    setIsReady(true);
-  }, []);
 
   useEffect(() => {
     if (!isReady) return;

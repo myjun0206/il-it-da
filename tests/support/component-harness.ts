@@ -59,6 +59,9 @@ export function createHookHarness(initialStates: unknown[]) {
     useEffect() {},
     useLayoutEffect() {},
     useMemo(factory: () => unknown) { return factory(); },
+    useSyncExternalStore<Snapshot>(_subscribe: (callback: () => void) => () => void, getSnapshot: () => Snapshot) {
+      return getSnapshot();
+    },
   };
   return {
     react,

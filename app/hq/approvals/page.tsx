@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { useClientReady } from "@/lib/hq/use-client-ready";
 import { useRouter } from "next/navigation";
 import { Check, CircleCheck, CircleX, Clock, UserCheck, X } from "lucide-react";
 import BackToHomeLink from "@/components/hq/BackToHomeLink";
@@ -35,7 +36,7 @@ function isPendingStatus(status: Membership["status"]): boolean {
 
 export default function HQApprovalsPage() {
   const router = useRouter();
-  const [isReady, setIsReady] = useState(false);
+  const isReady = useClientReady();
   const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
   const [allApprovals, setAllApprovals] = useState<ApprovalItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -51,10 +52,6 @@ export default function HQApprovalsPage() {
     existingOwnerNames?: string[];
   }>({ open: false });
   const [isProcessing, setIsProcessing] = useState(false);
-
-  useEffect(() => {
-    setIsReady(true);
-  }, []);
 
   const fetchApprovals = async () => {
     setIsLoading(true);

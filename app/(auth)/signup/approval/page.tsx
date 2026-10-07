@@ -554,7 +554,7 @@ export default function SignupApprovalPage() {
             }),
           });
 
-          const result = (await response.json()) as { success: boolean; error?: string; code?: string };
+          const result = (await response.json()) as { success: boolean; error?: string; code?: string; requestId?: string };
 
           if (!result.success) {
             console.error("Membership 생성 실패:", result);
@@ -566,7 +566,8 @@ export default function SignupApprovalPage() {
               );
               return;
             }
-            alert(`매장 "${approval.store.name}" 승인 요청 중 오류: ${result.error || "알 수 없는 오류"}`);
+            const requestReference = result.requestId ? ` (문의 ID: ${result.requestId})` : "";
+            alert(`매장 "${approval.store.name}" 승인 요청 중 오류: ${result.error || "알 수 없는 오류"}${requestReference}`);
             return;
           }
           requestedStoreIds.add(approval.store.id);

@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
+import { createElement } from "react";
+import { renderToString } from "react-dom/server";
+import { useClientReady } from "../../lib/hq/use-client-ready.ts";
 import { isSupabaseSessionInvalidationError } from "../../lib/auth/session-expiration.ts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -13,7 +16,7 @@ function readSource(relativePath: string): string {
 
 describe("server-side role-protected layouts", () => {
   const cases: Array<{ file: string; role: "hq" | "owner" | "staff"; expectsWrapper?: string; expectsSibling?: string }> = [
-    { file: "app/hq/layout.tsx", role: "hq" },
+    { file: "app/hq/layout.tsx", role: "hq", expectsWrapper: "HQShell" },
     { file: "app/boss/layout.tsx", role: "owner", expectsSibling: "EscalationNotificationPopup" },
     { file: "app/staff/layout.tsx", role: "staff", expectsWrapper: "StaffShell" },
   ];
@@ -51,7 +54,10 @@ describe("server-side role-protected layouts", () => {
             : "renders children unchanged (no UI restructuring)",
         () => {
           if (expectsWrapper) {
-            assert.match(source, new RegExp(`return\\s*<${expectsWrapper}>\\{children\\}</${expectsWrapper}>`));
+            const shellPath = role === "hq" ? "@/components/hq/HQShell" : "@/components/staff/StaffShell";
+            assert.match(source, new RegExp(`import\\s+${expectsWrapper}\\s+from\\s+["']${shellPath}["']`));
+            assert.match(source, new RegExp(`return\\s*(?:\\(\\s*)?<${expectsWrapper}>\\s*\\{children\\}\\s*</${expectsWrapper}>\\s*(?:\\))?\\s*;`));
+            assert.equal((source.match(new RegExp(`<${expectsWrapper}>`, "g")) ?? []).length, 1);
             return;
           }
           if (expectsSibling) {
@@ -108,5 +114,23 @@ describe("Supabase single-session expiration handling", () => {
   test("login page displays the session-replaced message for the expiry query", () => {
     assert.match(loginPage, /searchParams\.get\("session"\) === "expired"/);
     assert.equal((loginPage.match(/로그인 세션이 만료되었습니다\. 다시 로그인해 주세요\./g) ?? []).length, 2);
+  });
+});
+
+describe("HQ hydration readiness", () => {
+  test("server rendering remains empty until the client hydration snapshot", () => {
+    function ReadinessProbe() {
+      return useClientReady() ? createElement("span", null, "ready") : null;
+    }
+    assert.equal(renderToString(createElement(ReadinessProbe)), "");
+  });
+
+  test("the four HQ pages retain their existing hydration gate without synchronous readiness effects", () => {
+    for (const file of ["app/hq/approvals/page.tsx", "app/hq/communication/page.tsx", "app/hq/manuals/common/page.tsx", "app/hq/manuals/stores/page.tsx"]) {
+      const source = readSource(file);
+      assert.match(source, /const isReady = useClientReady\(\);/);
+      assert.match(source, /if \(!isReady\)\s*\{\s*return null;/);
+      assert.equal(source.includes("setIsReady"), false);
+    }
   });
 });
