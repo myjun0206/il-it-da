@@ -503,6 +503,7 @@ export interface StoreMembershipRequestInput {
   /** 요청자 프로필의 기존 approval_status - 이미 "approved"면 승격 상태를 유지한다. */
   currentApprovalStatus?: string | null;
   diagnosticRequestId?: string;
+  ensureProfile?: () => Promise<SignupProfileResult>;
 }
 
 export interface StoreMembershipRequestResult {
@@ -963,6 +964,10 @@ export async function submitStoreMembershipRequest(
       });
       // 중복 row를 만들지 않고 기존 membership과 상태를 돌려준다.
       // created/membershipStatus는 가입·매장 추가 화면이 "이미 신청함" 안내를 고를 때 쓴다.
+      if (input.ensureProfile) {
+        const profileResult = await input.ensureProfile();
+        if (!profileResult.success) return { success: false, error: "가입 프로필을 생성하지 못했습니다.", status: 500 };
+      }
       return {
         success: true,
         membershipId: existingMembership.id,
@@ -1004,6 +1009,10 @@ export async function submitStoreMembershipRequest(
       }
     }
 
+    if (input.ensureProfile) {
+      const profileResult = await input.ensureProfile();
+      if (!profileResult.success) return { success: false, error: "가입 프로필을 생성하지 못했습니다.", status: 500 };
+    }
     const { data: newMembership, error: createError } = await adminClient
       .from("store_memberships")
       .insert({

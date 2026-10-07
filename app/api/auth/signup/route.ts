@@ -28,6 +28,13 @@ export async function POST(request: Request): Promise<NextResponse<SignupRespons
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "입력값을 확인해주세요." }, { status: 400 });
+  }
+  if (body.role === "owner" || body.role === "staff" || body.role === "boss") {
+    return NextResponse.json({ error: "점주·직원은 이메일 인증번호 가입을 이용해주세요." }, { status: 403 });
+  }
+
   if (!hasSupabaseAdminEnv()) {
     // 환경변수 이름은 응답에 담지 않고 서버 로그 코드로만 구분한다.
     logSafeAuthError("SIGNUP_MISSING_ENV_VARS", new Error("Missing Supabase admin environment variables"));

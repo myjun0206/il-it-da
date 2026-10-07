@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { upsertSignupProfile, submitStoreMembershipRequest } from "@/lib/signup/store-membership-service";
 import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
 import { createDiagnosticRequestId, logDiagnosticError } from "@/lib/auth/diagnostic-error-log";
+import { fetchAuthEmailSettings } from "@/lib/auth/auth-email-settings";
+import { checkEmailSignupConfirmation, validateInitialEmailMembership } from "@/lib/auth/owner-staff-signup";
 
 export const runtime = "nodejs";
 
@@ -14,6 +16,8 @@ interface CreateMembershipRequest {
   storeName?: string;
   role: "owner" | "staff";
   franchiseId?: string;
+  terms?: unknown;
+  email?: unknown;
 }
 
 interface CreateMembershipResponse {
@@ -179,7 +183,7 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
     if (!role || (role !== "owner" && role !== "staff")) {
       return respond({ success: false, error: "신청 역할이 올바르지 않습니다." }, 400);
     }
-    const { storeId, storeName, franchiseId } = body as CreateMembershipRequest;
+    const { storeId, storeName, franchiseId, terms, email } = body as CreateMembershipRequest;
     requestedRole = role;
     requestedStoreId = storeId?.trim() || undefined;
     requestedStoreName = storeName?.trim() || undefined;
@@ -232,26 +236,27 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
       return respond({ success: false, error: "로그인한 계정의 역할과 신청 역할이 일치하지 않습니다." }, 403);
     }
 
-    // profiles row 생성 또는 업데이트 (full_name이 없으면 채우기)
-    userName = typeof user.user_metadata?.name === "string" && user.user_metadata.name.trim()
+    const confirmation = await checkEmailSignupConfirmation(user, {
+      hasProfile: Boolean(authorizedProfile),
+      getSettings: fetchAuthEmailSettings,
+    });
+    if (!confirmation.ok) {
+      return respond(
+        { success: false, code: confirmation.code, error: confirmation.error },
+        confirmation.status,
+      );
+    }
+
+    if (canCreateInitialEmailProfile) {
+      const validationError = validateInitialEmailMembership(user, role, terms, email);
+      if (validationError) return respond({ success: false, error: validationError }, 400);
+    }
+
+    const applicantName = typeof user.user_metadata?.name === "string" && user.user_metadata.name.trim()
       ? user.user_metadata.name.trim()
       : user.email || (role === "staff" ? "알바" : "점주");
+    userName = applicantName;
     const userPhone = typeof user.user_metadata?.phone === "string" ? user.user_metadata.phone : null;
-
-    stage = "profile.upsert";
-    const profileResult = authorizedProfile?.approval_status === "approved" ? { success: true } : await upsertSignupProfile(adminClient, {
-      userId,
-      email: user.email ?? null,
-      role,
-      name: userName,
-      phone: userPhone,
-      diagnosticRequestId: requestId,
-    });
-
-    if (!profileResult.success) {
-      logFailure(new Error(profileResult.details ?? profileResult.error ?? "Profile write failed"));
-      return respond({ success: false, error: "신청자 정보를 저장하지 못했습니다." }, 500);
-    }
 
     // 매장 조회/생성 + store_memberships row 생성 + 알림 발송
     stage = "membership.submit";
@@ -265,6 +270,9 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
       franchiseId: requestedFranchiseId,
       currentApprovalStatus: authorizedProfile?.approval_status ?? null,
       diagnosticRequestId: requestId,
+      ensureProfile: async () => authorizedProfile?.approval_status === "approved" ? { success: true } : upsertSignupProfile(adminClient, {
+        userId: user.id, email: user.email ?? null, role, name: applicantName, phone: userPhone, diagnosticRequestId: requestId,
+      }),
     });
 
     if (membershipResult.status >= 500) {

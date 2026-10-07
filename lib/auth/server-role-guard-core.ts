@@ -70,6 +70,11 @@ export async function requireServerRole(
     return { status: "UNAUTHENTICATED" };
   }
 
+  const user = userData.user;
+  if (user?.app_metadata?.provider === "email" && !user.email_confirmed_at && !user.identities?.some((identity) => identity.provider !== "email")) {
+    return { status: "FORBIDDEN" };
+  }
+
   const adminClient = deps.getAdminClient();
   const { data: profile, error: profileError } = await adminClient
     .from("profiles")

@@ -101,6 +101,8 @@ const pageEntries = Object.fromEntries(Object.entries(PAGES).map(([name, page]) 
 const staffNotices = bundleModule(path.join(root, "app/staff/notices/page.tsx"));
 const staffHeader = bundleModule(path.join(root, "components/staff/StaffHeader.tsx"));
 const staffSidebar = bundleModule(path.join(root, "components/staff/StaffSidebar.tsx"));
+const hqNotices = bundleModule(path.join(root, "app/hq/communication/page.tsx"));
+const hqShell = bundleModule(path.join(root, "components/hq/HQShell.tsx"));
 const react = bundleModule(require.resolve("react"));
 const reactDom = bundleModule(require.resolve("react-dom/client"));
 const app = `
@@ -110,7 +112,9 @@ const app = `
   const props = ${JSON.stringify(Object.fromEntries(Object.entries(PAGES).map(([name, page]) => [name, page.props ?? {}])))};
   const name = window.fixture.page;
   let element;
-  if (name === 'staff-notices') {
+  if (name === 'hq-notices') {
+    element = h(require(${JSON.stringify(hqShell)}).default, null, h(require(${JSON.stringify(hqNotices)}).default));
+  } else if (name === 'staff-notices') {
     // 직원 기준 화면: StaffShell과 같은 구조(Sidebar + Header + main)
     element = h('div', { className: 'h-screen overflow-hidden bg-[var(--color-bg-default)]' },
       h(require(${JSON.stringify(staffSidebar)}).default, { activeMenu: 'notice', onLogout: () => {} }),
@@ -150,7 +154,7 @@ after(async () => {
   console.log(`Mock screenshots: ${screenshots}`);
 });
 
-function installFixture({ page, stores }) {
+function installFixture({ page, stores, noticeState = "ready" }) {
   const now = "2026-10-05T09:00:00Z";
   const question = { id: "q-1", question: "개봉한 우유는 언제까지 사용할 수 있나요?", status: "insufficient", createdAt: now, originReason: "frequent_question", repeatCount: 4, resolutionStatus: "open", resolutionRevision: 1, resolutionUpdatedAt: null, resolvedAt: null };
   const manual = (id, extra = {}) => ({ id, title: "오픈 체크리스트", category: "매장운영", content: "매장 오픈 전 확인 사항입니다.", store_id: "store-a", parent_manual_id: null, status: "approved", created_at: now, updated_at: now, ...extra });
@@ -167,6 +171,14 @@ function installFixture({ page, stores }) {
     const method = init.method || "GET";
     window.fixture.calls = [...(window.fixture.calls || []), { endpoint, method, body: init.body }];
     if (!endpoint.startsWith("/api/")) throw Error(`External fetch forbidden: ${endpoint}`);
+    if (endpoint === "/api/hq/stores") return json({ stores: staffStores });
+    if (endpoint === "/api/hq/notices") {
+      if (noticeState === "loading") return new Promise(() => {});
+      if (noticeState === "error") return json({ error: "HQ fixture load failed" }, 503);
+      return json({ notices: noticeState === "empty" ? [] : [notice("hq-1", {
+        title: "HQ fixture notice", targetType: "all", audience: "all_members", viewCount: noticeState === "zero" ? 0 : 7,
+      })] });
+    }
     if (endpoint === "/api/store-manuals/search-readiness/reindex" && method === "POST") {
       return window.fixture.reindexFails ? json({ error: "검색 준비를 다시 하지 못했어요." }, 500) : json({ reindexed: true });
     }
@@ -195,22 +207,22 @@ function installFixture({ page, stores }) {
   };
 }
 
-async function openPage(name, viewport, { dark = false, stores = STORES } = {}) {
+async function openPage(name, viewport, { dark = false, stores = STORES, noticeState = "ready" } = {}) {
   const page = await browser.newPage({ viewport });
   page.setDefaultTimeout(8000);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.route("**/*", (route) => route.request().url().startsWith(url) ? route.continue() : route.abort());
-  await page.addInitScript(installFixture, { page: name, stores });
+  await page.addInitScript(installFixture, { page: name, stores, noticeState });
   await page.goto(url);
-  const heading = name === "staff-notices" ? "공지사항" : PAGES[name].heading;
+  const heading = name === "staff-notices" || name === "hq-notices" ? "공지사항" : PAGES[name].heading;
   try {
     await page.getByRole("heading", { level: 1, name: heading }).waitFor();
   } catch (error) {
     await page.close();
     throw new Error(`${name} ${viewport.width}: ${errors.join("\n") || error.message}`);
   }
-  await page.waitForFunction(() => !/불러오는 중|확인하는 중/.test(document.querySelector("main")?.textContent ?? ""), null, { timeout: 8000 }).catch(() => {});
+  if (noticeState !== "loading") await page.waitForFunction(() => !/불러오는 중|확인하는 중/.test(document.querySelector("main")?.textContent ?? ""), null, { timeout: 8000 }).catch(() => {});
   if (dark) await page.evaluate(() => document.documentElement.classList.add("dark"));
   return { page, errors };
 }
@@ -234,6 +246,46 @@ async function layoutMetrics(page) {
     };
   });
 }
+
+test("HQ shell preserves store selection, count detail and responsive loading/error/empty states", async () => {
+  for (const viewport of VIEWPORTS) {
+    for (const noticeState of ["ready", "zero"]) {
+      const { page, errors } = await openPage("hq-notices", viewport, { noticeState });
+      try {
+        const count = noticeState === "zero" ? 0 : 7;
+        await page.locator("main").getByText(`조회 ${count}`, { exact: false }).waitFor();
+        const selector = page.locator('header button[aria-controls="hq-store-selector-menu"]');
+        await selector.click();
+        await page.getByRole("menu", { name: "기본 매장 선택" }).getByRole("button", { name: STORES[1].storeName }).click();
+        assert.equal(await page.evaluate(() => sessionStorage.getItem("hqSelectedStoreId")), "store-b");
+        assert.equal(await selector.getAttribute("aria-expanded"), "false");
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `HQ ${viewport.width}: long store name overflow`);
+        await selector.click({ trial: true });
+        await page.locator('main a[href="/hq/communication/new"]').click({ trial: true });
+        for (const control of await page.locator("header button, button[class*='lg:hidden']").all()) {
+          if (await control.isVisible() && await control.isEnabled()) await control.click({ trial: true });
+        }
+        await page.screenshot({ path: path.join(screenshots, `hq-header-${noticeState}-${viewport.width}.png`), fullPage: true });
+        await page.locator("main button").filter({ hasText: "HQ fixture notice" }).first().click();
+        await page.getByRole("dialog").getByText(`조회 ${count}`, { exact: false }).waitFor();
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `HQ ${viewport.width}: detail overflow`);
+        assert.equal(await page.evaluate(() => window.fixture.calls.some((call) => call.endpoint === "/api/hq/set-default-store" || /\/read$/.test(call.endpoint))), false);
+        assert.deepEqual(errors, []);
+        await page.screenshot({ path: path.join(screenshots, `hq-notices-${noticeState}-${viewport.width}.png`), fullPage: true });
+      } finally { await page.close(); }
+    }
+  }
+  for (const noticeState of ["loading", "error", "empty"]) {
+    const { page, errors } = await openPage("hq-notices", { width: 390, height: 844 }, { noticeState });
+    try {
+      if (noticeState === "loading") await page.getByText("불러오는 중...", { exact: false }).waitFor();
+      if (noticeState === "error") await page.getByRole("alert").getByText("HQ fixture load failed").waitFor();
+      if (noticeState === "empty") await page.getByText("등록된 공지사항이 없습니다.").waitFor();
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `HQ ${noticeState}: overflow`);
+      assert.deepEqual(errors, []);
+    } finally { await page.close(); }
+  }
+});
 
 test("every owner page renders inside the owner shell with the staff title, spacing and no horizontal overflow", async () => {
   for (const viewport of VIEWPORTS) {

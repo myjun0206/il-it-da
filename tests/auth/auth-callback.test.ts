@@ -22,6 +22,7 @@ describe("auth callback URLs", () => {
   });
 
   test("preserves approval flow destinations", () => {
+    assert.equal(getSafeAuthNextPath("/signup/profile?auth=email"), "/signup/profile?auth=email");
     assert.equal(getSafeAuthNextPath("/signup/approval"), "/signup/approval");
     assert.equal(getSafeAuthNextPath("/signup/approval-status"), "/signup/approval-status");
   });

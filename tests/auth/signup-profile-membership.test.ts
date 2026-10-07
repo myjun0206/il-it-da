@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
+import { loadComponentModule } from "../support/component-harness.ts";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -23,6 +24,104 @@ type Row = Record<string, unknown>;
 type Call = { table: string; op: "insert" | "update"; payload: Row; filters: Row };
 
 const NOT_FOUND = { code: "PGRST116", message: "No rows found" };
+
+function integratedMembershipRoute(options: {
+  unconfirmed?: boolean;
+  unavailable?: boolean;
+  storeDenied?: boolean;
+  socialApproved?: boolean;
+} = {}) {
+  const profileWrites: Row[] = [];
+  const submissions: Row[] = [];
+  const user = {
+    id: USER_ID,
+    email: "owner@example.com",
+    email_confirmed_at: options.unconfirmed ? null : "2026-10-07T00:00:00Z",
+    confirmation_sent_at: "2026-10-06T00:00:00Z",
+    app_metadata: { provider: options.socialApproved ? "google" : "email" },
+    identities: [{ provider: options.socialApproved ? "google" : "email" }],
+    user_metadata: { role: "owner", name: "  Owner Fixture  ", phone: "01011112222" },
+  };
+  const admin = {
+    from(table: string) {
+      assert.equal(table, "profiles");
+      const builder = {
+        select: () => builder,
+        eq: () => builder,
+        maybeSingle: async () => ({ data: options.socialApproved ? { role: "owner", approval_status: "approved" } : null, error: null }),
+      };
+      return builder;
+    },
+  };
+  const route = loadComponentModule<{ POST: (request: Request) => Promise<Response> }>("app/api/signup/store-membership/route.ts", {
+    "@/lib/supabase/server": { createClient: async () => ({ auth: { getUser: async () => ({ data: { user }, error: null }) } }) },
+    "@/lib/supabase/admin": { createAdminClient: () => admin },
+    "@/lib/auth/auth-email-settings": { fetchAuthEmailSettings: async () => options.unavailable ? null : ({ emailEnabled: true, autoconfirm: false, signupDisabled: false }) },
+    "@/lib/signup/store-membership-service": {
+      upsertSignupProfile: async (_admin: unknown, input: Row) => { profileWrites.push(input); return { success: true }; },
+      submitStoreMembershipRequest: async (_admin: unknown, input: Row & { ensureProfile: () => Promise<{ success: boolean }> }) => {
+        submissions.push(input);
+        if (options.storeDenied) return { success: false, status: 403, error: "Store denied" };
+        assert.equal((await input.ensureProfile()).success, true);
+        return { success: true, status: 200, membershipId: MEMBERSHIP_ID, created: true, membershipStatus: "pending" };
+      },
+    },
+  }, { process: { env: { NEXT_PUBLIC_SIGNUP_EMAIL_OTP_LENGTH: "6" } } });
+  const submit = (overrides: Row = {}) => route.POST(new Request("http://localhost/api/signup/store-membership", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ storeId: STORE_ID, role: "owner", email: user.email, terms: { service: true, privacy: true, store_connection: true }, ...overrides }),
+  }));
+  return { submit, profileWrites, submissions };
+}
+
+describe("integrated initial-email membership handler", () => {
+  for (const scenario of [
+    { name: "unconfirmed email", options: { unconfirmed: true }, body: {}, status: 403 },
+    { name: "unavailable OTP settings", options: { unavailable: true }, body: {}, status: 503 },
+    { name: "missing required terms", options: {}, body: { terms: {} }, status: 400 },
+    { name: "changed email", options: {}, body: { email: "changed@example.com" }, status: 400 },
+    { name: "mismatched role", options: {}, body: { role: "staff" }, status: 403 },
+  ]) {
+    test(`${scenario.name} rejects before profile or membership creation`, async () => {
+      const fixture = integratedMembershipRoute(scenario.options);
+      const response = await fixture.submit(scenario.body);
+      assert.equal(response.status, scenario.status);
+      assert.equal(typeof (await response.json()).requestId, "string");
+      assert.equal(fixture.profileWrites.length, 0);
+      assert.equal(fixture.submissions.length, 0);
+    });
+  }
+
+  test("store rejection does not create an initial profile", async () => {
+    const fixture = integratedMembershipRoute({ storeDenied: true });
+    assert.equal((await fixture.submit()).status, 403);
+    assert.equal(fixture.submissions.length, 1);
+    assert.equal(fixture.profileWrites.length, 0);
+  });
+
+  test("confirmed first signup defers profile creation and returns pending rather than approval", async () => {
+    const fixture = integratedMembershipRoute();
+    const response = await fixture.submit();
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.membershipStatus, "pending");
+    assert.equal(body.created, true);
+    assert.equal(fixture.profileWrites.length, 1);
+    assert.equal(fixture.profileWrites[0].userId, USER_ID);
+    assert.equal(fixture.profileWrites[0].name, "Owner Fixture");
+    assert.equal(fixture.submissions.length, 1);
+    assert.equal(fixture.submissions[0].storeId, STORE_ID);
+    assert.equal(fixture.submissions[0].role, "owner");
+  });
+
+  test("approved social signup preserves its profile without requiring email OTP settings", async () => {
+    const fixture = integratedMembershipRoute({ socialApproved: true, unconfirmed: true, unavailable: true });
+    assert.equal((await fixture.submit({ email: null, terms: null })).status, 200);
+    assert.equal(fixture.profileWrites.length, 0);
+    assert.equal(fixture.submissions.length, 1);
+  });
+});
 
 /**
  * 001/004/006 + 023(profiles.user_id, brand_id)을 흉내낸 최소 가짜 DB.
@@ -604,6 +703,35 @@ describe("submitStoreMembershipRequest - 신규 요청", () => {
     assert.equal(result.code, "STORE_NO_OWNER");
     assert.equal(result.status, 409);
     assert.equal(db.callsFor("store_memberships", "insert").length, 0);
+  });
+
+  test("invalid store or ownerless staff application never invokes profile creation", async () => {
+    for (const stores of [[], [STORE_ROW]]) {
+      const db = fakeClient({ stores });
+      let profileCalled = false;
+      const result = await submitStoreMembershipRequest(db.client, {
+        ...MEMBERSHIP_INPUT, ensureProfile: async () => { profileCalled = true; return { success: true }; },
+      });
+      assert.equal(result.success, false);
+      assert.equal(profileCalled, false);
+    }
+  });
+
+  test("profile creation runs after store eligibility and before pending membership; failure blocks membership", async () => {
+    for (const success of [true, false]) {
+      const db = fakeClient({ stores: [STORE_ROW], memberships: [approvedOwnerMembership] });
+      let profileCalled = false;
+      const result = await submitStoreMembershipRequest(db.client, {
+        ...MEMBERSHIP_INPUT, ensureProfile: async () => {
+          profileCalled = true;
+          assert.equal(db.callsFor("store_memberships", "insert").length, 0);
+          return { success };
+        },
+      });
+      assert.equal(profileCalled, true);
+      assert.equal(result.success, success);
+      assert.equal(db.callsFor("store_memberships", "insert").length, success ? 1 : 0);
+    }
   });
 
   test("멤버십이 없으면 pending으로 만들고 created:true를 돌려준다", async () => {

@@ -3,10 +3,11 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
-import { createElement } from "react";
+import { createElement, type ReactNode } from "react";
 import { renderToString } from "react-dom/server";
 import { useClientReady } from "../../lib/hq/use-client-ready.ts";
 import { isSupabaseSessionInvalidationError } from "../../lib/auth/session-expiration.ts";
+import { componentElements, createHookHarness, loadComponentModule } from "../support/component-harness.ts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -132,5 +133,52 @@ describe("HQ hydration readiness", () => {
       assert.match(source, /if \(!isReady\)\s*\{\s*return null;/);
       assert.equal(source.includes("setIsReady"), false);
     }
+  });
+});
+
+describe("HQ tab-local store selection", () => {
+  test("selects only returned accessible stores without an unavailable server-write endpoint", async () => {
+    const storage = new Map<string, string>([["hqSelectedStoreId", "foreign-store"]]);
+    const effects: Array<() => void> = [];
+    const requests: string[] = [];
+    const harness = createHookHarness([]);
+    const headerStub = () => null;
+    const sidebarStub = () => null;
+    const shell = loadComponentModule<{ default: (props: { children: ReactNode }) => ReactNode }>("components/hq/HQShell.tsx", {
+      react: { ...harness.react, useEffect: (effect: () => void) => { effects.push(effect); } },
+      "next/navigation": { useRouter: () => ({ push: () => assert.fail("Unexpected redirect") }), usePathname: () => "/hq/manuals/stores" },
+      "@/components/hq/HQHeader": { default: headerStub, __esModule: true },
+      "@/components/hq/HQSidebar": { default: sidebarStub, __esModule: true },
+      "@/lib/supabase/client": { createClient: () => ({ auth: { getSession: async () => ({ data: { session: { user: { user_metadata: { name: "HQ Tester" } } } } }) } }) },
+    }, {
+      sessionStorage: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) },
+      console: { ...console, error: () => {} },
+      fetch: async (url: string) => {
+        requests.push(url);
+        return url === "/api/hq/stores"
+          ? Response.json({ stores: [{ id: "store-a", name: "Store A" }, { id: "store-b", name: "Store B" }] })
+          : Response.json({ error: "Missing endpoint" }, { status: 404 });
+      },
+    });
+    const child = createElement("span", { "data-testid": "hq-child" }, "retained");
+    const render = () => harness.render(() => shell.default({ children: child }));
+    assert.equal(render(), null);
+    effects[0]();
+    effects[1]();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const header = () => {
+      const element = componentElements(render()).find((candidate) => candidate.type === headerStub);
+      assert.ok(element);
+      return element;
+    };
+    assert.equal(header().props.selectedStoreId, "store-a");
+    await (header().props.onSetDefaultStore as (storeId: string) => Promise<void>)("store-b");
+    assert.equal(header().props.selectedStoreId, "store-b");
+    assert.equal(storage.get("hqSelectedStoreId"), "store-b");
+    await (header().props.onSetDefaultStore as (storeId: string) => Promise<void>)("foreign-store");
+    assert.equal(header().props.selectedStoreId, "store-b");
+    assert.equal(storage.get("hqSelectedStoreId"), "store-b");
+    assert.deepEqual(requests, ["/api/hq/stores"]);
+    assert.ok(componentElements(render()).some((element) => element.props["data-testid"] === "hq-child"));
   });
 });

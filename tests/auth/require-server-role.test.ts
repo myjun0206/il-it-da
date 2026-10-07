@@ -9,7 +9,7 @@ import {
   type ServerRole,
 } from "../../lib/auth/server-role-guard-core.ts";
 
-type FakeUser = { id: string; user_metadata?: Record<string, unknown> } | null;
+type FakeUser = { id: string; user_metadata?: Record<string, unknown>; app_metadata?: Record<string, unknown>; email_confirmed_at?: string | null } | null;
 
 function fakeSessionClient(options: { user?: FakeUser; userError?: unknown }): SupabaseClient {
   return {
@@ -115,6 +115,13 @@ describe("decideServerRoleAccess (pure role decision)", () => {
 });
 
 describe("requireServerRole (injected Supabase clients, no network)", () => {
+  test("unconfirmed email cannot access protected functions even if a profile role exists", async () => {
+    const result = await requireServerRole("owner", {
+      getSessionClient: async () => fakeSessionClient({ user: { id: "user-1", app_metadata: { provider: "email" }, email_confirmed_at: null } }),
+      getAdminClient: () => { throw new Error("profile must not grant unconfirmed access"); },
+    });
+    assert.deepEqual(result, { status: "FORBIDDEN" });
+  });
   test("treats AuthSessionMissingError as unauthenticated without logging an auth failure", async () => {
     const { calls, logAuthError } = spyLogAuthError();
     const missingSessionError = Object.assign(new Error("Auth session missing"), {
