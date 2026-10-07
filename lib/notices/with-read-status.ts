@@ -7,6 +7,21 @@ export interface NoticeReadRecord {
   user_id: string;
 }
 
+export type NoticeReadFilter = "all" | "unread";
+
+export function parseNoticeReadFilter(value: string | null): NoticeReadFilter {
+  return value === "unread" ? "unread" : "all";
+}
+
+export function filterNoticeRowsByRead<T extends { isRead?: boolean | null }>(
+  notices: readonly T[],
+  readFilter: NoticeReadFilter,
+): T[] {
+  return readFilter === "unread"
+    ? notices.filter((notice) => notice.isRead === false)
+    : [...notices];
+}
+
 export function withNoticeViewCounts<T extends NoticeWithId>(
   notices: T[],
   readRecords: Iterable<NoticeReadRecord>,

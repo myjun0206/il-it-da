@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Megaphone, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { Megaphone, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
@@ -12,8 +12,11 @@ import { NoticeDetailDialog } from "@/components/notices/NoticeDetailDialog";
 import { NoticeEditDialog } from "@/components/notices/NoticeEditDialog";
 import { NoticeFilter, type NoticeFilterOption } from "@/components/notices/NoticeFilter";
 import { NoticePageHeader } from "@/components/notices/NoticePageHeader";
+import { NoticePagination } from "@/components/notices/NoticePagination";
 import { createClient } from "@/lib/supabase/client";
 import type { HqNoticeItem } from "@/lib/types/notice";
+import type { NoticeSortOrder } from "@/lib/notices/sort-notices";
+import { DEFAULT_NOTICE_LIMIT, DEFAULT_NOTICE_PAGE, type NoticePaginationMetadata } from "@/lib/notices/pagination";
 
 // 목록 표시용 형태. /api/hq/notices 응답에서 대상 라벨을 계산해 만든다.
 interface HqNotice {
@@ -30,6 +33,7 @@ interface HqNotice {
 }
 
 type HqNoticeFilter = "all" | "franchise" | "store";
+interface HqTargetStore { id: string; name: string }
 
 const ALL_TARGETS = "all";
 const HQ_NOTICE_FILTERS: readonly NoticeFilterOption<HqNoticeFilter>[] = [
@@ -76,9 +80,19 @@ export default function CommunicationPage() {
   const [franchiseName, setFranchiseName] = useState("프랜차이즈");
   const [isReady, setIsReady] = useState(false);
   const [notices, setNotices] = useState<HqNotice[]>([]);
+  const [targetStores, setTargetStores] = useState<HqTargetStore[]>([]);
+  const [pagination, setPagination] = useState<NoticePaginationMetadata>({
+    page: DEFAULT_NOTICE_PAGE,
+    limit: DEFAULT_NOTICE_LIMIT,
+    totalCount: 0,
+    totalPages: 0,
+  });
+  const [page, setPage] = useState(DEFAULT_NOTICE_PAGE);
   const [isLoadingNotices, setIsLoadingNotices] = useState(true);
   const [noticesError, setNoticesError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [submittedSearch, setSubmittedSearch] = useState("");
+  const [sortOrder, setSortOrder] = useState<NoticeSortOrder>("latest");
   const [scopeFilter, setScopeFilter] = useState<HqNoticeFilter>("all");
   const [targetFilter, setTargetFilter] = useState(ALL_TARGETS);
   const [editingNotice, setEditingNotice] = useState<HqNotice | null>(null);
@@ -132,13 +146,30 @@ export default function CommunicationPage() {
     if (!isReady) return;
 
     const loadNotices = async () => {
+      setIsLoadingNotices(true);
+      setNoticesError("");
       try {
-        const response = await fetch("/api/hq/notices");
-        const result = (await response.json()) as { notices?: HqNoticeItem[]; error?: string };
+        const params = new URLSearchParams();
+        if (submittedSearch) params.set("search", submittedSearch);
+        params.set("sort", sortOrder);
+        params.set("page", String(page));
+        params.set("limit", String(DEFAULT_NOTICE_LIMIT));
+        if (scopeFilter !== "all") params.set("scope", scopeFilter);
+        if (targetFilter !== ALL_TARGETS) params.set("targetStoreId", targetFilter);
+        const query = params.toString();
+        const response = await fetch(`/api/hq/notices${query ? `?${query}` : ""}`);
+        const result = (await response.json()) as {
+          notices?: HqNoticeItem[];
+          targetStores?: HqTargetStore[];
+          pagination?: NoticePaginationMetadata;
+          error?: string;
+        };
         if (!response.ok) {
           throw new Error(result.error || "공지사항을 불러오지 못했습니다.");
         }
         setNotices((result.notices ?? []).map(toNoticeRow));
+        setTargetStores(result.targetStores ?? []);
+        setPagination(result.pagination ?? { page, limit: DEFAULT_NOTICE_LIMIT, totalCount: 0, totalPages: 0 });
       } catch (error) {
         console.error("Failed to load notices:", error);
         setNoticesError(error instanceof Error ? error.message : "공지사항을 불러오지 못했습니다.");
@@ -148,7 +179,7 @@ export default function CommunicationPage() {
     };
 
     void loadNotices();
-  }, [isReady]);
+  }, [isReady, submittedSearch, sortOrder, page, scopeFilter, targetFilter]);
 
   const handleLogout = async () => {
     try {
@@ -200,29 +231,25 @@ export default function CommunicationPage() {
   };
 
   // 대상 필터 값은 실제로 불러온 공지의 대상에서만 만든다.
-  const targetOptions = useMemo(() => {
-    const scopedNotices = notices.filter((notice) => {
-      if (scopeFilter === "franchise") return false;
-      return scopeFilter === "all" || notice.targetType === "store";
-    });
-    return [...new Set(scopedNotices.map((notice) => notice.target))].sort((a, b) => a.localeCompare(b));
-  }, [notices, scopeFilter]);
+  const targetOptions = useMemo(() => scopeFilter === "franchise" ? [] : targetStores, [scopeFilter, targetStores]);
+  const filteredNotices = notices;
 
-  const filteredNotices = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    return notices
-      .filter((notice) => scopeFilter === "all"
-        || (scopeFilter === "franchise"
-          ? notice.targetType === "all" || notice.targetType === "franchise"
-          : notice.targetType === "store"))
-      .filter((notice) => targetFilter === ALL_TARGETS || notice.target === targetFilter)
-      .filter((notice) => !query || notice.title.toLowerCase().includes(query))
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }, [notices, scopeFilter, searchQuery, targetFilter]);
+  const submitSearch = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSubmittedSearch(searchQuery.trim());
+    setPage(DEFAULT_NOTICE_PAGE);
+  };
+
+  const clearSearch = () => {
+    setSearchQuery("");
+    setSubmittedSearch("");
+    setPage(DEFAULT_NOTICE_PAGE);
+  };
 
   const changeScopeFilter = (value: HqNoticeFilter) => {
     setScopeFilter(value);
     setTargetFilter(ALL_TARGETS);
+    setPage(DEFAULT_NOTICE_PAGE);
   };
 
   if (!isReady) {
@@ -263,7 +290,7 @@ export default function CommunicationPage() {
               <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-base text-red-700" role="alert">
                 {noticesError}
               </div>
-            ) : notices.length === 0 ? (
+            ) : notices.length === 0 && !submittedSearch ? (
               <div className="bg-white border border-[var(--color-border)] rounded-xl p-12 text-center shadow-sm">
                 <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-4">
                   <Megaphone size={32} className="text-amber-600" aria-hidden="true" />
@@ -286,7 +313,8 @@ export default function CommunicationPage() {
                 </div>
                 {/* Toolbar */}
                 <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div className="relative w-full md:max-w-sm">
+                  <form onSubmit={submitSearch} className="flex w-full gap-2 md:max-w-xl">
+                    <div className="relative min-w-0 flex-1">
                     <Search
                       size={18}
                       aria-hidden="true"
@@ -296,22 +324,43 @@ export default function CommunicationPage() {
                       type="search"
                       value={searchQuery}
                       onChange={(event) => setSearchQuery(event.target.value)}
-                      placeholder="공지 제목으로 검색"
-                      aria-label="공지 제목으로 검색"
+                      placeholder="제목, 내용, 작성자 이름으로 검색"
+                      aria-label="제목, 내용, 작성자 이름으로 검색"
                       className="min-h-[44px] w-full rounded-lg border-2 border-[var(--color-border)] bg-white py-2.5 pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/30"
                     />
-                  </div>
+                    </div>
+                    <button type="submit" className="min-h-[44px] rounded-lg bg-[var(--color-primary)] px-4 text-sm font-semibold text-white">검색</button>
+                    <button type="button" onClick={clearSearch} disabled={!searchQuery && !submittedSearch} aria-label="검색어 초기화" title="검색어 초기화" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] disabled:opacity-50">
+                      <X size={18} aria-hidden="true" />
+                    </button>
+                  </form>
+                  <select
+                    value={sortOrder}
+                    onChange={(event) => {
+                      setSortOrder(event.target.value as NoticeSortOrder);
+                      setPage(DEFAULT_NOTICE_PAGE);
+                    }}
+                    aria-label="공지 정렬"
+                    className="min-h-[44px] rounded-lg border-2 border-[var(--color-border)] bg-white px-4 text-sm font-medium text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/30"
+                  >
+                    <option value="latest">최신순</option>
+                    <option value="oldest">오래된순</option>
+                    <option value="views">조회수순</option>
+                  </select>
                   {scopeFilter !== "franchise" && targetOptions.length > 0 && (
                     <select
                       value={targetFilter}
-                      onChange={(event) => setTargetFilter(event.target.value)}
+                      onChange={(event) => {
+                        setTargetFilter(event.target.value);
+                        setPage(DEFAULT_NOTICE_PAGE);
+                      }}
                       aria-label="공지 대상 지점 필터"
                       className="min-h-[44px] rounded-lg border-2 border-[var(--color-border)] bg-white px-4 text-sm font-medium text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/30"
                     >
                       <option value={ALL_TARGETS}>{scopeFilter === "store" ? "모든 특정 지점" : "전체 대상"}</option>
-                      {targetOptions.map((target) => (
-                        <option key={target} value={target}>
-                          {target}
+                      {targetOptions.map((targetStore) => (
+                        <option key={targetStore.id} value={targetStore.id}>
+                          {targetStore.name}
                         </option>
                       ))}
                     </select>
@@ -321,7 +370,7 @@ export default function CommunicationPage() {
                 {filteredNotices.length === 0 ? (
                   <div className="bg-white border border-[var(--color-border)] rounded-xl p-12 text-center shadow-sm">
                     <Search size={28} className="mx-auto mb-3 text-[var(--color-text-tertiary)]" aria-hidden="true" />
-                    <p className="text-base text-[var(--color-text-secondary)]">선택한 조건에 맞는 공지사항이 없습니다.</p>
+                    <p className="text-base text-[var(--color-text-secondary)]">{submittedSearch ? "검색 결과가 없습니다." : "선택한 조건에 맞는 공지사항이 없습니다."}</p>
                   </div>
                 ) : (
                   <div className="space-y-3">
@@ -339,6 +388,7 @@ export default function CommunicationPage() {
                     ))}
                   </div>
                 )}
+                <NoticePagination page={page} totalPages={pagination.totalPages} onPageChange={setPage} />
               </>
             )}
           </section>

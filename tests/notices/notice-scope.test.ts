@@ -15,13 +15,22 @@ import {
 } from "../../lib/notices/notice-authorization.ts";
 import { buildHqNoticeTarget } from "../../lib/notices/build-hq-notice-target.ts";
 import { validateOwnerNoticeCreateRequest } from "../../lib/notices/validate-owner-notice-create-request.ts";
-import { withNoticeReadStats, withNoticeReadStatus, withNoticeViewCounts } from "../../lib/notices/with-read-status.ts";
+import {
+  filterNoticeRowsByRead,
+  parseNoticeReadFilter,
+  withNoticeReadStats,
+  withNoticeReadStatus,
+  withNoticeViewCounts,
+} from "../../lib/notices/with-read-status.ts";
 import { getNoticeViewCountIncrement } from "../../lib/notices/mark-notice-read.ts";
 import { filterStaffNotices, toStaffNotice, type NoticeSourceFilter, type NoticeTargetFilter } from "../../lib/notices/notice-filters.ts";
 import {
   validateNoticeContentUpdateRequest,
   validateNoticeDeleteRequest,
 } from "../../lib/notices/validate-notice-mutation.ts";
+import { filterNoticeRowsBySearch, searchNoticeRows } from "../../lib/notices/search-notices.ts";
+import { getNoticeSortOrder, sortNoticeRows } from "../../lib/notices/sort-notices.ts";
+import { paginateNoticeRows, parseNoticePagination } from "../../lib/notices/pagination.ts";
 
 // 공지 라우트는 next/server, cookies(), Supabase 클라이언트에 묶여 Next 런타임 밖에서 실행되지
 // 않는다(다른 route 테스트와 동일 관행). 여기서는 021 마이그레이션과 라우트가 같은 테이블·컬럼·
@@ -47,6 +56,266 @@ const noticeCard = readSource("components/notices/NoticeCard.tsx");
 const noticeFilter = readSource("components/notices/NoticeFilter.tsx");
 const noticeMeta = readSource("components/notices/NoticeMeta.tsx");
 const markNoticeReadHelper = readSource("lib/notices/mark-notice-read.ts");
+const noticeSearchHelper = readSource("lib/notices/search-notices.ts");
+const noticeSortHelper = readSource("lib/notices/sort-notices.ts");
+const noticePaginationHelper = readSource("lib/notices/pagination.ts");
+const noticePaginationComponent = readSource("components/notices/NoticePagination.tsx");
+
+describe("notice search", () => {
+  const notices = [
+    { id: "title-hit", author_id: "author-1", title: "신규 직원 교육 안내", content: "일정 확인" },
+    { id: "content-hit", author_id: "author-2", title: "운영 공지", content: "교육 일정 변경" },
+    { id: "author-hit", author_id: "author-3", title: "담당자 안내", content: "연락처 확인" },
+    { id: "miss", author_id: null, title: "정기 안내", content: "매장 운영" },
+  ];
+  const authorNames = new Map([["author-3", "김교육"]]);
+
+  test("matches title, content, author name, and partial text", () => {
+    assert.deepEqual(filterNoticeRowsBySearch(notices, "교육", authorNames).map(({ id }) => id), [
+      "title-hit", "content-hit", "author-hit",
+    ]);
+    assert.deepEqual(filterNoticeRowsBySearch(notices, "신규 직원", authorNames).map(({ id }) => id), ["title-hit"]);
+    assert.deepEqual(filterNoticeRowsBySearch(notices, "운영 공", authorNames).map(({ id }) => id), ["content-hit"]);
+  });
+
+  test("trims surrounding whitespace, preserves the list for an empty query, and handles no matches", () => {
+    assert.deepEqual(filterNoticeRowsBySearch(notices, "  교육  ", authorNames), filterNoticeRowsBySearch(notices, "교육", authorNames));
+    assert.strictEqual(filterNoticeRowsBySearch(notices, "   ", authorNames), notices);
+    assert.deepEqual(filterNoticeRowsBySearch(notices, "없는 검색어", authorNames), []);
+  });
+
+  test("looks up only authors in the scoped rows and skips lookup without a search", async () => {
+    const requestedIds: string[][] = [];
+    const fakeClient = {
+      from: () => ({
+        select: () => ({
+          in: (_column: string, ids: string[]) => {
+            requestedIds.push(ids);
+            return Promise.resolve({
+              data: [{ id: "author-3", full_name: "김교육" }, { id: "out-of-scope", full_name: "교육 담당" }],
+              error: null,
+            });
+          },
+        }),
+      }),
+    } as never;
+    const scopedNotices = [notices[2], notices[3]];
+
+    assert.deepEqual((await searchNoticeRows(fakeClient, scopedNotices, "교육")).map(({ id }) => id), ["author-hit"]);
+    assert.deepEqual(requestedIds, [["author-3"]]);
+    assert.strictEqual(await searchNoticeRows(fakeClient, scopedNotices, "  "), scopedNotices);
+    assert.deepEqual(requestedIds, [["author-3"]]);
+  });
+
+  test("each API searches after its existing role and notice scope checks", () => {
+    assert.match(hqRoute, /\.eq\("franchise_id", hqUser\.franchiseId\)[\s\S]*?\.in\("audience", \["owner", "all_members"\]\)[\s\S]*?await searchNoticeRows\(/);
+    assert.match(bossRoute, /const readableRows = \[[\s\S]*?canReadNotice\("owner"[\s\S]*?const searchedRows = await searchNoticeRows\(/);
+    assert.match(staffRoute, /const readableRows = \(\(scopedRows \?\? \[\]\) as NoticeRow\[\]\)[\s\S]*?canReadNotice\("staff"[\s\S]*?await searchNoticeRows\(/);
+    assert.match(noticeSearchHelper, /\.from\("profiles"\)[\s\S]*?\.select\("id, full_name"\)[\s\S]*?\.in\("id", authorIds\)/);
+  });
+});
+
+describe("notice sorting", () => {
+  const notices = [
+    { id: "old", title: "휴무 안내", content: "일정", author_id: "author-1", createdAt: "2026-01-01T00:00:00.000Z", viewCount: 1 },
+    { id: "new-high", title: "휴무 일정", content: "변경", author_id: "author-2", createdAt: "2026-03-01T00:00:00.000Z", viewCount: 8 },
+    { id: "middle-high", title: "휴무 공지", content: "확인", author_id: "author-3", createdAt: "2026-02-01T00:00:00.000Z", viewCount: 8 },
+    { id: "new-low", title: "근무 공지", content: "안내", author_id: "author-4", createdAt: "2026-04-01T00:00:00.000Z", viewCount: 2 },
+  ];
+
+  test("defaults to latest and supports latest, oldest, and views with latest tie-break", () => {
+    assert.equal(getNoticeSortOrder(null), "latest");
+    assert.equal(getNoticeSortOrder("invalid"), "latest");
+    assert.equal(getNoticeSortOrder("oldest"), "oldest");
+    assert.equal(getNoticeSortOrder("views"), "views");
+    assert.deepEqual(sortNoticeRows(notices, getNoticeSortOrder(null)).map(({ id }) => id), [
+      "new-low", "new-high", "middle-high", "old",
+    ]);
+    assert.deepEqual(sortNoticeRows(notices, "oldest").map(({ id }) => id), [
+      "old", "middle-high", "new-high", "new-low",
+    ]);
+    assert.deepEqual(sortNoticeRows(notices, "views").map(({ id }) => id), [
+      "new-high", "middle-high", "new-low", "old",
+    ]);
+  });
+
+  test("search results are sorted after filtering and all role APIs sort after read counts", () => {
+    const matchingNotices = filterNoticeRowsBySearch(notices, "휴무", new Map());
+    assert.deepEqual(sortNoticeRows(matchingNotices, "views").map(({ id }) => id), [
+      "new-high", "middle-high", "old",
+    ]);
+    assert.match(hqRoute, /searchNoticeRows\([\s\S]*?sortNoticeRows\([\s\S]*?withNoticeViewCounts\(noticeItems, readRecords\)/);
+    for (const [route, userId] of [[bossRoute, "user.id"], [staffRoute, "userId"]]) {
+      assert.match(route, /searchNoticeRows\([\s\S]*?withNoticeReadStatus\(noticeItems, readNoticeIds\)/);
+      assert.match(route, /withNoticeReadStatus\(noticeItems, readNoticeIds\)[\s\S]*?filterNoticeRowsByRead\(noticesWithReadStatus, readFilter\)[\s\S]*?withNoticeViewCounts\(readFilteredNotices, readRecords\)[\s\S]*?sortNoticeRows\(noticesWithViewCounts, sortOrder\)/);
+      assert.match(route, new RegExp(`record.user_id === ${userId}`));
+    }
+    assert.match(staffRoute, /sortNoticeRows\(noticesWithViewCounts, sortOrder\)[\s\S]*?\.slice\(0, 1000\)/);
+    for (const route of [hqRoute, bossRoute, staffRoute]) {
+      assert.match(route, /getNoticeSortOrder\([\s\S]*?searchParams\.get\("sort"\)/);
+    }
+    assert.match(noticeSortHelper, /right\.viewCount - left\.viewCount \|\| createdAtDifference/);
+  });
+});
+
+describe("notice pagination", () => {
+  const rows = Array.from({ length: 25 }, (_, index) => ({ id: index + 1 }));
+
+  test("defaults to page 1 and limit 10, and caps a requested limit at 50", () => {
+    assert.deepEqual(parseNoticePagination(new URLSearchParams()), { page: 1, limit: 10 });
+    assert.deepEqual(parseNoticePagination(new URLSearchParams("page=abc&limit=0")), { page: 1, limit: 10 });
+    assert.deepEqual(parseNoticePagination(new URLSearchParams("page=0&limit=abc")), { page: 1, limit: 10 });
+    assert.deepEqual(parseNoticePagination(new URLSearchParams("page=-1&limit=-10")), { page: 1, limit: 10 });
+    assert.deepEqual(parseNoticePagination(new URLSearchParams("page=2&limit=10000")), { page: 2, limit: 50 });
+  });
+
+  test("returns ten rows per page with total count and page count", () => {
+    const first = paginateNoticeRows(rows, 1, 10);
+    const second = paginateNoticeRows(rows, 2, 10);
+    const third = paginateNoticeRows(rows, 3, 10);
+
+    assert.deepEqual(first.items.map(({ id }) => id), Array.from({ length: 10 }, (_, index) => index + 1));
+    assert.deepEqual(second.items.map(({ id }) => id), Array.from({ length: 10 }, (_, index) => index + 11));
+    assert.deepEqual(third.items.map(({ id }) => id), [21, 22, 23, 24, 25]);
+    assert.deepEqual(third.pagination, { page: 3, limit: 10, totalCount: 25, totalPages: 3 });
+  });
+
+  test("returns an empty page after the last page while retaining requested page metadata", () => {
+    const result = paginateNoticeRows(rows, 4, 10);
+    assert.deepEqual(result.items, []);
+    assert.deepEqual(result.pagination, { page: 4, limit: 10, totalCount: 25, totalPages: 3 });
+  });
+
+  test("applies search and views sort before counting and selecting page two", () => {
+    const allRows = Array.from({ length: 25 }, (_, index) => ({
+      id: `notice-${index + 1}`,
+      title: index % 5 === 0 ? "정기 안내" : "휴무 일정 안내",
+      content: "운영 공지",
+      author_id: null,
+      createdAt: new Date(Date.UTC(2026, 0, index + 1)).toISOString(),
+      viewCount: (index * 7) % 13,
+    }));
+    const matchingRows = filterNoticeRowsBySearch(allRows, "휴무", new Map());
+    const sortedRows = sortNoticeRows(matchingRows, "views");
+    const result = paginateNoticeRows(sortedRows, 2, 10);
+
+    assert.equal(result.pagination.totalCount, 20);
+    assert.equal(result.pagination.totalPages, 2);
+    assert.deepEqual(result.items, sortedRows.slice(10, 20));
+  });
+
+  test("all role APIs paginate after authorized filters, search, and sorting", () => {
+    assert.match(hqRoute, /\.in\("audience", \["owner", "all_members"\]\)[\s\S]*?searchNoticeRows\([\s\S]*?const filteredRows = rows\.filter[\s\S]*?sortNoticeRows\([\s\S]*?paginateNoticeRows\(sortedNotices, page, limit\)/);
+    assert.match(bossRoute, /const readableRows = \[[\s\S]*?const filteredRows = readableRows\.filter[\s\S]*?searchNoticeRows\([\s\S]*?sortNoticeRows\([\s\S]*?paginateNoticeRows\(sortedNotices, page, limit\)/);
+    assert.match(staffRoute, /canReadNotice\("staff"[\s\S]*?const filteredRows = readableRows\.filter[\s\S]*?searchNoticeRows\([\s\S]*?sortNoticeRows\([\s\S]*?const cappedNotices = sortedNotices\.slice\(0, 1000\)[\s\S]*?paginateNoticeRows\(cappedNotices, page, limit\)/);
+    assert.match(noticePaginationHelper, /totalCount = rows\.length/);
+    assert.match(noticePaginationComponent, /disabled=\{page <= 1\}/);
+    assert.match(noticePaginationComponent, /disabled=\{page >= totalPages\}/);
+    assert.match(noticePaginationComponent, /aria-current=\{pageNumber === page \? "page" : undefined\}/);
+  });
+
+  test("role APIs return pagination metadata and pages send fixed page/limit with active filters", () => {
+    for (const route of [hqRoute, bossRoute, staffRoute]) {
+      assert.match(route, /parseNoticePagination\(/);
+      assert.match(route, /paginateNoticeRows\(/);
+      assert.match(route, /pagination/);
+    }
+    assert.match(hqRoute, /return NextResponse\.json\(\{ notices, targetStores, pagination \}\)/);
+    assert.match(bossRoute, /summary: \{[\s\S]*?total: pagination\.totalCount[\s\S]*?pagination,/);
+    assert.match(staffRoute, /return NextResponse\.json\(\{ notices, pagination \}\)/);
+    assert.match(hqNoticesPage, /params\.set\("page", String\(page\)\)/);
+    assert.match(hqNoticesPage, /params\.set\("limit", String\(DEFAULT_NOTICE_LIMIT\)\)/);
+    assert.match(ownerNoticesPage, /params\.set\("source", sourceFilter\)[\s\S]*?params\.set\("category", categoryFilter\)/);
+    assert.match(staffNoticesPage, /params\.set\("source", sourceFilter\)[\s\S]*?params\.set\("target", targetFilter\)/);
+    for (const page of [hqNoticesPage, ownerNoticesPage, staffNoticesPage]) {
+      assert.match(page, /params\.set\("page", String\(page\)\)/);
+      assert.match(page, /params\.set\("limit", String\(DEFAULT_NOTICE_LIMIT\)\)/);
+      assert.match(page, /<NoticePagination/);
+    }
+  });
+});
+
+describe("notice read filter", () => {
+  test("defaults missing and invalid values to all and accepts unread", () => {
+    assert.equal(parseNoticeReadFilter(null), "all");
+    assert.equal(parseNoticeReadFilter("all"), "all");
+    assert.equal(parseNoticeReadFilter("foo"), "all");
+    assert.equal(parseNoticeReadFilter("123"), "all");
+    assert.equal(parseNoticeReadFilter("unread"), "unread");
+  });
+
+  test("unread includes only an explicit false read state", () => {
+    const notices = [
+      { id: "read", isRead: true },
+      { id: "unread", isRead: false },
+      { id: "null", isRead: null },
+      { id: "undefined" },
+    ];
+
+    assert.deepEqual(filterNoticeRowsByRead(notices, "unread"), [{ id: "unread", isRead: false }]);
+    assert.deepEqual(filterNoticeRowsByRead(notices, "all"), notices);
+  });
+
+  test("search, unread, views sort, count, and page two compose in order", () => {
+    const allRows = Array.from({ length: 32 }, (_, index) => ({
+      id: `notice-${index + 1}`,
+      author_id: null,
+      title: index < 30 ? "휴무 일정 안내" : "근무 일정 안내",
+      content: "매장 운영",
+      createdAt: new Date(Date.UTC(2026, 0, index + 1)).toISOString(),
+    }));
+    const matchingRows = filterNoticeRowsBySearch(allRows, "휴무", new Map());
+    const readRecords = matchingRows.flatMap((notice, index) => [
+      ...Array.from({ length: index % 6 }, (_, readerIndex) => ({
+        notice_id: notice.id,
+        user_id: `viewer-${readerIndex}`,
+      })),
+      ...(index < 5 ? [{ notice_id: notice.id, user_id: "current-user" }] : []),
+    ]);
+    const currentUserReadIds = readRecords
+      .filter((record) => record.user_id === "current-user")
+      .map((record) => record.notice_id);
+    const withReadState = withNoticeReadStatus(matchingRows, currentUserReadIds);
+    const unreadRows = filterNoticeRowsByRead(withReadState, parseNoticeReadFilter("unread"));
+    const withViewCounts = withNoticeViewCounts(unreadRows, readRecords);
+    const sortedRows = sortNoticeRows(withViewCounts, "views");
+    const firstPage = paginateNoticeRows(sortedRows, 1, 10);
+    const secondPage = paginateNoticeRows(sortedRows, 2, 10);
+    const thirdPage = paginateNoticeRows(sortedRows, 3, 10);
+
+    assert.equal(firstPage.pagination.totalCount, 25);
+    assert.equal(firstPage.pagination.totalPages, 3);
+    assert.equal(firstPage.items.length, 10);
+    assert.equal(secondPage.items.length, 10);
+    assert.equal(thirdPage.items.length, 5);
+    assert.deepEqual(secondPage.items, sortedRows.slice(10, 20));
+    assert.ok([...firstPage.items, ...secondPage.items, ...thirdPage.items].every((notice) => notice.isRead === false));
+    assert.deepEqual(sortNoticeRows(unreadRows.map((notice, index) => ({ ...notice, viewCount: index })), "views").map(({ id }) => id),
+      [...unreadRows].reverse().map(({ id }) => id));
+  });
+
+  test("OWNER and STAFF accept read while HQ route, response type, and page stay unchanged", () => {
+    assert.match(bossRoute, /parseNoticeReadFilter\(request\.nextUrl\.searchParams\.get\("read"\)\)/);
+    assert.match(staffRoute, /parseNoticeReadFilter\(url\.searchParams\.get\("read"\)\)/);
+    assert.doesNotMatch(hqRoute, /parseNoticeReadFilter|searchParams\.get\("read"\)/);
+    assert.doesNotMatch(hqNoticesPage, /params\.set\("read"/);
+    assert.doesNotMatch(readSource("lib/types/notice.ts"), /isRead/);
+  });
+
+  test("OWNER and STAFF pages send the filter, reset pages, and retain their other query state", () => {
+    assert.match(ownerNoticesPage, /params\.set\("read", readFilter\)/);
+    assert.match(staffNoticesPage, /params\.set\("read", readFilter\)/);
+    assert.match(ownerNoticesPage, /setReadFilter\(value\);\s*setPage\(DEFAULT_NOTICE_PAGE\)/);
+    assert.match(staffNoticesPage, /setReadFilter\(value\);\s*setPage\(DEFAULT_NOTICE_PAGE\)/);
+    for (const page of [ownerNoticesPage, staffNoticesPage]) {
+      assert.match(page, /value: "all", label: "전체"/);
+      assert.match(page, /value: "unread", label: "안 읽음"/);
+      assert.match(page, /markNoticeAsRead\(notice\.id\)/);
+      assert.match(page, /if \(readFilter === "unread"\) \{[\s\S]*?unreadReadPending\.current = true/);
+      assert.match(page, /if \(unreadReadPending\.current\) \{[\s\S]*?setReloadToken/);
+    }
+  });
+});
 
 function noticePageScenario(role: "hq" | "owner" | "staff", multiple = false) {
   const notice = {
@@ -60,10 +329,24 @@ function noticePageScenario(role: "hq" | "owner" | "staff", multiple = false) {
     { ...notice, id: "notice-c", title: "Franchise Safety", targetType: "franchise", target: "전체 지점", targetStoreId: null },
   ] : [notice];
   const initialStates = role === "hq"
-    ? ["Tester", "Cafe", true, rows, false, "", "", "all", "all", null, null, null, false]
+    ? [
+        "Tester", "Cafe", true, rows,
+        [{ id: "store-a", name: "Store A" }, { id: "store-b", name: "Store B" }],
+        { page: 1, limit: 10, totalCount: rows.length, totalPages: 1 }, 1,
+        false, "", "", "", "latest", "all", "all", null, null, null, false,
+      ]
     : role === "owner"
-      ? [true, "Tester", "Store A", "store-a", { notices: rows, summary: { total: rows.length, important: 0 } }, false, "", "all", "", "전체", null, null, null, false]
-      : [{ key: "store-a:0", status: "ready", notices: rows }, 0, "", "all", "all", null];
+      ? [true, "Tester", "Store A", "store-a", {
+          notices: rows,
+          pagination: { page: 1, limit: 10, totalCount: rows.length, totalPages: 1 },
+          summary: { total: rows.length, important: 0 },
+        }, false, "", "all", "", "", "latest", "전체", 1, null, null, null, false, "all", 0, false]
+      : [{
+          key: "store-a:0::latest:all:all:all:1",
+          status: "ready",
+          notices: rows,
+          pagination: { page: 1, limit: 10, totalCount: rows.length, totalPages: 1 },
+        }, 0, "", "", "latest", 1, "store-a", "all", "all", null, "all", false];
   const harness = createHookHarness(initialStates);
   const navigations: string[] = [];
   const reads: string[] = [];
@@ -184,7 +467,7 @@ describe("app/api/hq/notices/route.ts (본사만 작성)", () => {
   });
 
   test("franchise_id가 없는 레거시 HQ 계정은 fail closed 한다", () => {
-    assert.match(hqRoute, /if \(!hqUser\.franchiseId\) \{\s*return NextResponse\.json\(\{ notices: \[\] \}\)/);
+    assert.match(hqRoute, /if \(!hqUser\.franchiseId\) \{[\s\S]*?notices: \[\],[\s\S]*?pagination: emptyPage\.pagination/);
     assert.match(hqRoute, /소속 프랜차이즈 정보가 없어 공지를 작성할 수 없습니다\./);
   });
 
@@ -274,7 +557,7 @@ describe("app/api/boss/notices/route.ts (점주 조회 범위)", () => {
   });
 
   test("franchise가 없는 매장은 공지를 하나도 노출하지 않는다", () => {
-    assert.match(bossRoute, /if \(!store\?\.franchise_id\) \{\s*return NextResponse\.json\(\{ success: true, data: \{ notices: \[\], summary/);
+    assert.match(bossRoute, /if \(!store\?\.franchise_id\) \{[\s\S]*?notices: \[\],[\s\S]*?pagination: emptyPage\.pagination/);
   });
 
   test("migration 미적용 환경에서는 빈 목록으로 응답한다", () => {
@@ -513,15 +796,15 @@ describe("notice isRead/viewCount mapping and GET queries", () => {
 
   test("OWNER batches reads for the merged HQ and own STAFF notices, scoped to current user", () => {
     assert.match(bossRoute, /\.eq\("audience", "staff"\)[\s\S]*?\.eq\("author_id", user\.id\)/);
-    assert.match(bossRoute, /if \(readableRows\.length > 0\)[\s\S]*?\.from\("notice_reads"\)[\s\S]*?\.select\("notice_id,user_id"\)[\s\S]*?\.in\("notice_id", readableRows\.map\(\(row\) => row\.id\)\)/);
-    assert.match(bossRoute, /withNoticeReadStats\(noticeItems, readRecords, user\.id\)/);
+    assert.match(bossRoute, /if \(searchedRows\.length > 0\)[\s\S]*?\.from\("notice_reads"\)[\s\S]*?\.select\("notice_id,user_id"\)[\s\S]*?\.in\("notice_id", searchedRows\.map\(\(row\) => row\.id\)\)/);
+    assert.match(bossRoute, /withNoticeReadStatus\(noticeItems, readNoticeIds\)[\s\S]*?filterNoticeRowsByRead\(noticesWithReadStatus, readFilter\)[\s\S]*?withNoticeViewCounts\(readFilteredNotices, readRecords\)/);
     assert.equal((bossRoute.match(/\.from\("notice_reads"\)/g) ?? []).length, 1);
   });
 
   test("STAFF batches reads after existing access filtering and skips empty lists", () => {
     assert.match(staffRoute, /\.filter\(\(row\) => canReadNotice\("staff"/);
     assert.match(staffRoute, /if \(noticesData\.length > 0\)[\s\S]*?\.from\("notice_reads"\)[\s\S]*?\.select\("notice_id,user_id"\)[\s\S]*?\.in\("notice_id", noticesData\.map\(\(row\) => row\.id\)\)/);
-    assert.match(staffRoute, /withNoticeReadStats\(noticeItems, readRecords, userId\)/);
+    assert.match(staffRoute, /withNoticeReadStatus\(noticeItems, readNoticeIds\)[\s\S]*?filterNoticeRowsByRead\(noticesWithReadStatus, readFilter\)[\s\S]*?withNoticeViewCounts\(readFilteredNotices, readRecords\)/);
     assert.equal((staffRoute.match(/\.from\("notice_reads"\)/g) ?? []).length, 1);
   });
 
@@ -564,40 +847,19 @@ describe("notice source and target filters", () => {
           assert.equal(markup.includes(title), titles.includes(title), `${role}: ${title}`);
         }
       };
-      const search = (value: string) => change((element) => typeof element.props.onChange === "function" && typeof element.props.placeholder === "string", value, true);
       if (role === "hq") {
         change((element) => element.props.ariaLabel === "공지 대상 범위", "store");
-        change((element) => element.props["aria-label"] === "공지 대상 지점 필터", "Store A", true);
-        search("  Kitchen  ");
-        hasTitles(["Kitchen Safety"]);
-        search("");
-        hasTitles(["Kitchen Safety"]);
+        change((element) => element.props["aria-label"] === "공지 대상 지점 필터", "store-a", true);
+        hasTitles(["Kitchen Safety", "Store Schedule", "Franchise Safety"]);
       } else if (role === "owner") {
         change((element) => element.props.ariaLabel === "공지 출처", "hq");
         change((element) => element.type === "select", "기타", true);
-        search("Kitchen");
         hasTitles([]);
         change((element) => element.props.ariaLabel === "공지 출처", "mine");
         hasTitles(["Store Schedule"]);
-        search("missing");
-        hasTitles([]);
-        search("");
-        hasTitles(["Store Schedule"]);
       } else {
-        change((element) => element.props["aria-label"] === "공지 대상 필터", "store", true);
-        const source = componentElements(scenario.render()).find((element) => element.type === "button" && element.props.children === "매장 공지");
-        assert.ok(source);
-        (source.props.onClick as () => void)();
-        search("  KITCHEN  ");
-        hasTitles(["Store Schedule"]);
-        change((element) => element.props["aria-label"] === "공지 대상 필터", "franchise", true);
-        hasTitles([]);
-        change((element) => element.props["aria-label"] === "공지 대상 필터", "store", true);
-        hasTitles(["Store Schedule"]);
-        search("missing");
-        hasTitles([]);
-        search("");
-        hasTitles(["Store Schedule"]);
+        assert.match(staffNoticesPage, /setSourceFilter\(value\);\s*setPage\(DEFAULT_NOTICE_PAGE\)/);
+        assert.match(staffNoticesPage, /setTargetFilter\(event\.target\.value as NoticeTargetFilter\);\s*setPage\(DEFAULT_NOTICE_PAGE\)/);
       }
     }
   });
@@ -610,12 +872,14 @@ describe("notice source and target filters", () => {
     }
   });
 
-  test("HQ preserves target fields and filters all/franchise/store in the client", () => {
+  test("HQ preserves target fields and sends scope/target filters to the paginated API", () => {
     assert.match(hqNoticesPage, /targetType: notice\.targetType/);
     assert.match(hqNoticesPage, /targetStoreId: notice\.targetStoreId/);
     assert.match(hqNoticesPage, /useState<HqNoticeFilter>\("all"\)/);
-    assert.match(hqNoticesPage, /notice\.targetType === "all" \|\| notice\.targetType === "franchise"/);
-    assert.match(hqNoticesPage, /notice\.targetType === "store"/);
+    assert.match(hqNoticesPage, /params\.set\("scope", scopeFilter\)/);
+    assert.match(hqNoticesPage, /params\.set\("targetStoreId", targetFilter\)/);
+    assert.match(hqNoticesPage, /targetStores\?: HqTargetStore\[\]/);
+    assert.match(hqRoute, /const filteredRows = rows\.filter\([\s\S]*?scopeFilter === "franchise"[\s\S]*?targetStoreId/);
     assert.match(hqNoticesPage, /setTargetFilter\(ALL_TARGETS\)/);
   });
 
@@ -632,19 +896,25 @@ describe("notice source and target filters", () => {
   test("STAFF maps sourceLabel to sourceType and keeps target filters independent", () => {
     assert.deepEqual(toStaffNotice({ id: "owner", sourceLabel: "점주 공지" }), { id: "owner", sourceLabel: "점주 공지", sourceType: "owner" });
     assert.deepEqual(toStaffNotice({ id: "hq", sourceLabel: "본사 공지" }), { id: "hq", sourceLabel: "본사 공지", sourceType: "hq" });
-    assert.match(staffNoticesPage, /filterStaffNotices\(allNotices, \{ source: sourceFilter, target: targetFilter, query \}\)/);
-    assert.match(staffNoticesPage, /onClick={\(\) => setSourceFilter\(value\)}/);
-    assert.match(staffNoticesPage, /onChange={\(event\) => setTargetFilter\(event\.target\.value as NoticeTargetFilter\)}/);
-    assert.match(staffNoticesPage, /requestKey = storeId \? `\$\{storeId\}:\$\{reloadToken\}` : null/);
-    assert.match(staffNoticesPage, /fetch\(`\/api\/staff\/notices\?storeId=\$\{encodeURIComponent\(storeId!\)\}`/);
+    assert.match(staffNoticesPage, /filterStaffNotices\(allNotices, \{ source: sourceFilter, target: targetFilter, query: "" \}\)/);
+    assert.match(staffNoticesPage, /setSourceFilter\(value\);\s*setPage\(DEFAULT_NOTICE_PAGE\)/);
+    assert.match(staffNoticesPage, /setTargetFilter\(event\.target\.value as NoticeTargetFilter\);\s*setPage\(DEFAULT_NOTICE_PAGE\)/);
+    assert.match(staffNoticesPage, /requestKey = storeId[\s\S]*?\$\{storeId\}:\$\{reloadToken\}:\$\{submittedQuery\}:\$\{sortOrder\}:\$\{sourceFilter\}:\$\{targetFilter\}:\$\{readFilter\}:\$\{page\}/);
+    assert.match(staffNoticesPage, /params\.set\("search", submittedQuery\)/);
+    assert.match(staffNoticesPage, /params\.set\("sort", sortOrder\)/);
+    assert.match(staffNoticesPage, /params\.set\("page", String\(page\)\)/);
+    assert.match(staffNoticesPage, /params\.set\("limit", String\(DEFAULT_NOTICE_LIMIT\)\)/);
+    assert.match(staffNoticesPage, /params\.set\("source", sourceFilter\)/);
+    assert.match(staffNoticesPage, /params\.set\("target", targetFilter\)/);
     assert.match(staffRoute, /sourceLabel: row\.audience === "staff" \? "점주 공지" : "본사 공지"/);
     assert.match(staffNoticesPage, /label: "본사 공지"/);
     assert.match(staffNoticesPage, /label: "매장 공지"/);
   });
 
-  test("role filters are local state and compose with existing search", () => {
-    assert.match(hqNoticesPage, /\.filter\(\(notice\) => !query \|\| notice\.title\.toLowerCase\(\)\.includes\(query\)\)/);
-    assert.match(ownerNoticesPage, /const query = searchQuery\.toLowerCase\(\)\.trim\(\)/);
+  test("role filters stay local and compose with the server search results", () => {
+    assert.match(hqNoticesPage, /setSubmittedSearch\(searchQuery\.trim\(\)\)/);
+    assert.match(ownerNoticesPage, /params\.set\("search", submittedSearch\)/);
+    assert.match(staffNoticesPage, /setSubmittedQuery\(query\.trim\(\)\)/);
     const notices = [
       { id: "hq-all", sourceType: "hq", targetType: "all", title: "Recipe", content: "Alpha" },
       { id: "hq-franchise", sourceType: "hq", targetType: "franchise", title: "Safety", content: "Recipe" },
@@ -663,9 +933,18 @@ describe("notice source and target filters", () => {
         }
       }
     }
-    assert.match(hqNoticesPage, /void loadNotices\(\);\s*\}, \[isReady\]\)/);
-    assert.match(ownerNoticesPage, /fetchNotices\(\);\s*\}, \[selectedStoreId\]\)/);
-    assert.match(staffNoticesPage, /\}, \[storeId, requestKey, router\]\)/);
+    assert.match(hqNoticesPage, /void loadNotices\(\);\s*\}, \[isReady, submittedSearch, sortOrder, page, scopeFilter, targetFilter\]\)/);
+    assert.match(ownerNoticesPage, /fetchNotices\(\);\s*\}, \[selectedStoreId, submittedSearch, sortOrder, sourceFilter, categoryFilter, readFilter, page, reloadToken\]\)/);
+    assert.match(staffNoticesPage, /\}, \[storeId, requestKey, router, submittedQuery, sortOrder, sourceFilter, targetFilter, readFilter, page\]\)/);
+    for (const page of [hqNoticesPage, ownerNoticesPage, staffNoticesPage]) {
+      assert.match(page, /onSubmit=\{submitSearch\}/);
+      assert.match(page, /onClick=\{clearSearch\}/);
+      assert.match(page, /aria-label="검색어 초기화"/);
+      assert.match(page, /useState<NoticeSortOrder>\("latest"\)/);
+      assert.match(page, /value="oldest">오래된순/);
+      assert.match(page, /value="views">조회수순/);
+      assert.match(page, /params\.set\("sort", sortOrder\)/);
+    }
   });
 });
 
@@ -724,14 +1003,14 @@ describe("OWNER and STAFF GET read status queries", () => {
   test("OWNER batches one read lookup across HQ and own STAFF notices for the session user", () => {
     assert.match(bossRoute, /\.in\("audience", \["owner", "all_members"\]\)/);
     assert.match(bossRoute, /\.eq\("author_id", user\.id\)/);
-    assert.match(bossRoute, /if \(readableRows\.length > 0\)[\s\S]*?\.from\("notice_reads"\)[\s\S]*?\.select\("notice_id,user_id"\)[\s\S]*?\.in\("notice_id", readableRows\.map\(\(row\) => row\.id\)\)/);
-    assert.match(bossRoute, /withNoticeReadStats\(noticeItems, readRecords, user\.id\)/);
+    assert.match(bossRoute, /if \(searchedRows\.length > 0\)[\s\S]*?\.from\("notice_reads"\)[\s\S]*?\.select\("notice_id,user_id"\)[\s\S]*?\.in\("notice_id", searchedRows\.map\(\(row\) => row\.id\)\)/);
+    assert.match(bossRoute, /withNoticeReadStatus\(noticeItems, readNoticeIds\)[\s\S]*?filterNoticeRowsByRead\(noticesWithReadStatus, readFilter\)[\s\S]*?withNoticeViewCounts\(readFilteredNotices, readRecords\)/);
   });
 
   test("STAFF batches one read lookup after the existing access filter and skips empty lists", () => {
     assert.match(staffRoute, /\.filter\(\(row\) => canReadNotice\("staff"/);
     assert.match(staffRoute, /if \(noticesData\.length > 0\)[\s\S]*?\.from\("notice_reads"\)[\s\S]*?\.select\("notice_id,user_id"\)[\s\S]*?\.in\("notice_id", noticesData\.map\(\(row\) => row\.id\)\)/);
-    assert.match(staffRoute, /withNoticeReadStats\(noticeItems, readRecords, userId\)/);
+    assert.match(staffRoute, /withNoticeReadStatus\(noticeItems, readNoticeIds\)[\s\S]*?filterNoticeRowsByRead\(noticesWithReadStatus, readFilter\)[\s\S]*?withNoticeViewCounts\(readFilteredNotices, readRecords\)/);
   });
 });
 
