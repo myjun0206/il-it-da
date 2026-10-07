@@ -33,6 +33,7 @@ function LoginPageContent() {
 
   // Check if user is already logged in on mount
   useLayoutEffect(() => {
+    sessionStorage.removeItem("signupPassword");
     const checkSession = async () => {
       try {
         const oauthError = new URLSearchParams(window.location.search).get("oauthError");
@@ -96,9 +97,26 @@ function LoginPageContent() {
           role?: string;
           approvalStatus?: "pending" | "approved" | "rejected";
         };
+        code?: string;
+        signup?: { role: "owner" | "staff"; email: string; name: string; phone: string };
         error?: string;
       } =
         await response.json();
+
+      if (result.code === "SIGNUP_INCOMPLETE" && result.signup) {
+        sessionStorage.removeItem("signupPassword");
+        sessionStorage.removeItem("signupOtpDraft");
+        // 이메일 인증까지 끝낸 점주·직원 가입을 매장 선택 단계부터 이어간다. (비밀번호는 저장하지 않음)
+        sessionStorage.setItem("signupRole", result.signup.role);
+        sessionStorage.setItem("signupProfile", JSON.stringify({
+          email: result.signup.email,
+          name: result.signup.name,
+          phone: result.signup.phone,
+          role: result.signup.role,
+        }));
+        router.push("/signup/profile");
+        return;
+      }
 
       if (!response.ok || !result.user) {
         setIsLoading(false);

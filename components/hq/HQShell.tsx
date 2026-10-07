@@ -133,18 +133,9 @@ export default function HQShell({ children, activeMenu: propActiveMenu }: HQShel
   }, []);
 
   const handleSetDefaultStore = async (storeId: string) => {
+    if (isStoresLoading || !stores.some((store) => store.id === storeId)) return;
     try {
       setIsStoresLoading(true);
-      const response = await fetch("/api/hq/set-default-store", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storeId }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to set default store");
-      }
-
       setSelectedStoreId(storeId);
       writeSelectedHqStoreId(storeId);
     } catch (error) {

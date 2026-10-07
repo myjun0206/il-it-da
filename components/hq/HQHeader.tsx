@@ -121,12 +121,12 @@ export default function HQHeader({
 
   return (
     <header className="sticky top-0 z-20 bg-white border-b border-[var(--color-border)] h-16 shrink-0">
-      <div className="flex items-center justify-end gap-3 sm:gap-4 px-6 h-full">
+      <div className="flex min-w-0 items-center justify-end gap-2 pl-16 pr-3 sm:gap-4 lg:px-6 h-full">
         {/* 알림 */}
         <NotificationCenter notificationPageUrl="/hq/notifications" />
 
         {/* 기본 매장 선택 영역 */}
-        <div ref={selectorRef} className="relative">
+        <div ref={selectorRef} className="relative min-w-0 flex-1 lg:flex-none">
           <button
             type="button"
             onClick={() => hasMultipleStores && setIsStoreDropdownOpen((prev) => !prev)}
@@ -135,13 +135,13 @@ export default function HQHeader({
             aria-expanded={isStoreDropdownOpen}
             aria-controls={hasMultipleStores ? "hq-store-selector-menu" : undefined}
             className={`
-              flex items-center gap-2 px-3 py-2 rounded-lg transition-colors
+              flex w-full min-w-0 items-center gap-2 px-3 py-2 rounded-lg transition-colors lg:w-auto
               ${hasMultipleStores ? "hover:bg-[var(--color-primary-light)]/10 cursor-pointer" : "cursor-default"}
               focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
             `}
           >
             {/* 현재 기본 매장명 */}
-            <span className="max-w-[200px] text-sm font-medium text-[var(--color-text-primary)] truncate">
+            <span className="min-w-0 max-w-[200px] text-sm font-medium text-[var(--color-text-primary)] truncate">
               {isStoresLoading ? "매장 불러오는 중..." : currentStore ? currentStore.name : franchiseName}
             </span>
 
@@ -161,7 +161,7 @@ export default function HQHeader({
               id="hq-store-selector-menu"
               role="menu"
               aria-label="기본 매장 선택"
-              className="absolute right-0 top-full z-50 mt-2 w-[280px] rounded-xl border border-[var(--color-border)] bg-white shadow-md overflow-hidden"
+              className="fixed left-3 right-3 top-16 z-50 mt-2 rounded-xl border border-[var(--color-border)] bg-white shadow-md overflow-hidden lg:absolute lg:left-auto lg:right-0 lg:top-full lg:w-[280px]"
             >
               {/* 헤더: "기본 매장" 라벨 */}
               <div className="px-3 py-3 border-b border-[var(--color-border)]">
