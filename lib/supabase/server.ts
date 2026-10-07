@@ -8,11 +8,17 @@ import {
 import { applySessionCookiePolicy, readSessionPolicy } from "@/lib/supabase/session-policy";
 
 export async function createClient(loginOptions?: { rememberMe: boolean; acceptSession?: boolean }): Promise<SupabaseClient> {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
 
   if (!supabaseUrl || !supabaseAnonKey) {
-    throw new Error("Missing Supabase server environment variables.");
+    const missing = [
+      !supabaseUrl && "NEXT_PUBLIC_SUPABASE_URL",
+      !supabaseAnonKey && "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+    ].filter(Boolean);
+    const message = `Missing Supabase server environment variables: ${missing.join(", ")}. Set these in .env.local at the project root (or in the process environment), then restart the server. For standalone Node scripts, load the environment before creating the client.`;
+    console.error(`[Supabase configuration] ${message}`);
+    throw new Error(message);
   }
 
   const cookieStore = await cookies();

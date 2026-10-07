@@ -46,10 +46,12 @@ function getSafeErrorDetails(error: unknown): { name: string; message: string } 
 }
 
 function getOpenAiApiKey() { // OPENAI_API_KEY 환경변수 존재 여부 확인 후 반환
-  const value = process.env.OPENAI_API_KEY;
+  const value = process.env.OPENAI_API_KEY?.trim();
 
   if (!value) {
-    throw new Error("Missing OPENAI_API_KEY.");
+    const message = "Missing OPENAI_API_KEY. Set it in .env.local at the project root (or in the process environment), then restart the server.";
+    console.error(`[RAG configuration] ${message}`);
+    throw new Error(message);
   }
 
   return value;
@@ -113,16 +115,16 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
   };
   trace({ stage: "request", traceVersion: "follow-up-trace-v1", conversationPresent: Boolean(conversationTag) });
 
-  const authorization = await authorizeRagStoreAccessForRequest(storeId);
-
-  if (authorization.status === "UNAUTHENTICATED") {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
-  if (authorization.status === "FORBIDDEN") {
-    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
-  }
-
   try {
+    const authorization = await authorizeRagStoreAccessForRequest(storeId);
+
+    if (authorization.status === "UNAUTHENTICATED") {
+      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+    }
+    if (authorization.status === "FORBIDDEN") {
+      return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+    }
+
     // 인증된 storeId로만 franchise 범위를 서버에서 결정한다(요청 body의 franchiseId는 신뢰하지 않음).
     // 확인할 수 없으면 검색 자체를 실행하지 않는다(fail-closed).
     const franchiseScope = await resolveRagStoreFranchiseForRequest(storeId);
@@ -146,13 +148,21 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
             includesBFamilyPack: /B\s*패밀리\s*팩/u.test(userQuestion), franchiseId: franchiseScope.franchiseId });
           try { return await searchManualChunks(userQuestion, storeId, franchiseScope.franchiseId); }
           catch (error) {
+            console.error("RAG search failed:", getSafeErrorDetails(error));
             const failure = error as { diagnosticService?: unknown; diagnosticHttpStatus?: unknown };
             trace({ stage: "external_api", service: failure?.diagnosticService === "embedding" ? "embedding" : failure?.diagnosticService === "search_rpc" ? "search_rpc" : "search_unknown",
               httpStatus: typeof failure?.diagnosticHttpStatus === "number" ? failure.diagnosticHttpStatus : null, reason: "REQUEST_FAILED" });
             throw error;
           }
         },
-        generate: (rawQuestion, chunks, variant) => createGroundedAnswer(rawQuestion, chunks, variant, trace),
+        generate: async (rawQuestion, chunks, variant) => {
+          try {
+            return await createGroundedAnswer(rawQuestion, chunks, variant, trace);
+          } catch (error) {
+            console.error("RAG generation failed:", getSafeErrorDetails(error));
+            throw error;
+          }
+        },
         onDiagnostic: traceEnabled ? trace : undefined,
       },
     );
@@ -216,7 +226,8 @@ async function createGroundedAnswer(question: string, chunks: ManualChunkMatch[]
     trace?.({ stage: "external_api", service: "answer", httpStatus: response.status, reason: response.ok ? "RESPONSE_OK" : "REQUEST_FAILED" });
     if (!response.ok) {
       // 응답 body/헤더는 포함하지 않고 status만 기록해 API 키 등 민감정보 노출 방지
-      throw new Error(`OpenAI chat request failed with status ${response.status}.`);
+      const guidance = response.status === 401 ? "Check OPENAI_API_KEY." : response.status === 429 ? "Check OpenAI quota and rate limits." : "Check OpenAI service availability and model access.";
+      throw new Error(`OpenAI chat request failed with status ${response.status}. ${guidance}`);
     }
 
     const payload = (await response.json()) as OpenAiChatResponse;
@@ -230,6 +241,9 @@ async function createGroundedAnswer(question: string, chunks: ManualChunkMatch[]
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error("OpenAI chat request timed out.");
+    }
+    if (error instanceof TypeError) {
+      throw new Error("OpenAI chat request or response failed. Check network, DNS, proxy and TLS settings, then retry.");
     }
     throw error;
   } finally {
