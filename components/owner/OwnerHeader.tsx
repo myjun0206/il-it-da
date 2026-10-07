@@ -133,13 +133,11 @@ export default function OwnerHeader({
 
   const activeStoreName = currentStoreName || storeName;
 
-  // 배치·간격은 직원 Header(StaffHeader)와 같다: 알림 → 매장 → 프로필 순으로 오른쪽 정렬.
+  // 매장 → 알림 → 프로필 순으로 오른쪽 정렬.
   return (
     <>
       <header className="sticky top-0 z-20 bg-white border-b border-(--color-border) h-16 shrink-0">
-        <div className="flex items-center justify-end gap-0 sm:gap-2 pl-16 pr-4 sm:pr-6 h-full lg:pl-6">
-          <NotificationCenter notificationPageUrl="/boss/notifications" />
-
+        <div className="flex min-w-0 items-center justify-end gap-2 pl-16 pr-4 sm:pr-6 h-full lg:pl-6">
           <StoreSwitcher
             compact
             label="현재 운영 매장"
@@ -152,13 +150,16 @@ export default function OwnerHeader({
             onManageStores={() => router.push("/boss/stores")}
           />
 
-          <ProfileMenu
-            userName={userName}
-            subtitle="점주"
-            roleLabel="점주"
-            avatarUrl={avatarUrl}
-            context={activeStoreName ? { label: "현재 운영 매장", value: activeStoreName } : undefined}
-          />
+          <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+            <NotificationCenter notificationPageUrl="/boss/notifications" />
+            <ProfileMenu
+              userName={userName}
+              subtitle="점주"
+              roleLabel="점주"
+              avatarUrl={avatarUrl}
+              context={activeStoreName ? { label: "현재 운영 매장", value: activeStoreName } : undefined}
+            />
+          </div>
         </div>
       </header>
 

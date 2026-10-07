@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AlertCircle, ArrowLeft, BookOpen, ChevronRight, FileText, RefreshCw, Search, Store as StoreIcon } from "lucide-react";
@@ -18,9 +18,7 @@ type ManualGroup = {
   id: string;
   category: string;
   title: string;
-  /** 하위 세부 매뉴얼이 없으면 자기 자신 1개 */
   items: ManualRecord[];
-  hasChildren: boolean;
 };
 
 type LoadResult =
@@ -74,28 +72,93 @@ function extractMatchedPreview(text: string, query: string, maxLength: number = 
   return preview;
 }
 
-// 최상위 매뉴얼(타이틀) + 하위 세부 매뉴얼로 묶는다. (HQ/Owner 매뉴얼 화면과 같은 규칙)
-function groupByParent(manuals: ManualRecord[]): ManualGroup[] {
-  const childrenByParent = new Map<string, ManualRecord[]>();
+function groupByCategory(manuals: ManualRecord[]): ManualGroup[] {
+  const manualsById = new Map(manuals.map((manual) => [manual.id, manual]));
+  const parentIds = new Set(manuals.flatMap((manual) => manual.parent_manual_id ? [manual.parent_manual_id] : []));
+  const groupsByCategory = new Map<string, ManualGroup>();
+
   for (const manual of manuals) {
-    if (!manual.parent_manual_id) continue;
-    const list = childrenByParent.get(manual.parent_manual_id) ?? [];
-    list.push(manual);
-    childrenByParent.set(manual.parent_manual_id, list);
+    if (parentIds.has(manual.id)) continue;
+    const parent = manual.parent_manual_id ? manualsById.get(manual.parent_manual_id) : undefined;
+    const category = getDisplayCategoryName(manual.category?.trim() || parent?.category || "");
+    const existing = groupsByCategory.get(category);
+    if (existing) {
+      existing.items.push(manual);
+    } else {
+      groupsByCategory.set(category, {
+        id: `category:${category}`,
+        category,
+        title: category,
+        items: [manual],
+      });
+    }
   }
 
-  return manuals
-    .filter((manual) => !manual.parent_manual_id)
-    .map((parent) => {
-      const children = childrenByParent.get(parent.id) ?? [];
-      return {
-        id: parent.id,
-        category: getDisplayCategoryName(parent.category ?? ""),
-        title: parent.title,
-        items: children.length > 0 ? children : [parent],
-        hasChildren: children.length > 0,
-      };
-    });
+  return [...groupsByCategory.values()];
+}
+
+function groupByTitle(manuals: ManualRecord[]): Array<Pick<ManualGroup, "id" | "title" | "items">> {
+  const groupsByTitle = new Map<string, Pick<ManualGroup, "id" | "title" | "items">>();
+  const seenIds = new Set<string>();
+
+  for (const manual of manuals) {
+    if (seenIds.has(manual.id)) continue;
+    seenIds.add(manual.id);
+    const title = manual.title.normalize("NFC").trim().replace(/\s+/g, " ");
+    const key = title ? `title:${title}` : `id:${manual.id}`;
+    const existing = groupsByTitle.get(key);
+    if (existing) {
+      existing.items.push(manual);
+    } else {
+      groupsByTitle.set(key, {
+        id: manual.id,
+        title: title || `세부 매뉴얼 ${groupsByTitle.size + 1}`,
+        items: [manual],
+      });
+    }
+  }
+
+  return [...groupsByTitle.values()];
+}
+
+function uniqueManualContents(manuals: ManualRecord[]): ManualRecord[] {
+  const seenContents = new Set<string>();
+  return manuals.filter((manual) => {
+    const content = manual.content.replace(/\r\n/g, "\n").trim();
+    if (seenContents.has(content)) return false;
+    seenContents.add(content);
+    return true;
+  });
+}
+
+const MANUAL_GRID_CLASS_NAME = "grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3";
+
+function ManualNavigationCard({
+  category,
+  title,
+  description,
+  onClick,
+}: {
+  category: string;
+  title: string;
+  description: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex h-full w-full flex-col items-start rounded-xl border border-[var(--color-border)] bg-[#ffffff] p-5 text-left transition-colors hover:border-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+    >
+      <span className="mb-3 inline-flex max-w-full truncate rounded-full bg-[var(--color-primary-light)]/40 px-2.5 py-0.5 text-xs font-semibold text-[var(--color-primary)]">
+        {category}
+      </span>
+      <span className="w-full text-base font-semibold text-[var(--color-text-primary)] break-keep line-clamp-2">
+        {title}
+      </span>
+      <span className="mt-auto pt-3 text-xs text-[var(--color-text-tertiary)]">{description}</span>
+    </button>
+  );
 }
 
 // 검색어가 있을 때 일치하는 세부 매뉴얼을 각각 반환 (상위 매뉴얼 + 세부 매뉴얼 정보 포함)
@@ -169,9 +232,8 @@ export default function StaffManualBrowser({ scope }: { scope: Scope }) {
   const [query, setQuery] = useState("");
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   // 상세 보기: 매장이 바뀌면 자동으로 목록으로 돌아가도록 매장 ID와 함께 기억한다.
-  // subId가 있으면 검색 결과에서 진입한 것 → 해당 세부 매뉴얼로 스크롤
+  // subId는 선택한 매뉴얼 ID이다.
   const [detail, setDetail] = useState<{ storeId: string; groupId: string; subId?: string } | null>(null);
-  const subManualRef = useRef<HTMLElement | null>(null);
 
   // 지점 매뉴얼: 기본 매장 사용 | 공통 매뉴얼: 선택 매장 사용
   const effectiveStoreId = scope === "store" ? defaultStoreId : selectedStore?.id;
@@ -215,7 +277,9 @@ export default function StaffManualBrowser({ scope }: { scope: Scope }) {
   }, [scope, storeId, requestKey, router]);
 
   const currentResult = result && result.key === requestKey ? result : null;
-  const groups = currentResult?.status === "ready" ? groupByParent(currentResult.manuals) : [];
+  const groups = currentResult?.status === "ready"
+    ? groupByCategory(currentResult.manuals)
+    : [];
   const categories = [...new Set(groups.map((group) => group.category))];
   const normalizedQuery = query.trim().toLowerCase();
   // 매장 전환 등으로 사라진 카테고리가 선택돼 있으면 전체로 본다.
@@ -233,67 +297,111 @@ export default function StaffManualBrowser({ scope }: { scope: Scope }) {
     : [];
 
   const openGroup = detail && detail.storeId === storeId ? groups.find((group) => group.id === detail.groupId) ?? null : null;
+  const titleGroups = openGroup ? groupByTitle(openGroup.items) : [];
+  const selectedManual = openGroup && detail?.subId
+    ? openGroup.items.find((item) => item.id === detail.subId) ?? null
+    : null;
+  const selectedTitleGroup = selectedManual
+    ? titleGroups.find((group) => group.items.some((item) => item.id === selectedManual.id)) ?? null
+    : null;
 
-  // 검색에서 진입한 경우 특정 세부 매뉴얼로 스크롤
-  useEffect(() => {
-    if (openGroup && detail?.subId) {
-      setTimeout(() => {
-        const element = document.getElementById(`sub-manual-${detail.subId}`);
-        if (element) {
-          element.scrollIntoView({ behavior: "smooth", block: "start" });
-          subManualRef.current = element;
-        }
-      }, 100);
-    }
-  }, [openGroup, detail?.subId]);
+  const navigateDetail = (nextDetail: typeof detail) => {
+    setDetail(nextDetail);
+    document.querySelector("main")?.scrollTo({ top: 0 });
+  };
 
   // ── 상세 ─────────────────────────────────────────
   if (openGroup) {
     return (
-      <div className="p-6 lg:p-8">
+      <div className="p-6 lg:p-8 pb-[calc(6rem+env(safe-area-inset-bottom))] lg:pb-[calc(6rem+env(safe-area-inset-bottom))]">
         <div className="max-w-7xl mx-auto">
           <button
             type="button"
-            onClick={() => setDetail(null)}
-            className="-ml-2 mb-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+            onClick={() => navigateDetail(selectedManual && storeId ? { storeId, groupId: openGroup.id } : null)}
+            aria-label={`${selectedManual ? openGroup.title : copy.backLabel} 목록으로 돌아가기`}
+            className="fixed bottom-[calc(1.5rem+env(safe-area-inset-bottom))] left-6 lg:left-[calc(240px+1.5rem)] z-10 inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-(--color-border) bg-(--color-bg-surface) px-4 text-sm font-semibold text-(--color-primary) shadow-md transition-colors hover:bg-(--color-primary-light) focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-primary) focus-visible:ring-offset-2"
           >
             <ArrowLeft size={16} aria-hidden="true" />
-            {copy.backLabel}
+            {selectedManual ? "세부 매뉴얼 목록" : copy.backLabel}
           </button>
+
+          <nav aria-label="매뉴얼 탐색 경로" className="mb-5 text-sm text-(--color-text-secondary)">
+              <ol className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <li>
+                  <button type="button" onClick={() => navigateDetail(null)} className="min-h-11 text-(--color-primary) hover:underline">
+                    {copy.title}
+                  </button>
+                </li>
+                <li aria-hidden="true"><ChevronRight size={16} /></li>
+                <li className="min-w-0 break-words">
+                  {selectedManual && storeId ? (
+                    <button type="button" onClick={() => navigateDetail({ storeId, groupId: openGroup.id })} className="min-h-11 text-left text-(--color-primary) hover:underline">
+                      {openGroup.title}
+                    </button>
+                  ) : (
+                    <span aria-current="page">{openGroup.title}</span>
+                  )}
+                </li>
+                {selectedManual && (
+                  <>
+                    <li aria-hidden="true"><ChevronRight size={16} /></li>
+                    <li aria-current="page" className="min-w-0 break-words">{selectedTitleGroup?.title || selectedManual.title || openGroup.title}</li>
+                  </>
+                )}
+              </ol>
+          </nav>
 
           <div className="mb-6">
             <span className="mb-3 inline-flex rounded-full bg-[var(--color-primary-light)]/40 px-2.5 py-0.5 text-xs font-semibold text-[var(--color-primary)]">
               {openGroup.category}
             </span>
-            <h1 className="text-2xl font-bold text-[var(--color-text-primary)] break-keep">{openGroup.title}</h1>
+            <h1 className="text-2xl font-bold text-[var(--color-text-primary)] break-words">{selectedTitleGroup?.title || selectedManual?.title || openGroup.title}</h1>
             {scope === "store" && selectedStore && (
               <p className="mt-2 text-sm text-[var(--color-text-secondary)]">{formatStoreDisplayName(selectedStore.name)}</p>
             )}
           </div>
 
+          {!selectedManual ? (
+            <>
+              <p className="mb-3 text-sm text-[var(--color-text-secondary)]">
+                매뉴얼 <span className="font-bold text-[var(--color-text-primary)]">{titleGroups.length}</span>개
+              </p>
+              <ul className={MANUAL_GRID_CLASS_NAME}>
+                {titleGroups.map((group) => (
+                  <li key={group.id} className="min-w-0">
+                    <ManualNavigationCard
+                      category={openGroup.category}
+                      title={group.title}
+                      description="상세 매뉴얼"
+                      onClick={() => {
+                        if (!storeId) return;
+                        navigateDetail({ storeId, groupId: openGroup.id, subId: group.id });
+                      }}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
           <div className="space-y-4">
-            {openGroup.items.map((item, index) => {
+            {(selectedTitleGroup ? uniqueManualContents(selectedTitleGroup.items) : [selectedManual]).map((item) => {
               const isHighlighted = detail?.subId === item.id;
               return (
                 <article
                   key={item.id}
                   id={`sub-manual-${item.id}`}
-                  className={`rounded-xl border p-5 lg:p-6 scroll-mt-24 transition-colors ${
+                  className={`rounded-xl border bg-[#ffffff] p-5 lg:p-6 scroll-mt-24 transition-colors ${
                     isHighlighted
-                      ? "border-[var(--color-primary)]/50 bg-[var(--color-primary-light)]/20"
-                      : "border-[var(--color-border)] bg-white"
+                      ? "border-[var(--color-primary)]/50"
+                      : "border-[var(--color-border)]"
                   }`}
                 >
-                  {openGroup.hasChildren && (
-                    <h2 className="mb-2 text-base font-semibold text-[var(--color-text-primary)] break-keep">
-                      {item.title && item.title !== openGroup.title ? item.title : `세부 매뉴얼 ${index + 1}`}
-                    </h2>
-                  )}
                   <p className="whitespace-pre-wrap break-words text-base leading-7 text-[var(--color-text-primary)]">{item.content}</p>
                 </article>
               );
             })}
           </div>
+          )}
         </div>
       </div>
     );
@@ -423,10 +531,9 @@ export default function StaffManualBrowser({ scope }: { scope: Scope }) {
                           type="button"
                           onClick={() => {
                             if (!storeId) return;
-                            setDetail({ storeId, groupId: parentGroup.id, subId: subManual.id });
-                            document.querySelector("main")?.scrollTo({ top: 0 });
+                            navigateDetail({ storeId, groupId: parentGroup.id });
                           }}
-                          className="flex w-full flex-col rounded-lg border border-[var(--color-border)] bg-white px-5 py-4 text-left transition-colors hover:border-[var(--color-border)]/70 hover:bg-[var(--color-bg-default)]/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                          className="flex w-full flex-col rounded-lg border border-[var(--color-border)] bg-[#ffffff] px-5 py-4 text-left transition-colors hover:border-[var(--color-border)]/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                         >
                           <div className="flex w-full items-start justify-between gap-3">
                             <div className="flex items-start gap-3 flex-1 min-w-0">
@@ -454,7 +561,7 @@ export default function StaffManualBrowser({ scope }: { scope: Scope }) {
               // 비검색 모드: 상위 매뉴얼 카드 그리드
               <>
                 <p className="mb-3 text-sm text-[var(--color-text-secondary)]">
-                  매뉴얼 <span className="font-bold text-[var(--color-text-primary)]">{visibleGroups.length}</span>개
+                  카테고리 <span className="font-bold text-[var(--color-text-primary)]">{visibleGroups.length}</span>개
                 </p>
 
                 {visibleGroups.length === 0 ? (
@@ -463,26 +570,18 @@ export default function StaffManualBrowser({ scope }: { scope: Scope }) {
                     <p className="text-base text-[var(--color-text-secondary)]">검색 결과가 없습니다.</p>
                   </StateBox>
                 ) : (
-                  <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  <ul className={MANUAL_GRID_CLASS_NAME}>
                     {visibleGroups.map((group) => (
                       <li key={group.id} className="min-w-0">
-                        <button
-                          type="button"
+                        <ManualNavigationCard
+                          category={copy.title}
+                          title={group.title}
+                          description={`매뉴얼 ${groupByTitle(group.items).length}개`}
                           onClick={() => {
                             if (!storeId) return;
-                            setDetail({ storeId, groupId: group.id });
-                            document.querySelector("main")?.scrollTo({ top: 0 });
+                            navigateDetail({ storeId, groupId: group.id });
                           }}
-                          className="flex h-full w-full flex-col items-start rounded-xl border border-[var(--color-border)] bg-white p-5 text-left transition-colors hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
-                        >
-                          <span className="mb-3 inline-flex max-w-full truncate rounded-full bg-[var(--color-primary-light)]/40 px-2.5 py-0.5 text-xs font-semibold text-[var(--color-primary)]">
-                            {group.category}
-                          </span>
-                          <span className="w-full text-base font-semibold text-[var(--color-text-primary)] break-keep line-clamp-2">
-                            {group.title}
-                          </span>
-                          <span className="mt-auto pt-3 text-xs text-[var(--color-text-tertiary)]">세부 매뉴얼 {group.items.length}개</span>
-                        </button>
+                        />
                       </li>
                     ))}
                   </ul>
