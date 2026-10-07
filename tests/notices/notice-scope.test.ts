@@ -330,7 +330,7 @@ function noticePageScenario(role: "hq" | "owner" | "staff", multiple = false) {
   ] : [notice];
   const initialStates = role === "hq"
     ? [
-        "Tester", "Cafe", true, rows,
+        "Tester", "Cafe", rows,
         [{ id: "store-a", name: "Store A" }, { id: "store-b", name: "Store B" }],
         { page: 1, limit: 10, totalCount: rows.length, totalPages: 1 }, 1,
         false, "", "", "", "latest", "all", "all", null, null, null, false,
