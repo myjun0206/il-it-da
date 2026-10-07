@@ -224,6 +224,7 @@ export default function NoticesPage() {
       if (!response.ok) throw new Error(result.error || "공지를 삭제하지 못했습니다.");
 
       setNotices((current) => ({
+        ...current,
         summary: {
           total: Math.max(0, current.summary.total - 1),
           important: Math.max(0, current.summary.important - Number(deletingNotice.isImportant)),

@@ -33,6 +33,7 @@ export interface StaffNoticeItem {
 
 type NoticeRow = {
   id: string;
+  author_id: string | null;
   franchise_id: string;
   target_type: NoticeTargetType;
   target_store_id: string | null;
@@ -42,7 +43,7 @@ type NoticeRow = {
   created_at: string;
 };
 
-const NOTICE_ROW_COLUMNS = "id, franchise_id, target_type, target_store_id, audience, title, content, created_at";
+const NOTICE_ROW_COLUMNS = "id, author_id, franchise_id, target_type, target_store_id, audience, title, content, created_at";
 
 function isMissingTableError(error: { code?: string } | null): boolean {
   return error?.code === "42P01" || error?.code === "PGRST205";
