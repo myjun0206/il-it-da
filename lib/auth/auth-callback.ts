@@ -3,6 +3,7 @@ export const DEFAULT_AUTH_NEXT_PATH = "/signup/complete";
 
 const ALLOWED_AUTH_NEXT_PATHS = new Set([
   "/signup/complete",
+  "/signup/profile",
   "/signup/stores",
   "/signup/approval",
   "/signup/approval-status",

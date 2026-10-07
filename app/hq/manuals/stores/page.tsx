@@ -1,11 +1,9 @@
 "use client";
 
-import React, { useEffect, useLayoutEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
+import { useClientReady } from "@/lib/hq/use-client-ready";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, RefreshCw, Store, ExternalLink } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
-import HQSidebar from "@/components/hq/HQSidebar";
-import HQHeader from "@/components/hq/HQHeader";
+import { ArrowLeft, RefreshCw, Store, ExternalLink, Search, FileText } from "lucide-react";
 import type { ManualRecord } from "@/lib/types/manual";
 import type { HqStoreSummary } from "@/lib/types/store";
 
@@ -37,9 +35,7 @@ async function readJsonResponse<T>(response: Response, fallbackMessage: string):
 
 export default function StoreManualViewPage() {
   const router = useRouter();
-  const [userName, setUserName] = useState("본사 관리자");
-  const [franchiseName, setFranchiseName] = useState("메가MGC커피");
-  const [isReady, setIsReady] = useState(false);
+  const isReady = useClientReady();
   const [isLoading, setIsLoading] = useState(true);
   const [storeListError, setStoreListError] = useState("");
   const [reloadStoreList, setReloadStoreList] = useState(0);
@@ -54,49 +50,8 @@ export default function StoreManualViewPage() {
   const [selectedStoreManuals, setSelectedStoreManuals] = useState<ManualRecord[]>([]);
   const [loadedStoreId, setLoadedStoreId] = useState("");
   const [storeManualsError, setStoreManualsError] = useState("");
-
-  useLayoutEffect(() => {
-    const checkAuth = async () => {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-
-        if (!data.session?.user || data.session.user.user_metadata?.role !== "hq") {
-          router.push("/");
-          return;
-        }
-      } catch (e) {
-        console.error("Auth check failed:", e);
-        router.push("/");
-      }
-    };
-
-    checkAuth();
-  }, [router]);
-
-  useEffect(() => {
-    const setUserInfo = async () => {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-
-        if (!data.session?.user) return;
-
-        const name = data.session.user.user_metadata?.name;
-        if (name) {
-          setUserName(name);
-          if (name.includes(" ")) {
-            const [first] = name.split(" ");
-            if (first) setFranchiseName(first);
-          }
-        }
-      } finally {
-        setIsReady(true);
-      }
-    };
-
-    setUserInfo();
-  }, []);
+  const [storeSearchQuery, setStoreSearchQuery] = useState("");
+  const [selectedManualCategory, setSelectedManualCategory] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchStoreData = async () => {
@@ -161,48 +116,25 @@ export default function StoreManualViewPage() {
     return () => controller.abort();
   }, [selectedStoreId]);
 
-  const handleLogout = async () => {
-    try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
-      router.push("/");
-    } catch (e) {
-      console.error("Logout failed:", e);
-      router.push("/");
-    }
-  };
-
   const filteredStores = stores.filter((store) =>
     store.name.toLowerCase().includes(searchQuery.toLowerCase()),
   );
   const selectedStore = stores.find((store) => store.id === selectedStoreId) ?? null;
 
-  const childrenByParent = new Map<string, ManualRecord[]>();
-  for (const manual of selectedStoreManuals) {
-    if (!manual.parent_manual_id) continue;
-    const children = childrenByParent.get(manual.parent_manual_id) ?? [];
-    children.push(manual);
-    childrenByParent.set(manual.parent_manual_id, children);
-  }
-
-  const manualsByCategory = new Map<string, { parent: ManualRecord; children: ManualRecord[] }[]>();
-  for (const parent of selectedStoreManuals.filter((manual) => !manual.parent_manual_id)) {
-    const category = parent.category?.trim() || "미분류";
-    const groups = manualsByCategory.get(category) ?? [];
-    groups.push({ parent, children: childrenByParent.get(parent.id) ?? [] });
-    manualsByCategory.set(category, groups);
-  }
-
   const openStoreManuals = (storeId: string) => {
     setSelectedStoreManuals([]);
     setLoadedStoreId("");
     setStoreManualsError("");
+    setStoreSearchQuery("");
+    setSelectedManualCategory(null);
     setSelectedStoreId(storeId);
     router.push(`/hq/manuals/stores?storeId=${encodeURIComponent(storeId)}`, { scroll: false });
   };
 
   const closeStoreManuals = () => {
     setSelectedStoreId("");
+    setStoreSearchQuery("");
+    setSelectedManualCategory(null);
     router.push("/hq/manuals/stores", { scroll: false });
   };
 
@@ -211,18 +143,8 @@ export default function StoreManualViewPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-default)]">
-      <HQSidebar
-        userName={userName}
-        franchiseName={franchiseName}
-        onLogout={handleLogout}
-        activeMenu="manual-store"
-      />
-
-      <div className="lg:ml-[240px]">
-        <HQHeader userName={userName} franchiseName={franchiseName} onLogout={handleLogout} />
-
-        <main className="p-6 lg:p-8 max-w-7xl mx-auto">
+    <>
+    <main className="p-6 lg:p-8 max-w-7xl mx-auto">
           {/* Header */}
           <div className="mb-8">
             <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
@@ -382,69 +304,175 @@ export default function StoreManualViewPage() {
 
           {selectedStore && (
             <section className="mt-8 border-t border-[var(--color-border)] pt-6" aria-live="polite">
-              <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-xl font-bold text-[var(--color-text-primary)]">
-                    {selectedStore.name} 지점 매뉴얼
-                  </h2>
-                  <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
-                    지점 전용 매뉴얼 {selectedStore.manualCount}개
-                  </p>
-                </div>
+              {/* Header with back button */}
+              <div className="mb-6">
                 <button
                   type="button"
                   onClick={closeStoreManuals}
-                  className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[var(--color-border)] bg-white px-3 text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
+                  className="mb-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                 >
-                  <ArrowLeft size={16} aria-hidden="true" /> 전체 지점
+                  <ArrowLeft size={16} aria-hidden="true" /> 지점 목록
                 </button>
+                <h2 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
+                  {selectedStore.name}
+                </h2>
+                <p className="text-base text-[var(--color-text-secondary)]">
+                  지점의 업무 매뉴얼을 확인할 수 있습니다.
+                </p>
               </div>
 
               {selectedStoreId !== loadedStoreId && !storeManualsError ? (
-                <p className="rounded-lg border border-[var(--color-border)] bg-white p-6 text-sm text-[var(--color-text-secondary)]" role="status">
-                  지점 매뉴얼을 불러오는 중...
-                </p>
-              ) : storeManualsError ? (
-                <p className="rounded-lg border border-red-200 bg-red-50 p-6 text-sm text-red-700" role="alert">
-                  {storeManualsError}
-                </p>
-              ) : selectedStoreManuals.length === 0 ? (
-                <p className="rounded-lg border border-[var(--color-border)] bg-white p-6 text-sm text-[var(--color-text-secondary)]">
-                  이 지점에 등록된 매뉴얼이 없습니다.
-                </p>
-              ) : (
-                <div className="space-y-5">
-                  {Array.from(manualsByCategory, ([category, groups]) => (
-                    <section key={category} className="border-b border-[var(--color-border)] pb-5 last:border-0">
-                      <h3 className="mb-3 text-base font-bold text-[var(--color-primary)]">{category}</h3>
-                      <div className="space-y-3">
-                        {groups.map(({ parent, children }) => (
-                          <article key={parent.id} className="rounded-lg border border-[var(--color-border)] bg-white p-4">
-                            <h4 className="font-semibold text-[var(--color-text-primary)]">{parent.title}</h4>
-                            {children.length > 0 ? (
-                              <ul className="mt-2 space-y-2">
-                                {children.map((child) => (
-                                  <li key={child.id} className="border-l-2 border-[var(--color-border)] pl-3 text-sm text-[var(--color-text-secondary)] whitespace-pre-wrap">
-                                    {child.content}
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : parent.content ? (
-                              <p className="mt-2 text-sm text-[var(--color-text-secondary)] whitespace-pre-wrap">
-                                {parent.content}
-                              </p>
-                            ) : null}
-                          </article>
-                        ))}
-                      </div>
-                    </section>
-                  ))}
+                <div className="bg-white border border-[var(--color-border)] rounded-xl p-8 shadow-sm text-center">
+                  <p className="text-sm text-[var(--color-text-secondary)]">지점 매뉴얼을 불러오는 중...</p>
                 </div>
-              )}
+              ) : storeManualsError ? (
+                <div className="flex flex-wrap items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-6" role="alert">
+                  <p className="flex-1 text-sm text-red-700">{storeManualsError}</p>
+                </div>
+              ) : selectedStoreManuals.length === 0 ? (
+                <div className="bg-white border border-[var(--color-border)] rounded-xl p-12 text-center shadow-sm">
+                  <FileText size={28} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+                  <p className="text-base text-[var(--color-text-secondary)]">등록된 지점 매뉴얼이 없습니다.</p>
+                </div>
+              ) : (() => {
+                // Helper: normalize category name
+                const getDisplayCategoryName = (category: string): string => {
+                  const trimmed = category.trim();
+                  if (!trimmed) return "미분류";
+                  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+                  const internalPattern = /^[A-Za-z0-9_-]{16,}$/;
+                  if (uuidPattern.test(trimmed) || internalPattern.test(trimmed)) return "카테고리";
+                  return trimmed;
+                };
+
+                // Group manuals by parent (title) and extract categories
+                type ManualGroup = {
+                  id: string;
+                  category: string;
+                  title: string;
+                  items: ManualRecord[];
+                };
+
+                const groups: ManualGroup[] = [];
+                const childrenByParent = new Map<string, ManualRecord[]>();
+
+                for (const manual of selectedStoreManuals) {
+                  if (!manual.parent_manual_id) continue;
+                  const children = childrenByParent.get(manual.parent_manual_id) ?? [];
+                  children.push(manual);
+                  childrenByParent.set(manual.parent_manual_id, children);
+                }
+
+                for (const parent of selectedStoreManuals.filter((m) => !m.parent_manual_id)) {
+                  groups.push({
+                    id: parent.id,
+                    category: getDisplayCategoryName(parent.category ?? ""),
+                    title: parent.title,
+                    items: childrenByParent.get(parent.id) ?? [parent],
+                  });
+                }
+
+                // Extract categories from groups
+                const allCategories = [...new Set(groups.map((g) => g.category))];
+                const categories = allCategories.length > 1 ? [null, ...allCategories] : [];
+
+                // Filter by search query and category
+                const normalizedQuery = storeSearchQuery.trim().toLowerCase();
+                const filteredGroups = groups.filter((group) => {
+                  // Category filter
+                  if (selectedManualCategory && group.category !== selectedManualCategory) {
+                    return false;
+                  }
+                  // Search filter
+                  if (normalizedQuery) {
+                    const searchText = [group.title, group.category].join(" ").toLowerCase();
+                    return searchText.includes(normalizedQuery);
+                  }
+                  return true;
+                });
+
+                return (
+                  <>
+                    {/* Search and Filter */}
+                    <div className="mb-6 flex flex-col gap-4">
+                      {/* Search Input */}
+                      <div className="relative">
+                        <Search
+                          size={18}
+                          aria-hidden="true"
+                          className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]"
+                        />
+                        <input
+                          type="search"
+                          value={storeSearchQuery}
+                          onChange={(event) => setStoreSearchQuery(event.target.value)}
+                          placeholder="매뉴얼 검색"
+                          aria-label="매뉴얼 검색"
+                          className="h-12 w-full rounded-lg border border-[var(--color-border)] bg-white pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
+                        />
+                      </div>
+
+                      {/* Category Chips */}
+                      {categories.length > 0 && (
+                        <div className="flex flex-wrap gap-2" role="group" aria-label="카테고리">
+                          {categories.map((category) => {
+                            const isActive = selectedManualCategory === category;
+                            return (
+                              <button
+                                key={category ?? "__all"}
+                                type="button"
+                                aria-pressed={isActive}
+                                onClick={() => setSelectedManualCategory(category)}
+                                className={`min-h-[36px] rounded-full border px-3.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${
+                                  isActive
+                                    ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/40 text-[var(--color-primary)]"
+                                    : "border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]/50 hover:text-[var(--color-text-primary)]"
+                                }`}
+                              >
+                                {category ?? "전체"}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Manual Count and Grid */}
+                    {filteredGroups.length === 0 ? (
+                      <div className="bg-white border border-[var(--color-border)] rounded-xl p-12 text-center shadow-sm">
+                        <FileText size={28} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+                        <p className="text-base text-[var(--color-text-secondary)]">
+                          {normalizedQuery ? "검색 결과가 없습니다." : "등록된 매뉴얼이 없습니다."}
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="mb-4 text-sm text-[var(--color-text-secondary)]">
+                          매뉴얼 <span className="font-bold text-[var(--color-text-primary)]">{filteredGroups.length}</span>개
+                        </p>
+                        <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                          {filteredGroups.map((group) => (
+                            <li key={group.id} className="min-w-0">
+                              <div className="flex h-full w-full flex-col items-start rounded-xl border border-[var(--color-border)] bg-white p-5 text-left transition-colors hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/10">
+                                <span className="mb-3 inline-flex max-w-full truncate rounded-full bg-[var(--color-primary-light)]/40 px-2.5 py-0.5 text-xs font-semibold text-[var(--color-primary)]">
+                                  {group.category}
+                                </span>
+                                <span className="w-full text-base font-semibold text-[var(--color-text-primary)] break-keep line-clamp-2">
+                                  {group.title}
+                                </span>
+                                <span className="mt-auto pt-3 text-xs text-[var(--color-text-tertiary)]">세부 매뉴얼 {group.items.length}개</span>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                  </>
+                );
+              })()}
             </section>
           )}
         </main>
-      </div>
-    </div>
+    </>
   );
 }

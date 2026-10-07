@@ -305,13 +305,16 @@ describe("components/manuals/ManualSearchReadinessPanel.tsx (관리자 화면 �
 });
 
 describe("기존 화면/계약 회귀 없음", () => {
-  test("HQ와 점주 매뉴얼 화면이 같은 상태 컴포넌트를 재사용한다", () => {
+  test("HQ 화면은 상태 패널을 쓰고, 점주 지점 화면은 패널 없이 저장 안내 안에서 재처리한다", () => {
     const hqPage = readSource("app/hq/manuals/common/page.tsx");
     const storePage = readSource("app/boss/store-manuals/page.tsx");
     assert.match(hqPage, /<ManualSearchReadinessPanel/);
-    assert.match(storePage, /<ManualSearchReadinessPanel/);
     assert.match(hqPage, /readinessUrl="\/api\/manuals\/search-readiness"/);
-    assert.match(storePage, /readinessUrl=\{`\/api\/store-manuals\/search-readiness\?storeId=\$\{selectedStoreId\}`\}/);
+    assert.doesNotMatch(storePage, /ManualSearchReadinessPanel/);
+    assert.match(storePage, /const STORE_REINDEX_URL = "\/api\/store-manuals\/search-readiness\/reindex";/);
+    assert.match(storePage, /body: JSON\.stringify\(\{ storeId: selectedStoreId, manualId \}\)/);
+    assert.match(storePage, /setSearchRetryIds\(searchRetryManualIds\(data\)\)/);
+    assert.match(storePage, /item\.status === "failed" \|\| item\.status === "unknown"/);
   });
 
   test("기존 목록 조회/업로드 호출부는 그대로 남아 있다", () => {

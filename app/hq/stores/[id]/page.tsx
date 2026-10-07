@@ -3,10 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, CalendarDays, FileText, Pencil, Store, UserRound, Users } from "lucide-react";
-import HQSidebar from "@/components/hq/HQSidebar";
-import HQHeader from "@/components/hq/HQHeader";
-import { createClient } from "@/lib/supabase/client";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import type { HqStoreSummary } from "@/lib/types/store";
 
 function formatDate(value: string | null): string {
@@ -17,9 +14,6 @@ function formatDate(value: string | null): string {
 
 export default function HqStoreDetailPage() {
   const params = useParams<{ id: string }>();
-  const router = useRouter();
-  const [userName, setUserName] = useState("본사 관리자");
-  const [franchiseName, setFranchiseName] = useState("메가MGC커피");
   const [store, setStore] = useState<HqStoreSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
@@ -27,14 +21,6 @@ export default function HqStoreDetailPage() {
   useEffect(() => {
     const loadStore = async () => {
       try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-        const user = data.session?.user;
-        if (user?.user_metadata?.name) {
-          setUserName(user.user_metadata.name);
-          const firstName = user.user_metadata.name.split(" ")[0];
-          if (firstName) setFranchiseName(firstName);
-        }
 
         // /api/hq/stores는 서버에서 현재 HQ의 franchise 지점만 돌려주므로 다른 브랜드 ID로는 조회되지 않는다.
         const storesResponse = await fetch("/api/hq/stores");
@@ -60,26 +46,10 @@ export default function HqStoreDetailPage() {
     void loadStore();
   }, [params.id]);
 
-  const handleLogout = async () => {
-    try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
-    } finally {
-      router.push("/");
-    }
-  };
+
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-default)]">
-      <HQSidebar
-        userName={userName}
-        franchiseName={franchiseName}
-        onLogout={handleLogout}
-        activeMenu="store-status"
-      />
-      <div className="lg:ml-[240px]">
-        <HQHeader userName={userName} franchiseName={franchiseName} onLogout={handleLogout} />
-        <main className="mx-auto max-w-5xl p-6 lg:p-8">
+    <main className="mx-auto max-w-5xl p-6 lg:p-8">
           <Link
             href="/hq/stores"
             className="mb-6 inline-flex items-center gap-2 text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
@@ -139,7 +109,5 @@ export default function HqStoreDetailPage() {
             </>
           ) : null}
         </main>
-      </div>
-    </div>
-  );
+      );
 }

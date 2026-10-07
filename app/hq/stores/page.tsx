@@ -4,10 +4,7 @@ import React, { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowRight, ChevronRight, CircleAlert, CircleCheck, Loader2, Search, Store, Users, X } from "lucide-react";
-import HQSidebar from "@/components/hq/HQSidebar";
-import HQHeader from "@/components/hq/HQHeader";
 import BackToHomeLink from "@/components/hq/BackToHomeLink";
-import { createClient } from "@/lib/supabase/client";
 import type { HqStoreSummary } from "@/lib/types/store";
 
 type OwnerFilter = "all" | "registered" | "unregistered";
@@ -63,8 +60,6 @@ export default function HqStoresPage() {
 function HqStoresContent() {
   const router = useRouter();
   const isNoOwnerView = useSearchParams().get("view") === NO_OWNER_VIEW;
-  const [userName, setUserName] = useState("본사 관리자");
-  const [franchiseName, setFranchiseName] = useState("메가MGC커피");
   const [stores, setStores] = useState<HqStoreSummary[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [ownerFilter, setOwnerFilter] = useState<OwnerFilter>("all");
@@ -78,15 +73,6 @@ function HqStoresContent() {
   useEffect(() => {
     const loadPage = async () => {
       try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-        const user = data.session?.user;
-        if (user?.user_metadata?.name) {
-          setUserName(user.user_metadata.name);
-          const firstName = user.user_metadata.name.split(" ")[0];
-          if (firstName) setFranchiseName(firstName);
-        }
-
         const response = await fetch("/api/hq/stores");
         const result = (await response.json()) as { stores?: HqStoreSummary[]; error?: string };
         if (!response.ok) {
@@ -104,15 +90,6 @@ function HqStoresContent() {
 
     void loadPage();
   }, []);
-
-  const handleLogout = async () => {
-    try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
-    } finally {
-      router.push("/");
-    }
-  };
 
   const handleOpenMembers = async (store: HqStoreSummary) => {
     setSelectedStore(store);
@@ -163,19 +140,9 @@ function HqStoresContent() {
   ];
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-default)]">
-      <HQSidebar
-        userName={userName}
-        franchiseName={franchiseName}
-        onLogout={handleLogout}
-        activeMenu={isNoOwnerView ? "home" : "store-status"}
-      />
-
-      <div className="lg:ml-[240px]">
-        <HQHeader userName={userName} franchiseName={franchiseName} onLogout={handleLogout} />
-
-        <main className="p-6 lg:p-8 max-w-7xl mx-auto">
-          {isNoOwnerView ? (
+    <>
+    <main className="p-6 lg:p-8 max-w-7xl mx-auto">
+      {isNoOwnerView ? (
             <>
               <BackToHomeLink />
               <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -217,9 +184,9 @@ function HqStoresContent() {
               {/* Stats Cards */}
               <div className={`grid grid-cols-1 md:grid-cols-3 gap-4 mb-8 ${isNoOwnerView ? "hidden" : ""}`}>
                 {statCards.map((card) => (
-                  <div key={card.label} className="bg-white border border-[var(--color-border)] rounded-xl p-6 shadow-sm">
-                    <p className="text-sm font-medium text-[var(--color-text-secondary)] mb-1">{card.label}</p>
-                    <p className="text-2xl font-bold text-[var(--color-text-primary)]">{card.value}</p>
+                  <div key={card.label} className="bg-white border border-[var(--color-border)] rounded-lg p-4 shadow-sm">
+                    <p className="text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">{card.label}</p>
+                    <p className="text-xl font-bold text-[var(--color-text-primary)]">{card.value}</p>
                   </div>
                 ))}
               </div>
@@ -229,26 +196,20 @@ function HqStoresContent() {
                   <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-4">
                     <Store size={32} className="text-amber-600" aria-hidden="true" />
                   </div>
-                  <p className="text-base text-[var(--color-text-secondary)] mb-2">점주가 미등록된 지점이 없습니다.</p>
-                  <p className="text-sm text-[var(--color-text-tertiary)]">
-                    현재 모든 지점에 담당 점주가 등록되어 있습니다.
-                  </p>
+                  <p className="text-base text-[var(--color-text-secondary)]">점주가 미등록된 지점이 없습니다.</p>
                 </div>
               ) : stores.length === 0 ? (
                 <div className="bg-white border border-[var(--color-border)] rounded-xl p-12 text-center shadow-sm">
                   <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-4">
                     <Store size={32} className="text-amber-600" aria-hidden="true" />
                   </div>
-                  <p className="text-base text-[var(--color-text-secondary)] mb-2">아직 등록된 지점이 없습니다.</p>
-                  <p className="text-sm text-[var(--color-text-tertiary)]">
-                    점주의 가입 및 지점 등록이 완료되면 이곳에서 지점을 확인할 수 있습니다.
-                  </p>
+                  <p className="text-base text-[var(--color-text-secondary)]">등록된 지점이 없습니다.</p>
                 </div>
               ) : (
                 <>
                   {/* Toolbar */}
-                  <div className={`mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between ${isNoOwnerView ? "hidden" : ""}`}>
-                    <div className="relative w-full md:max-w-sm">
+                  <div className={`mb-6 flex flex-col gap-3 md:flex-row md:items-center ${isNoOwnerView ? "hidden" : ""}`}>
+                    <div className="relative flex-1 min-w-0">
                       <Search
                         size={18}
                         aria-hidden="true"
@@ -264,7 +225,7 @@ function HqStoresContent() {
                       />
                     </div>
 
-                    <div role="group" aria-label="점주 등록 상태 필터" className="flex gap-2">
+                    <div role="group" aria-label="점주 등록 상태 필터" className="flex flex-wrap gap-2 shrink-0">
                       {FILTER_OPTIONS.map((option) => {
                         const isSelected = ownerFilter === option.value;
                         return (
@@ -289,7 +250,7 @@ function HqStoresContent() {
                   {filteredStores.length === 0 ? (
                     <div className="bg-white border border-[var(--color-border)] rounded-xl p-12 text-center shadow-sm">
                       <Search size={28} className="mx-auto mb-3 text-[var(--color-text-tertiary)]" aria-hidden="true" />
-                      <p className="text-base text-[var(--color-text-secondary)]">조건에 맞는 지점이 없습니다.</p>
+                      <p className="text-base text-[var(--color-text-secondary)]">검색 결과가 없습니다.</p>
                     </div>
                   ) : (
                     <>
@@ -300,12 +261,11 @@ function HqStoresContent() {
                             <caption className="sr-only">지점 목록</caption>
                             <thead className="bg-[var(--color-bg-default)] border-b border-[var(--color-border)]">
                               <tr>
-                                <th scope="col" className="px-6 py-4 text-left text-sm font-bold text-[var(--color-text-primary)]">지점명</th>
-                                <th scope="col" className="px-6 py-4 text-left text-sm font-bold text-[var(--color-text-primary)]">점주</th>
-                                <th scope="col" className="px-6 py-4 text-right text-sm font-bold text-[var(--color-text-primary)]">직원</th>
-                                <th scope="col" className="px-6 py-4 text-left text-sm font-bold text-[var(--color-text-primary)]">상태</th>
-                                <th scope="col" className="px-6 py-4 text-left text-sm font-bold text-[var(--color-text-primary)]">등록일</th>
-                                <th scope="col" className="px-6 py-4 text-center text-sm font-bold text-[var(--color-text-primary)]">관리</th>
+                                <th scope="col" className="px-6 py-3 text-left text-sm font-bold text-[var(--color-text-primary)]">지점명</th>
+                                <th scope="col" className="px-6 py-3 text-left text-sm font-bold text-[var(--color-text-primary)]">상태</th>
+                                <th scope="col" className="px-6 py-3 text-left text-sm font-bold text-[var(--color-text-primary)]">점주</th>
+                                <th scope="col" className="px-6 py-3 text-right text-sm font-bold text-[var(--color-text-primary)]">직원</th>
+                                <th scope="col" className="px-6 py-3 text-center text-sm font-bold text-[var(--color-text-primary)]">관리</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -315,6 +275,9 @@ function HqStoresContent() {
                                   className="border-t border-[var(--color-border)] hover:bg-[var(--color-bg-default)] transition-colors"
                                 >
                                   <td className="px-6 py-4 text-base font-medium text-[var(--color-text-primary)]">{store.name}</td>
+                                  <td className="px-6 py-4">
+                                    <OwnerStatusBadge hasOwner={store.ownerNames.length > 0} />
+                                  </td>
                                   <td className="px-6 py-4 text-base text-[var(--color-text-primary)]">
                                     {store.ownerNames.length > 0 ? (
                                       store.ownerNames.join(", ")
@@ -323,10 +286,6 @@ function HqStoresContent() {
                                     )}
                                   </td>
                                   <td className="px-6 py-4 text-base text-right text-[var(--color-text-secondary)]">{store.staffCount}명</td>
-                                  <td className="px-6 py-4">
-                                    <OwnerStatusBadge hasOwner={store.ownerNames.length > 0} />
-                                  </td>
-                                  <td className="px-6 py-4 text-base text-[var(--color-text-secondary)]">{formatDate(store.createdAt)}</td>
                                   <td className="px-6 py-4 text-center">
                                     <div className="inline-flex items-center gap-1">
                                       <button
@@ -335,14 +294,14 @@ function HqStoresContent() {
                                         aria-label={`${store.name} 소속 사용자 보기`}
                                         className="inline-flex min-h-[44px] items-center gap-1 rounded-lg px-3 text-sm font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-default)] hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                                       >
-                                        <Users size={16} aria-hidden="true" /> 소속 사용자
+                                        <Users size={16} aria-hidden="true" /> 보기
                                       </button>
                                       <Link
                                         href={`/hq/stores/${store.id}`}
                                         aria-label={`${store.name} 상세 보기`}
                                         className="inline-flex min-h-[44px] items-center gap-1 rounded-lg px-3 text-sm font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                                       >
-                                        상세 보기 <ChevronRight size={16} aria-hidden="true" />
+                                        <ChevronRight size={16} aria-hidden="true" />
                                       </Link>
                                     </div>
                                   </td>
@@ -360,16 +319,16 @@ function HqStoresContent() {
                             <Link
                               href={`/hq/stores/${store.id}`}
                               aria-label={`${store.name} 상세 보기`}
-                              className="block bg-white border border-[var(--color-border)] rounded-xl p-5 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                              className="block bg-white border border-[var(--color-border)] rounded-lg p-4 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                             >
-                              <div className="mb-3 flex items-start justify-between gap-3">
+                              <div className="mb-2 flex items-start justify-between gap-3">
                                 <p className="text-base font-bold text-[var(--color-text-primary)]">{store.name}</p>
                                 <ChevronRight size={20} className="mt-0.5 shrink-0 text-[var(--color-text-tertiary)]" aria-hidden="true" />
                               </div>
                               <div className="mb-3">
                                 <OwnerStatusBadge hasOwner={store.ownerNames.length > 0} />
                               </div>
-                              <dl className="grid grid-cols-3 gap-2 text-sm">
+                              <dl className="grid grid-cols-2 gap-3 text-xs">
                                 <div>
                                   <dt className="text-[var(--color-text-secondary)]">점주</dt>
                                   <dd className="font-medium text-[var(--color-text-primary)]">
@@ -380,20 +339,15 @@ function HqStoresContent() {
                                   <dt className="text-[var(--color-text-secondary)]">직원</dt>
                                   <dd className="font-medium text-[var(--color-text-primary)]">{store.staffCount}명</dd>
                                 </div>
-                                <div>
-                                  <dt className="text-[var(--color-text-secondary)]">등록일</dt>
-                                  <dd className="font-medium text-[var(--color-text-primary)]">{formatDate(store.createdAt)}</dd>
-                                </div>
                               </dl>
                             </Link>
-                            {/* Link 안에 버튼을 중첩하지 않도록 형제 요소로 둔다. */}
                             <button
                               type="button"
                               onClick={() => void handleOpenMembers(store)}
                               aria-label={`${store.name} 소속 사용자 보기`}
                               className="mt-2 inline-flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-white px-3 text-sm font-medium text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                             >
-                              <Users size={16} aria-hidden="true" /> 소속 사용자 보기
+                              <Users size={16} aria-hidden="true" /> 소속 사용자
                             </button>
                           </li>
                         ))}
@@ -405,7 +359,6 @@ function HqStoresContent() {
             </>
           )}
         </main>
-      </div>
 
       {selectedStore && (
         <div
@@ -476,6 +429,6 @@ function HqStoresContent() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
