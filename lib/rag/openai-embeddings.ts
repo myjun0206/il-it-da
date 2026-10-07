@@ -7,9 +7,11 @@ const MAX_INPUT_LENGTH = 8_000;
 const MAX_TOTAL_INPUT_LENGTH = 100_000;
 
 function getOpenAiApiKey(): string {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
-    throw new Error("Missing OPENAI_API_KEY environment variable.");
+    const message = "Missing OPENAI_API_KEY environment variable. Set it in .env.local at the project root (or in the process environment), then restart the server. For standalone Node scripts, load the environment before requesting embeddings.";
+    console.error(`[RAG configuration] ${message}`);
+    throw new Error(message);
   }
   return apiKey;
 }
@@ -160,7 +162,8 @@ export async function createEmbeddings(inputs: string[]): Promise<number[][]> {
     });
 
     if (!response.ok) {
-      throw Object.assign(new Error(`OpenAI Embeddings API request failed with status ${response.status}.`), {
+      const guidance = response.status === 401 ? "Check OPENAI_API_KEY." : response.status === 429 ? "Check OpenAI quota and rate limits." : "Check OpenAI service availability.";
+      throw Object.assign(new Error(`OpenAI Embeddings API request failed with status ${response.status}. ${guidance}`), {
         diagnosticService: "embedding", diagnosticHttpStatus: response.status,
       });
     }
@@ -170,6 +173,9 @@ export async function createEmbeddings(inputs: string[]): Promise<number[][]> {
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error(`OpenAI Embeddings API request timed out after ${TIMEOUT_MS / 1000} seconds.`);
+    }
+    if (error instanceof TypeError) {
+      throw new Error("OpenAI Embeddings request or response failed. Check network, DNS, proxy and TLS settings, then retry.");
     }
     throw error;
   } finally {

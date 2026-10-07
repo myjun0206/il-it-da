@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { useClientReady } from "@/lib/hq/use-client-ready";
 import { useRouter } from "next/navigation";
 import { AlertCircle, ArrowLeft, FileText, Pencil, Plus, RefreshCw, Search, Upload, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
@@ -94,7 +95,7 @@ function groupByCategory(manuals: ManualRecord[], groups: ManualGroup[]): Manual
 
 export default function ManualDashboardPage() {
   const router = useRouter();
-  const [isReady, setIsReady] = useState(false);
+  const isReady = useClientReady();
   const [manuals, setManuals] = useState<ManualRecord[]>([]);
   const [isLoadingManuals, setIsLoadingManuals] = useState(true);
   const [manualsLoadError, setManualsLoadError] = useState("");
@@ -154,10 +155,6 @@ export default function ManualDashboardPage() {
     setToastMessage(message);
     setTimeout(() => setToastMessage(""), 2500);
   };
-
-  useEffect(() => {
-    setIsReady(true);
-  }, []);
 
   const fetchManualsData = async (): Promise<ManualRecord[]> => {
     const response = await fetch("/api/manuals?includeCategoryPlaceholders=1", {

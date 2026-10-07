@@ -3,8 +3,11 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { upsertSignupProfile, submitStoreMembershipRequest } from "@/lib/signup/store-membership-service";
 import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
+import { createDiagnosticRequestId, logDiagnosticError } from "@/lib/auth/diagnostic-error-log";
 
 export const runtime = "nodejs";
+
+const DATABASE_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface CreateMembershipRequest {
   storeId?: string;
@@ -21,6 +24,7 @@ interface CreateMembershipResponse {
   code?: string;
   error?: string;
   details?: string;
+  requestId?: string;
 }
 
 interface MembershipWithStore {
@@ -128,39 +132,84 @@ export async function GET(): Promise<NextResponse> {
 }
 
 export async function POST(request: Request): Promise<NextResponse<CreateMembershipResponse>> {
+  const requestId = createDiagnosticRequestId();
+  let stage = "request.parse";
+  let userId: string | null = null;
+  let requestedRole: string | undefined;
+  let requestedStoreId: string | undefined;
+  let requestedStoreName: string | undefined;
+  let requestedFranchiseId: string | undefined;
+  let userName: string | undefined;
+  let databaseTable: string | undefined;
+  const logFailure = (error: unknown) => logDiagnosticError("STORE_MEMBERSHIP_POST", stage, error, {
+    requestId,
+    path: "/api/signup/store-membership",
+    userId,
+    role: requestedRole,
+    storeId: requestedStoreId,
+    storeName: requestedStoreName,
+    franchiseId: requestedFranchiseId,
+    userName,
+    table: databaseTable,
+    sessionPresent: Boolean(userId),
+  });
+  const respond = (body: CreateMembershipResponse, status: number) => NextResponse.json(
+    status >= 400 ? { ...body, requestId } : body,
+    { status, headers: { "Cache-Control": "private, no-store, max-age=0", "X-Request-Id": requestId } },
+  );
+
   try {
-    // 요청 본문 파싱
-    const body = (await request.json()) as unknown;
-    if (!body || typeof body !== "object") {
-      return NextResponse.json(
-        { success: false, error: "Invalid request body" },
-        { status: 400 }
-      );
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch (error) {
+      logFailure(error);
+      return respond({ success: false, error: "요청 형식이 올바르지 않습니다." }, 400);
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return respond({ success: false, error: "요청 형식이 올바르지 않습니다." }, 400);
     }
 
-    const { storeId, storeName, role, franchiseId } = body as CreateMembershipRequest;
+    const fields = body as Record<string, unknown>;
+    if (["storeId", "storeName", "franchiseId"].some((field) => fields[field] != null && typeof fields[field] !== "string")) {
+      return respond({ success: false, error: "매장 정보 형식이 올바르지 않습니다." }, 400);
+    }
+    const role = fields.role;
 
     if (!role || (role !== "owner" && role !== "staff")) {
-      return NextResponse.json(
-        { success: false, error: "role must be 'owner' or 'staff'" },
-        { status: 400 }
-      );
+      return respond({ success: false, error: "신청 역할이 올바르지 않습니다." }, 400);
+    }
+    const { storeId, storeName, franchiseId } = body as CreateMembershipRequest;
+    requestedRole = role;
+    requestedStoreId = storeId?.trim() || undefined;
+    requestedStoreName = storeName?.trim() || undefined;
+    requestedFranchiseId = franchiseId?.trim() || undefined;
+    if (
+      (requestedStoreId && !DATABASE_UUID_PATTERN.test(requestedStoreId)) ||
+      (requestedFranchiseId && !DATABASE_UUID_PATTERN.test(requestedFranchiseId))
+    ) {
+      return respond({ success: false, error: "선택한 매장 또는 브랜드 정보가 올바르지 않습니다. 다시 선택해 주세요." }, 400);
+    }
+    if (!requestedStoreId && !requestedStoreName) {
+      return respond({ success: false, error: "신청할 매장을 선택해 주세요." }, 400);
     }
 
     // 서버에서 현재 인증된 사용자를 직접 가져옴 (클라이언트 userId 신뢰 안 함)
+    stage = "session.get_user";
     const serverClient = await createClient();
     const { data: { user }, error: userError } = await serverClient.auth.getUser();
 
     if (userError || !user) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized: No authenticated user" },
-        { status: 401 }
-      );
+      logFailure(userError ?? new Error("No authenticated user"));
+      return respond({ success: false, error: "로그인 정보를 확인할 수 없습니다." }, 401);
     }
 
-    const userId = user.id;
+    userId = user.id;
 
+    stage = "admin_client.create";
     const adminClient = createAdminClient();
+    stage = "profile.authorization_lookup";
+    databaseTable = "profiles";
     const { data: authorizedProfile, error: authorizedProfileError } = await adminClient
       .from("profiles")
       .select("role, approval_status")
@@ -168,10 +217,8 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
       .maybeSingle<{ role: string; approval_status: string | null }>();
 
     if (authorizedProfileError) {
-      return NextResponse.json(
-        { success: false, error: "Unable to verify authenticated profile" },
-        { status: 500 }
-      );
+      logFailure(authorizedProfileError);
+      return respond({ success: false, error: "신청 권한을 확인하지 못했습니다." }, 500);
     }
 
     const hasSocialIdentity = user.identities?.some(
@@ -182,61 +229,63 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
       !authorizedProfile && isEmailSignup && user.user_metadata?.role === role;
 
     if (authorizedProfile?.role !== role && !canCreateInitialEmailProfile) {
-      return NextResponse.json(
-        { success: false, error: "Forbidden: role does not match authenticated profile" },
-        { status: 403 }
-      );
+      return respond({ success: false, error: "로그인한 계정의 역할과 신청 역할이 일치하지 않습니다." }, 403);
     }
 
     // profiles row 생성 또는 업데이트 (full_name이 없으면 채우기)
-    const userName = user.user_metadata?.name || user.email || "Unknown User";
+    userName = typeof user.user_metadata?.name === "string" && user.user_metadata.name.trim()
+      ? user.user_metadata.name.trim()
+      : user.email || (role === "staff" ? "알바" : "점주");
     const userPhone = typeof user.user_metadata?.phone === "string" ? user.user_metadata.phone : null;
 
-    const profileResult = await upsertSignupProfile(adminClient, {
+    stage = "profile.upsert";
+    const profileResult = authorizedProfile?.approval_status === "approved" ? { success: true } : await upsertSignupProfile(adminClient, {
       userId,
       email: user.email ?? null,
       role,
       name: userName,
       phone: userPhone,
+      diagnosticRequestId: requestId,
     });
 
     if (!profileResult.success) {
-      logSafeAuthError("STORE_MEMBERSHIP_PROFILE_FAILED", profileResult.details ?? profileResult.error);
-      return NextResponse.json(
-        { success: false, error: profileResult.error },
-        { status: 500 }
-      );
+      logFailure(new Error(profileResult.details ?? profileResult.error ?? "Profile write failed"));
+      return respond({ success: false, error: "신청자 정보를 저장하지 못했습니다." }, 500);
     }
 
     // 매장 조회/생성 + store_memberships row 생성 + 알림 발송
+    stage = "membership.submit";
+    databaseTable = "stores,store_memberships";
     const membershipResult = await submitStoreMembershipRequest(adminClient, {
       userId,
       userName,
       role,
-      storeId,
-      storeName,
-      franchiseId,
+      storeId: requestedStoreId,
+      storeName: requestedStoreName,
+      franchiseId: requestedFranchiseId,
       currentApprovalStatus: authorizedProfile?.approval_status ?? null,
+      diagnosticRequestId: requestId,
     });
 
-    return NextResponse.json(
+    if (membershipResult.status >= 500) {
+      logFailure(new Error(membershipResult.error || "Membership request failed"));
+    }
+
+    return respond(
       {
         success: membershipResult.success,
         membershipId: membershipResult.membershipId,
         created: membershipResult.created,
         membershipStatus: membershipResult.membershipStatus,
         code: membershipResult.code,
-        error: membershipResult.error,
+        error: membershipResult.status >= 500 ? "근무 또는 운영 신청을 처리하지 못했습니다." : membershipResult.error,
         // 서버 오류(5xx)의 내부 DB 메시지는 클라이언트로 보내지 않는다.
         details: membershipResult.status < 500 ? membershipResult.details : undefined,
       },
-      { status: membershipResult.status }
+      membershipResult.status,
     );
   } catch (error) {
-    logSafeAuthError("STORE_MEMBERSHIP_POST_UNEXPECTED", error);
-    return NextResponse.json(
-      { success: false, error: "Unexpected error" },
-      { status: 500 }
-    );
+    logFailure(error);
+    return respond({ success: false, error: "일시적인 서버 오류로 신청을 처리하지 못했습니다." }, 500);
   }
 }

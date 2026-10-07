@@ -8,6 +8,8 @@ import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
+const DATABASE_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 type OwnerStoreRequestCode = "NOT_OWNER" | "STORE_BRAND_UNKNOWN" | "STORE_NOT_FOUND";
 
 type OwnerStoreRequestResponse = {
@@ -39,6 +41,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<OwnerStor
   let userId: string | null = null;
   let requestedStoreId: string | null = null;
   let hasStoreName = false;
+  let storeFranchiseId: string | null = null;
+  let databaseTable: string | null = null;
   const hasSessionCookie = request.cookies.getAll().some(({ name }) => name === "il-it-da-auth-session" || name.startsWith("il-it-da-auth-session."));
   const proxyRequestId = request.headers.get("x-proxy-request-id") ?? undefined;
   const respond = (body: OwnerStoreRequestResponse, status: number) =>
@@ -63,9 +67,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<OwnerStor
     userId = userData.user.id;
 
     stage = "request.parse";
-    let body: { storeId?: unknown; storeName?: unknown };
+    let parsedBody: unknown;
     try {
-      body = (await request.json()) as { storeId?: unknown; storeName?: unknown };
+      parsedBody = await request.json();
     } catch (error) {
       logDiagnosticError("OWNER_STORE_REQUEST", stage, error, {
         requestId,
@@ -77,15 +81,31 @@ export async function POST(request: NextRequest): Promise<NextResponse<OwnerStor
       return respond({ success: false, error: "요청 형식이 올바르지 않습니다." }, 400);
     }
 
-    const storeName = typeof body.storeName === "string" ? body.storeName.trim() : "";
+    if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) {
+      return respond({ success: false, error: "요청 형식이 올바르지 않습니다." }, 400);
+    }
+    const body = parsedBody as { storeId?: unknown; storeName?: unknown };
+    if (
+      (body.storeId != null && typeof body.storeId !== "string") ||
+      (body.storeName != null && typeof body.storeName !== "string")
+    ) {
+      return respond({ success: false, error: "매장 정보 형식이 올바르지 않습니다." }, 400);
+    }
+
+    let storeName = typeof body.storeName === "string" ? body.storeName.trim() : "";
     requestedStoreId = typeof body.storeId === "string" && body.storeId.trim() ? body.storeId.trim() : null;
     hasStoreName = Boolean(storeName);
-    if (!storeName) {
+    if (requestedStoreId && !DATABASE_UUID_PATTERN.test(requestedStoreId)) {
+      return respond({ success: false, error: "선택한 매장 정보가 올바르지 않습니다. 매장을 다시 선택해 주세요." }, 400);
+    }
+    if (!requestedStoreId && !storeName) {
       return respond({ success: false, error: "매장을 선택해 주세요." }, 400);
     }
 
-    stage = "profile.lookup";
+    stage = "admin_client.create";
     const adminClient = createAdminClient();
+    stage = "profile.lookup";
+    databaseTable = "profiles";
     const { data: profile, error: profileError } = await adminClient
       .from("profiles")
       .select("role, approval_status, full_name")
@@ -94,39 +114,51 @@ export async function POST(request: NextRequest): Promise<NextResponse<OwnerStor
 
     if (profileError) throw profileError;
     if (profile?.role !== "owner" || profile.approval_status !== "approved") {
-      return NextResponse.json(
+      return respond(
         { success: false, code: "NOT_OWNER", error: "승인된 점주만 운영 매장을 추가할 수 있습니다." },
-        { status: 403 },
+        403,
       );
     }
 
     // 대상 매장의 브랜드는 서버에서만 정한다. storeId가 있으면 그 매장 행의 franchise_id가 기준이고,
     // 없을 때만 기존 가입 경로와 같은 매장명 resolver를 쓴다.
-    let storeFranchiseId: string | null = null;
-
     if (requestedStoreId) {
       stage = "store.brand_lookup";
+      databaseTable = "stores";
       const { data: store, error: storeError } = await adminClient
         .from("stores")
-        .select("franchise_id")
+        .select("store_name, franchise_id")
         .eq("id", requestedStoreId)
-        .maybeSingle<{ franchise_id: string | null }>();
+        .maybeSingle<{ store_name: string; franchise_id: string | null }>();
 
       if (storeError) throw storeError;
-      storeFranchiseId = store?.franchise_id ?? null;
+      if (!store) {
+        return respond({ success: false, code: "STORE_NOT_FOUND", error: "선택한 매장을 찾을 수 없습니다." }, 404);
+      }
+      storeName = store.store_name?.trim() || "";
+      hasStoreName = Boolean(storeName);
+      if (!storeName) {
+        logDiagnosticError("OWNER_STORE_REQUEST", "store.required_fields", new Error("stores.store_name is missing"), {
+          requestId, userId, storeId: requestedStoreId, table: "stores", missingField: "store_name",
+        });
+        return respond({ success: false, error: "매장 정보가 올바르지 않습니다. 본사에 문의해 주세요." }, 422);
+      }
+      storeFranchiseId = store.franchise_id;
     } else {
       stage = "store.franchise_resolve";
+      databaseTable = "franchises";
       storeFranchiseId = await resolveFranchiseIdForStoreName(adminClient, storeName, { requestId, userId });
     }
 
     if (!storeFranchiseId) {
-      return NextResponse.json(
+      return respond(
         { success: false, code: "STORE_BRAND_UNKNOWN", error: STORE_BRAND_UNKNOWN_MESSAGE },
-        { status: 400 },
+        400,
       );
     }
 
     stage = "membership.submit";
+    databaseTable = "stores,store_memberships";
     const result = await submitStoreMembershipRequest(adminClient, {
       userId: userData.user.id,
       userName: profile.full_name || userData.user.user_metadata?.name || userData.user.email || "점주",
@@ -160,7 +192,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<OwnerStor
         membershipStatus: result.membershipStatus,
         // STORE_NO_OWNER는 직원 신청에서만 나오는 코드라 점주 신청 응답에는 싣지 않는다.
         code: result.code === "STORE_NOT_FOUND" || result.code === "STORE_BRAND_UNKNOWN" ? result.code : undefined,
-        error: result.success ? undefined : "운영 신청을 처리하지 못했습니다.",
+        error: result.success ? undefined : result.status >= 500 ? "운영 신청을 처리하지 못했습니다." : result.error,
       },
       result.status,
     );
@@ -171,6 +203,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<OwnerStor
       userId,
       role: "owner",
       storeId: requestedStoreId,
+      franchiseId: storeFranchiseId,
+      table: databaseTable,
       hasStoreName,
       hasSessionCookie,
       sessionPresent: Boolean(userId),

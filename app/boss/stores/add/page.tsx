@@ -76,7 +76,7 @@ export default function OwnerAddStorePage() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storeId: store.id, storeName: store.name }),
+        body: JSON.stringify({ storeName: store.name }),
       });
       const result = (await response.json()) as {
         success?: boolean;
@@ -99,6 +99,9 @@ export default function OwnerAddStorePage() {
       }
       if (response.status === 403) {
         return { kind: "error", message: "운영 매장을 추가할 권한이 없습니다." };
+      }
+      if (response.status >= 400 && response.status < 500) {
+        return { kind: "error", message: result.error || "매장 정보를 확인한 뒤 다시 신청해 주세요." };
       }
       if (!response.ok || !result.success || !result.membershipId) {
         const requestReference = result.requestId ? ` (문의 ID: ${result.requestId})` : "";

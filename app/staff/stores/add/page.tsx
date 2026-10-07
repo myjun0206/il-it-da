@@ -77,7 +77,7 @@ export default function StaffAddStorePage() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storeId: store.id, storeName: store.name, role: "staff" }),
+        body: JSON.stringify({ storeName: store.name, role: "staff" }),
       });
       const result = (await response.json()) as {
         success?: boolean;
@@ -85,10 +85,15 @@ export default function StaffAddStorePage() {
         created?: boolean;
         membershipStatus?: string;
         code?: string;
+        error?: string;
+        requestId?: string;
       };
 
-      if (response.status === 401 || response.status === 403) {
+      if (response.status === 401) {
         return { kind: "error", message: "로그인 정보를 확인할 수 없습니다. 다시 로그인한 뒤 신청해 주세요." };
+      }
+      if (response.status === 403) {
+        return { kind: "error", message: "알바 계정으로 로그인한 뒤 근무 신청해 주세요." };
       }
       if (result.code === "STORE_NO_OWNER") {
         return { kind: "error", message: "아직 점주가 등록되지 않은 매장이라 근무 신청을 할 수 없습니다. 점주가 등록된 뒤 다시 신청해 주세요." };
@@ -96,8 +101,12 @@ export default function StaffAddStorePage() {
       if (response.status === 404 || result.code === "STORE_NOT_FOUND") {
         return { kind: "error", message: "일잇다에 등록된 매장이 아니라 신청할 수 없습니다. 매장 이름을 다시 확인해 주세요." };
       }
+      if (response.status >= 400 && response.status < 500) {
+        return { kind: "error", message: result.error || "매장 정보를 확인한 뒤 다시 신청해 주세요." };
+      }
       if (!response.ok || !result.success || !result.membershipId) {
-        return { kind: "error", message: "일시적인 서버 오류로 신청하지 못했습니다. 잠시 후 다시 시도해 주세요." };
+        const requestReference = result.requestId ? ` (문의 ID: ${result.requestId})` : "";
+        return { kind: "error", message: `일시적인 서버 오류로 신청하지 못했습니다. 잠시 후 다시 시도해 주세요.${requestReference}` };
       }
 
       const refreshed = await loadMemberships();

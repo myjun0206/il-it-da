@@ -60,7 +60,7 @@ function noticePageScenario(role: "hq" | "owner" | "staff", multiple = false) {
     { ...notice, id: "notice-c", title: "Franchise Safety", targetType: "franchise", target: "전체 지점", targetStoreId: null },
   ] : [notice];
   const initialStates = role === "hq"
-    ? [true, rows, false, "", "", "all", "all", null, null, null, false]
+    ? [rows, false, "", "", "all", "all", null, null, null, false]
     : role === "owner"
       ? [true, "Tester", "Store A", "store-a", { notices: rows, summary: { total: rows.length, important: 0 } }, false, "", "all", "", "전체", null, null, null, false]
       : [{ key: "store-a:0", status: "ready", notices: rows }, 0, "", "all", "all", null];
