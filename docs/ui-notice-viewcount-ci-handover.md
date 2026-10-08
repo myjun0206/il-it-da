@@ -197,7 +197,7 @@ Every HQ page/layout from the original tree was checked with Git blob identities
 | `app/hq/stores/[id]/page.tsx` | Identical | Identical | Store detail retained. |
 | `app/hq/stores/requests/page.tsx` | Identical | Identical | Store request screen retained. |
 | `components/hq/HQHeader.tsx` | Identical | Identical | Original store selector, notifications, profile UI and handlers retained. |
-| `components/hq/HQSidebar.tsx` | Changed | Changed | Only equivalent Tailwind variable syntax (`border variable syntax` -> `updated border variable syntax`, same for text/background). Navigation, responsive layout and handlers retained. |
+| `components/hq/HQSidebar.tsx` | Changed | Changed | Only equivalent border, text and background CSS-variable spelling changes. Navigation, responsive layout and handlers retained. |
 | `components/hq/HQShell.tsx` | Identical | Identical | Shared header/sidebar, scroll area, pathname menu selection and store-loading/selection handlers retained. |
 | `lib/hq/selected-store.ts` | Identical | Identical | Tab-local selected store persistence retained. |
 | `app/globals.css`, `app/layout.tsx` | Identical | Identical | Global styles/layout retained. |

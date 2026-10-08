@@ -49,3 +49,9 @@ export const fetchAuthEmailSettings: AuthEmailSettingsFetcher = async () => {
     return null;
   }
 };
+
+export const fetchEmailFirstAuthSettings: AuthEmailSettingsFetcher = async () => {
+  if (process.env.OWNER_STAFF_EMAIL_FIRST_OTP_POLICY_READY !== "true" ||
+    Number(process.env.NEXT_PUBLIC_SIGNUP_EMAIL_OTP_LENGTH ?? 6) !== 6) return null;
+  return fetchAuthEmailSettings();
+};

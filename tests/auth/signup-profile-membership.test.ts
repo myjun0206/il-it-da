@@ -30,6 +30,9 @@ function integratedMembershipRoute(options: {
   unavailable?: boolean;
   storeDenied?: boolean;
   socialApproved?: boolean;
+  incompleteFlow?: boolean;
+  completeFlow?: boolean;
+  signupRole?: "owner" | "staff";
 } = {}) {
   const profileWrites: Row[] = [];
   const submissions: Row[] = [];
@@ -40,7 +43,7 @@ function integratedMembershipRoute(options: {
     confirmation_sent_at: "2026-10-06T00:00:00Z",
     app_metadata: { provider: options.socialApproved ? "google" : "email" },
     identities: [{ provider: options.socialApproved ? "google" : "email" }],
-    user_metadata: { role: "owner", name: "  Owner Fixture  ", phone: "01011112222" },
+    user_metadata: { role: options.signupRole ?? "owner", name: "  Owner Fixture  ", phone: "01011112222" },
   };
   const admin = {
     from(table: string) {
@@ -56,7 +59,11 @@ function integratedMembershipRoute(options: {
   const route = loadComponentModule<{ POST: (request: Request) => Promise<Response> }>("app/api/signup/store-membership/route.ts", {
     "@/lib/supabase/server": { createClient: async () => ({ auth: { getUser: async () => ({ data: { user }, error: null }) } }) },
     "@/lib/supabase/admin": { createAdminClient: () => admin },
-    "@/lib/auth/auth-email-settings": { fetchAuthEmailSettings: async () => options.unavailable ? null : ({ emailEnabled: true, autoconfirm: false, signupDisabled: false }) },
+    "@/lib/auth/auth-email-settings": {
+      fetchAuthEmailSettings: async () => options.unavailable ? null : ({ emailEnabled: true, autoconfirm: false, signupDisabled: false }),
+      fetchEmailFirstAuthSettings: async () => options.unavailable ? null : ({ emailEnabled: true, autoconfirm: false, signupDisabled: false }),
+    },
+    "@/lib/auth/owner-staff-signup-server": { prepareEmailFirstSignup: async () => ({ kind: options.incompleteFlow ? "resume" : options.completeFlow ? "complete" : "legacy", userId: USER_ID }) },
     "@/lib/signup/store-membership-service": {
       upsertSignupProfile: async (_admin: unknown, input: Row) => { profileWrites.push(input); return { success: true }; },
       submitStoreMembershipRequest: async (_admin: unknown, input: Row & { ensureProfile: () => Promise<{ success: boolean }> }) => {
@@ -70,12 +77,35 @@ function integratedMembershipRoute(options: {
   const submit = (overrides: Row = {}) => route.POST(new Request("http://localhost/api/signup/store-membership", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ storeId: STORE_ID, role: "owner", email: user.email, terms: { service: true, privacy: true, store_connection: true }, ...overrides }),
+    body: JSON.stringify({ storeId: STORE_ID, role: options.signupRole ?? "owner", email: user.email, terms: { service: true, privacy: true, store_connection: true, store_work: true }, ...overrides }),
   }));
   return { submit, profileWrites, submissions };
 }
 
 describe("integrated initial-email membership handler", () => {
+  test("email verification without final signup cannot create a profile or request", async () => {
+    const fixture = integratedMembershipRoute({ incompleteFlow: true });
+    const response = await fixture.submit();
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).code, "SIGNUP_INCOMPLETE");
+    assert.equal(fixture.profileWrites.length, 0);
+    assert.equal(fixture.submissions.length, 0);
+  });
+  test("completed email-first signup can request a store but remains pending", async () => {
+    const fixture = integratedMembershipRoute({ completeFlow: true });
+    const response = await fixture.submit();
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).membershipStatus, "pending");
+    assert.equal(fixture.profileWrites.length, 1);
+  });
+  test("completed staff signup preserves staff role and creates only pending membership", async () => {
+    const fixture = integratedMembershipRoute({ completeFlow: true, signupRole: "staff" });
+    const response = await fixture.submit();
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).membershipStatus, "pending");
+    assert.equal(fixture.profileWrites[0].role, "staff");
+    assert.equal(fixture.submissions[0].role, "staff");
+  });
   for (const scenario of [
     { name: "unconfirmed email", options: { unconfirmed: true }, body: {}, status: 403 },
     { name: "unavailable OTP settings", options: { unavailable: true }, body: {}, status: 503 },

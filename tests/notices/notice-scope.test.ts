@@ -333,7 +333,7 @@ function noticePageScenario(role: "hq" | "owner" | "staff", multiple = false) {
         "Tester", "Cafe", rows,
         [{ id: "store-a", name: "Store A" }, { id: "store-b", name: "Store B" }],
         { page: 1, limit: 10, totalCount: rows.length, totalPages: 1 }, 1,
-        false, "", "", "", "latest", "all", "all", null, null, null, false,
+        false, "", "", "", "latest", "all", "__all__", null, "", null, null, null, false,
       ]
     : role === "owner"
       ? [true, "Tester", "Store A", "store-a", {

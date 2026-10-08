@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { fetchAuthEmailSettings } from "@/lib/auth/auth-email-settings";
+import { fetchAuthEmailSettings, fetchEmailFirstAuthSettings } from "@/lib/auth/auth-email-settings";
 import { checkEmailSignupConfirmation, parseOwnerStaffRole } from "@/lib/auth/owner-staff-signup";
+import { prepareEmailFirstSignup } from "@/lib/auth/owner-staff-signup-server";
 
 export const runtime = "nodejs";
 
@@ -19,11 +20,18 @@ export async function GET(): Promise<NextResponse> {
     if (profileError || (profile && profile.role !== role)) {
       return NextResponse.json({ ok: false }, { status: 403, headers: { "Cache-Control": "no-store" } });
     }
-    const confirmation = await checkEmailSignupConfirmation(user, { hasProfile: Boolean(profile), getSettings: fetchAuthEmailSettings });
+    const state = profile ? null : await prepareEmailFirstSignup(user.email ?? "", role, "inspect");
+    const emailFirstVerified = state?.userId === user.id && (state.kind === "complete" || state.emailVerified === true);
+    const confirmation = await checkEmailSignupConfirmation(user, { hasProfile: Boolean(profile), emailFirstVerified,
+      getSettings: emailFirstVerified ? fetchEmailFirstAuthSettings : fetchAuthEmailSettings });
     if (!confirmation.ok) {
       return NextResponse.json(confirmation, { status: confirmation.status, headers: { "Cache-Control": "no-store" } });
     }
-    return NextResponse.json({ ok: true, role, email: user.email, name: user.user_metadata?.name ?? "", phone: user.user_metadata?.phone ?? "" },
+    const profileComplete = Boolean(profile) || state?.kind === "complete" || state?.kind === "legacy";
+    if (!profile && (state?.userId !== user.id || (!profileComplete && !state?.emailVerified))) {
+      return NextResponse.json({ ok: false, code: "SIGNUP_INCOMPLETE" }, { status: 403, headers: { "Cache-Control": "no-store" } });
+    }
+    return NextResponse.json({ ok: true, role, email: user.email, name: user.user_metadata?.name ?? "", phone: user.user_metadata?.phone ?? "", profileComplete },
       { headers: { "Cache-Control": "no-store" } });
   } catch {
     return NextResponse.json({ ok: false, error: "인증 상태를 확인할 수 없습니다." }, { status: 503, headers: { "Cache-Control": "no-store" } });

@@ -3,6 +3,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
+import postcss from "postcss";
+import tailwind from "@tailwindcss/postcss";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const SCAN_DIRS = ["app", "components"];
@@ -59,4 +61,11 @@ describe("client components never import the server-only role guard", () => {
       }
     });
   }
+});
+
+test("generated Tailwind CSS does not include placeholder custom properties from scanned source", async () => {
+  const filename = path.join(repoRoot, "app/globals.css");
+  const result = await postcss([tailwind({ base: repoRoot })]).process(readFileSync(filename, "utf8"), { from: filename });
+  assert.doesNotMatch(result.css, /\bvar\((?:--)?\.{3}\)/);
+  assert.ok(result.css.includes("border-color: var(--color-border);"));
 });

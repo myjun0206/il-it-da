@@ -4,8 +4,9 @@ import { createClient } from "@/lib/supabase/server";
 import { upsertSignupProfile, submitStoreMembershipRequest } from "@/lib/signup/store-membership-service";
 import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
 import { createDiagnosticRequestId, logDiagnosticError } from "@/lib/auth/diagnostic-error-log";
-import { fetchAuthEmailSettings } from "@/lib/auth/auth-email-settings";
+import { fetchAuthEmailSettings, fetchEmailFirstAuthSettings } from "@/lib/auth/auth-email-settings";
 import { checkEmailSignupConfirmation, validateInitialEmailMembership } from "@/lib/auth/owner-staff-signup";
+import { prepareEmailFirstSignup } from "@/lib/auth/owner-staff-signup-server";
 
 export const runtime = "nodejs";
 
@@ -236,9 +237,12 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
       return respond({ success: false, error: "로그인한 계정의 역할과 신청 역할이 일치하지 않습니다." }, 403);
     }
 
+    const onboarding = canCreateInitialEmailProfile ? await prepareEmailFirstSignup(user.email ?? "", role, "inspect") : null;
+    const emailFirstVerified = onboarding?.kind === "complete" && onboarding.userId === user.id;
     const confirmation = await checkEmailSignupConfirmation(user, {
       hasProfile: Boolean(authorizedProfile),
-      getSettings: fetchAuthEmailSettings,
+      emailFirstVerified,
+      getSettings: emailFirstVerified ? fetchEmailFirstAuthSettings : fetchAuthEmailSettings,
     });
     if (!confirmation.ok) {
       return respond(
@@ -248,6 +252,9 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
     }
 
     if (canCreateInitialEmailProfile) {
+      if (onboarding?.userId !== user.id || (onboarding.kind !== "complete" && onboarding.kind !== "legacy")) {
+        return respond({ success: false, code: "SIGNUP_INCOMPLETE", error: "이메일 인증 후 기본 정보를 입력하고 가입을 마쳐주세요." }, 403);
+      }
       const validationError = validateInitialEmailMembership(user, role, terms, email);
       if (validationError) return respond({ success: false, error: validationError }, 400);
     }

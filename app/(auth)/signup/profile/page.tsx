@@ -14,7 +14,8 @@ import {
   DEV_TEST_PASSWORD,
 } from "@/lib/data/mockFranchises";
 import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
-import { validateOwnerStaffSignup, validateOwnerStaffSignupProfile, isValidSignupEmail, isValidSignupToken, SIGNUP_EMAIL_OTP_LENGTH, hasRequiredSignupTerms, parseOwnerStaffRole } from "@/lib/auth/owner-staff-signup";
+import { validateOwnerStaffSignup, validateOwnerStaffSignupProfile, isValidSignupEmail, hasRequiredSignupTerms, parseOwnerStaffRole } from "@/lib/auth/owner-staff-signup";
+import { EMAIL_FIRST_OTP_LENGTH, EMAIL_FIRST_OTP_SECONDS } from "@/lib/auth/email-first-signup";
 
 function readSignupTerms(): unknown {
   try { return JSON.parse(sessionStorage.getItem("signupTerms") ?? "null"); } catch { return null; }
@@ -1015,7 +1016,6 @@ function OwnerStaffSignupProfile() {
     name: "",
     phone: "",
   });
-  // 비밀번호는 어디에도 저장하지 않음 (React state에서만 유지하고 인증번호 요청 시 서버로 한 번만 보낸다)
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -1023,6 +1023,7 @@ function OwnerStaffSignupProfile() {
   const busy = useRef(false);
   const emailEdited = useRef(false);
   const [verifiedEmail, setVerifiedEmail] = useState("");
+  const [profileComplete, setProfileComplete] = useState(false);
 
   // 이메일 인증번호 상태 (인증 완료 여부는 서버 verify 응답 또는 실제 세션으로만 true가 된다)
   const [emailVerified, setEmailVerified] = useState(false);
@@ -1033,16 +1034,21 @@ function OwnerStaffSignupProfile() {
   const [isSendingVerification, setIsSendingVerification] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [resendAvailableAt, setResendAvailableAt] = useState(0);
+  const [expiresAt, setExpiresAt] = useState(0);
   const [now, setNow] = useState(() => Date.now());
   const [isOAuthSignup, setIsOAuthSignup] = useState(false);
 
   const resendRemainingSeconds = Math.max(0, Math.ceil((resendAvailableAt - now) / 1000));
+  const remainingSeconds = Math.max(0, Math.ceil((expiresAt - now) / 1000));
+  const expired = emailVerificationSent && !emailVerified && remainingSeconds === 0;
+  const remainingTime = `${String(Math.floor(remainingSeconds / 60)).padStart(2, "0")}:${String(remainingSeconds % 60).padStart(2, "0")}`;
 
   useEffect(() => {
-    if (resendAvailableAt <= Date.now()) return;
+    if (emailVerified) return;
+    if (Math.max(resendAvailableAt, expiresAt) <= Date.now()) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [resendAvailableAt]);
+  }, [resendAvailableAt, expiresAt, emailVerified]);
 
   // 페이지 로드 시 sessionStorage에서 저장된 데이터 복원.
   // 인증 완료 여부는 저장값을 믿지 않고, 실제 로그인 세션(이메일 인증 완료된 같은 계정)으로만 복원한다.
@@ -1058,11 +1064,14 @@ function OwnerStaffSignupProfile() {
       const profile = JSON.parse(savedProfile ?? "null") as Record<string, unknown> | null;
       if (profile && profile.role === sessionStorage.getItem("signupRole")) {
         restoredEmail = typeof profile.email === "string" ? normalizeEmail(profile.email) : "";
-        const draft = { email: restoredEmail, name: typeof profile.name === "string" ? profile.name : "", phone: typeof profile.phone === "string" ? profile.phone : "", role: profile.role, sent: profile.sent === true };
+        const draft = { email: restoredEmail, name: typeof profile.name === "string" ? profile.name : "", phone: typeof profile.phone === "string" ? profile.phone : "", role: profile.role, sent: profile.sent === true, expiresAt: typeof profile.expiresAt === "number" ? profile.expiresAt : 0, resendAvailableAt: typeof profile.resendAvailableAt === "number" ? profile.resendAvailableAt : 0 };
         queueMicrotask(() => {
           if (!active || emailEdited.current) return;
           setFormData(draft);
           setEmailVerificationSent(draft.sent);
+          setExpiresAt(draft.expiresAt);
+          setResendAvailableAt(draft.resendAvailableAt);
+          setNow(Date.now());
         });
         sessionStorage.setItem("signupOtpDraft", JSON.stringify(draft));
         sessionStorage.removeItem("signupProfile");
@@ -1074,6 +1083,7 @@ function OwnerStaffSignupProfile() {
       setFormData({ email: data.email, name: data.name, phone: data.phone });
       setVerifiedEmail(normalizeEmail(data.email));
       setEmailVerified(true);
+      setProfileComplete(data.profileComplete === true);
     }).catch(() => {});
     return () => { active = false; };
   }, []);
@@ -1108,6 +1118,8 @@ function OwnerStaffSignupProfile() {
     setVerificationCode("");
     setVerificationError("");
     setResendAvailableAt(0);
+    setExpiresAt(0);
+    setProfileComplete(false);
   };
 
   const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1140,6 +1152,8 @@ function OwnerStaffSignupProfile() {
     cooldownSeconds?: number;
     retryAfterSeconds?: number;
     fields?: Record<string, string>;
+    expiresAt?: number;
+    profileComplete?: boolean;
   };
 
   const postOtpApi = async (path: string, body: Record<string, unknown>) => {
@@ -1157,9 +1171,22 @@ function OwnerStaffSignupProfile() {
     setErrors((current) => ({ ...current, [field]: validation[field] ?? "" }));
   };
 
+  const saveSentDraft = (data: OtpApiResponse, email: string) => {
+    if (typeof data.expiresAt !== "number" || data.expiresAt <= Date.now()) throw new Error("Invalid OTP deadline");
+    const current = Date.now();
+    const availableAt = current + Math.max(1, data.cooldownSeconds ?? 60) * 1000;
+    setNow(current);
+    setExpiresAt(data.expiresAt);
+    setResendAvailableAt(availableAt);
+    sessionStorage.setItem("signupOtpDraft", JSON.stringify({ ...formData, email, role: sessionStorage.getItem("signupRole"), sent: true, expiresAt: data.expiresAt, resendAvailableAt: availableAt }));
+  };
+
   const handleSendVerificationCode = async () => {
     if (busy.current || resendRemainingSeconds > 0) return;
-    if (!validateForm({ requireVerified: false })) return;
+    if (!isValidEmail(formData.email) || !parseOwnerStaffRole(sessionStorage.getItem("signupRole"))) {
+      setErrors((current) => ({ ...current, email: "올바른 이메일 주소를 입력해주세요." }));
+      return;
+    }
     busy.current = true;
     setIsSendingVerification(true);
     setVerificationError("");
@@ -1171,12 +1198,7 @@ function OwnerStaffSignupProfile() {
 
       const { response, data } = await postOtpApi("/api/auth/signup/owner-staff/start", {
         email,
-        password,
-        passwordConfirm,
-        terms: readSignupTerms(),
         role,
-        name: formData.name.trim(),
-        phone: formData.phone.trim(),
       });
 
       if (!response.ok || !data.ok) {
@@ -1193,16 +1215,13 @@ function OwnerStaffSignupProfile() {
       }
 
       setEmailVerificationSent(true);
-      sessionStorage.setItem("signupOtpDraft", JSON.stringify({ ...formData, email, role, sent: true }));
+      saveSentDraft(data, email);
       setPassword("");
       setPasswordConfirm("");
       setEmailVerified(false);
       setVerificationCode("");
-      startResendCooldown(data.cooldownSeconds);
       setVerificationNotice(
-        data.resumed
-          ? "이전에 가입을 시작한 이메일입니다. 새 인증번호를 보냈습니다. 인증을 마치면 처음 가입할 때 입력한 정보와 비밀번호가 그대로 사용됩니다."
-          : "입력하신 이메일로 인증번호를 보냈습니다. 메일이 보이지 않으면 스팸함도 확인해주세요.",
+        "입력하신 이메일로 인증번호를 보냈습니다. 메일이 보이지 않으면 스팸함도 확인해주세요.",
       );
     } catch {
       setVerificationError("인증번호 발송 중 오류가 발생했습니다.");
@@ -1232,8 +1251,7 @@ function OwnerStaffSignupProfile() {
       }
       setVerificationCode("");
       setEmailVerificationSent(true);
-      sessionStorage.setItem("signupOtpDraft", JSON.stringify({ ...formData, email, role: sessionStorage.getItem("signupRole"), sent: true }));
-      startResendCooldown(data.cooldownSeconds);
+      saveSentDraft(data, email);
       setVerificationNotice("인증번호를 다시 보냈습니다. 가장 최근에 받은 인증번호를 입력해주세요.");
     } catch {
       setVerificationError("인증번호 재발송 중 오류가 발생했습니다.");
@@ -1245,7 +1263,7 @@ function OwnerStaffSignupProfile() {
 
   const handleVerifyCode = async () => {
     if (busy.current) return;
-    if (!isValidSignupToken(verificationCode)) {
+    if (!new RegExp(`^\\d{${EMAIL_FIRST_OTP_LENGTH}}$`).test(verificationCode) || expired) {
       setVerificationError("인증번호를 정확히 입력해주세요.");
       return;
     }
@@ -1278,6 +1296,7 @@ function OwnerStaffSignupProfile() {
       setFormData({ email: status.email, name: status.name, phone: status.phone });
       setVerifiedEmail(email);
       setEmailVerified(true);
+      setProfileComplete(status.profileComplete === true);
       setVerificationCode("");
       setVerificationError("");
       setVerificationNotice("");
@@ -1293,7 +1312,7 @@ function OwnerStaffSignupProfile() {
     if (!isOAuthSignup) {
       const role = parseOwnerStaffRole(sessionStorage.getItem("signupRole"));
       const validation = requireVerified
-        ? validateOwnerStaffSignupProfile(formData)
+        ? profileComplete ? validateOwnerStaffSignupProfile(formData) : validateOwnerStaffSignup({ ...formData, role, password, passwordConfirm, terms: readSignupTerms() })
         : validateOwnerStaffSignup({ ...formData, role, password, passwordConfirm, terms: readSignupTerms() });
       if (requireVerified && !role) validation.role = "가입 역할을 다시 선택해주세요.";
       if (requireVerified && role && !hasRequiredSignupTerms(readSignupTerms(), role)) validation.terms = "필수 약관에 동의해주세요.";
@@ -1380,9 +1399,21 @@ function OwnerStaffSignupProfile() {
     }
 
     try {
+      if (!profileComplete) {
+        const completed = await postOtpApi("/api/auth/signup/owner-staff/complete", {
+          ...formData, role: sessionStorage.getItem("signupRole"), password, passwordConfirm, terms: readSignupTerms(),
+        });
+        if (!completed.response.ok || !completed.data.ok) {
+          setErrors(completed.data.fields ?? { form: completed.data.error || "가입 정보를 저장하지 못했습니다." });
+          setIsLoading(false);
+          busy.current = false;
+          return;
+        }
+        setProfileComplete(true);
+      }
       const response = await fetch("/api/auth/signup/owner-staff/status", { cache: "no-store" });
       const data = await response.json();
-      if (!response.ok || !data.ok || normalizeEmail(data.email ?? "") !== verifiedEmail || data.role !== sessionStorage.getItem("signupRole")) {
+      if (!response.ok || !data.ok || !data.profileComplete || normalizeEmail(data.email ?? "") !== verifiedEmail || data.role !== sessionStorage.getItem("signupRole")) {
         resetVerification();
         setErrors({ email: "인증된 세션이 없습니다. 이메일 인증 또는 로그인을 다시 진행해주세요." });
         setIsLoading(false);
@@ -1479,7 +1510,7 @@ function OwnerStaffSignupProfile() {
                     disabled={isSendingVerification || resendRemainingSeconds > 0}
                     className="mt-4 w-full sm:w-auto px-6 py-3 bg-[var(--color-primary)] text-white rounded-lg font-semibold hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    {isSendingVerification ? "발송 중..." : resendRemainingSeconds > 0 ? `${resendRemainingSeconds}초 후 재시도` : "가입하고 인증번호 받기"}
+                    {isSendingVerification ? "발송 중..." : resendRemainingSeconds > 0 ? `${resendRemainingSeconds}초 후 재시도` : "인증번호 받기"}
                   </button>
                 )}
               </div>
@@ -1503,14 +1534,14 @@ function OwnerStaffSignupProfile() {
                   <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_156px] gap-3.5 w-full">
                     <Input
                       type="text"
-                      placeholder={`인증번호 ${SIGNUP_EMAIL_OTP_LENGTH}자리 입력`}
+                      placeholder={`인증번호 ${EMAIL_FIRST_OTP_LENGTH}자리 입력`}
                       inputMode="numeric"
                       autoComplete="one-time-code"
-                      maxLength={SIGNUP_EMAIL_OTP_LENGTH}
+                      maxLength={EMAIL_FIRST_OTP_LENGTH}
                       disabled={emailVerified}
                       value={verificationCode}
                       onChange={(e) => {
-                        setVerificationCode(e.target.value);
+                        setVerificationCode(e.target.value.replace(/\D/g, ""));
                         setVerificationError("");
                       }}
                       error={verificationError}
@@ -1519,9 +1550,9 @@ function OwnerStaffSignupProfile() {
                     <button
                       type="button"
                       onClick={handleVerifyCode}
-                      disabled={isVerifying || emailVerified || !isValidSignupToken(verificationCode)}
+                      disabled={isVerifying || emailVerified || expired || verificationCode.length !== EMAIL_FIRST_OTP_LENGTH}
                       className={`h-[72px] rounded-lg border-2 font-semibold text-sm sm:text-base transition-all duration-200 flex items-center justify-center whitespace-nowrap ${
-                        isVerifying || emailVerified || !isValidSignupToken(verificationCode)
+                        isVerifying || emailVerified || expired || verificationCode.length !== EMAIL_FIRST_OTP_LENGTH
                           ? "border-[var(--color-border-light)] text-[var(--color-text-secondary)] bg-white cursor-not-allowed opacity-60"
                           : "border-[var(--color-primary)] text-[var(--color-primary)] bg-white hover:bg-[var(--color-primary-light)]/20"
                       }`}
@@ -1530,6 +1561,8 @@ function OwnerStaffSignupProfile() {
                     </button>
                   </div>
 
+                  {!emailVerified && <p role="timer" className="mt-2 text-sm text-[var(--color-text-secondary)]">남은 시간 {remainingTime}</p>}
+                  {expired && <p role="alert" className="mt-2 text-sm text-[var(--color-status-error)]">인증번호 유효 시간 {EMAIL_FIRST_OTP_SECONDS / 60}분이 지났습니다. 인증번호를 다시 받아주세요.</p>}
                   {/* Verification Success */}
                   {emailVerified && (
                     <div className="flex items-center gap-2 mt-2.5 text-sm sm:text-base">
@@ -1556,14 +1589,14 @@ function OwnerStaffSignupProfile() {
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   onBlur={() => { if (!isOAuthSignup) validateField("name"); }}
                   error={errors.name}
-                  disabled={!isOAuthSignup && (emailVerificationSent || emailVerified)}
+                  disabled={!isOAuthSignup && (!emailVerified || profileComplete)}
                 />
               </div>
 
               {/* Phone */}
               <div className="mb-6">
                 <label className="block text-base font-semibold text-[var(--color-text-primary)] mb-2.5">
-                  연락처
+                  전화번호
                 </label>
                 <Input
                   type="tel"
@@ -1572,11 +1605,11 @@ function OwnerStaffSignupProfile() {
                   onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                   onBlur={() => { if (!isOAuthSignup) validateField("phone"); }}
                   error={errors.phone}
-                  disabled={!isOAuthSignup && (emailVerificationSent || emailVerified)}
+                  disabled={!isOAuthSignup && (!emailVerified || profileComplete)}
                 />
               </div>
 
-              {!isOAuthSignup && !emailVerificationSent && !emailVerified && (<>
+              {!isOAuthSignup && !profileComplete && (<>
               {/* Password */}
               <div className="mb-6">
                 <label className="block text-base font-semibold text-[var(--color-text-primary)] mb-2.5">
@@ -1584,6 +1617,7 @@ function OwnerStaffSignupProfile() {
                 </label>
                 <PasswordInput
                   placeholder="8글자 이상 입력해주세요"
+                  disabled={!emailVerified}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   onBlur={() => validateField("password")}
@@ -1598,6 +1632,7 @@ function OwnerStaffSignupProfile() {
                 </label>
                 <PasswordInput
                   placeholder="비밀번호를 다시 입력해주세요"
+                  disabled={!emailVerified}
                   value={passwordConfirm}
                   onChange={(e) => setPasswordConfirm(e.target.value)}
                   onBlur={() => validateField("passwordConfirm")}
@@ -1606,14 +1641,15 @@ function OwnerStaffSignupProfile() {
               </div>
               </>)}
 
-              {!isOAuthSignup && !emailVerified && (
+              {!isOAuthSignup && emailVerificationSent && !emailVerified && (
                 <div className="mb-4">
                   <Button type="button" variant="outline" onClick={handleResendVerificationCode} disabled={resendRemainingSeconds > 0 || isSendingVerification}>
-                    {resendRemainingSeconds > 0 ? `${resendRemainingSeconds}초 후 재발송` : emailVerificationSent ? "인증번호 재발송" : "이전에 시작한 가입 이어가기"}
+                    {resendRemainingSeconds > 0 ? `${resendRemainingSeconds}초 후 재발송` : "인증번호 재발송"}
                   </Button>
                   {verificationError && !emailVerificationSent && <p role="alert" className="mt-2 text-sm text-[var(--color-status-error)]">{verificationError}</p>}
                 </div>
               )}
+              {verificationError && !emailVerificationSent && <p role="alert" className="mb-4 text-sm text-[var(--color-status-error)]">{verificationError}</p>}
               {errors.terms && <p role="alert" className="mb-4 text-sm text-[var(--color-status-error)]">{errors.terms} <a href="/signup/terms" className="underline">약관 동의</a></p>}
               {emailVerified && !emailVerificationSent && !isOAuthSignup && <p role="status" className="mb-4 text-sm text-[var(--color-primary)]">이메일 인증이 완료되었습니다.</p>}
               {errors.role && <p role="alert" className="mb-4 text-sm text-[var(--color-status-error)]">{errors.role}</p>}
