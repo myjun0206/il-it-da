@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { AlertCircle, ArrowLeft, FileText, Pencil, Plus, RefreshCw, Search, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
+import { ManualSearchReadinessPanel } from "@/components/manuals/ManualSearchReadinessPanel";
 import { manualSaveMessage } from "@/lib/manuals/manual-save-result";
 import type { ManualRecord } from "@/lib/types/manual";
 
@@ -765,6 +766,11 @@ export default function ManualDashboardPage() {
             </div>
           )}
 
+          <ManualSearchReadinessPanel
+            key={readinessRevision}
+            readinessUrl="/api/manuals/search-readiness"
+            reindexUrl="/api/manuals/search-readiness/reindex"
+          />
           {saveNotice && <p role="status" className="mb-6 whitespace-pre-wrap break-words border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{saveNotice}</p>}
 
           {isLoadingManuals ? (

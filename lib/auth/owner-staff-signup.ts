@@ -25,7 +25,7 @@ export type OtpErrorCode =
   | "SIGNUP_FAILED";
 
 export type OtpResult =
-  | { ok: true; status: 200; resumed?: boolean; cooldownSeconds?: number; role?: OwnerStaffRole }
+  | { ok: true; status: 200; resumed?: boolean; cooldownSeconds?: number; role?: OwnerStaffRole; expiresAt?: number; profileComplete?: boolean }
   | { ok: false; status: number; code: OtpErrorCode; error: string; retryAfterSeconds?: number; fields?: Record<string, string> };
 
 type AuthErrorLike = { code?: string; status?: number; message?: string; name?: string } | null;
@@ -363,7 +363,7 @@ export function validateInitialEmailMembership(user: MembershipAuthUser, role: O
  */
 export async function checkEmailSignupConfirmation(
   user: MembershipAuthUser,
-  options: { hasProfile: boolean; getSettings: AuthEmailSettingsFetcher },
+  options: { hasProfile: boolean; getSettings: AuthEmailSettingsFetcher; emailFirstVerified?: boolean },
 ): Promise<{ ok: true } | { ok: false; status: number; code: string; error: string }> {
   if (hasSocialIdentity(user) || user.app_metadata?.provider !== "email") return { ok: true };
 
@@ -378,7 +378,7 @@ export async function checkEmailSignupConfirmation(
 
   if (!options.hasProfile) {
     const settings = await options.getSettings();
-    if (!settings || !settings.emailEnabled || settings.signupDisabled || settings.autoconfirm || !user.confirmation_sent_at) {
+    if (!settings || !settings.emailEnabled || settings.signupDisabled || settings.autoconfirm || (!user.confirmation_sent_at && !options.emailFirstVerified)) {
       return {
         ok: false,
         status: 503,

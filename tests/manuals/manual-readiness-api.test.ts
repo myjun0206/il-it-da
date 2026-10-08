@@ -333,9 +333,11 @@ describe("기존 화면/계약 회귀 없음", () => {
   test("HQ 지점 매뉴얼 화면은 프랜차이즈별 지점 요약과 선택 지점 ID를 사용한다", () => {
     const page = readSource("app/hq/manuals/stores/page.tsx");
     assert.match(page, /fetch\("\/api\/hq\/stores"\)/);
-    assert.match(page, /new URLSearchParams\(window\.location\.search\)\.get\("storeId"\)/);
-    assert.match(page, /fetch\(`\/api\/manuals\?storeId=\$\{encodeURIComponent\(selectedStoreId\)\}&scope=store`/);
-    assert.match(page, /onClick=\{\(\) => openStoreManuals\(store\.id\)\}/);
+    assert.match(page, /const searchParams = useSearchParams\(\);/);
+    assert.match(page, /const selectedStoreId = searchParams\.get\("storeId"\);/);
+    assert.match(page, /`\/api\/manuals\?storeId=\$\{encodeURIComponent\(store\.id\)\}&scope=store`/);
+    assert.match(page, /manual\.store_id === store\.id/);
+    assert.match(page, /`\/hq\/manuals\/stores\?storeId=\$\{encodeURIComponent\(store\.id\)\}`/);
     assert.equal(page.includes('fetch("/api/manuals")'), false);
   });
 
@@ -384,9 +386,10 @@ describe("기존 화면/계약 회귀 없음", () => {
     assert.match(route, /matchingFranchises\.length !== 1/);
     assert.match(route, /\.eq\("franchise_id", franchiseId\)/);
     assert.equal(route.includes("if (!hqUser.franchiseId)"), false);
-    assert.match(page, /setStoreListError\(e instanceof Error \? e\.message/);
-    assert.match(page, /\) : storeListError \?/);
-    assert.match(page, /setReloadStoreList\(\(current\) => current \+ 1\)/);
+    assert.match(page, /setLoadError\([\s\S]*?e instanceof Error && e\.message\.includes\("지점"\)/);
+    assert.match(page, /\) : loadError \?/);
+    assert.match(page, /role="alert"/);
+    assert.match(page, /setReloadKey\(\(prev\) => prev \+ 1\)/);
   });
 
   test("확정 저장 API의 성공 응답 shape({ manuals })는 바뀌지 않았다", () => {

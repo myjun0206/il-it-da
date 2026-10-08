@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 
-import { verifyOwnerStaffSignup, type VerifyAuthClient } from "@/lib/auth/owner-staff-signup";
-import { fetchAuthEmailSettings } from "@/lib/auth/auth-email-settings";
+import { verifyEmailFirstOtp } from "@/lib/auth/email-first-signup";
+import { fetchEmailFirstAuthSettings } from "@/lib/auth/auth-email-settings";
 import {
   UNEXPECTED_SIGNUP_ERROR,
   isSameOriginRequest,
-  prepareOwnerStaffSignup,
+  prepareEmailFirstSignup,
   readJsonBody,
   toOtpResponse,
 } from "@/lib/auth/owner-staff-signup-server";
@@ -27,9 +27,9 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     // 로그인 API와 같은 방식으로 세션 쿠키 + 세션 정책 쿠키(브라우저 세션 유지)를 발급한다.
     const supabase = await createClient({ rememberMe: false });
-    const result = await verifyOwnerStaffSignup(
+    const result = await verifyEmailFirstOtp(
       { email: body.email, token: body.token, role: body.role },
-      { authClient: supabase.auth as unknown as VerifyAuthClient, getSettings: fetchAuthEmailSettings, prepare: prepareOwnerStaffSignup },
+      { auth: supabase.auth, getSettings: fetchEmailFirstAuthSettings, prepare: prepareEmailFirstSignup },
     );
     if (!result.ok) logSafeAuthError(`OWNER_STAFF_SIGNUP_VERIFY_${result.code}`, null);
     return toOtpResponse(result);

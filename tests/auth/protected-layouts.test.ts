@@ -136,9 +136,8 @@ describe("HQ hydration readiness", () => {
   });
 });
 
-describe("HQ tab-local store selection", () => {
-  test("selects only returned accessible stores without an unavailable server-write endpoint", async () => {
-    const storage = new Map<string, string>([["hqSelectedStoreId", "foreign-store"]]);
+describe("HQ layout and URL-based store selection", () => {
+  test("preserves the authenticated shell, exact active menu and child without legacy store writes", async () => {
     const effects: Array<() => void> = [];
     const requests: string[] = [];
     const harness = createHookHarness([]);
@@ -151,34 +150,103 @@ describe("HQ tab-local store selection", () => {
       "@/components/hq/HQSidebar": { default: sidebarStub, __esModule: true },
       "@/lib/supabase/client": { createClient: () => ({ auth: { getSession: async () => ({ data: { session: { user: { user_metadata: { name: "HQ Tester" } } } } }) } }) },
     }, {
-      sessionStorage: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) },
       console: { ...console, error: () => {} },
       fetch: async (url: string) => {
         requests.push(url);
-        return url === "/api/hq/stores"
-          ? Response.json({ stores: [{ id: "store-a", name: "Store A" }, { id: "store-b", name: "Store B" }] })
-          : Response.json({ error: "Missing endpoint" }, { status: 404 });
+        assert.fail("Shared shell must not perform a store write or hidden store fetch");
       },
     });
     const child = createElement("span", { "data-testid": "hq-child" }, "retained");
     const render = () => harness.render(() => shell.default({ children: child }));
     assert.equal(render(), null);
+    assert.equal(effects.length, 1);
     effects[0]();
-    effects[1]();
     await new Promise<void>((resolve) => setImmediate(resolve));
     const header = () => {
       const element = componentElements(render()).find((candidate) => candidate.type === headerStub);
       assert.ok(element);
       return element;
     };
-    assert.equal(header().props.selectedStoreId, "store-a");
-    await (header().props.onSetDefaultStore as (storeId: string) => Promise<void>)("store-b");
-    assert.equal(header().props.selectedStoreId, "store-b");
-    assert.equal(storage.get("hqSelectedStoreId"), "store-b");
-    await (header().props.onSetDefaultStore as (storeId: string) => Promise<void>)("foreign-store");
-    assert.equal(header().props.selectedStoreId, "store-b");
-    assert.equal(storage.get("hqSelectedStoreId"), "store-b");
-    assert.deepEqual(requests, ["/api/hq/stores"]);
+    assert.equal(header().props.userName, "HQ Tester");
+    assert.equal(header().props.franchiseName, "HQ");
+    const sidebar = componentElements(render()).find((element) => element.type === sidebarStub);
+    assert.ok(sidebar);
+    assert.equal(sidebar.props.activeMenu, "manual-store");
+    assert.deepEqual(requests, []);
     assert.ok(componentElements(render()).some((element) => element.props["data-testid"] === "hq-child"));
+  });
+
+  test("actual store-manual page selects only returned stores, preserves scoped fetches and URL navigation", async () => {
+    let query = new URLSearchParams();
+    const effects: Array<() => void> = [];
+    const requests: string[] = [];
+    const navigations: string[] = [];
+    const harness = createHookHarness([]);
+    const page = loadComponentModule<{ default: () => ReactNode }>("app/hq/manuals/stores/page.tsx", {
+      react: { ...harness.react, useEffect: (effect: () => void) => { effects.push(effect); } },
+      "next/navigation": { useSearchParams: () => query, useRouter: () => ({ push: (href: string) => { navigations.push(href); query = new URL(href, "http://localhost").searchParams; } }) },
+    }, {
+      fetch: async (url: string) => {
+        requests.push(url);
+        if (url === "/api/hq/stores") return Response.json({ stores: [{ id: "store-a", name: "Store A", manualCount: 1 }, { id: "store-b", name: "Store B", manualCount: 1 }] });
+        const params = new URL(url, "http://localhost").searchParams;
+        assert.equal(params.get("scope"), "store");
+        const storeId = params.get("storeId");
+        assert.ok(storeId === "store-a" || storeId === "store-b");
+        return Response.json({ manuals: [
+          { id: `manual-${storeId}`, store_id: storeId, title: `Manual ${storeId}`, content: "Fixture", category: "Operations" },
+          { id: "foreign-manual", store_id: "foreign-store", title: "Foreign manual", content: "Not visible" },
+        ] });
+      },
+    });
+    const render = () => { effects.length = 0; return harness.render(page.default); };
+    render();
+    effects[0]();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const initial = render();
+    assert.deepEqual(requests, ["/api/hq/stores", "/api/manuals?storeId=store-a&scope=store", "/api/manuals?storeId=store-b&scope=store"]);
+    const search = componentElements(initial).find((element) => element.type === "input" && element.props.type === "search");
+    assert.ok(search);
+    (search.props.onChange as (event: { target: { value: string } }) => void)({ target: { value: "Store B" } });
+    const choose = componentElements(render()).find((element) => element.type === "button" && renderToString(element).includes("Store B"));
+    assert.ok(choose);
+    (choose.props.onClick as () => void)();
+    assert.deepEqual(navigations, ["/hq/manuals/stores?storeId=store-b"]);
+    const selected = render();
+    assert.ok(renderToString(selected).includes("Manual store-b"));
+    assert.equal(renderToString(selected).includes("Manual store-a"), false);
+    assert.equal(renderToString(selected).includes("Foreign manual"), false);
+    query = new URLSearchParams("storeId=store-b&manualId=manual-store-b");
+    assert.ok(renderToString(render()).includes("Fixture"));
+    query = new URLSearchParams("storeId=store-a&manualId=manual-store-b");
+    assert.equal(renderToString(render()).includes("Manual store-b"), false);
+    assert.ok(renderToString(render()).includes("Manual store-a"));
+    query = new URLSearchParams("storeId=foreign-store");
+    assert.equal(renderToString(render()).includes("Foreign manual"), false);
+    assert.equal(requests.some((url) => url.includes("set-default-store")), false);
+  });
+
+  test("store-list failure stays an alert with a working retry rather than an empty list", async () => {
+    const effects: Array<() => void> = [];
+    const harness = createHookHarness([]);
+    let calls = 0;
+    const page = loadComponentModule<{ default: () => ReactNode }>("app/hq/manuals/stores/page.tsx", {
+      react: { ...harness.react, useEffect: (effect: () => void) => { effects.push(effect); } },
+      "next/navigation": { useSearchParams: () => new URLSearchParams(), useRouter: () => ({ push: () => assert.fail("Unexpected navigation") }) },
+    }, {
+      console: { ...console, error: () => {} },
+      fetch: async (url: string) => { assert.equal(url, "/api/hq/stores"); calls++; return calls === 1 ? Response.json({ error: "지점 fixture failure" }, { status: 500 }) : Response.json({ stores: [] }); },
+    });
+    const render = () => { effects.length = 0; return harness.render(page.default); };
+    render(); effects[0](); await new Promise<void>((resolve) => setImmediate(resolve));
+    const tree = render();
+    const alert = componentElements(tree).find((element) => element.props.role === "alert");
+    assert.ok(alert);
+    assert.ok(renderToString(alert).includes("fixture failure"));
+    const retry = componentElements(alert).find((element) => element.type === "button");
+    assert.ok(retry); (retry.props.onClick as () => void)();
+    render(); effects[0](); await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(calls, 2);
+    assert.equal(componentElements(render()).some((element) => element.props.role === "alert"), false);
   });
 });

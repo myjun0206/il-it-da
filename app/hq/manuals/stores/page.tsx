@@ -64,20 +64,14 @@ export default function StoreManualViewPage() {
   
   // Detail view state
   const selectedStoreId = searchParams.get("storeId");
-  const selectedManualIdFromQuery = searchParams.get("manualId");
+  const selectedManualId = searchParams.get("manualId");
   const selectedStore = selectedStoreId ? stores.find((s) => s.id === selectedStoreId) : null;
   const storeManuals = selectedStoreId ? allManuals.filter((m) => m.storeId === selectedStoreId) : [];
   
   // Manual detail view state
-  const [selectedManualId, setSelectedManualId] = useState<string | null>(selectedManualIdFromQuery);
   const selectedManual = selectedManualId && selectedStoreId
     ? allManuals.find((m) => m.storeId === selectedStoreId && m.manual.id === selectedManualId)
     : null;
-
-  // Sync manual selection with URL query parameters
-  useEffect(() => {
-    setSelectedManualId(selectedManualIdFromQuery);
-  }, [selectedManualIdFromQuery]);
 
   // Load all stores and their manuals
   useEffect(() => {

@@ -1,13 +1,12 @@
 import { NextResponse } from "next/server";
 
-import { fetchAuthEmailSettings } from "@/lib/auth/auth-email-settings";
-import { startOwnerStaffSignup } from "@/lib/auth/owner-staff-signup";
+import { fetchEmailFirstAuthSettings } from "@/lib/auth/auth-email-settings";
+import { sendEmailFirstOtp } from "@/lib/auth/email-first-signup";
 import {
   createEphemeralAuthClient,
-  prepareOwnerStaffSignup,
+  prepareEmailFirstSignup,
   isSameOriginRequest,
   readJsonBody,
-  signupEmailRedirectTo,
   toOtpResponse,
 } from "@/lib/auth/owner-staff-signup-server";
 import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
@@ -25,13 +24,13 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   try {
-    const result = await startOwnerStaffSignup(
-      { email: body.email, password: body.password, passwordConfirm: body.passwordConfirm, terms: body.terms, role: body.role, name: body.name, phone: body.phone },
+    const result = await sendEmailFirstOtp(
+      { email: body.email, role: body.role },
       {
-        authClient: createEphemeralAuthClient(),
-        getSettings: fetchAuthEmailSettings,
-        prepare: prepareOwnerStaffSignup,
-        emailRedirectTo: signupEmailRedirectTo(request),
+        action: "start",
+        auth: createEphemeralAuthClient(),
+        getSettings: fetchEmailFirstAuthSettings,
+        prepare: prepareEmailFirstSignup,
       },
     );
     if (!result.ok) logSafeAuthError(`OWNER_STAFF_SIGNUP_START_${result.code}`, null);

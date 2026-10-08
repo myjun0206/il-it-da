@@ -1,8 +1,25 @@
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 
-import type { OtpResult, SignUpAuthClient, PrepareSignup } from "@/lib/auth/owner-staff-signup";
+import type { OtpResult, PrepareSignup } from "@/lib/auth/owner-staff-signup";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { EmailFirstState, PrepareEmailFirst } from "@/lib/auth/email-first-signup";
+
+export const prepareEmailFirstSignup: PrepareEmailFirst = async (email, role, action, userId, requestId) => {
+  const { data, error } = await createAdminClient().rpc("prepare_owner_staff_email_first_signup", {
+    p_email: email, p_role: role, p_action: action, p_user_id: userId ?? null, p_request_id: requestId ?? null,
+  });
+  if (error || !data || typeof data !== "object") return { kind: "unavailable" };
+  if (!["new", "resume", "complete", "legacy", "exists", "role_mismatch", "unavailable", "rate_limited"].includes(data.kind)) return { kind: "unavailable" };
+  return {
+    kind: data.kind as EmailFirstState["kind"],
+    userId: typeof data.userId === "string" ? data.userId : undefined,
+    expiresAt: typeof data.expiresAt === "number" ? data.expiresAt : undefined,
+    retryAfterSeconds: typeof data.retryAfterSeconds === "number" ? data.retryAfterSeconds : undefined,
+    emailVerified: data.emailVerified === true,
+    requestId: typeof data.requestId === "string" ? data.requestId : undefined,
+  };
+};
 
 export const prepareOwnerStaffSignup: PrepareSignup = async (email, role, action) => {
   const { data, error } = await createAdminClient().rpc("prepare_owner_staff_signup", {
@@ -15,7 +32,7 @@ export const prepareOwnerStaffSignup: PrepareSignup = async (email, role, action
 };
 
 /** 세션을 저장하지 않는 서버 전용 anon 클라이언트. signUp/resend 응답의 세션은 쿠키로 남기지 않는다. */
-export function createEphemeralAuthClient(): SignUpAuthClient {
+export function createEphemeralAuthClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!supabaseUrl || !supabaseAnonKey) {
@@ -25,7 +42,7 @@ export function createEphemeralAuthClient(): SignUpAuthClient {
   const client = createSupabaseClient(supabaseUrl, supabaseAnonKey, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   });
-  return client.auth as unknown as SignUpAuthClient;
+  return client.auth;
 }
 
 /** 같은 출처에서 온 요청만 허용한다(CSRF 방지). */
