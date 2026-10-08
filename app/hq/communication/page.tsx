@@ -3,16 +3,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Megaphone, Pencil, Plus, Search, Store, Trash2, X } from "lucide-react";
+import { ChevronDown, Megaphone, Pencil, Plus, Search, Store, Trash2, X } from "lucide-react";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { NoticeCard } from "@/components/notices/NoticeCard";
 import { NoticeDetailDialog } from "@/components/notices/NoticeDetailDialog";
 import { NoticeEditDialog } from "@/components/notices/NoticeEditDialog";
-import { NoticeFilter, type NoticeFilterOption } from "@/components/notices/NoticeFilter";
 import { NoticePageHeader } from "@/components/notices/NoticePageHeader";
 import { NoticePagination } from "@/components/notices/NoticePagination";
-import HQSidebar from "@/components/hq/HQSidebar";
-import HQHeader from "@/components/hq/HQHeader";
 import { createClient } from "@/lib/supabase/client";
 import { useClientReady } from "@/lib/hq/use-client-ready";
 import type { HqNoticeItem } from "@/lib/types/notice";
@@ -35,8 +32,9 @@ interface HqNotice {
 
 type HqNoticeFilter = "all" | "franchise" | "store";
 interface HqTargetStore { id: string; name: string }
+interface HqNoticeFilterOption { value: HqNoticeFilter; label: string }
 
-const HQ_NOTICE_FILTERS: readonly NoticeFilterOption<HqNoticeFilter>[] = [
+const HQ_NOTICE_FILTERS: readonly HqNoticeFilterOption[] = [
   { value: "all", label: "전체" },
   { value: "franchise", label: "전체 지점" },
   { value: "store", label: "특정 지점" },
@@ -44,6 +42,13 @@ const HQ_NOTICE_FILTERS: readonly NoticeFilterOption<HqNoticeFilter>[] = [
 
 const NEW_NOTICE_HREF = "/hq/communication/new";
 const ALL_TARGETS = "__all__";
+const NOTICES_PER_PAGE = 9;
+
+const SORT_OPTIONS: Array<{ value: NoticeSortOrder; label: string }> = [
+  { value: "latest", label: "최신순" },
+  { value: "oldest", label: "오래된순" },
+  { value: "views", label: "조회수순" },
+];
 
 function CreateNoticeButton({ label }: { label: string }) {
   return (
@@ -102,6 +107,7 @@ export default function CommunicationPage() {
   const [deletingNotice, setDeletingNotice] = useState<HqNotice | null>(null);
   const [selectedNotice, setSelectedNotice] = useState<HqNotice | null>(null);
   const [isDeletingNotice, setIsDeletingNotice] = useState(false);
+  const [isSortDropdownOpen, setIsSortDropdownOpen] = useState(false);
 
   useEffect(() => {
     const setUserInfo = async () => {
@@ -138,6 +144,20 @@ export default function CommunicationPage() {
 
     setUserInfo();
   }, [router]);
+
+  useEffect(() => {
+    if (!isSortDropdownOpen) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('[data-sort-dropdown]')) {
+        setIsSortDropdownOpen(false);
+      }
+    };
+
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, [isSortDropdownOpen]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -241,6 +261,17 @@ export default function CommunicationPage() {
   // 서버에서 받은 notices 사용 (이미 필터링됨)
   const filteredNotices = notices;
 
+  // 클라이언트 사이드 페이지네이션
+  const totalPages = useMemo(() => {
+    return Math.ceil(filteredNotices.length / NOTICES_PER_PAGE);
+  }, [filteredNotices.length]);
+
+  const paginatedNotices = useMemo(() => {
+    const startIndex = (page - 1) * NOTICES_PER_PAGE;
+    const endIndex = startIndex + NOTICES_PER_PAGE;
+    return filteredNotices.slice(startIndex, endIndex);
+  }, [filteredNotices, page]);
+
   const targetOptions = useMemo(() => scopeFilter === "franchise" ? [] : targetStores, [scopeFilter, targetStores]);
 
   const submitSearch = (event: React.FormEvent<HTMLFormElement>) => {
@@ -263,27 +294,17 @@ export default function CommunicationPage() {
     setPage(DEFAULT_NOTICE_PAGE);
   };
 
+  const getSortLabel = (value: NoticeSortOrder) => {
+    return SORT_OPTIONS.find((opt) => opt.value === value)?.label || "최신순";
+  };
+
   if (!isReady) {
     return null;
   }
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-default)]">
-      {/* Sidebar */}
-      <HQSidebar
-        userName={userName}
-        franchiseName={franchiseName}
-        onLogout={handleLogout}
-        activeMenu="notice"
-      />
-
-      {/* Main Content */}
-      <div className="lg:ml-[240px]">
-        {/* Header */}
-        <HQHeader userName={userName} franchiseName={franchiseName} />
-
-        {/* Content */}
-        <main className="p-6 lg:p-8 max-w-7xl mx-auto">
+    <>
+      <main className="p-6 lg:p-8 max-w-7xl mx-auto">
           <NoticePageHeader
             title="공지사항"
             description="전체 또는 특정 지점에 전달할 공지를 작성하고 관리합니다."
@@ -314,69 +335,85 @@ export default function CommunicationPage() {
               </div>
             ) : (
               <>
-                <div className="mb-4">
-                  <NoticeFilter
-                    ariaLabel="공지 대상 범위"
-                    value={scopeFilter}
-                    options={HQ_NOTICE_FILTERS}
-                    onChange={changeScopeFilter}
-                  />
-                </div>
-
-                {/* Toolbar: 검색, 정렬, 지점 필터 */}
-                <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <form onSubmit={submitSearch} className="flex w-full gap-2 md:max-w-xl">
-                    <div className="relative min-w-0 flex-1">
-                      <Search
-                        size={18}
-                        aria-hidden="true"
-                        className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]"
-                      />
-                      <input
-                        type="search"
-                        value={searchQuery}
-                        onChange={(event) => setSearchQuery(event.target.value)}
-                        placeholder="제목, 내용, 작성자 이름으로 검색"
-                        aria-label="제목, 내용, 작성자 이름으로 검색"
-                        className="min-h-[44px] w-full rounded-lg border-2 border-[var(--color-border)] bg-white py-2.5 pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/30"
-                      />
-                    </div>
-                    <button type="submit" className="min-h-[44px] rounded-lg bg-[var(--color-primary)] px-4 text-sm font-semibold text-white">검색</button>
-                    <button type="button" onClick={clearSearch} disabled={!searchQuery && !submittedSearch} aria-label="검색어 초기화" title="검색어 초기화" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] disabled:opacity-50">
-                      <X size={18} aria-hidden="true" />
-                    </button>
-                  </form>
-                  <select
-                    value={sortOrder}
-                    onChange={(event) => {
-                      setSortOrder(event.target.value as NoticeSortOrder);
-                      setPage(DEFAULT_NOTICE_PAGE);
-                    }}
-                    aria-label="공지 정렬"
-                    className="min-h-[44px] rounded-lg border-2 border-[var(--color-border)] bg-white px-4 text-sm font-medium text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/30"
-                  >
-                    <option value="latest">최신순</option>
-                    <option value="oldest">오래된순</option>
-                    <option value="views">조회수순</option>
-                  </select>
-                  {scopeFilter !== "franchise" && targetOptions.length > 0 && (
-                    <select
-                      value={targetFilter}
+                {/* 검색창과 정렬 드롭다운 */}
+                <div className="mb-4 flex flex-col sm:flex-row gap-3 sm:items-center">
+                  <div className="relative flex-1">
+                    <Search
+                      size={18}
+                      aria-hidden="true"
+                      className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]"
+                    />
+                    <input
+                      type="search"
+                      value={searchQuery}
                       onChange={(event) => {
-                        setTargetFilter(event.target.value);
+                        setSearchQuery(event.target.value);
+                        setSubmittedSearch(event.target.value.trim());
                         setPage(DEFAULT_NOTICE_PAGE);
                       }}
-                      aria-label="공지 대상 지점 필터"
-                      className="min-h-[44px] rounded-lg border-2 border-[var(--color-border)] bg-white px-4 text-sm font-medium text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/30"
+                      placeholder="공지사항 검색"
+                      aria-label="공지사항 검색"
+                      className="min-h-[44px] w-full rounded-lg border border-[var(--color-border)] bg-white py-2.5 pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20"
+                    />
+                  </div>
+                  {/* 커스텀 정렬 드롭다운 */}
+                  <div data-sort-dropdown className="relative flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setIsSortDropdownOpen(!isSortDropdownOpen)}
+                      aria-label="공지 정렬"
+                      aria-expanded={isSortDropdownOpen}
+                      className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-white px-3 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:border-[var(--color-primary)]/30 focus:outline-none focus:border-[var(--color-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/30"
                     >
-                      <option value={ALL_TARGETS}>{scopeFilter === "store" ? "모든 특정 지점" : "전체 대상"}</option>
-                      {targetOptions.map((targetStore) => (
-                        <option key={targetStore.id} value={targetStore.id}>
-                          {targetStore.name}
-                        </option>
-                      ))}
-                    </select>
-                  )}
+                      <span>{getSortLabel(sortOrder)}</span>
+                      <ChevronDown size={16} className={`flex-shrink-0 transition-transform ${isSortDropdownOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+                    </button>
+
+                    {isSortDropdownOpen && (
+                      <div className="absolute right-0 top-full mt-1 rounded-lg border border-[var(--color-border)] bg-white shadow-md z-50 min-w-[120px] overflow-hidden">
+                        {SORT_OPTIONS.map((option, index) => (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => {
+                              setSortOrder(option.value);
+                              setPage(DEFAULT_NOTICE_PAGE);
+                              setIsSortDropdownOpen(false);
+                            }}
+                            className={`block w-full text-left px-4 py-2.5 text-sm font-medium transition-colors ${
+                              sortOrder === option.value
+                                ? "bg-[var(--color-primary-light)]/20 text-[var(--color-primary)]"
+                                : "text-[var(--color-text-primary)] hover:bg-[var(--color-bg-default)]"
+                            } ${index !== SORT_OPTIONS.length - 1 ? 'border-b border-[var(--color-border)]/50' : ''}`}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* 공지 대상 필터 - 칩 형태 */}
+                <div className="mb-5 flex flex-wrap gap-2">
+                  {HQ_NOTICE_FILTERS.map((filter) => {
+                    const isActive = scopeFilter === filter.value;
+                    return (
+                      <button
+                        key={filter.value}
+                        type="button"
+                        onClick={() => changeScopeFilter(filter.value)}
+                        aria-pressed={isActive}
+                        className={`min-h-[36px] rounded-full px-4 text-sm font-medium transition-all ${
+                          isActive
+                            ? "border border-[var(--color-primary)] bg-[var(--color-primary-light)]/20 text-[var(--color-primary)]"
+                            : "border border-[var(--color-border)] bg-white text-[var(--color-text-primary)] hover:border-[var(--color-primary)]/50"
+                        }`}
+                      >
+                        {filter.label}
+                      </button>
+                    );
+                  })}
                 </div>
 
                 {/* 특정 지점 선택 UI (클라이언트 필터) - scopeFilter === "store"일 때만 표시 */}
@@ -477,27 +514,33 @@ export default function CommunicationPage() {
                     <p className="text-base text-[var(--color-text-secondary)]">{submittedSearch ? "검색 결과가 없습니다." : "선택한 조건에 맞는 공지사항이 없습니다."}</p>
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    {filteredNotices.map((notice) => (
-                      <NoticeCard
-                        key={notice.id}
-                        title={notice.title}
-                        content={notice.content}
-                        sourceLabel={notice.sourceLabel}
-                        createdAt={notice.createdAt}
-                        viewCount={notice.viewCount}
-                        isRead={null}
-                        onOpen={() => setSelectedNotice(notice)}
-                      />
-                    ))}
-                  </div>
+                  <>
+                    <p className="mb-4 text-sm font-medium text-[var(--color-text-secondary)]">
+                      공지사항 <span className="text-[var(--color-primary)]">{filteredNotices.length}</span>개
+                    </p>
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+                      {paginatedNotices.map((notice) => (
+                        <NoticeCard
+                          key={notice.id}
+                          title={notice.title}
+                          content={notice.content}
+                          sourceLabel={notice.targetType === "all" || notice.targetType === "franchise" ? "전체 지점" : "특정 지점"}
+                          createdAt={notice.createdAt}
+                          viewCount={notice.viewCount}
+                          isRead={null}
+                          onOpen={() => setSelectedNotice(notice)}
+                          showContent={false}
+                          showSourceLabel={true}
+                        />
+                      ))}
+                    </div>
+                  </>
                 )}
-                <NoticePagination page={page} totalPages={pagination.totalPages} onPageChange={setPage} />
+                <NoticePagination page={page} totalPages={totalPages} onPageChange={setPage} />
               </>
             )}
           </section>
-        </main>
-      </div>
+    </main>
       {selectedNotice && (
         <NoticeDetailDialog
           notice={{ ...selectedNotice, isRead: null }}
@@ -547,6 +590,6 @@ export default function CommunicationPage() {
         onConfirm={() => void deleteNotice()}
         onCancel={() => setDeletingNotice(null)}
       />
-    </div>
+    </>
   );
 }

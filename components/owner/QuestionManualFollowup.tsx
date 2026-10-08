@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
-import { BookOpen, ChevronDown, Copy, FileText, Pencil, RefreshCw } from "lucide-react";
-import { Button } from "@/components/common/Button";
+import { ChevronDown, Pencil, Search, X } from "lucide-react";
 import { buildManualSelectionGroups } from "@/lib/manuals/manual-selection";
 import { buildQuestionManualEditUrl, type QuestionManualContext } from "@/lib/owner/question-manual-context";
 import type { ManualRecord } from "@/lib/types/manual";
@@ -15,19 +14,35 @@ export default function QuestionManualFollowup({ storeId, storeName, questionId,
   const [manuals, setManuals] = useState<ManualRecord[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [manualsError, setManualsError] = useState("");
   const [reload, setReload] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [copying, setCopying] = useState(false);
-  const [showContext, setShowContext] = useState(false);
-  const [showHelp, setShowHelp] = useState(false);
-  const [showVerification, setShowVerification] = useState(false);
+  const [expandedAccordion, setExpandedAccordion] = useState<string | null>(null);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const id = useId();
+
   const manualGroups = buildManualSelectionGroups(manuals, storeId);
   const options = manualGroups.flatMap((group) => group.options);
+
+  // 검색 필터링 로직
+  const filteredOptions = searchQuery.trim() === ""
+    ? options
+    : options.filter((option) => {
+        const query = searchQuery.toLowerCase();
+        return (
+          option.manual.title.toLowerCase().includes(query) ||
+          option.manual.content.toLowerCase().includes(query)
+        );
+      });
+
   const selectedOption = options.find((option) => option.manual.id === selectedId);
   const selectedManual = selectedOption?.manual;
+
+  // 선택된 매뉴얼이 매장 매뉴얼인지 판단
+  const isStoreManual = selectedManual && selectedManual.store_id !== null;
 
   useEffect(() => {
     let cancelled = false;
@@ -62,79 +77,282 @@ export default function QuestionManualFollowup({ storeId, storeName, questionId,
     return () => { cancelled = true; };
   }, [storeId, questionId, reload]);
 
-  const copyQuestion = async () => {
-    if (copying) return;
-    setCopying(true);
-    try { await navigator.clipboard.writeText(question); setNotice("질문 원문을 복사했습니다."); }
-    catch { setNotice("복사하지 못했습니다. 질문 원문을 직접 선택해 주세요."); }
-    finally { setCopying(false); }
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsDropdownOpen(false);
+      }
+    };
+    if (isDropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [isDropdownOpen]);
+
+  useEffect(() => {
+    if (isDropdownOpen && searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
+  }, [isDropdownOpen]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        setReload((value) => value + 1);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
+
+  const toggleAccordion = (key: string) => {
+    setExpandedAccordion(expandedAccordion === key ? null : key);
+  };
+
+  const handleSelectOption = (optionId: string) => {
+    setSelectedId(optionId);
+    setIsDropdownOpen(false);
+    setSearchQuery("");
+  };
+
+  const clearSearch = () => {
+    setSearchQuery("");
+    if (searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
   };
 
   return (
-    <section aria-label="관련 매뉴얼 확인·수정" className="min-w-0 space-y-5 py-2">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="flex min-w-0 items-center gap-2 text-lg font-semibold"><BookOpen size={20} className="shrink-0 text-(--color-primary)" aria-hidden="true" />관련 매뉴얼 확인·수정</h2>
-        <Button variant="ghost" size="md" disabled={loading} title="답변과 매뉴얼 다시 불러오기" aria-label="답변과 매뉴얼 다시 불러오기" onClick={() => { setLoading(true); setReload((value) => value + 1); }} className="shrink-0 px-2">
-          <RefreshCw size={18} className={loading ? "animate-spin" : ""} aria-hidden="true" />
-        </Button>
-      </div>
-      {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
-      <div className="space-y-3">
-        <label htmlFor={`${id}-manual`} className="block text-sm font-medium">수정할 매장 매뉴얼을 선택하세요</label>
-        {manualsError && <p role="alert" className="text-sm text-red-700">{manualsError}</p>}
-        {loading && <p role="status" className="text-sm text-(--color-text-secondary)">답변과 매장 매뉴얼을 불러오는 중...</p>}
-        {!loading && !manualsError && options.length === 0 && <p role="status" className="text-sm text-(--color-text-secondary)">수정할 매장 매뉴얼이 없습니다. 전체 매장 매뉴얼에서 내용을 확인하거나 추가할 수 있습니다.</p>}
-        <select id={`${id}-manual`} value={selectedId} disabled={loading || !!manualsError || options.length === 0} onChange={(event) => setSelectedId(event.target.value)} className="min-h-12 w-full min-w-0 rounded-lg border border-(--color-border) bg-white px-3 text-sm text-(--color-text-primary) focus:border-(--color-primary) focus:outline-none focus:ring-2 focus:ring-(--color-primary)/20 disabled:opacity-60">
-          <option value="">매장 매뉴얼 선택</option>
-          {manualGroups.map((group) => <optgroup key={group.id} label={group.label}>
-            {group.options.map((option) => <option key={option.manual.id} value={option.manual.id}>{option.label}</option>)}
-          </optgroup>)}
-        </select>
-        {!loading && selectedManual && <div className="flex min-w-0 flex-col gap-3 border-l-2 border-(--color-primary) pl-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0"><p className="text-xs text-(--color-text-secondary)">{storeName || "선택 매장"} · 매장 전용</p><p className="mt-1 wrap-break-word font-semibold">{selectedOption?.title}</p><p className="mt-1 wrap-break-word text-sm text-(--color-text-secondary)">{selectedManual.category}{selectedOption?.parentTitle ? ` · ${selectedOption.parentTitle}` : ""}</p></div>
-          <Link href={buildQuestionManualEditUrl(storeId, questionId, selectedManual.id)} className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-lg bg-(--color-primary) px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-primary)"><Pencil size={16} aria-hidden="true" />매뉴얼 편집</Link>
-        </div>}
-        {!loading && !manualsError && options.length > 0 && !selectedManual && <p className="text-sm text-(--color-text-secondary)">아직 선택한 매뉴얼이 없습니다.</p>}
-        <div className="flex flex-wrap gap-2 pt-1">
-          <Link href={buildQuestionManualEditUrl(storeId, questionId)} className="inline-flex min-h-11 max-w-full items-center justify-center gap-2 rounded-lg border border-(--color-border) bg-white px-3 py-2 text-sm font-semibold text-(--color-primary) transition-colors hover:border-(--color-primary)/50 hover:bg-(--color-primary-light)/10 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-(--color-primary-accent)"><FileText size={16} className="shrink-0" aria-hidden="true" />전체 매장 매뉴얼</Link>
-          <Link href="/boss/manuals" className="inline-flex min-h-11 max-w-full items-center justify-center gap-2 rounded-lg border border-(--color-border) bg-white px-3 py-2 text-sm font-semibold text-(--color-primary) transition-colors hover:border-(--color-primary)/50 hover:bg-(--color-primary-light)/10 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-(--color-primary-accent)"><BookOpen size={16} className="shrink-0" aria-hidden="true" />본사 매뉴얼 확인</Link>
+    <div className="space-y-6">
+      {/* 1단계: 매뉴얼 확인하기 */}
+      <section aria-label="1단계: 매뉴얼 확인하기" className="min-w-0 mb-10">
+        <h2 className="text-lg font-bold text-[var(--color-text-primary)] mb-4">1단계: 매뉴얼 확인하기</h2>
+
+        <div className="space-y-4">
+          {error && <p role="alert" className="text-base text-red-700 font-medium">{error}</p>}
+          {manualsError && <p role="alert" className="text-base text-red-700 font-medium">{manualsError}</p>}
+          {loading && <p role="status" className="text-base text-[var(--color-text-secondary)]">답변과 매장 매뉴얼을 불러오는 중...</p>}
+          {!loading && !manualsError && options.length === 0 && <p role="status" className="text-base text-[var(--color-text-secondary)]">수정할 매장 매뉴얼이 없습니다.</p>}
+
+          {!loading && !manualsError && options.length > 0 && (
+            <>
+              {/* 커스텀 드롭다운 */}
+              <div ref={dropdownRef} className="relative">
+                <label htmlFor={`${id}-manual`} className="block text-sm font-semibold mb-2 text-[var(--color-text-primary)]">매뉴얼 선택</label>
+                <button
+                  id={`${id}-manual`}
+                  type="button"
+                  disabled={loading || !!manualsError || options.length === 0}
+                  onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                  aria-haspopup="listbox"
+                  aria-expanded={isDropdownOpen}
+                  className="w-full min-h-[48px] rounded-lg border-2 border-[var(--color-border)] bg-white px-4 py-3 text-base text-left font-medium text-[var(--color-text-primary)] hover:border-[var(--color-primary)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 disabled:opacity-60 transition-colors flex items-center justify-between"
+                >
+                  <span className="truncate">
+                    {selectedOption?.title || "매장 매뉴얼 선택"}
+                  </span>
+                  <ChevronDown
+                    size={20}
+                    className={`shrink-0 transition-transform ${isDropdownOpen ? "rotate-180" : ""}`}
+                    aria-hidden="true"
+                  />
+                </button>
+
+                {isDropdownOpen && (
+                  <div className="absolute top-full left-0 right-0 mt-1 z-50 rounded-lg border-2 border-[var(--color-border)] bg-white shadow-lg overflow-hidden">
+                    {/* 검색창 */}
+                    <div className="sticky top-0 bg-white border-b border-[var(--color-border)] p-3">
+                      <div className="relative flex items-center">
+                        <Search size={16} className="absolute left-3 text-[var(--color-text-secondary)]" aria-hidden="true" />
+                        <input
+                          ref={searchInputRef}
+                          type="text"
+                          placeholder="매뉴얼 검색..."
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          className="w-full min-h-[36px] pl-9 pr-9 py-2 text-sm border border-[var(--color-border)] rounded-lg bg-white text-[var(--color-text-primary)] placeholder-[var(--color-text-secondary)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 transition-colors"
+                          aria-label="매뉴얼 검색"
+                        />
+                        {searchQuery && (
+                          <button
+                            type="button"
+                            onClick={clearSearch}
+                            className="absolute right-3 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
+                            aria-label="검색어 지우기"
+                          >
+                            <X size={16} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 검색 결과 */}
+                    {filteredOptions.length === 0 ? (
+                      <div className="px-4 py-6 text-center text-sm text-[var(--color-text-secondary)]">
+                        검색 결과가 없습니다.
+                      </div>
+                    ) : (
+                      <ul role="listbox" className="max-h-64 overflow-y-auto">
+                        {manualGroups.map((group) => {
+                          const groupOptions = group.options.filter((option) =>
+                            filteredOptions.some((filtered) => filtered.manual.id === option.manual.id)
+                          );
+
+                          if (groupOptions.length === 0) return null;
+
+                          return (
+                            <li key={group.id}>
+                              <div className="px-4 py-2 bg-[var(--color-bg-secondary)] text-sm font-semibold text-[var(--color-text-secondary)]">
+                                {group.label}
+                              </div>
+                              <ul>
+                                {groupOptions.map((option) => (
+                                  <li key={option.manual.id}>
+                                    <button
+                                      type="button"
+                                      role="option"
+                                      aria-selected={selectedId === option.manual.id}
+                                      onClick={() => handleSelectOption(option.manual.id)}
+                                      className={`w-full text-left px-4 py-3 min-h-[44px] text-base font-medium transition-colors ${
+                                        selectedId === option.manual.id
+                                          ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] border-l-4 border-[var(--color-primary)]"
+                                          : "text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)] border-l-4 border-transparent"
+                                      }`}
+                                    >
+                                      {option.title || "제목 없음"}
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* 선택된 매뉴얼 정보 */}
+              {selectedManual && (
+                <div className="flex min-w-0 flex-col gap-4 border-l-4 border-[var(--color-primary)] pl-4 py-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-[var(--color-text-secondary)]">
+                      {isStoreManual ? `${storeName || "선택 매장"} · 매장 전용` : "본사 · 공용"}
+                    </p>
+                    <p className="mt-2 wrap-break-word font-semibold text-base text-[var(--color-text-primary)]">{selectedOption?.title}</p>
+                  </div>
+                  {isStoreManual && (
+                    <Link
+                      href={buildQuestionManualEditUrl(storeId, questionId, selectedManual.id)}
+                      className="inline-flex min-h-[48px] shrink-0 items-center justify-center gap-2 rounded-lg bg-[var(--color-primary)] px-4 py-3 text-base font-semibold text-white transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
+                    >
+                      <Pencil size={18} aria-hidden="true" />
+                      <span>매뉴얼 편집</span>
+                    </Link>
+                  )}
+                </div>
+              )}
+            </>
+          )}
         </div>
-      </div>
-      <div className="border-y border-(--color-border)">
-        <button type="button" aria-expanded={showContext} aria-controls={`${id}-context`} onClick={() => setShowContext((value) => !value)} className="flex min-h-12 w-full items-center justify-between gap-3 py-3 text-left text-sm font-medium focus-visible:outline-2 focus-visible:outline-(--color-primary)">
-          기존 챗봇 답변과 근거 후보<ChevronDown size={18} className={`shrink-0 transition-transform ${showContext ? "rotate-180" : ""}`} aria-hidden="true" />
-        </button>
-        <div id={`${id}-context`} hidden={!showContext} className="space-y-4 pb-4">
-          {loading && <p role="status" className="text-sm">기존 답변을 불러오는 중...</p>}
-          {!loading && context && <>
-            <div><h3 className="text-sm font-semibold">당시 답변</h3><p className="mt-2 whitespace-pre-wrap wrap-break-word text-sm">{context.answer || "저장된 답변이 없습니다."}</p></div>
-            <div><h3 className="text-sm font-semibold">기록된 근거 후보</h3>
-              {context.source ? <>
-                <p className="mt-2 wrap-break-word text-sm font-semibold">{context.source.category} · {context.source.title}</p>
-                <p className="mt-1 text-xs text-(--color-text-secondary)">{context.source.editable ? "매장 전용" : "본사 공통 · 읽기 전용"}</p>
-                <p className="mt-2 whitespace-pre-wrap wrap-break-word text-sm">{context.source.content}</p>
-                {!context.source.editable && <p className="mt-2 text-sm text-amber-800">본사 매뉴얼은 점주가 수정할 수 없습니다. 내용이 부족하면 본사 확인이 필요합니다.</p>}
-                {context.source.editable && !manualsError && options.some((option) => option.manual.id === context.source?.id) && <Button variant="outline" size="sm" className="mt-3" onClick={() => { setSelectedId(context.source!.id); document.getElementById(`${id}-manual`)?.focus(); }}>이 근거 매뉴얼 선택</Button>}
-              </> : <p className="mt-2 text-sm">{context.sourceState === "none" ? "기록된 근거가 없습니다." : "근거가 삭제되었거나 조회 범위를 확인할 수 없습니다."}</p>}
-              <p className="mt-3 text-xs leading-5 text-(--color-text-secondary)">근거 후보는 현재 본문이며 당시 전체 검색 근거는 저장되지 않았습니다. 질문과 맞는지 직접 확인해 주세요.</p>
+      </section>
+
+      {/* 2단계: 질문 처리 안내 */}
+      <section aria-label="2단계: 질문 처리 안내" className="min-w-0">
+        <h2 className="text-lg font-bold text-[var(--color-text-primary)] mb-4">2단계: 질문 처리 안내</h2>
+
+        <div className="space-y-3">
+          {/* 기존 AI 답변 확인 아코디언 */}
+          <div className="border-2 border-[var(--color-border)] rounded-lg overflow-hidden">
+            <button
+              type="button"
+              aria-expanded={expandedAccordion === "context"}
+              aria-controls={`${id}-context`}
+              onClick={() => toggleAccordion("context")}
+              className="flex min-h-[48px] w-full items-center justify-between gap-3 px-4 py-3 text-left text-base font-semibold text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)] focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] transition-colors"
+            >
+              기존 AI 답변 확인
+              <ChevronDown
+                size={20}
+                className={`shrink-0 transition-transform ${expandedAccordion === "context" ? "rotate-180" : ""}`}
+                aria-hidden="true"
+              />
+            </button>
+            {expandedAccordion === "context" && (
+              <div id={`${id}-context`} className="space-y-4 border-t-2 border-[var(--color-border)] px-4 py-4 bg-[var(--color-bg-secondary)]">
+                {loading && <p role="status" className="text-base text-[var(--color-text-secondary)]">기존 답변을 불러오는 중...</p>}
+                {!loading && context && <>
+                  <div>
+                    <h3 className="text-sm font-semibold text-[var(--color-text-primary)] mb-2">당시 답변</h3>
+                    <p className="text-base leading-7 text-[var(--color-text-primary)] whitespace-pre-wrap">{context.answer || "저장된 답변이 없습니다."}</p>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-[var(--color-text-primary)] mb-2">기록된 근거 후보</h3>
+                    {context.source ? <>
+                      <p className="text-sm font-semibold text-[var(--color-text-primary)]">{context.source.category} · {context.source.title}</p>
+                      <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{context.source.editable ? "매장 전용" : "본사 공통 · 읽기 전용"}</p>
+                      <p className="mt-2 text-base leading-7 text-[var(--color-text-primary)] whitespace-pre-wrap">{context.source.content}</p>
+                      {!context.source.editable && <p className="mt-2 text-sm text-amber-700 font-medium">본사 매뉴얼은 점주가 수정할 수 없습니다.</p>}
+                    </> : <p className="text-base text-[var(--color-text-secondary)]">{context.sourceState === "none" ? "기록된 근거가 없습니다." : "근거가 삭제되었습니다."}</p>}
+                  </div>
+                </>}
+              </div>
+            )}
+          </div>
+
+          {/* 직원 재질문 안내 아코디언 */}
+          <div className="border-2 border-[var(--color-border)] rounded-lg overflow-hidden">
+            <button
+              type="button"
+              aria-expanded={expandedAccordion === "verification"}
+              aria-controls={`${id}-verification`}
+              onClick={() => toggleAccordion("verification")}
+              className="flex min-h-[48px] w-full items-center justify-between gap-3 px-4 py-3 text-left text-base font-semibold text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)] focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] transition-colors"
+            >
+              직원 재질문 안내
+              <ChevronDown
+                size={20}
+                className={`shrink-0 transition-transform ${expandedAccordion === "verification" ? "rotate-180" : ""}`}
+                aria-hidden="true"
+              />
+            </button>
+            {expandedAccordion === "verification" && (
+              <div id={`${id}-verification`} className="space-y-3 border-t-2 border-[var(--color-border)] px-4 py-4 bg-[var(--color-bg-secondary)]">
+                <p className="text-base leading-7 text-[var(--color-text-primary)]">해당 매장의 승인된 직원이 챗봇에 질문 원문을 직접 입력하고 답변과 근거를 확인합니다.</p>
+                <p className="text-base leading-7 text-[var(--color-text-primary)]">매뉴얼을 수정했다면 본문 저장과 검색 반영 결과를 먼저 확인해 주세요.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* 처리 도움말 */}
+      <section aria-label="처리 도움말" className="min-w-0">
+        <div className="border-2 border-[var(--color-border)] rounded-lg overflow-hidden">
+          <button
+            type="button"
+            aria-expanded={expandedAccordion === "help"}
+            aria-controls={`${id}-help`}
+            onClick={() => toggleAccordion("help")}
+            className="flex min-h-[48px] w-full items-center justify-between gap-3 px-4 py-3 text-left text-base font-semibold text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)] focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] transition-colors"
+          >
+            처리 도움말
+            <ChevronDown
+              size={20}
+              className={`shrink-0 transition-transform ${expandedAccordion === "help" ? "rotate-180" : ""}`}
+              aria-hidden="true"
+            />
+          </button>
+          {expandedAccordion === "help" && (
+            <div id={`${id}-help`} className="space-y-3 border-t-2 border-[var(--color-border)] px-4 py-4 bg-[var(--color-bg-secondary)]">
+              <p className="text-base leading-7 text-[var(--color-text-primary)]">답이 이미 매뉴얼에 있다면 본문을 바꾸지 말고 검색 문제로 확인해 주세요.</p>
+              <p className="text-base leading-7 text-[var(--color-text-primary)]">본문 저장과 검색 반영은 별개입니다. 매뉴얼 화면에서 최신 내용을 확인해 주세요.</p>
+              <p className="text-base leading-7 text-[var(--color-text-primary)]">매뉴얼 수정 없이 직원 안내나 개별 대응으로 처리할 수 있습니다.</p>
             </div>
-          </>}
+          )}
         </div>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Button variant="ghost" size="sm" disabled={copying} onClick={() => void copyQuestion()} className="gap-2"><Copy size={16} aria-hidden="true" />질문 원문 복사</Button>
-        <Button variant="ghost" size="sm" aria-expanded={showVerification} aria-controls={`${id}-verification`} onClick={() => setShowVerification((value) => !value)} className="gap-2">직원 재질문 안내<ChevronDown size={16} aria-hidden="true" /></Button>
-      </div>
-      {notice && <p role="status" className="text-sm">{notice}</p>}
-      <p id={`${id}-verification`} hidden={!showVerification} className="text-sm leading-6 text-(--color-text-secondary)">해당 매장의 승인된 직원이 챗봇에 질문 원문을 직접 입력하고 답변과 근거를 확인해 주세요. 이 버튼은 재질문을 실행하지 않습니다. 매뉴얼을 수정했다면 본문 저장과 검색 반영 결과를 먼저 확인해 주세요.</p>
-      <div>
-        <button type="button" aria-expanded={showHelp} aria-controls={`${id}-help`} onClick={() => setShowHelp((value) => !value)} className="inline-flex min-h-10 items-center gap-2 text-sm text-(--color-text-secondary) focus-visible:outline-2 focus-visible:outline-(--color-primary)">처리 도움말<ChevronDown size={16} className={showHelp ? "rotate-180" : ""} aria-hidden="true" /></button>
-        <div id={`${id}-help`} hidden={!showHelp} className="space-y-2 pt-2 text-sm leading-6 text-(--color-text-secondary)">
-          <p>답이 이미 매뉴얼에 있다면 본문을 바꾸지 말고 검색 문제로 확인해 주세요. 반복 질문은 직원 안내가 필요한 경우도 있습니다.</p>
-          <p>본문 저장과 검색 반영은 별개입니다. 실패하거나 결과가 미확인이라면 매뉴얼 화면에서 최신 내용과 검색 준비 상태를 확인해 주세요.</p>
-          <p>매뉴얼 수정 없이 직원 안내나 개별 대응으로 처리할 수 있습니다. 매뉴얼 저장만으로 질문이 자동 완료되지는 않습니다.</p>
-        </div>
-      </div>
-    </section>
+      </section>
+    </div>
   );
 }

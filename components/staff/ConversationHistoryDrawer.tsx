@@ -132,7 +132,7 @@ export default function ConversationHistoryDrawer({
             </p>
           ) : state.status === "error" ? (
             <div className="flex flex-col items-center gap-2 px-2 py-8 text-center" role="alert">
-              <p className="flex items-center gap-1.5 text-sm text-red-700">
+              <p className="flex items-center gap-1.5 text-sm text-[var(--color-status-error)]">
                 <AlertCircle size={16} aria-hidden="true" /> 대화 기록을 불러오지 못했습니다.
               </p>
               <button
@@ -188,7 +188,7 @@ export default function ConversationHistoryDrawer({
                           onClick={() => deleteConversation(conversation)}
                           disabled={deletingId !== null}
                           aria-label={`${conversation.title} 대화 삭제`}
-                          className="absolute right-1 top-1/2 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-[var(--color-text-tertiary)] opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 hover:bg-red-50 hover:text-red-700 focus:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 group-hover:opacity-100 disabled:opacity-40"
+                          className="absolute right-1 top-1/2 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-[var(--color-text-tertiary)] opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 hover:bg-[var(--color-status-error)]/10 hover:text-[var(--color-status-error)] focus:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-status-error)] group-hover:opacity-100 disabled:opacity-40"
                         >
                           <Trash2 size={16} aria-hidden="true" />
                         </button>
