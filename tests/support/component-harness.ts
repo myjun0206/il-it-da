@@ -56,6 +56,11 @@ export function createHookHarness(initialStates: unknown[]) {
         states[index] = typeof update === "function" ? update(states[index]) : update;
       }];
     },
+    useRef(initial: unknown) {
+      const index = cursor++;
+      if (!(index in states)) states[index] = { current: initial };
+      return states[index];
+    },
     useEffect() {},
     useLayoutEffect() {},
     useMemo(factory: () => unknown) { return factory(); },

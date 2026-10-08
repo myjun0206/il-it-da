@@ -1,4 +1,8 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
+
+@source "./";
+@source "../components";
+@source "../lib";
 
 /* dark: 유틸리티가 OS 설정이 아니라 html.dark(테마 선택)를 따르도록 한다. */
 @custom-variant dark (&:where(.dark, .dark *));

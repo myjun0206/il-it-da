@@ -1,15 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { startTransition, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, Megaphone, RefreshCw, Search, Store as StoreIcon } from "lucide-react";
+import { AlertCircle, Megaphone, RefreshCw, Search, Store as StoreIcon, X } from "lucide-react";
 
 import { useStaffShell } from "@/components/staff/StaffShellContext";
 import { NoticeDetailDialog } from "@/components/notices/NoticeDetailDialog";
+import { NoticeFilter, type NoticeFilterOption } from "@/components/notices/NoticeFilter";
+import { NoticePagination } from "@/components/notices/NoticePagination";
 import { getNoticeViewCountIncrement, markNoticeAsRead } from "@/lib/notices/mark-notice-read";
-import { filterStaffNotices, toStaffNotice, type NoticeSourceFilter } from "@/lib/notices/notice-filters";
+import { filterStaffNotices, toStaffNotice, type NoticeSourceFilter, type NoticeTargetFilter } from "@/lib/notices/notice-filters";
+import type { NoticeReadFilter } from "@/lib/notices/with-read-status";
 import type { NoticeTargetType } from "@/lib/notices/notice-authorization";
+import type { NoticeSortOrder } from "@/lib/notices/sort-notices";
+import { DEFAULT_NOTICE_LIMIT, DEFAULT_NOTICE_PAGE, type NoticePaginationMetadata } from "@/lib/notices/pagination";
 
 // 직원 공지사항: 기본 매장 범위의 공지만 조회·검색·필터·상세 보기 (작성/수정/삭제 없음).
 // 기본 매장이 변경되면 자동으로 반영된다.
@@ -32,8 +37,13 @@ type StaffNoticeResponse = Omit<StaffNotice, "sourceType">;
 
 const DEFAULT_LOAD_ERROR = "공지사항을 불러오지 못했습니다.";
 
+const NOTICE_READ_FILTERS: readonly NoticeFilterOption<NoticeReadFilter>[] = [
+  { value: "all", label: "전체" },
+  { value: "unread", label: "안 읽음" },
+];
+
 type LoadResult =
-  | { key: string; status: "ready"; notices: StaffNotice[] }
+  | { key: string; status: "ready"; notices: StaffNotice[]; pagination: NoticePaginationMetadata }
   | { key: string; status: "error"; message: string };
 
 class UnauthorizedError extends Error {}
@@ -55,22 +65,48 @@ function StateBox({ children, tone = "neutral" }: { children: React.ReactNode; t
 export default function StaffNoticesPage() {
   const router = useRouter();
   const { selectedStore, stores, isStoresLoading, storesError, reloadStores } = useStaffShell();
+  const storeId = selectedStore?.id ?? null;
   const [result, setResult] = useState<LoadResult | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [query, setQuery] = useState("");
+  const [submittedQuery, setSubmittedQuery] = useState("");
+  const [sortOrder, setSortOrder] = useState<NoticeSortOrder>("latest");
+  const [page, setPage] = useState(DEFAULT_NOTICE_PAGE);
+  const [pageStoreId, setPageStoreId] = useState(storeId);
   const [sourceFilter, setSourceFilter] = useState<NoticeSourceFilter>("all");
+  const [targetFilter, setTargetFilter] = useState<NoticeTargetFilter>("all");
   // 상세 보기: 선택한 공지 ID를 기억한다.
   const [detail, setDetail] = useState<string | null>(null);
+  const [readFilter, setReadFilter] = useState<NoticeReadFilter>("all");
+  const unreadReadPending = useRef(false);
+  const noticeDetailOpen = useRef(false);
 
-  const storeId = selectedStore?.id ?? null;
-  const requestKey = storeId ? `${storeId}:${reloadToken}` : null;
+  const requestKey = storeId
+    ? `${storeId}:${reloadToken}:${submittedQuery}:${sortOrder}:${sourceFilter}:${targetFilter}:${readFilter}:${page}`
+    : null;
+
+  useEffect(() => {
+    if (pageStoreId === storeId) return;
+    startTransition(() => {
+      setPage(DEFAULT_NOTICE_PAGE);
+      setPageStoreId(storeId);
+    });
+  }, [storeId, pageStoreId]);
 
   // 단일 기본 매장 기준 공지 조회
   useEffect(() => {
     if (!requestKey) return;
     const controller = new AbortController();
 
-    fetch(`/api/staff/notices?storeId=${encodeURIComponent(storeId!)}`, {
+    const params = new URLSearchParams({ storeId: storeId! });
+    if (submittedQuery) params.set("search", submittedQuery);
+    params.set("sort", sortOrder);
+    params.set("page", String(page));
+    params.set("limit", String(DEFAULT_NOTICE_LIMIT));
+    params.set("source", sourceFilter);
+    params.set("target", targetFilter);
+    params.set("read", readFilter);
+    fetch(`/api/staff/notices?${params.toString()}`, {
       credentials: "include",
       signal: controller.signal,
     })
@@ -79,14 +115,16 @@ export default function StaffNoticesPage() {
           router.push("/");
           return;
         }
-        const payload = (await response.json()) as { notices?: StaffNoticeResponse[]; error?: string };
-        if (!response.ok || !Array.isArray(payload.notices)) {
+        const payload = (await response.json()) as {
+          notices?: StaffNoticeResponse[];
+          pagination?: NoticePaginationMetadata;
+          error?: string;
+        };
+        if (!response.ok || !Array.isArray(payload.notices) || !payload.pagination) {
           throw new NoticeLoadError(payload.error || DEFAULT_LOAD_ERROR);
         }
-        const sortedNotices = [...payload.notices]
-          .map(toStaffNotice)
-          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        setResult({ key: requestKey, status: "ready", notices: sortedNotices });
+        const notices = payload.notices.map(toStaffNotice);
+        setResult({ key: requestKey, status: "ready", notices, pagination: payload.pagination });
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
@@ -102,17 +140,31 @@ export default function StaffNoticesPage() {
       });
 
     return () => controller.abort();
-  }, [storeId, requestKey, router]);
+  }, [storeId, requestKey, router, submittedQuery, sortOrder, sourceFilter, targetFilter, readFilter, page]);
 
   const currentResult = result && result.key === requestKey ? result : null;
   const allNotices = currentResult?.status === "ready" ? currentResult.notices : [];
-  const trimmedQuery = query.trim();
-  const visibleNotices = filterStaffNotices(allNotices, { source: sourceFilter, target: "all", query });
+  const trimmedQuery = submittedQuery;
+  const visibleNotices = filterStaffNotices(allNotices, { source: sourceFilter, target: targetFilter, query: "" })
+    .filter((notice) => readFilter !== "unread" || notice.isRead === false);
+
+  const submitSearch = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSubmittedQuery(query.trim());
+    setPage(DEFAULT_NOTICE_PAGE);
+  };
+
+  const clearSearch = () => {
+    setQuery("");
+    setSubmittedQuery("");
+    setPage(DEFAULT_NOTICE_PAGE);
+  };
 
   // 상세 보기 시 해당 공지 찾기
   const selectedNotice = detail ? allNotices.find((notice) => notice.id === detail) ?? null : null;
 
   const openNotice = (notice: StaffNotice) => {
+    noticeDetailOpen.current = true;
     setDetail(notice.id);
     if (notice.isRead) return;
 
@@ -131,7 +183,23 @@ export default function StaffNoticesPage() {
             }
           : current,
       );
+      if (readFilter === "unread") {
+        unreadReadPending.current = true;
+        if (!noticeDetailOpen.current) {
+          unreadReadPending.current = false;
+          setReloadToken((value) => value + 1);
+        }
+      }
     });
+  };
+
+  const closeNotice = () => {
+    noticeDetailOpen.current = false;
+    setDetail(null);
+    if (unreadReadPending.current) {
+      unreadReadPending.current = false;
+      if (readFilter === "unread") setReloadToken((value) => value + 1);
+    }
   };
 
   return (
@@ -191,7 +259,7 @@ export default function StaffNoticesPage() {
               <RefreshCw size={16} aria-hidden="true" /> 다시 시도
             </button>
           </StateBox>
-        ) : allNotices.length === 0 ? (
+        ) : allNotices.length === 0 && !submittedQuery && readFilter === "all" ? (
           <StateBox>
             <Megaphone size={28} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" aria-hidden="true" />
             <p className="text-base font-semibold text-[var(--color-text-primary)]">아직 등록된 공지사항이 없습니다.</p>
@@ -200,8 +268,8 @@ export default function StaffNoticesPage() {
         ) : (
           <>
             {/* 검색 영역 */}
-            <div className="mb-6">
-              <div className="relative">
+            <form onSubmit={submitSearch} className="mb-6 flex gap-2">
+              <div className="relative min-w-0 flex-1">
                 <Search
                   size={18}
                   className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]"
@@ -211,11 +279,27 @@ export default function StaffNoticesPage() {
                   type="search"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="공지사항 검색"
-                  aria-label="공지사항 검색"
+                  placeholder="제목, 내용, 작성자 이름으로 검색"
+                  aria-label="제목, 내용, 작성자 이름으로 검색"
                   className="h-12 w-full rounded-lg border border-[var(--color-border)] bg-white pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
                 />
               </div>
+              <button type="submit" className="min-h-[48px] shrink-0 rounded-lg bg-[var(--color-primary)] px-4 text-sm font-semibold text-white">검색</button>
+              <button type="button" onClick={clearSearch} disabled={!query && !submittedQuery} aria-label="검색어 초기화" title="검색어 초기화" className="inline-flex min-h-[48px] min-w-[48px] shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] disabled:opacity-50">
+                <X size={18} aria-hidden="true" />
+              </button>
+            </form>
+
+            <div className="mb-5">
+              <NoticeFilter
+                ariaLabel="공지 읽음 상태"
+                value={readFilter}
+                options={NOTICE_READ_FILTERS}
+                onChange={(value) => {
+                  setReadFilter(value);
+                  setPage(DEFAULT_NOTICE_PAGE);
+                }}
+              />
             </div>
 
             {/* 공지 유형 필터 (카테고리 스타일) */}
@@ -233,7 +317,10 @@ export default function StaffNoticesPage() {
                     key={value}
                     type="button"
                     aria-pressed={isActive}
-                    onClick={() => setSourceFilter(value)}
+                    onClick={() => {
+                      setSourceFilter(value);
+                      setPage(DEFAULT_NOTICE_PAGE);
+                    }}
                     className={`min-h-[36px] rounded-full border px-3.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${
                       isActive
                         ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/40 text-[var(--color-primary)]"
@@ -244,11 +331,37 @@ export default function StaffNoticesPage() {
                   </button>
                 );
               })}
+              <select
+                value={targetFilter}
+                onChange={(event) => {
+                  setTargetFilter(event.target.value as NoticeTargetFilter);
+                  setPage(DEFAULT_NOTICE_PAGE);
+                }}
+                aria-label="공지 대상 필터"
+                className="ml-auto min-h-[36px] rounded-lg border border-[var(--color-border)] bg-white px-3 text-sm font-medium text-[var(--color-text-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+              >
+                <option value="all">전체 대상</option>
+                <option value="franchise">전체 지점</option>
+                <option value="store">현재 매장</option>
+              </select>
+              <select
+                value={sortOrder}
+                onChange={(event) => {
+                  setSortOrder(event.target.value as NoticeSortOrder);
+                  setPage(DEFAULT_NOTICE_PAGE);
+                }}
+                aria-label="공지 정렬"
+                className="min-h-[36px] rounded-lg border border-[var(--color-border)] bg-white px-3 text-sm font-medium text-[var(--color-text-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+              >
+                <option value="latest">최신순</option>
+                <option value="oldest">오래된순</option>
+                <option value="views">조회수순</option>
+              </select>
             </div>
 
             {/* 공지 개수 */}
             <p className="mb-4 text-sm text-[var(--color-text-secondary)]">
-              공지사항 <span className="font-bold text-[var(--color-text-primary)]">{visibleNotices.length}</span>개
+              공지사항 <span className="font-bold text-[var(--color-text-primary)]">{currentResult?.status === "ready" ? currentResult.pagination.totalCount : visibleNotices.length}</span>개
             </p>
 
             {visibleNotices.length === 0 ? (
@@ -288,13 +401,16 @@ export default function StaffNoticesPage() {
                 ))}
               </ul>
             )}
+            {currentResult?.status === "ready" && (
+              <NoticePagination page={page} totalPages={currentResult.pagination.totalPages} onPageChange={setPage} />
+            )}
           </>
         )}
       </div>
       {selectedNotice && (
         <NoticeDetailDialog
           notice={{ ...selectedNotice, sourceLabel: selectedNotice.sourceLabel }}
-          onClose={() => setDetail(null)}
+          onClose={closeNotice}
         />
       )}
     </div>
