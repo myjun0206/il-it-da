@@ -29,6 +29,10 @@ const CATEGORY_PLACEHOLDER_CONTENT = "__HQ_MANUAL_CATEGORY_PLACEHOLDER__";
 const UUID_LIKE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const INTERNAL_ID_LIKE_PATTERN = /^[A-Za-z0-9_-]{16,}$/;
 
+function createManualItemId(): string {
+  return `manual-item-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
 function isCategoryPlaceholder(manual: ManualRecord): boolean {
   return !manual.parent_manual_id && manual.status === "draft" && manual.content === CATEGORY_PLACEHOLDER_CONTENT;
 }
@@ -118,8 +122,8 @@ export default function ManualDashboardPage() {
   const [isDeletingCategory, setIsDeletingCategory] = useState(false);
   const [showTitleModal, setShowTitleModal] = useState(false);
   const [titleName, setTitleName] = useState("");
-  const [titleItems, setTitleItems] = useState<{ id: string; content: string }[]>([
-    { id: crypto.randomUUID(), content: "" },
+  const [titleItems, setTitleItems] = useState<{ id: string; content: string }[]>(() => [
+    { id: createManualItemId(), content: "" },
   ]);
   const [titleError, setTitleError] = useState("");
   const [isCreatingTitle, setIsCreatingTitle] = useState(false);
@@ -254,12 +258,12 @@ export default function ManualDashboardPage() {
 
   const resetTitleForm = () => {
     setTitleName("");
-    setTitleItems([{ id: crypto.randomUUID(), content: "" }]);
+    setTitleItems([{ id: createManualItemId(), content: "" }]);
     setTitleError("");
   };
 
   const handleAddTitleItem = () => {
-    setTitleItems((prev) => [...prev, { id: crypto.randomUUID(), content: "" }]);
+    setTitleItems((prev) => [...prev, { id: createManualItemId(), content: "" }]);
   };
 
   const handleRemoveTitleItem = (id: string) => {
@@ -1399,7 +1403,7 @@ function ManualGroupModal({
   };
 
   const handleAddItem = () => {
-    setItems((prev) => [...prev, { id: `new-${crypto.randomUUID()}`, title: "", content: "", isNew: true }]);
+    setItems((prev) => [...prev, { id: `new-${createManualItemId()}`, title: "", content: "", isNew: true }]);
   };
 
   const handleSaveTopic = async () => {

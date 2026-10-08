@@ -19,6 +19,13 @@ interface StoreViewStats {
   totalStoreManuals: number;
 }
 
+interface ManualGroup {
+  id: string;
+  category: string;
+  title: string;
+  items: ManualRecord[];
+}
+
 async function readJsonResponse<T>(response: Response, fallbackMessage: string): Promise<T> {
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) {
@@ -52,6 +59,8 @@ export default function StoreManualViewPage() {
   const [storeManualsError, setStoreManualsError] = useState("");
   const [storeSearchQuery, setStoreSearchQuery] = useState("");
   const [selectedManualCategory, setSelectedManualCategory] = useState<string | null>(null);
+  const [selectedManualGroup, setSelectedManualGroup] = useState<ManualGroup | null>(null);
+  const [reloadStoreManuals, setReloadStoreManuals] = useState(0);
 
   useEffect(() => {
     const fetchStoreData = async () => {
@@ -103,18 +112,23 @@ export default function StoreManualViewPage() {
 
     fetch(`/api/manuals?storeId=${encodeURIComponent(selectedStoreId)}&scope=store`, {
       signal: controller.signal,
+      cache: "no-store",
     })
       .then((response) => readJsonResponse<{ manuals?: ManualRecord[] }>(response, "지점 매뉴얼을 불러오지 못했습니다."))
       .then((data) => {
-        setSelectedStoreManuals((data.manuals ?? []).filter((manual) => manual.store_id === selectedStoreId));
+        if (controller.signal.aborted) return;
+        if (!Array.isArray(data.manuals)) {
+          throw new Error("지점 매뉴얼 응답을 확인하지 못했습니다.");
+        }
+        setSelectedStoreManuals(data.manuals.filter((manual) => manual.store_id === selectedStoreId));
         setLoadedStoreId(selectedStoreId);
       })
       .catch((error) => {
-        if (error instanceof Error && error.name === "AbortError") return;
+        if (controller.signal.aborted) return;
         setStoreManualsError(error instanceof Error ? error.message : "지점 매뉴얼을 불러오지 못했습니다.");
-      })
+      });
     return () => controller.abort();
-  }, [selectedStoreId]);
+  }, [selectedStoreId, reloadStoreManuals]);
 
   const filteredStores = stores.filter((store) =>
     store.name.toLowerCase().includes(searchQuery.toLowerCase()),
@@ -127,6 +141,7 @@ export default function StoreManualViewPage() {
     setStoreManualsError("");
     setStoreSearchQuery("");
     setSelectedManualCategory(null);
+    setSelectedManualGroup(null);
     setSelectedStoreId(storeId);
     router.push(`/hq/manuals/stores?storeId=${encodeURIComponent(storeId)}`, { scroll: false });
   };
@@ -135,6 +150,7 @@ export default function StoreManualViewPage() {
     setSelectedStoreId("");
     setStoreSearchQuery("");
     setSelectedManualCategory(null);
+    setSelectedManualGroup(null);
     router.push("/hq/manuals/stores", { scroll: false });
   };
 
@@ -145,6 +161,8 @@ export default function StoreManualViewPage() {
   return (
     <>
     <main className="p-6 lg:p-8 max-w-7xl mx-auto">
+          {!selectedStore && (
+            <>
           {/* Header */}
           <div className="mb-8">
             <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
@@ -301,9 +319,11 @@ export default function StoreManualViewPage() {
               )}
             </>
           )}
+            </>
+          )}
 
           {selectedStore && (
-            <section className="mt-8 border-t border-[var(--color-border)] pt-6" aria-live="polite">
+            <section aria-live="polite">
               {/* Header with back button */}
               <div className="mb-6">
                 <button
@@ -328,12 +348,49 @@ export default function StoreManualViewPage() {
               ) : storeManualsError ? (
                 <div className="flex flex-wrap items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-6" role="alert">
                   <p className="flex-1 text-sm text-red-700">{storeManualsError}</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStoreManualsError("");
+                      setLoadedStoreId("");
+                      setReloadStoreManuals((current) => current + 1);
+                    }}
+                    className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-sm font-medium text-red-700 hover:bg-red-100"
+                  >
+                    <RefreshCw size={16} aria-hidden="true" /> 다시 시도
+                  </button>
                 </div>
               ) : selectedStoreManuals.length === 0 ? (
                 <div className="bg-white border border-[var(--color-border)] rounded-xl p-12 text-center shadow-sm">
                   <FileText size={28} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" aria-hidden="true" />
                   <p className="text-base text-[var(--color-text-secondary)]">등록된 지점 매뉴얼이 없습니다.</p>
                 </div>
+              ) : selectedManualGroup ? (
+                <article aria-labelledby="store-manual-detail-title">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedManualGroup(null)}
+                    className="mb-4 inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                  >
+                    <ArrowLeft size={16} aria-hidden="true" /> 매뉴얼 목록
+                  </button>
+                  <p className="mb-2 text-sm text-[var(--color-text-secondary)]">{selectedManualGroup.category}</p>
+                  <h3 id="store-manual-detail-title" className="mb-6 break-words text-xl font-bold text-[var(--color-text-primary)]">
+                    {selectedManualGroup.title}
+                  </h3>
+                  <div className="divide-y divide-[var(--color-border)]">
+                    {selectedManualGroup.items.map((item, index) => (
+                      <section key={item.id} className="min-w-0 py-5 first:pt-0">
+                        <h4 className="mb-3 break-words text-base font-semibold text-[var(--color-text-primary)]">
+                          {item.title || `세부 매뉴얼 ${index + 1}`}
+                        </h4>
+                        <p className="whitespace-pre-wrap break-words text-base leading-relaxed text-[var(--color-text-secondary)]">
+                          {item.content?.trim() ? item.content : "등록된 상세 내용이 없습니다."}
+                        </p>
+                      </section>
+                    ))}
+                  </div>
+                </article>
               ) : (() => {
                 // Helper: normalize category name
                 const getDisplayCategoryName = (category: string): string => {
@@ -343,14 +400,6 @@ export default function StoreManualViewPage() {
                   const internalPattern = /^[A-Za-z0-9_-]{16,}$/;
                   if (uuidPattern.test(trimmed) || internalPattern.test(trimmed)) return "카테고리";
                   return trimmed;
-                };
-
-                // Group manuals by parent (title) and extract categories
-                type ManualGroup = {
-                  id: string;
-                  category: string;
-                  title: string;
-                  items: ManualRecord[];
                 };
 
                 const groups: ManualGroup[] = [];
@@ -461,6 +510,14 @@ export default function StoreManualViewPage() {
                                   {group.title}
                                 </span>
                                 <span className="mt-auto pt-3 text-xs text-[var(--color-text-tertiary)]">세부 매뉴얼 {group.items.length}개</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedManualGroup(group)}
+                                  aria-label={`${group.title} 상세 보기`}
+                                  className="mt-3 inline-flex min-h-11 items-center gap-1 rounded-lg px-2 text-sm font-medium text-[var(--color-primary)] hover:text-[var(--color-primary-dark)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                                >
+                                  보기 <ExternalLink size={14} aria-hidden="true" />
+                                </button>
                               </div>
                             </li>
                           ))}

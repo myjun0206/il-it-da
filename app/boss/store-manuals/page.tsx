@@ -41,6 +41,10 @@ const UUID_LIKE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a
 const INTERNAL_ID_LIKE_PATTERN = /^[A-Za-z0-9_-]{16,}$/;
 const STORE_REINDEX_URL = "/api/store-manuals/search-readiness/reindex";
 
+function createTitleItemId(): string {
+  return `title-item-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
 // 저장 응답의 searchResults 중 검색 반영이 실패했거나 확인되지 않은 항목만 다시 처리 대상으로 삼는다.
 function searchRetryManualIds(body: unknown): string[] {
   const results = (body as { searchResults?: unknown } | null)?.searchResults;
@@ -142,8 +146,8 @@ export default function StoreManualsManagementPage() {
   const [isDeletingCategory, setIsDeletingCategory] = useState(false);
   const [showTitleModal, setShowTitleModal] = useState(false);
   const [titleName, setTitleName] = useState("");
-  const [titleItems, setTitleItems] = useState<{ id: string; content: string }[]>([
-    { id: crypto.randomUUID(), content: "" },
+  const [titleItems, setTitleItems] = useState<{ id: string; content: string }[]>(() => [
+    { id: createTitleItemId(), content: "" },
   ]);
   const [titleError, setTitleError] = useState("");
   const [isCreatingTitle, setIsCreatingTitle] = useState(false);
@@ -375,12 +379,12 @@ export default function StoreManualsManagementPage() {
 
   const resetTitleForm = () => {
     setTitleName("");
-    setTitleItems([{ id: crypto.randomUUID(), content: "" }]);
+    setTitleItems([{ id: createTitleItemId(), content: "" }]);
     setTitleError("");
   };
 
   const handleAddTitleItem = () => {
-    setTitleItems((prev) => [...prev, { id: crypto.randomUUID(), content: "" }]);
+    setTitleItems((prev) => [...prev, { id: createTitleItemId(), content: "" }]);
   };
 
   const handleRemoveTitleItem = (id: string) => {
