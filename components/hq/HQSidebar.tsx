@@ -92,7 +92,7 @@ export default function HQSidebar({
         aria-label={`${franchiseName} · ${userName} 사이드바`}
         className={`fixed left-0 top-0 h-dvh overflow-hidden bg-white border-r border-(--color-border) flex flex-col transition-transform duration-300 lg:translate-x-0 ${
           isOpen ? "translate-x-0" : "-translate-x-full"
-        } lg:w-[240px] w-64 z-40`}
+        } lg:w-60 w-64 z-40`}
       >
         {/* Logo Section - aligned with header */}
         <div className="flex shrink-0 items-center px-6 h-16 border-b border-(--color-border)">
