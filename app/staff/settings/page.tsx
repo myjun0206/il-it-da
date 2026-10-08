@@ -30,6 +30,8 @@ const primaryButtonClass =
   "flex h-11 w-32 shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary)] px-5 text-sm font-medium text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap";
 const dangerButtonClass =
   "flex h-11 w-32 shrink-0 items-center justify-center rounded-lg border-2 border-red-300 bg-white px-5 text-sm font-medium text-red-700 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 disabled:cursor-not-allowed disabled:opacity-60 transition-colors whitespace-nowrap";
+const successBorderButtonClass =
+  "flex h-11 w-32 shrink-0 items-center justify-center rounded-lg border-2 border-[var(--color-primary)] bg-white px-5 text-sm font-medium text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary)]/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap";
 const compactButtonClass =
   "text-sm font-medium text-[var(--color-text-primary)] hover:text-[var(--color-primary)] transition-colors underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] rounded px-1 py-1 disabled:cursor-not-allowed disabled:opacity-60";
 
@@ -923,7 +925,7 @@ export default function StaffSettingsPage() {
                     <button
                       type="button"
                       onClick={handleConfirmPasswordSuccess}
-                      className="flex h-10 shrink-0 items-center justify-center rounded-lg border-2 border-[var(--color-primary)] bg-white px-4 text-sm font-medium text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary)]/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap"
+                      className={successBorderButtonClass}
                     >
                       확인
                     </button>

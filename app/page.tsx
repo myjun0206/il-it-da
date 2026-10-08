@@ -4,6 +4,7 @@ import React, { Suspense, useState, useLayoutEffect } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Check } from "lucide-react";
+import { siApple } from "simple-icons/icons";
 import { Button } from "@/components/common/Button";
 import { Input, PasswordInput } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
@@ -178,10 +179,7 @@ function LoginPageContent() {
 
   return (
     <div 
-      className="min-h-screen flex flex-col"
-      style={{
-        background: "linear-gradient(135deg, #e3eee0 0%, #ffffff 50%, #f7f9f5 100%)"
-      }}
+      className="min-h-screen flex flex-col login-page-bg"
     >
       {/* Desktop Layout */}
       <div className="hidden lg:grid lg:grid-cols-[55%_45%] lg:min-h-screen">
@@ -367,7 +365,7 @@ function LoginPageContent() {
                     e.preventDefault();
                     void handleOAuthLogin("custom:naver");
                   }}
-                  className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
+                  className="flex items-center justify-center rounded-full bg-white dark:bg-[var(--color-bg-surface)] border border-[var(--color-border-light)] dark:border-[var(--color-border)] hover:border-[var(--color-border)] dark:hover:bg-[var(--color-bg-default)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm oauth-button"
                   style={{ width: "52px", height: "52px" }}
                   aria-label="네이버로 로그인"
                 >
@@ -384,7 +382,7 @@ function LoginPageContent() {
                     e.preventDefault();
                     void handleOAuthLogin("kakao");
                   }}
-                  className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
+                  className="flex items-center justify-center rounded-full bg-white dark:bg-[var(--color-bg-surface)] border border-[var(--color-border-light)] dark:border-[var(--color-border)] hover:border-[var(--color-border)] dark:hover:bg-[var(--color-bg-default)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm oauth-button"
                   style={{ width: "52px", height: "52px" }}
                   aria-label="카카오로 로그인"
                 >
@@ -401,7 +399,7 @@ function LoginPageContent() {
                     e.preventDefault();
                     void handleOAuthLogin("google");
                   }}
-                  className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
+                  className="flex items-center justify-center rounded-full bg-white dark:bg-[var(--color-bg-surface)] border border-[var(--color-border-light)] dark:border-[var(--color-border)] hover:border-[var(--color-border)] dark:hover:bg-[var(--color-bg-default)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm oauth-button"
                   style={{ width: "52px", height: "52px" }}
                   aria-label="Google로 로그인"
                 >
@@ -437,15 +435,17 @@ function LoginPageContent() {
                     e.preventDefault();
                     void handleOAuthLogin("apple");
                   }}
-                  className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
+                  className="flex items-center justify-center rounded-full bg-white dark:bg-[var(--color-bg-surface)] border border-[var(--color-border-light)] dark:border-[var(--color-border)] hover:border-[var(--color-border)] dark:hover:bg-[var(--color-bg-default)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm oauth-button"
                   style={{ width: "52px", height: "52px" }}
                   aria-label="Apple로 로그인"
                 >
-                  <img
-                    src="/social/apple.svg"
-                    alt=""
-                    className="block w-full h-full object-contain"
-                  />
+                  <svg
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                    className="h-[22px] w-[22px] fill-current text-black dark:text-white"
+                  >
+                    <path d={siApple.path} />
+                  </svg>
                 </a>
               </div>
             </form>
@@ -587,7 +587,7 @@ function LoginPageContent() {
                     e.preventDefault();
                     void handleOAuthLogin("custom:naver");
                   }}
-                  className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
+                  className="flex items-center justify-center rounded-full bg-white dark:bg-[var(--color-bg-surface)] border border-[var(--color-border-light)] dark:border-[var(--color-border)] hover:border-[var(--color-border)] dark:hover:bg-[var(--color-bg-default)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm oauth-button"
                   style={{ width: "52px", height: "52px" }}
                   aria-label="네이버로 로그인"
                 >
@@ -604,7 +604,7 @@ function LoginPageContent() {
                     e.preventDefault();
                     void handleOAuthLogin("kakao");
                   }}
-                  className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
+                  className="flex items-center justify-center rounded-full bg-white dark:bg-[var(--color-bg-surface)] border border-[var(--color-border-light)] dark:border-[var(--color-border)] hover:border-[var(--color-border)] dark:hover:bg-[var(--color-bg-default)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm oauth-button"
                   style={{ width: "52px", height: "52px" }}
                   aria-label="카카오로 로그인"
                 >
@@ -621,7 +621,7 @@ function LoginPageContent() {
                     e.preventDefault();
                     void handleOAuthLogin("google");
                   }}
-                  className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
+                  className="flex items-center justify-center rounded-full bg-white dark:bg-[var(--color-bg-surface)] border border-[var(--color-border-light)] dark:border-[var(--color-border)] hover:border-[var(--color-border)] dark:hover:bg-[var(--color-bg-default)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm oauth-button"
                   style={{ width: "52px", height: "52px" }}
                   aria-label="Google로 로그인"
                 >
@@ -657,15 +657,17 @@ function LoginPageContent() {
                     e.preventDefault();
                     void handleOAuthLogin("apple");
                   }}
-                  className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
+                  className="flex items-center justify-center rounded-full bg-white dark:bg-[var(--color-bg-surface)] border border-[var(--color-border-light)] dark:border-[var(--color-border)] hover:border-[var(--color-border)] dark:hover:bg-[var(--color-bg-default)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm oauth-button"
                   style={{ width: "52px", height: "52px" }}
                   aria-label="Apple로 로그인"
                 >
-                  <img
-                    src="/social/apple.svg"
-                    alt=""
-                    className="block w-full h-full object-contain"
-                  />
+                  <svg
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                    className="h-[22px] w-[22px] fill-current text-black dark:text-white"
+                  >
+                    <path d={siApple.path} />
+                  </svg>
                 </a>
               </div>
             </form>

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, CalendarDays, FileText, Pencil, Store, UserRound, Users } from "lucide-react";
+import { ArrowLeft, FileText, Users } from "lucide-react";
 import { useParams } from "next/navigation";
 import type { HqStoreSummary } from "@/lib/types/store";
 
@@ -65,47 +65,60 @@ export default function HqStoreDetailPage() {
             <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">{errorMessage}</div>
           ) : store ? (
             <>
-              <div className="mb-8 flex flex-col gap-4 rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-bg-surface)] p-6 shadow-md sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-[var(--color-primary-light)] text-[var(--color-primary)]">
-                    <Store size={23} />
-                  </div>
-                  <div>
-                    <p className="mb-1 text-sm text-[var(--color-text-secondary)]">지점 상세 관리</p>
-                    <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">{store.name}</h1>
-                  </div>
-                </div>
+              {/* Header */}
+              <div className="mb-8 flex flex-col items-start justify-between gap-4 md:flex-row md:items-center">
+                <h1 className="text-3xl font-bold text-[var(--color-text-primary)]">{store.name}</h1>
                 <Link
                   href={`/hq/manuals/stores?storeId=${encodeURIComponent(store.id)}`}
-                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-[var(--color-primary)] px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border-2 border-[var(--color-primary)] bg-[var(--color-primary-light)]/20 px-4 text-base font-semibold text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary-light)]/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                 >
-                  <Pencil size={16} /> 매뉴얼 관리
+                  <FileText size={18} aria-hidden="true" />
+                  매뉴얼 보기
                 </Link>
               </div>
 
-              <dl className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {/* Current Status Cards */}
+              <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2">
                 {[
-                  {
-                    label: "점주",
-                    value: store.ownerNames.length > 0 ? store.ownerNames.join(", ") : "미지정",
-                    icon: UserRound,
-                  },
                   { label: "등록된 직원", value: `${store.staffCount}명`, icon: Users },
-                  { label: "지점 전용 매뉴얼", value: `${store.manualCount}개`, icon: FileText },
-                  { label: "등록일", value: formatDate(store.createdAt), icon: CalendarDays },
+                  { label: "지점 매뉴얼", value: `${store.manualCount}개`, icon: FileText },
                 ].map((item) => (
                   <div
                     key={item.label}
-                    className="rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-bg-surface)] p-6 shadow-md"
+                    className="rounded-lg border border-[var(--color-border)] bg-white p-6 shadow-sm"
                   >
-                    <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--color-primary-light)] text-[var(--color-primary)]">
-                      <item.icon size={19} aria-hidden="true" />
+                    <dt className="mb-3 text-sm font-medium text-[var(--color-text-secondary)]">{item.label}</dt>
+                    <div className="flex items-baseline gap-2">
+                      <dd className="text-3xl font-bold text-[var(--color-text-primary)]">
+                        {item.value.split(/\D+/)[0]}
+                      </dd>
+                      <span className="text-sm text-[var(--color-text-secondary)]">
+                        {item.value.includes("명") ? "명" : "개"}
+                      </span>
                     </div>
-                    <dt className="text-sm text-[var(--color-text-secondary)]">{item.label}</dt>
-                    <dd className="mt-1 text-2xl font-bold text-[var(--color-text-primary)]">{item.value}</dd>
                   </div>
                 ))}
-              </dl>
+              </div>
+
+              {/* Basic Information */}
+              <div className="rounded-lg border border-[var(--color-border)] bg-white p-6 shadow-sm">
+                <h2 className="mb-6 text-lg font-bold text-[var(--color-text-primary)]">지점 기본 정보</h2>
+                <dl className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                  {/* Owner Name */}
+                  <div>
+                    <dt className="mb-2 text-sm font-medium text-[var(--color-text-secondary)]">점주</dt>
+                    <dd className="text-base font-semibold text-[var(--color-text-primary)]">
+                      {store.ownerNames.length > 0 ? store.ownerNames.join(", ") : <span className="text-[var(--color-text-tertiary)]">미지정</span>}
+                    </dd>
+                  </div>
+
+                  {/* Registration Date */}
+                  <div>
+                    <dt className="mb-2 text-sm font-medium text-[var(--color-text-secondary)]">등록일</dt>
+                    <dd className="text-base font-semibold text-[var(--color-text-primary)]">{formatDate(store.createdAt)}</dd>
+                  </div>
+                </dl>
+              </div>
             </>
           ) : null}
         </main>

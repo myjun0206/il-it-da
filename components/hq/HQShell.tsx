@@ -5,8 +5,6 @@ import { useRouter, usePathname } from "next/navigation";
 import HQSidebar from "@/components/hq/HQSidebar";
 import HQHeader from "@/components/hq/HQHeader";
 import { createClient } from "@/lib/supabase/client";
-import { readSelectedHqStoreId, writeSelectedHqStoreId } from "@/lib/hq/selected-store";
-import type { HqStoreSummary } from "@/lib/types/store";
 
 interface HQShellProps {
   children: React.ReactNode;
@@ -27,9 +25,6 @@ export default function HQShell({ children, activeMenu: propActiveMenu }: HQShel
   const pathname = usePathname();
   const [userName, setUserName] = useState("본사 관리자");
   const [franchiseName, setFranchiseName] = useState("메가MGC커피");
-  const [stores, setStores] = useState<HqStoreSummary[]>([]);
-  const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
-  const [isStoresLoading, setIsStoresLoading] = useState(false);
   const [isReady, setIsReady] = useState(false);
 
   /**
@@ -47,9 +42,14 @@ export default function HQShell({ children, activeMenu: propActiveMenu }: HQShel
       return "home";
     }
 
-    // /hq/manuals로 시작하는 모든 경로 → "manual"
-    if (pathname.startsWith("/hq/manuals")) {
-      return "manual";
+    // /hq/manuals/common → "manual-common"
+    if (pathname.startsWith("/hq/manuals/common")) {
+      return "manual-common";
+    }
+
+    // /hq/manuals/stores → "manual-store"
+    if (pathname.startsWith("/hq/manuals/stores")) {
+      return "manual-store";
     }
 
     // /hq/stores로 시작하는 모든 경로 → "store"
@@ -91,59 +91,13 @@ export default function HQShell({ children, activeMenu: propActiveMenu }: HQShel
       } catch (error) {
         console.error("Failed to load user info:", error);
         router.push("/");
+      } finally {
+        setIsReady(true);
       }
     };
 
     loadUserInfo();
   }, [router]);
-
-  // 매장 목록 로드
-  useEffect(() => {
-    const loadStores = async () => {
-      try {
-        setIsStoresLoading(true);
-        const response = await fetch("/api/hq/stores");
-        const result = (await response.json()) as { stores?: HqStoreSummary[] };
-
-        if (!response.ok) {
-          console.error("Failed to load stores");
-          return;
-        }
-
-        const storesList = result.stores ?? [];
-        setStores(storesList);
-
-        // 저장된 선택 매장 ID 복원
-        const savedStoreId = readSelectedHqStoreId();
-        if (savedStoreId && storesList.some((s) => s.id === savedStoreId)) {
-          setSelectedStoreId(savedStoreId);
-        } else if (storesList.length > 0) {
-          // 저장된 ID가 없거나 유효하지 않으면 첫 번째 매장 선택
-          setSelectedStoreId(storesList[0].id);
-        }
-      } catch (error) {
-        console.error("Failed to load stores:", error);
-      } finally {
-        setIsStoresLoading(false);
-        setIsReady(true);
-      }
-    };
-
-    loadStores();
-  }, []);
-
-  const handleSetDefaultStore = async (storeId: string) => {
-    if (isStoresLoading || !stores.some((store) => store.id === storeId)) return;
-    try {
-      setIsStoresLoading(true);
-      setSelectedStoreId(storeId);
-      writeSelectedHqStoreId(storeId);
-    } catch (error) {
-      console.error("Failed to set default store:", error);
-    } finally {
-      setIsStoresLoading(false);
-    }
-  };
 
   const handleLogout = async () => {
     try {
@@ -176,10 +130,6 @@ export default function HQShell({ children, activeMenu: propActiveMenu }: HQShel
         <HQHeader
           userName={userName}
           franchiseName={franchiseName}
-          stores={stores}
-          selectedStoreId={selectedStoreId}
-          isStoresLoading={isStoresLoading}
-          onSetDefaultStore={handleSetDefaultStore}
         />
 
         {/* 콘텐츠 영역 - 스크롤 가능 */}

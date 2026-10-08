@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, CheckCircle2, Eye, EyeOff, Trash2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, Camera, Trash2 } from "lucide-react";
 import ThemeSelector from "@/components/common/ThemeSelector";
 import ProfileAvatar from "@/components/common/ProfileAvatar";
 import { createClient } from "@/lib/supabase/client";
@@ -25,15 +25,6 @@ const PASSWORD_MIN_LENGTH = 8;
 const NAME_MAX_LENGTH = 50;
 
 const cardClass = "bg-white border border-[var(--color-border)] rounded-xl p-6 mb-6 shadow-sm";
-const rowClass =
-  "flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:gap-6 border-t border-[var(--color-border)] first:border-t-0 first:pt-0 last:pb-0";
-const rowLabelClass = "w-40 shrink-0 text-sm font-medium text-[var(--color-text-secondary)]";
-const inputClass =
-  "h-11 w-full rounded-lg border-2 border-[var(--color-border)] bg-white px-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/30";
-const secondaryButtonClass =
-  "inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-lg border-2 border-[var(--color-border)] bg-white px-4 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-bg-default)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60";
-const primaryButtonClass =
-  "inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary)] px-4 text-sm font-medium text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60";
 
 function FeedbackMessage({ feedback }: { feedback: Feedback }) {
   if (!feedback) return null;
@@ -42,41 +33,11 @@ function FeedbackMessage({ feedback }: { feedback: Feedback }) {
   return (
     <p
       role={isSuccess ? "status" : "alert"}
-      className={`mt-3 flex items-center gap-2 text-sm ${isSuccess ? "text-[var(--color-primary)]" : "text-red-700"}`}
+      className={`mt-3 flex items-center gap-2 text-base font-medium ${isSuccess ? "text-[var(--color-primary)]" : "text-red-700"}`}
     >
-      <Icon size={16} aria-hidden="true" />
+      <Icon size={20} aria-hidden="true" />
       {feedback.message}
     </p>
-  );
-}
-
-function PasswordInput({
-  id,
-  label,
-  value,
-  onChange,
-  isVisible,
-}: {
-  id: string;
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  isVisible: boolean;
-}) {
-  return (
-    <div>
-      <label htmlFor={id} className="mb-2 block text-sm font-semibold text-[var(--color-text-primary)]">
-        {label}
-      </label>
-      <input
-        id={id}
-        type={isVisible ? "text" : "password"}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        autoComplete="new-password"
-        className={inputClass}
-      />
-    </div>
   );
 }
 
@@ -94,10 +55,9 @@ export default function HqSettingsPage() {
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [isSavingPassword, setIsSavingPassword] = useState(false);
   const [passwordFeedback, setPasswordFeedback] = useState<Feedback>(null);
-
+  
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [avatarFeedback, setAvatarFeedback] = useState<Feedback>(null);
@@ -213,7 +173,6 @@ export default function HqSettingsPage() {
   const resetPasswordForm = () => {
     setNewPassword("");
     setConfirmPassword("");
-    setIsPasswordVisible(false);
   };
 
   const cancelChangePassword = () => {
@@ -395,22 +354,23 @@ export default function HqSettingsPage() {
             </div>
           ) : account ? (
             <>
-              {/* 1. 기본 정보 */}
-              <section aria-labelledby="basic-heading" className={cardClass}>
-                <h2 id="basic-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-1">
-                  기본 정보
+              {/* 1. 계정 정보 */}
+              <section aria-labelledby="account-heading" className={cardClass}>
+                <h2 id="account-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-2">
+                  계정 정보
                 </h2>
-                <p className="mb-5 text-sm text-[var(--color-text-secondary)]">서비스에서 사용하는 내 정보를 관리합니다.</p>
+                <p className="mb-4 text-base text-[var(--color-text-primary)] opacity-70">
+                  내 프로필과 계정 정보를 확인합니다.
+                </p>
 
-                {/* 프로필 사진 */}
-                <div className={rowClass}>
-                  <span className={rowLabelClass}>프로필 사진</span>
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 flex-1">
+                {/* === 프로필 섹션 === */}
+                <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 mb-8">
+                  {/* Avatar: 왼쪽 고정 */}
+                  <div className="flex-shrink-0">
                     <ProfileAvatar
-                      name={displayName}
+                      name={account.name}
                       avatarUrl={avatarPreview || account.avatarUrl}
-                      size="lg"
-                      className="w-12 h-12"
+                      size="xl"
                     />
                     <input
                       ref={fileInputRef}
@@ -421,13 +381,41 @@ export default function HqSettingsPage() {
                       className="hidden"
                       aria-label="프로필 사진 선택"
                     />
+                  </div>
+
+                  {/* 사용자 정보 영역: 중앙 확장 */}
+                  <div className="flex-1 flex flex-col gap-4">
+                    {/* 이름 + 역할 배지 */}
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-lg font-bold text-[var(--color-text-primary)]">
+                        {account.name || "등록된 이름 없음"}
+                      </h3>
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-[var(--color-primary)]/10 text-xs font-medium text-[var(--color-primary)]">
+                        본사 관리자
+                      </span>
+                    </div>
+
+                    {/* 이메일 */}
+                    <div>
+                      <p className="text-xs text-[var(--color-text-tertiary)] mb-1">이메일</p>
+                      <p className="text-sm font-medium text-[var(--color-text-primary)] break-all">
+                        {account.email || "등록된 이메일 없음"}
+                      </p>
+                    </div>
+
+                    {/* 피드백 메시지 */}
+                    <FeedbackMessage feedback={avatarFeedback} />
+                  </div>
+
+                  {/* 사진 변경 액션: 오른쪽 끝 고정 */}
+                  <div className="flex-shrink-0 flex flex-col gap-1 items-end justify-start">
                     {avatarPreview ? (
                       <div className="flex gap-2">
                         <button
                           type="button"
                           onClick={handleUploadAvatar}
                           disabled={isUploadingAvatar}
-                          className={primaryButtonClass}
+                          className="text-sm font-medium text-[var(--color-text-primary)] hover:text-[var(--color-primary)] transition-colors underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] rounded px-1 py-1 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           {isUploadingAvatar ? "저장 중..." : "저장"}
                         </button>
@@ -435,187 +423,247 @@ export default function HqSettingsPage() {
                           type="button"
                           onClick={handleCancelAvatarPreview}
                           disabled={isUploadingAvatar}
-                          className={secondaryButtonClass}
+                          className="text-sm font-medium text-[var(--color-text-primary)] hover:text-[var(--color-primary)] transition-colors underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] rounded px-1 py-1 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           취소
                         </button>
                       </div>
                     ) : (
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => fileInputRef.current?.click()}
-                          disabled={isUploadingAvatar}
-                          className={secondaryButtonClass}
-                        >
-                          사진 변경
-                        </button>
-                        {account.avatarUrl && (
-                          <button
-                            type="button"
-                            onClick={handleDeleteAvatar}
-                            disabled={isUploadingAvatar}
-                            aria-label="프로필 사진 삭제"
-                            className="inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-lg text-sm font-medium text-red-700 transition-colors hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            <Trash2 size={18} aria-hidden="true" />
-                          </button>
-                        )}
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={isUploadingAvatar}
+                        className="inline-flex h-10 items-center gap-2 px-3 text-sm font-medium text-[var(--color-text-primary)] hover:text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary-light)]/10 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+                        aria-label="프로필 사진 변경"
+                      >
+                        <Camera size={18} aria-hidden="true" className="flex-shrink-0" />
+                        <span>사진 변경</span>
+                      </button>
+                    )}
+                    {!avatarPreview && account.avatarUrl && (
+                      <button
+                        type="button"
+                        onClick={handleDeleteAvatar}
+                        disabled={isUploadingAvatar}
+                        className="text-sm font-medium text-red-700 hover:text-red-600 transition-colors underline focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 rounded px-1 py-1 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        사진 삭제
+                      </button>
                     )}
                   </div>
                 </div>
-                <FeedbackMessage feedback={avatarFeedback} />
 
-                {isEditingName ? (
-                  <form onSubmit={handleSaveName} className={rowClass}>
-                    <label htmlFor="hq-name" className={rowLabelClass}>
-                      이름
+              </section>
+
+              {/* 2. 가입 정보 */}
+              <section aria-labelledby="signup-heading" className={cardClass}>
+                <h2 id="signup-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-2">
+                  가입 정보
+                </h2>
+                <p className="mb-6 text-base text-[var(--color-text-primary)] opacity-70">
+                  가입 시 등록한 정보입니다. 비밀번호만 변경할 수 있습니다.
+                </p>
+
+                {/* 가입 정보 필드 */}
+                <div className="space-y-4 mb-6">
+                  {/* 이름 - 수정 가능 */}
+                  {isEditingName ? (
+                    <form onSubmit={handleSaveName} className="flex flex-col gap-2">
+                      <label htmlFor="hq-name" className="block text-sm font-medium text-[var(--color-text-secondary)]">
+                        이름
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          id="hq-name"
+                          type="text"
+                          value={nameDraft}
+                          maxLength={NAME_MAX_LENGTH}
+                          onChange={(event) => setNameDraft(event.target.value)}
+                          autoFocus
+                          className="h-11 flex-1 rounded-lg border border-[var(--color-border)] bg-white px-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+                        />
+                        <button
+                          type="button"
+                          onClick={cancelEditName}
+                          disabled={isSavingName}
+                          className="h-11 px-3 rounded-lg border border-[var(--color-border)] bg-white text-sm font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-bg-default)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap"
+                        >
+                          취소
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={isSavingName}
+                          className="h-11 px-3 rounded-lg bg-[var(--color-primary)] text-sm font-medium text-white hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap"
+                        >
+                          {isSavingName ? "저장 중..." : "저장"}
+                        </button>
+                      </div>
+                      <FeedbackMessage feedback={nameFeedback} />
+                    </form>
+                  ) : (
+                    <div>
+                      <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                        이름
+                      </label>
+                      <div className="flex items-center justify-between">
+                        <input
+                          type="text"
+                          value={account.name || "등록된 이름 없음"}
+                          disabled
+                          className="w-full px-4 py-3 rounded-lg bg-[var(--color-bg-default)] border border-[var(--color-border)] text-[var(--color-text-primary)] cursor-not-allowed opacity-70"
+                        />
+                        <button
+                          type="button"
+                          onClick={startEditName}
+                          className="ml-2 h-11 px-3 rounded-lg border border-[var(--color-border)] bg-white text-sm font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-bg-default)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap flex-shrink-0"
+                          aria-label="이름 수정"
+                        >
+                          수정
+                        </button>
+                      </div>
+                      <FeedbackMessage feedback={nameFeedback} />
+                    </div>
+                  )}
+
+                  {/* 이메일 - 읽기 전용 */}
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                      이메일
                     </label>
                     <input
-                      id="hq-name"
-                      type="text"
-                      value={nameDraft}
-                      maxLength={NAME_MAX_LENGTH}
-                      onChange={(event) => setNameDraft(event.target.value)}
-                      autoFocus
-                      className={`${inputClass} sm:max-w-sm`}
+                      type="email"
+                      value={account.email || "등록된 이메일 없음"}
+                      disabled
+                      className="w-full px-4 py-3 rounded-lg bg-[var(--color-bg-default)] border border-[var(--color-border)] text-[var(--color-text-primary)] cursor-not-allowed opacity-70"
                     />
-                    <div className="flex gap-2 sm:ml-auto">
-                      <button type="button" onClick={cancelEditName} disabled={isSavingName} className={secondaryButtonClass}>
-                        취소
-                      </button>
-                      <button type="submit" disabled={isSavingName} className={primaryButtonClass}>
-                        {isSavingName ? "저장 중..." : "변경사항 저장"}
-                      </button>
-                    </div>
-                  </form>
-                ) : (
-                  <div className={rowClass}>
-                    <span className={rowLabelClass}>이름</span>
-                    <span className="text-base font-medium text-[var(--color-text-primary)] break-all">
-                      {account.name || "등록된 이름 없음"}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={startEditName}
-                      aria-label="이름 수정"
-                      className={`${secondaryButtonClass} sm:ml-auto self-start sm:self-auto`}
-                    >
-                      수정
-                    </button>
                   </div>
-                )}
-                <FeedbackMessage feedback={nameFeedback} />
-              </section>
 
-              {/* 2. 계정 및 권한 정보 (조회 전용) */}
-              <section aria-labelledby="account-heading" className={cardClass}>
-                <h2 id="account-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-5">
-                  계정 및 권한 정보
-                </h2>
-                <dl>
-                  {readOnlyRows.map((row) => (
-                    <div key={row.label} className={rowClass}>
-                      <dt className={rowLabelClass}>{row.label}</dt>
-                      <dd className="text-base font-medium text-[var(--color-text-primary)] break-all">{row.value}</dd>
-                      <dd className="text-sm text-[var(--color-text-tertiary)] sm:ml-auto">변경 불가</dd>
-                    </div>
-                  ))}
-                </dl>
-                <p className="text-sm text-[var(--color-text-secondary)] mt-5 pt-5 border-t border-[var(--color-border)]">
-                  이메일, 소속 프랜차이즈 및 역할 변경이 필요한 경우 관리자에게 문의해주세요.
-                </p>
-              </section>
-
-              {/* 3. 보안 */}
-              <section aria-labelledby="security-heading" className={cardClass}>
-                <h2 id="security-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-5">
-                  보안
-                </h2>
-
-                {!account.hasPasswordLogin ? (
-                  <div className={rowClass}>
-                    <span className={rowLabelClass}>비밀번호</span>
-                    <span className="text-sm text-[var(--color-text-secondary)]">
-                      소셜 로그인 계정은 이 화면에서 비밀번호를 변경할 수 없습니다.
-                    </span>
+                  {/* 소속 프랜차이즈 - 읽기 전용 */}
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                      소속 프랜차이즈
+                    </label>
+                    <input
+                      type="text"
+                      value={account.franchiseName || "연결된 프랜차이즈 정보 없음"}
+                      disabled
+                      className="w-full px-4 py-3 rounded-lg bg-[var(--color-bg-default)] border border-[var(--color-border)] text-[var(--color-text-primary)] cursor-not-allowed opacity-70"
+                    />
                   </div>
-                ) : isChangingPassword ? (
-                  <form onSubmit={handleChangePassword} noValidate>
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                      <PasswordInput
-                        id="new-password"
-                        label="새 비밀번호"
-                        value={newPassword}
-                        onChange={setNewPassword}
-                        isVisible={isPasswordVisible}
-                      />
-                      <PasswordInput
-                        id="confirm-password"
-                        label="새 비밀번호 확인"
-                        value={confirmPassword}
-                        onChange={setConfirmPassword}
-                        isVisible={isPasswordVisible}
-                      />
-                    </div>
-                    <p className="mt-2 text-sm text-[var(--color-text-tertiary)]">{PASSWORD_MIN_LENGTH}자 이상 입력해주세요.</p>
-                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                      <button
-                        type="button"
-                        onClick={() => setIsPasswordVisible((visible) => !visible)}
-                        aria-pressed={isPasswordVisible}
-                        className="inline-flex min-h-[44px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
-                      >
-                        {isPasswordVisible ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
-                        {isPasswordVisible ? "비밀번호 숨기기" : "비밀번호 표시"}
-                      </button>
-                      <div className="flex gap-2">
+
+                  {/* 역할 - 읽기 전용 */}
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                      역할
+                    </label>
+                    <input
+                      type="text"
+                      value="본사 관리자"
+                      disabled
+                      className="w-full px-4 py-3 rounded-lg bg-[var(--color-bg-default)] border border-[var(--color-border)] text-[var(--color-text-primary)] cursor-not-allowed opacity-70"
+                    />
+                  </div>
+                </div>
+
+                {/* 구분선 */}
+                <div className="border-t border-[var(--color-border)] my-6" />
+
+                {/* 비밀번호 변경 섹션 */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div>
+                    <h3 className="text-lg font-bold text-[var(--color-text-primary)]">비밀번호</h3>
+                    <p className="text-base text-[var(--color-text-secondary)] mt-1">계정 보안을 위해 비밀번호를 변경할 수 있습니다.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isChangingPassword) {
+                        cancelChangePassword();
+                      } else {
+                        setPasswordFeedback(null);
+                        setIsChangingPassword(true);
+                      }
+                    }}
+                    className="h-11 px-5 rounded-lg border border-[var(--color-border)] bg-white text-sm font-medium text-[var(--color-text-primary)] hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-bg-default)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap"
+                  >
+                    {isChangingPassword ? "취소" : "비밀번호 변경"}
+                  </button>
+                </div>
+
+                {/* 비밀번호 변경 폼 */}
+                {isChangingPassword && (
+                  <div className="mt-6 pt-6 border-t border-[var(--color-border)] space-y-4">
+                    <form onSubmit={handleChangePassword} noValidate>
+                      <div>
+                        <label htmlFor="new-password" className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                          새 비밀번호
+                        </label>
+                        <input
+                          id="new-password"
+                          type="password"
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          autoComplete="new-password"
+                          placeholder={`최소 ${PASSWORD_MIN_LENGTH}자 이상`}
+                          className="w-full h-11 px-4 rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] disabled:opacity-60"
+                          disabled={isSavingPassword}
+                        />
+                      </div>
+
+                      <div>
+                        <label htmlFor="confirm-password" className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                          새 비밀번호 확인
+                        </label>
+                        <input
+                          id="confirm-password"
+                          type="password"
+                          value={confirmPassword}
+                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          autoComplete="new-password"
+                          placeholder="새 비밀번호를 다시 입력하세요"
+                          className="w-full h-11 px-4 rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] disabled:opacity-60"
+                          disabled={isSavingPassword}
+                        />
+                      </div>
+
+                      <div className="flex gap-2 justify-end pt-2">
                         <button
                           type="button"
                           onClick={cancelChangePassword}
                           disabled={isSavingPassword}
-                          className={secondaryButtonClass}
+                          className="h-11 px-5 rounded-lg border border-[var(--color-border)] bg-white text-sm font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-bg-default)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap"
                         >
                           취소
                         </button>
-                        <button type="submit" disabled={isSavingPassword} className={primaryButtonClass}>
-                          {isSavingPassword ? "변경 중..." : "비밀번호 변경"}
+                        <button
+                          type="submit"
+                          disabled={isSavingPassword}
+                          className="h-11 px-5 rounded-lg bg-[var(--color-primary)] text-sm font-medium text-white hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap"
+                        >
+                          {isSavingPassword ? "변경 중..." : "변경"}
                         </button>
                       </div>
-                    </div>
-                  </form>
-                ) : (
-                  <div className={rowClass}>
-                    <span className={rowLabelClass}>비밀번호</span>
-                    <span className="text-base font-medium tracking-widest text-[var(--color-text-primary)]" aria-label="비밀번호 숨김">
-                      ••••••••••••
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPasswordFeedback(null);
-                        setIsChangingPassword(true);
-                      }}
-                      className={`${secondaryButtonClass} sm:ml-auto self-start sm:self-auto`}
-                    >
-                      비밀번호 변경
-                    </button>
+                    </form>
+
+                    <FeedbackMessage feedback={passwordFeedback} />
                   </div>
                 )}
-                <FeedbackMessage feedback={passwordFeedback} />
+
+                {!isChangingPassword && <FeedbackMessage feedback={passwordFeedback} />}
+              </section>
+
+              {/* 3. 화면 설정 */}
+              <section aria-labelledby="display-heading" className={cardClass}>
+                <h2 id="display-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-2">
+                  화면 설정
+                </h2>
+                <p className="text-base text-[var(--color-text-primary)] opacity-70 mb-6">
+                  일잇다의 화면 테마를 선택합니다.
+                </p>
+                <ThemeSelector />
               </section>
             </>
           ) : null}
-
-          {/* 4. 화면 설정 */}
-          <section aria-labelledby="display-heading" className={cardClass}>
-            <h2 id="display-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-2">
-              화면 설정
-            </h2>
-            <p className="text-sm text-[var(--color-text-secondary)] mb-6">일잇다 화면의 테마를 설정합니다.</p>
-            <ThemeSelector />
-          </section>
-    </main>
-  );
-}
+        </main>
+      );
+    }

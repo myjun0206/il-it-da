@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useClientReady } from "@/lib/hq/use-client-ready";
 import Link from "next/link";
-import { Megaphone, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { Megaphone, Pencil, Plus, Search, Store, Trash2 } from "lucide-react";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { NoticeDetailDialog } from "@/components/notices/NoticeDetailDialog";
 import { NoticeEditDialog } from "@/components/notices/NoticeEditDialog";
@@ -26,7 +26,6 @@ interface HqNotice {
 
 type HqNoticeFilter = "all" | "franchise" | "store";
 
-const ALL_TARGETS = "all";
 const HQ_NOTICE_FILTERS: readonly NoticeFilterOption<HqNoticeFilter>[] = [
   { value: "all", label: "전체" },
   { value: "franchise", label: "전체 지점" },
@@ -72,7 +71,8 @@ export default function CommunicationPage() {
   const [noticesError, setNoticesError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [scopeFilter, setScopeFilter] = useState<HqNoticeFilter>("all");
-  const [targetFilter, setTargetFilter] = useState(ALL_TARGETS);
+  const [selectedStoreTarget, setSelectedStoreTarget] = useState<string | null>(null);
+  const [storeSearchQuery, setStoreSearchQuery] = useState("");
   const [editingNotice, setEditingNotice] = useState<HqNotice | null>(null);
   const [deletingNotice, setDeletingNotice] = useState<HqNotice | null>(null);
   const [selectedNotice, setSelectedNotice] = useState<HqNotice | null>(null);
@@ -140,13 +140,16 @@ export default function CommunicationPage() {
   };
 
   // 대상 필터 값은 실제로 불러온 공지의 대상에서만 만든다.
-  const targetOptions = useMemo(() => {
-    const scopedNotices = notices.filter((notice) => {
-      if (scopeFilter === "franchise") return false;
-      return scopeFilter === "all" || notice.targetType === "store";
-    });
+  const storeTargets = useMemo(() => {
+    const scopedNotices = notices.filter((notice) => notice.targetType === "store");
     return [...new Set(scopedNotices.map((notice) => notice.target))].sort((a, b) => a.localeCompare(b));
-  }, [notices, scopeFilter]);
+  }, [notices]);
+
+  // 지점 검색 필터링
+  const filteredStoreTargets = useMemo(() => {
+    const query = storeSearchQuery.trim().toLowerCase();
+    return query ? storeTargets.filter((target) => target.toLowerCase().includes(query)) : storeTargets;
+  }, [storeTargets, storeSearchQuery]);
 
   const filteredNotices = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -155,14 +158,15 @@ export default function CommunicationPage() {
         || (scopeFilter === "franchise"
           ? notice.targetType === "all" || notice.targetType === "franchise"
           : notice.targetType === "store"))
-      .filter((notice) => targetFilter === ALL_TARGETS || notice.target === targetFilter)
+      .filter((notice) => scopeFilter !== "store" || !selectedStoreTarget || notice.target === selectedStoreTarget)
       .filter((notice) => !query || notice.title.toLowerCase().includes(query))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }, [notices, scopeFilter, searchQuery, targetFilter]);
+  }, [notices, scopeFilter, searchQuery, selectedStoreTarget]);
 
   const changeScopeFilter = (value: HqNoticeFilter) => {
     setScopeFilter(value);
-    setTargetFilter(ALL_TARGETS);
+    setSelectedStoreTarget(null);
+    setStoreSearchQuery("");
   };
 
   if (!isReady) {
@@ -227,41 +231,116 @@ export default function CommunicationPage() {
                   })}
                 </div>
 
-                {/* 검색 & 대상 필터 */}
+                {/* 검색창 */}
                 <div className="mb-6">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-3">
-                    <div className="relative flex-1">
-                      <Search
-                        size={18}
-                        aria-hidden="true"
-                        className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]"
-                      />
-                      <input
-                        type="search"
-                        value={searchQuery}
-                        onChange={(event) => setSearchQuery(event.target.value)}
-                        placeholder="공지사항 검색"
-                        aria-label="공지사항 검색"
-                        className="min-h-[44px] w-full rounded-lg border border-[var(--color-border)] bg-white pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
-                      />
-                    </div>
-                    {scopeFilter !== "franchise" && targetOptions.length > 0 && (
-                      <select
-                        value={targetFilter}
-                        onChange={(event) => setTargetFilter(event.target.value)}
-                        aria-label="공지 대상 지점 필터"
-                        className="min-h-[44px] rounded-lg border border-[var(--color-border)] bg-white px-4 text-sm font-medium text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
-                      >
-                        <option value={ALL_TARGETS}>{scopeFilter === "store" ? "모든 특정 지점" : "전체 대상"}</option>
-                        {targetOptions.map((target) => (
-                          <option key={target} value={target}>
-                            {target}
-                          </option>
-                        ))}
-                      </select>
-                    )}
+                  <div className="relative">
+                    <Search
+                      size={18}
+                      aria-hidden="true"
+                      className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]"
+                    />
+                    <input
+                      type="search"
+                      value={searchQuery}
+                      onChange={(event) => setSearchQuery(event.target.value)}
+                      placeholder="공지사항 검색"
+                      aria-label="공지사항 검색"
+                      className="min-h-[44px] w-full rounded-lg border border-[var(--color-border)] bg-white pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
+                    />
                   </div>
                 </div>
+
+                {/* 특정 지점 선택 UI - scopeFilter === "store"일 때만 표시 */}
+                {scopeFilter === "store" && (
+                  <div className="mb-6">
+                    {selectedStoreTarget ? (
+                      /* 선택 후: 선택된 지점 표시 */
+                      <div className="flex min-h-[44px] items-center justify-between rounded-lg border border-[var(--color-border)] bg-white px-4 py-2">
+                        <div className="flex min-w-0 flex-1 items-center gap-3">
+                          <Store size={18} className="text-[var(--color-primary)] flex-shrink-0" aria-hidden="true" />
+                          <span
+                            className="text-base font-medium text-[var(--color-text-primary)] truncate"
+                            title={selectedStoreTarget}
+                          >
+                            {selectedStoreTarget}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedStoreTarget(null);
+                            setStoreSearchQuery("");
+                          }}
+                          className="ml-3 flex-shrink-0 min-h-[36px] rounded-lg border border-[var(--color-border)] bg-white px-3 text-sm font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-bg-default)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                        >
+                          변경
+                        </button>
+                      </div>
+                    ) : (
+                      /* 선택 전: 지점 검색 UI */
+                      <div>
+                        <label className="mb-3 block text-sm font-medium text-[var(--color-text-primary)]">
+                          지점 선택
+                        </label>
+                        <div className="rounded-lg border border-[var(--color-border)] bg-white">
+                          {/* 지점 검색 입력창 */}
+                          <div className="border-b border-[var(--color-border)] p-4 pb-3">
+                            <div className="relative">
+                              <Search
+                                size={18}
+                                aria-hidden="true"
+                                className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]"
+                              />
+                              <input
+                                type="search"
+                                value={storeSearchQuery}
+                                onChange={(event) => setStoreSearchQuery(event.target.value)}
+                                placeholder="지점명 검색..."
+                                aria-label="지점명 검색"
+                                className="min-h-[44px] w-full rounded-lg border border-[var(--color-border)] bg-white pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
+                              />
+                            </div>
+                          </div>
+
+                          {/* 지점 목록 - 검색어가 있을 때만 표시 */}
+                          {storeSearchQuery && filteredStoreTargets.length > 0 ? (
+                            <div className="max-h-[240px] overflow-y-auto">
+                              {filteredStoreTargets.map((target) => (
+                                <label
+                                  key={target}
+                                  className="flex min-h-[44px] items-center gap-3 border-b border-[var(--color-border)] px-4 py-2 hover:bg-[var(--color-bg-default)] cursor-pointer transition-colors last:border-b-0"
+                                >
+                                  <input
+                                    type="radio"
+                                    name="store-target"
+                                    value={target}
+                                    checked={false}
+                                    onChange={() => setSelectedStoreTarget(target)}
+                                    className="w-4 h-4 text-[var(--color-primary)] cursor-pointer flex-shrink-0"
+                                  />
+                                  <span
+                                    className="text-base font-medium text-[var(--color-text-primary)] truncate"
+                                    title={target}
+                                  >
+                                    {target}
+                                  </span>
+                                </label>
+                              ))}
+                            </div>
+                          ) : storeSearchQuery && filteredStoreTargets.length === 0 ? (
+                            <div className="px-4 py-8 text-center">
+                              <p className="text-base text-[var(--color-text-secondary)]">검색 결과가 없습니다.</p>
+                            </div>
+                          ) : (
+                            <div className="px-4 py-8 text-center">
+                              <p className="text-base text-[var(--color-text-secondary)]">지점명을 입력해 검색하세요.</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* 공지사항 개수 */}
                 <p className="mb-4 text-sm text-[var(--color-text-secondary)]">

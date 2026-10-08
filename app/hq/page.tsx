@@ -4,7 +4,6 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   UserCheck,
-  MessageSquare,
   Store,
   ChevronRight,
 } from "lucide-react";
@@ -17,14 +16,6 @@ const pendingTasksConfig = [
     description: "새로운 점주 또는 지점 승인 요청",
     icon: UserCheck,
     href: "/hq/approvals",
-  },
-  {
-    id: 2,
-    title: "미처리 문의 · 요청",
-    description: "아직 처리되지 않은 지점 요청",
-    icon: MessageSquare,
-    // 문의·요청 페이지의 "미처리" 업무 화면. 문의 테이블이 아직 없어 0건으로 표시된다.
-    href: "/hq/stores/requests?view=unresolved",
   },
   {
     id: 3,
@@ -105,14 +96,12 @@ export default function HQPage() {
         <h2 className="text-base font-bold text-[var(--color-text-primary)] mb-5">
           확인이 필요한 업무
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               {pendingTasksConfig.map((task) => {
                 const Icon = task.icon;
                 let count = 0;
                 if (task.id === 1) {
                   count = pendingApprovalsCount;
-                } else if (task.id === 2) {
-                  count = 0; // inquiries 테이블 없음
                 } else if (task.id === 3) {
                   count = storesWithoutOwnerCount;
                 }
@@ -133,7 +122,7 @@ export default function HQPage() {
                     <p className="text-3xl font-bold text-[var(--color-text-primary)] mb-3">
                       {count}
                       <span className="text-base font-normal text-[var(--color-text-secondary)] ml-1">
-                        {task.title === "승인 대기" ? "건" : task.title === "미처리 문의 · 요청" ? "건" : "곳"}
+                        {task.title === "승인 대기" ? "건" : "곳"}
                       </span>
                     </p>
                     <p className="text-sm text-[var(--color-text-secondary)]">
@@ -177,81 +166,37 @@ export default function HQPage() {
             </div>
           </div>
 
-          {/* Two Column Layout */}
-          <div className="grid grid-cols-1 lg:grid-cols-[1.75fr_1fr] gap-8 items-stretch">
-            {/* Recent Requests */}
-            <div className="flex flex-col">
-              <div className="flex items-center justify-between mb-5">
-                <h2 className="text-base font-bold text-[var(--color-text-primary)]">
-                  최근 지점 문의 · 요청
-                </h2>
-                <Link href="/hq/stores/requests" className="text-sm font-medium text-[var(--color-primary)] hover:underline flex items-center gap-2 px-2 rounded transition-colors min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]">
-                  전체 요청 보기 <ChevronRight size={16} aria-hidden="true" />
-                </Link>
-              </div>
-              <div className="bg-white border border-[var(--color-border)] rounded-lg overflow-hidden flex-1">
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b border-[var(--color-border)] bg-[var(--color-bg-surface)]">
-                        <th className="px-6 py-3 text-left text-sm font-semibold text-[var(--color-text-primary)]">
-                          지점명
-                        </th>
-                        <th className="px-6 py-3 text-left text-sm font-semibold text-[var(--color-text-primary)]">
-                          요청 내용
-                        </th>
-                        <th className="px-6 py-3 text-left text-sm font-semibold text-[var(--color-text-primary)]">
-                          시간
-                        </th>
-                        <th className="px-6 py-3 text-left text-sm font-semibold text-[var(--color-text-primary)]">
-                          상태
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr className="border-b border-[var(--color-border)]">
-                        <td colSpan={4} className="px-6 py-8 text-center text-sm text-[var(--color-text-secondary)]">
-                          아직 접수된 문의·요청이 없습니다.
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+          {/* Manual Status */}
+          <div className="flex flex-col">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-base font-bold text-[var(--color-text-primary)]">
+                매뉴얼 현황
+              </h2>
+              <Link href="/hq/manuals" className="text-sm font-medium text-[var(--color-primary)] hover:underline flex items-center gap-2 px-2 rounded transition-colors min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]">
+                매뉴얼 관리 <ChevronRight size={16} aria-hidden="true" />
+              </Link>
             </div>
-
-            {/* Manual Status */}
-            <div className="flex flex-col">
-              <div className="flex items-center justify-between mb-5">
-                <h2 className="text-base font-bold text-[var(--color-text-primary)]">
-                  매뉴얼 현황
-                </h2>
-                <Link href="/hq/manuals" className="text-sm font-medium text-[var(--color-primary)] hover:underline flex items-center gap-2 px-2 rounded transition-colors min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]">
-                  매뉴얼 관리 <ChevronRight size={16} aria-hidden="true" />
-                </Link>
+            <div className="bg-white border border-[var(--color-border)] rounded-lg p-6 space-y-3 flex-1">
+              <div>
+                <p className="text-sm text-[var(--color-text-secondary)] mb-2">
+                  공통 매뉴얼
+                </p>
+                <p className="text-2xl font-bold text-[var(--color-text-primary)]">
+                  {commonManualCount}
+                  <span className="text-sm font-normal text-[var(--color-text-secondary)] ml-1">
+                    개
+                  </span>
+                </p>
               </div>
-              <div className="bg-white border border-[var(--color-border)] rounded-lg p-6 space-y-3 flex-1">
-                <div>
-                  <p className="text-sm text-[var(--color-text-secondary)] mb-2">
-                    공통 매뉴얼
-                  </p>
-                  <p className="text-2xl font-bold text-[var(--color-text-primary)]">
-                    {commonManualCount}
-                    <span className="text-sm font-normal text-[var(--color-text-secondary)] ml-1">
-                      개
-                    </span>
-                  </p>
-                </div>
 
-                <div className="border-t border-[var(--color-border)] pt-3">
-                  <p className="text-sm text-[var(--color-text-secondary)] mb-2">
-                    지점별 매뉴얼
-                  </p>
-                  <p className="text-base text-[var(--color-text-primary)] font-medium">
-                    {storesWithManualsCount}
-                    <span className="text-sm font-normal text-[var(--color-text-secondary)]"> 개 지점에서 사용 중</span>
-                  </p>
-                </div>
+              <div className="border-t border-[var(--color-border)] pt-3">
+                <p className="text-sm text-[var(--color-text-secondary)] mb-2">
+                  지점별 매뉴얼
+                </p>
+                <p className="text-base text-[var(--color-text-primary)] font-medium">
+                  {storesWithManualsCount}
+                  <span className="text-sm font-normal text-[var(--color-text-secondary)]"> 개 지점에서 사용 중</span>
+                </p>
               </div>
             </div>
           </div>

@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, ArrowLeft, Inbox } from "lucide-react";
+import { AlertCircle, ArrowLeft, Bell } from "lucide-react";
 import { formatNotificationTime } from "@/lib/notifications";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 
 interface Notification {
   id: string;
@@ -27,6 +28,8 @@ export default function HqNotificationsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeleteLoading, setIsDeleteLoading] = useState(false);
   const pageSize = 20;
 
   // Fetch notifications
@@ -65,7 +68,7 @@ export default function HqNotificationsPage() {
 
   // Handle notification click
   const handleNotificationClick = async (notification: Notification) => {
-    // Mark as read
+    // Mark as read if unread
     if (!notification.isRead) {
       try {
         await fetch(`/api/notifications/${notification.id}/mark-read`, {
@@ -98,6 +101,29 @@ export default function HqNotificationsPage() {
     }
   };
 
+  // Handle delete all notifications
+  const handleDeleteAll = async () => {
+    setIsDeleteLoading(true);
+    try {
+      const response = await fetch("/api/notifications/delete-all", {
+        method: "DELETE",
+        credentials: "include",
+      });
+
+      if (response.ok) {
+        setNotifications([]);
+        setUnreadCount(0);
+        setShowDeleteConfirm(false);
+      } else {
+        console.error("Failed to delete all notifications");
+      }
+    } catch (e) {
+      console.error("Failed to delete all notifications:", e);
+    } finally {
+      setIsDeleteLoading(false);
+    }
+  };
+
   // Filter notifications based on current filter
   const filteredNotifications =
     filter === "unread"
@@ -105,154 +131,179 @@ export default function HqNotificationsPage() {
       : notifications;
 
   const hasMore = filteredNotifications.length >= pageSize * page;
+  const allNotificationsCount = notifications.length;
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-default)]">
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        {/* Header */}
-        <div className="flex items-center gap-4 mb-8">
+    <div className="p-6 lg:p-8">
+      <div className="max-w-7xl mx-auto">
+        {/* Page header with back button */}
+        <div className="flex items-start gap-4 mb-8">
           <button
             onClick={() => router.back()}
-            className="p-2 rounded-lg hover:bg-[var(--color-bg-surface)] transition-colors"
+            className="p-2 rounded-lg hover:bg-[var(--color-bg-surface)] transition-colors flex-shrink-0"
             aria-label="뒤로가기"
           >
             <ArrowLeft size={20} className="text-[var(--color-text-secondary)]" />
           </button>
           <div>
-            <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">알림</h1>
-            {unreadCount > 0 && (
-              <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-                읽지 않은 알림 {unreadCount}개
-              </p>
-            )}
+            <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">알림</h1>
+            <p className="text-base text-[var(--color-text-secondary)]">새로운 알림과 지난 알림을 확인하고 관리하세요.</p>
           </div>
-        </div>
-
-        {/* Controls */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
-          {/* Filter */}
-          <div className="flex gap-2">
-            <button
-              onClick={() => {
-                setFilter("all");
-                setPage(1);
-              }}
-              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                filter === "all"
-                  ? "bg-[var(--color-primary)] text-white"
-                  : "bg-[var(--color-bg-surface)] text-[var(--color-text-primary)] hover:bg-[var(--color-border)]"
-              }`}
-            >
-              전체
-            </button>
-            <button
-              onClick={() => {
-                setFilter("unread");
-                setPage(1);
-              }}
-              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                filter === "unread"
-                  ? "bg-[var(--color-primary)] text-white"
-                  : "bg-[var(--color-bg-surface)] text-[var(--color-text-primary)] hover:bg-[var(--color-border)]"
-              }`}
-            >
-              읽지 않음
-            </button>
-          </div>
-
-          {/* Mark all as read */}
-          {unreadCount > 0 && (
-            <button
-              onClick={handleMarkAllRead}
-              className="text-sm font-medium text-[var(--color-primary)] hover:opacity-80 transition-opacity"
-            >
-              모두 읽음
-            </button>
-          )}
         </div>
 
         {/* Content */}
         {isLoading ? (
-          <div className="text-center py-12">
-            <p className="text-[var(--color-text-secondary)]">로딩 중...</p>
+          <div className="rounded-lg border border-[var(--color-border)] bg-white p-8 text-center">
+            <p className="text-base text-[var(--color-text-secondary)]">로딩 중...</p>
           </div>
         ) : error ? (
-          <div className="flex flex-col items-center justify-center py-12 gap-3">
-            <AlertCircle
-              size={32}
-              className="text-red-600"
-              aria-hidden="true"
-            />
-            <p className="text-red-600 font-medium">{error}</p>
+          <div className="rounded-lg border border-red-200 bg-red-50 p-8 text-center">
+            <p className="flex items-center justify-center gap-1.5 text-sm text-red-700">
+              <AlertCircle size={16} aria-hidden="true" />
+              {error}
+            </p>
             <button
               onClick={() => window.location.reload()}
-              className="text-sm font-medium text-[var(--color-primary)] hover:opacity-80 transition-opacity"
+              className="mt-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-[var(--color-primary)] hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
             >
               다시 시도
             </button>
           </div>
-        ) : filteredNotifications.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 gap-3">
-            <Inbox
-              size={32}
-              className="text-[var(--color-text-tertiary)]"
-              aria-hidden="true"
-            />
-            <p className="text-[var(--color-text-secondary)]">
-              {filter === "unread" ? "읽지 않은 알림이 없습니다." : "알림이 없습니다."}
-            </p>
+        ) : allNotificationsCount === 0 ? (
+          <div className="rounded-lg border border-[var(--color-border)] bg-white p-8 text-center">
+            <Bell size={28} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+            <p className="text-base font-semibold text-[var(--color-text-primary)]">아직 알림이 없습니다.</p>
+            <p className="mt-1 text-sm text-[var(--color-text-secondary)]">새로운 소식이 도착하면 이곳에서 확인할 수 있습니다.</p>
           </div>
         ) : (
-          <div className="space-y-1">
-            <div className="bg-white border border-[var(--color-border)] rounded-lg overflow-hidden">
-              {filteredNotifications.map((notification, index) => (
-                <div
-                  key={notification.id}
-                  onClick={() => handleNotificationClick(notification)}
-                  className={`px-4 py-4 cursor-pointer transition-colors border-b border-[var(--color-border)] last:border-b-0 ${
-                    notification.isRead
-                      ? "bg-white hover:bg-[var(--color-bg-surface)]"
-                      : "bg-[var(--color-primary-light)]/5 hover:bg-[var(--color-primary-light)]/10"
+          <>
+            {/* Filter + Action buttons */}
+            <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              {/* Left: Filter buttons */}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    setFilter("all");
+                    setPage(1);
+                  }}
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                    filter === "all"
+                      ? "bg-[var(--color-primary)] text-white"
+                      : "bg-[var(--color-bg-surface)] text-[var(--color-text-primary)] hover:bg-[var(--color-border)]"
                   }`}
                 >
-                  <div className="flex gap-4">
-                    {!notification.isRead && (
-                      <div className="flex-shrink-0 mt-1">
-                        <div className="w-2.5 h-2.5 rounded-full bg-[var(--color-primary)]" />
-                      </div>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-4">
-                        <p className="text-sm font-semibold text-[var(--color-text-primary)]">
-                          {notification.title}
-                        </p>
-                        <p className="text-xs text-[var(--color-text-tertiary)] flex-shrink-0">
-                          {formatNotificationTime(notification.createdAt)}
-                        </p>
-                      </div>
-                      <p className="text-sm text-[var(--color-text-secondary)] mt-2 line-clamp-2">
-                        {notification.message}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Load more button */}
-            {hasMore && (
-              <div className="text-center py-6">
+                  전체 {allNotificationsCount}
+                </button>
                 <button
-                  onClick={() => setPage((p) => p + 1)}
-                  className="text-sm font-medium text-[var(--color-primary)] hover:opacity-80 transition-opacity"
+                  onClick={() => {
+                    setFilter("unread");
+                    setPage(1);
+                  }}
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                    filter === "unread"
+                      ? "bg-[var(--color-primary)] text-white"
+                      : "bg-[var(--color-bg-surface)] text-[var(--color-text-primary)] hover:bg-[var(--color-border)]"
+                  }`}
                 >
-                  더 보기
+                  읽지 않음 {unreadCount}
                 </button>
               </div>
+
+              {/* Right: Action buttons */}
+              <div className="flex gap-3 sm:ml-auto">
+                <button
+                  onClick={handleMarkAllRead}
+                  disabled={unreadCount === 0}
+                  className="px-4 py-2 rounded-lg font-medium text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-[var(--color-primary)] hover:enabled:opacity-80"
+                >
+                  모두 읽음
+                </button>
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  disabled={allNotificationsCount === 0}
+                  className="px-4 py-2 rounded-lg font-medium text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-red-600 hover:enabled:opacity-80"
+                >
+                  전체 삭제
+                </button>
+              </div>
+            </div>
+
+            {/* Notifications list */}
+            {filteredNotifications.length === 0 ? (
+              <div className="rounded-lg border border-[var(--color-border)] bg-white p-8 text-center">
+                <Bell size={28} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+                <p className="text-sm text-[var(--color-text-secondary)]">
+                  {filter === "unread" ? "읽지 않은 알림이 없습니다." : "알림이 없습니다."}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1 border border-[var(--color-border)] rounded-lg overflow-hidden bg-white">
+                {filteredNotifications.map((notification) => (
+                  <button
+                    key={notification.id}
+                    type="button"
+                    onClick={() => handleNotificationClick(notification)}
+                    className={`w-full px-8 py-7 text-left transition-colors border-b border-[var(--color-border)] last:border-b-0 cursor-pointer ${
+                      notification.isRead
+                        ? "hover:bg-[var(--color-bg-surface)]"
+                        : "hover:bg-[var(--color-primary-light)]/10"
+                    }`}
+                  >
+                    <div className="flex gap-4">
+                      {/* Unread indicator dot */}
+                      {!notification.isRead && (
+                        <div className="flex-shrink-0 mt-1">
+                          <div className="w-2 h-2 rounded-full bg-[var(--color-primary)]" />
+                        </div>
+                      )}
+
+                      {/* Content */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <p
+                              className={`text-[17px] font-semibold line-clamp-1 break-keep ${
+                                notification.isRead
+                                  ? "text-[var(--color-text-primary)]"
+                                  : "text-[var(--color-text-primary)] font-bold"
+                              }`}
+                            >
+                              {notification.title}
+                            </p>
+                            <p className="text-base text-[var(--color-text-secondary)] mt-3 line-clamp-1 break-words leading-relaxed">
+                              {notification.message}
+                            </p>
+                          </div>
+
+                          {/* Time */}
+                          <div className="flex-shrink-0 ml-2">
+                            <p className="text-sm text-[var(--color-text-tertiary)] whitespace-nowrap">
+                              {formatNotificationTime(notification.createdAt)}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
             )}
-          </div>
+          </>
         )}
       </div>
+
+      {/* Delete all confirm dialog */}
+      <ConfirmDialog
+        isOpen={showDeleteConfirm}
+        title="모든 알림을 삭제하시겠습니까?"
+        description="삭제한 알림은 다시 확인할 수 없습니다."
+        confirmText="전체 삭제"
+        cancelText="취소"
+        isDangerous
+        isLoading={isDeleteLoading}
+        onConfirm={handleDeleteAll}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
     </div>
   );
 }

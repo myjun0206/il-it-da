@@ -46,25 +46,13 @@ export default function HQSidebar({
 
   const menuItems: HQSidebarMenuItem[] = [
     { id: "home", label: "홈", icon: House, href: "/hq" },
-    {
-      id: "manual",
-      label: "매뉴얼 관리",
-      icon: BookOpen,
-      href: "/hq/manuals",
-      submenu: [
-        { id: "manual-common", label: "공통 매뉴얼 관리", href: "/hq/manuals/common" },
-        { id: "manual-store", label: "지점 매뉴얼 보기", href: "/hq/manuals/stores" },
-      ],
-    },
+    { id: "manual-common", label: "공통 매뉴얼 관리", icon: BookOpen, href: "/hq/manuals/common" },
+    { id: "manual-store", label: "지점 매뉴얼 보기", icon: BookOpen, href: "/hq/manuals/stores" },
     {
       id: "store",
       label: "지점 관리",
       icon: Store,
       href: "/hq/stores",
-      submenu: [
-        { id: "store-status", label: "지점 현황", href: "/hq/stores" },
-        { id: "store-request", label: "문의 · 요청", href: "/hq/stores/requests" },
-      ],
     },
     { id: "notice", label: "공지사항", icon: Megaphone, href: "/hq/communication" },
   ];

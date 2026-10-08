@@ -262,48 +262,30 @@ function HqStoresContent() {
                             <thead className="bg-[var(--color-bg-default)] border-b border-[var(--color-border)]">
                               <tr>
                                 <th scope="col" className="px-6 py-3 text-left text-sm font-bold text-[var(--color-text-primary)]">지점명</th>
-                                <th scope="col" className="px-6 py-3 text-left text-sm font-bold text-[var(--color-text-primary)]">상태</th>
-                                <th scope="col" className="px-6 py-3 text-left text-sm font-bold text-[var(--color-text-primary)]">점주</th>
-                                <th scope="col" className="px-6 py-3 text-right text-sm font-bold text-[var(--color-text-primary)]">직원</th>
-                                <th scope="col" className="px-6 py-3 text-center text-sm font-bold text-[var(--color-text-primary)]">관리</th>
+                                <th scope="col" className="px-6 py-3 text-left text-sm font-bold text-[var(--color-text-primary)]">등록 상태</th>
+                                <th scope="col" className="px-6 py-3 text-left text-sm font-bold text-[var(--color-text-primary)]">직원</th>
+                                <th scope="col" className="px-6 py-3 text-center text-sm font-bold text-[var(--color-text-primary)]">상세</th>
                               </tr>
                             </thead>
                             <tbody>
                               {filteredStores.map((store) => (
                                 <tr
                                   key={store.id}
-                                  className="border-t border-[var(--color-border)] hover:bg-[var(--color-bg-default)] transition-colors"
+                                  className="min-h-[76px] border-t border-[var(--color-border)] hover:bg-[var(--color-bg-default)] transition-colors"
                                 >
-                                  <td className="px-6 py-4 text-base font-medium text-[var(--color-text-primary)]">{store.name}</td>
-                                  <td className="px-6 py-4">
+                                  <td className="px-6 py-5 text-base font-semibold text-[var(--color-text-primary)] align-middle">{store.name}</td>
+                                  <td className="px-6 py-5 align-middle">
                                     <OwnerStatusBadge hasOwner={store.ownerNames.length > 0} />
                                   </td>
-                                  <td className="px-6 py-4 text-base text-[var(--color-text-primary)]">
-                                    {store.ownerNames.length > 0 ? (
-                                      store.ownerNames.join(", ")
-                                    ) : (
-                                      <span className="text-[var(--color-text-secondary)]">미지정</span>
-                                    )}
-                                  </td>
-                                  <td className="px-6 py-4 text-base text-right text-[var(--color-text-secondary)]">{store.staffCount}명</td>
-                                  <td className="px-6 py-4 text-center">
-                                    <div className="inline-flex items-center gap-1">
-                                      <button
-                                        type="button"
-                                        onClick={() => void handleOpenMembers(store)}
-                                        aria-label={`${store.name} 소속 사용자 보기`}
-                                        className="inline-flex min-h-[44px] items-center gap-1 rounded-lg px-3 text-sm font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-default)] hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
-                                      >
-                                        <Users size={16} aria-hidden="true" /> 보기
-                                      </button>
-                                      <Link
-                                        href={`/hq/stores/${store.id}`}
-                                        aria-label={`${store.name} 상세 보기`}
-                                        className="inline-flex min-h-[44px] items-center gap-1 rounded-lg px-3 text-sm font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
-                                      >
-                                        <ChevronRight size={16} aria-hidden="true" />
-                                      </Link>
-                                    </div>
+                                  <td className="px-6 py-5 text-base font-medium text-[var(--color-text-secondary)] align-middle whitespace-nowrap">{store.staffCount}명</td>
+                                  <td className="px-6 py-5 text-center align-middle">
+                                    <Link
+                                      href={`/hq/stores/${store.id}`}
+                                      aria-label={`${store.name} 상세 보기`}
+                                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                                    >
+                                      <ChevronRight size={20} aria-hidden="true" />
+                                    </Link>
                                   </td>
                                 </tr>
                               ))}
@@ -319,36 +301,27 @@ function HqStoresContent() {
                             <Link
                               href={`/hq/stores/${store.id}`}
                               aria-label={`${store.name} 상세 보기`}
-                              className="block bg-white border border-[var(--color-border)] rounded-lg p-4 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                              className="block bg-white border border-[var(--color-border)] rounded-lg p-4 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] min-h-[130px] flex flex-col"
                             >
-                              <div className="mb-2 flex items-start justify-between gap-3">
-                                <p className="text-base font-bold text-[var(--color-text-primary)]">{store.name}</p>
-                                <ChevronRight size={20} className="mt-0.5 shrink-0 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+                              <div className="mb-3 flex items-start justify-between gap-3">
+                                <p className="text-base font-bold text-[var(--color-text-primary)] flex-1">{store.name}</p>
+                                <ChevronRight size={20} className="mt-0.5 shrink-0 text-[var(--color-primary)]" aria-hidden="true" />
                               </div>
                               <div className="mb-3">
                                 <OwnerStatusBadge hasOwner={store.ownerNames.length > 0} />
                               </div>
-                              <dl className="grid grid-cols-2 gap-3 text-xs">
-                                <div>
-                                  <dt className="text-[var(--color-text-secondary)]">점주</dt>
-                                  <dd className="font-medium text-[var(--color-text-primary)]">
-                                    {store.ownerNames.length > 0 ? store.ownerNames.join(", ") : "미지정"}
-                                  </dd>
-                                </div>
-                                <div>
-                                  <dt className="text-[var(--color-text-secondary)]">직원</dt>
-                                  <dd className="font-medium text-[var(--color-text-primary)]">{store.staffCount}명</dd>
-                                </div>
-                              </dl>
+                              <div className="mt-auto">
+                                <dl className="flex items-center gap-2">
+                                  <div className="flex items-center gap-1.5">
+                                    <dt className="sr-only">직원 수</dt>
+                                    <dd className="inline-flex items-center gap-1 text-base font-medium text-[var(--color-text-secondary)]">
+                                      <Users size={16} className="text-[var(--color-primary)]" aria-hidden="true" />
+                                      {store.staffCount}명
+                                    </dd>
+                                  </div>
+                                </dl>
+                              </div>
                             </Link>
-                            <button
-                              type="button"
-                              onClick={() => void handleOpenMembers(store)}
-                              aria-label={`${store.name} 소속 사용자 보기`}
-                              className="mt-2 inline-flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-white px-3 text-sm font-medium text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
-                            >
-                              <Users size={16} aria-hidden="true" /> 소속 사용자
-                            </button>
                           </li>
                         ))}
                       </ul>
