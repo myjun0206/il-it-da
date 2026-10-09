@@ -1,5 +1,5 @@
 export const DEFAULT_NOTICE_PAGE = 1;
-export const DEFAULT_NOTICE_LIMIT = 10;
+export const DEFAULT_NOTICE_LIMIT = 9;
 export const MAX_NOTICE_LIMIT = 50;
 
 export interface NoticePaginationMetadata {

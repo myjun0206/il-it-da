@@ -3,7 +3,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, ArrowLeft, FileText, Pencil, Plus, RefreshCw, Search, Sparkles, Store, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, FileText, Pencil, Plus, RefreshCw, Search, Sparkles, Store, Trash2, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
@@ -40,6 +40,10 @@ const STORE_MANUAL_CATEGORY_PLACEHOLDER_CONTENT = "__STORE_MANUAL_CATEGORY_PLACE
 const UUID_LIKE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const INTERNAL_ID_LIKE_PATTERN = /^[A-Za-z0-9_-]{16,}$/;
 const STORE_REINDEX_URL = "/api/store-manuals/search-readiness/reindex";
+
+function createTitleItemId(): string {
+  return `title-item-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
+}
 
 // 저장 응답의 searchResults 중 검색 반영이 실패했거나 확인되지 않은 항목만 다시 처리 대상으로 삼는다.
 function searchRetryManualIds(body: unknown): string[] {
@@ -142,8 +146,8 @@ export default function StoreManualsManagementPage() {
   const [isDeletingCategory, setIsDeletingCategory] = useState(false);
   const [showTitleModal, setShowTitleModal] = useState(false);
   const [titleName, setTitleName] = useState("");
-  const [titleItems, setTitleItems] = useState<{ id: string; content: string }[]>([
-    { id: crypto.randomUUID(), content: "" },
+  const [titleItems, setTitleItems] = useState<{ id: string; content: string }[]>(() => [
+    { id: createTitleItemId(), content: "" },
   ]);
   const [titleError, setTitleError] = useState("");
   const [isCreatingTitle, setIsCreatingTitle] = useState(false);
@@ -180,6 +184,7 @@ export default function StoreManualsManagementPage() {
   const [idempotencyKey, setIdempotencyKey] = useState("");
   const [isSavingAnalysis, setIsSavingAnalysis] = useState(false);
   const [analysisSaveError, setAnalysisSaveError] = useState("");
+  const [filterType, setFilterType] = useState<"all" | "category" | "manual">("all");
 
   const showToast = (message: string) => {
     setToastMessage(message);
@@ -340,6 +345,12 @@ export default function StoreManualsManagementPage() {
         return categoryText.includes(normalizedSearch) || groupText.includes(normalizedSearch);
       })
     : categories;
+  const visibleManuals = normalizedSearch
+    ? groups.filter((group) => {
+        const groupText = [group.title, ...group.items.map((item) => item.content)].join(" ").toLowerCase();
+        return groupText.includes(normalizedSearch);
+      })
+    : groups;
   const normalizedTitleSearch = titleSearchQuery.trim().toLowerCase();
   const visibleTitleGroups = selectedCategory
     ? normalizedTitleSearch
@@ -375,12 +386,12 @@ export default function StoreManualsManagementPage() {
 
   const resetTitleForm = () => {
     setTitleName("");
-    setTitleItems([{ id: crypto.randomUUID(), content: "" }]);
+    setTitleItems([{ id: createTitleItemId(), content: "" }]);
     setTitleError("");
   };
 
   const handleAddTitleItem = () => {
-    setTitleItems((prev) => [...prev, { id: crypto.randomUUID(), content: "" }]);
+    setTitleItems((prev) => [...prev, { id: createTitleItemId(), content: "" }]);
   };
 
   const handleRemoveTitleItem = (id: string) => {
@@ -1110,7 +1121,7 @@ export default function StoreManualsManagementPage() {
           ) : view === "categories" ? (
             <section>
               <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-                <div className="relative w-full md:w-[420px] md:flex-none">
+                <div className="relative flex-1 min-w-0">
                   <Search
                     size={18}
                     aria-hidden="true"
@@ -1147,13 +1158,64 @@ export default function StoreManualsManagementPage() {
                 </div>
               </div>
 
-              <div className="mb-4 text-sm text-(--color-text-secondary)">
-                카테고리 <span className="font-bold text-(--color-text-primary)">{categories.length}</span>개 · 타이틀{" "}
-                <span className="font-bold text-(--color-text-primary)">{groups.length}</span>개 · 세부 항목{" "}
-                <span className="font-bold text-(--color-text-primary)">{totalItemCount}</span>개
+              {/* Filter Buttons */}
+              <div className="mb-6 flex flex-wrap gap-2" role="group" aria-label="검색 필터">
+                <button
+                  type="button"
+                  onClick={() => setFilterType("all")}
+                  aria-pressed={filterType === "all"}
+                  className={`min-h-9 rounded-full border px-3.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-primary) ${
+                    filterType === "all"
+                      ? "border-(--color-primary) bg-(--color-primary-light)/40 text-(--color-primary)"
+                      : "border-(--color-border) bg-white text-(--color-text-secondary) hover:border-(--color-primary)/50 hover:text-(--color-text-primary)"
+                  }`}
+                >
+                  전체
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterType("category")}
+                  aria-pressed={filterType === "category"}
+                  className={`min-h-9 rounded-full border px-3.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-primary) ${
+                    filterType === "category"
+                      ? "border-(--color-primary) bg-(--color-primary-light)/40 text-(--color-primary)"
+                      : "border-(--color-border) bg-white text-(--color-text-secondary) hover:border-(--color-primary)/50 hover:text-(--color-text-primary)"
+                  }`}
+                >
+                  카테고리
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterType("manual")}
+                  aria-pressed={filterType === "manual"}
+                  className={`min-h-9 rounded-full border px-3.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-primary) ${
+                    filterType === "manual"
+                      ? "border-(--color-primary) bg-(--color-primary-light)/40 text-(--color-primary)"
+                      : "border-(--color-border) bg-white text-(--color-text-secondary) hover:border-(--color-primary)/50 hover:text-(--color-text-primary)"
+                  }`}
+                >
+                  매뉴얼
+                </button>
               </div>
 
-              {visibleCategories.length === 0 ? (
+              <div className="mb-6 text-left text-sm">
+                <span className="font-bold text-(--color-text-primary)">
+                  검색 결과{" "}
+                  {filterType === "all"
+                    ? visibleCategories.length + visibleManuals.length
+                    : filterType === "category"
+                    ? visibleCategories.length
+                    : visibleManuals.length}
+                  개
+                </span>
+                <span className="text-(--color-text-secondary)">
+                  {" "}· 카테고리 {categories.length}개 · 타이틀 {groups.length}개 · 세부 항목 {totalItemCount}개
+                </span>
+              </div>
+
+              {(filterType === "all" && visibleCategories.length === 0 && visibleManuals.length === 0) ||
+              (filterType === "category" && visibleCategories.length === 0) ||
+              (filterType === "manual" && visibleManuals.length === 0) ? (
                 <div className="rounded-xl border border-(--color-border) bg-white p-12 text-center">
                   <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-(--color-primary-light)">
                     <FileText size={32} className="text-(--color-primary)" />
@@ -1174,46 +1236,91 @@ export default function StoreManualsManagementPage() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {visibleCategories.map((category) => (
-                    <button
-                      key={category.category}
-                      type="button"
-                      onClick={() => {
-                        setSelectedCategoryName(category.category);
-                        setSelectedTitleId(null);
-                        setTitleSearchQuery("");
-                        setView("titles");
-                      }}
-                      className="relative rounded-xl border border-(--color-border) bg-white p-5 text-left transition-colors hover:border-(--color-primary) hover:bg-(--color-primary-light)/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-primary)"
-                    >
-                      <span
+                  {(filterType === "all" || filterType === "category") &&
+                    visibleCategories.map((category) => (
+                      <div
+                        key={category.category}
                         role="button"
                         tabIndex={0}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          openEditCategoryModal(category);
+                        onClick={() => {
+                          setSelectedCategoryName(category.category);
+                          setSelectedTitleId(null);
+                          setTitleSearchQuery("");
+                          setView("titles");
                         }}
                         onKeyDown={(event) => {
                           if (event.key === "Enter" || event.key === " ") {
                             event.preventDefault();
-                            event.stopPropagation();
-                            openEditCategoryModal(category);
-                          }
+                            setSelectedCategoryName(category.category);
+                          setSelectedTitleId(null);
+                          setTitleSearchQuery("");
+                          setView("titles");
+                        }
+                      }}
+                      className="relative cursor-pointer rounded-xl border border-(--color-border) bg-white p-5 text-left transition-colors hover:border-(--color-primary) hover:bg-(--color-primary-light)/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-primary)"
+                    >
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openEditCategoryModal(category);
                         }}
-                        className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-md border border-(--color-border) bg-white text-(--color-text-secondary) shadow-sm transition-colors hover:border-(--color-primary) hover:text-(--color-primary)"
+                        className="absolute right-2 top-2 inline-flex h-9 w-9 items-center justify-center rounded-lg text-(--color-text-secondary) transition-all hover:bg-(--color-primary-light)/20 hover:text-(--color-primary) focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-primary)"
                         aria-label="카테고리 이름 수정"
+                        title="카테고리 이름 수정"
                       >
-                        <Pencil size={15} />
-                      </span>
-                      <span className="mb-3 inline-flex rounded-full bg-(--color-primary-light)/40 px-2.5 py-0.5 text-xs font-semibold text-(--color-primary)">
-                        카테고리
-                      </span>
-                      <p className="pr-10 text-base font-semibold text-(--color-text-primary) break-keep line-clamp-2">{getDisplayCategoryName(category.category)}</p>
+                        <Pencil size={18} />
+                      </button>
+                      <p className="text-lg font-bold text-(--color-text-primary) break-keep line-clamp-2">{getDisplayCategoryName(category.category)}</p>
                       <p className="pt-3 text-xs text-(--color-text-tertiary)">
                         타이틀 {category.groups.length}개 · 세부 매뉴얼 {category.itemCount}개
                       </p>
-                    </button>
+                    </div>
                   ))}
+                  {(filterType === "all" || filterType === "manual") &&
+                    visibleManuals.map((group) => (
+                      <div
+                        key={group.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => {
+                          setSelectedCategoryName(group.category);
+                          setSelectedTitleId(group.id);
+                          setItemSearchQuery("");
+                          cancelEditItem();
+                          setView("items");
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            setSelectedCategoryName(group.category);
+                            setSelectedTitleId(group.id);
+                            setItemSearchQuery("");
+                            cancelEditItem();
+                            setView("items");
+                          }
+                        }}
+                        className="relative cursor-pointer rounded-xl border border-(--color-border) bg-white p-5 text-left transition-colors hover:border-(--color-primary) hover:bg-(--color-primary-light)/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-primary)"
+                      >
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openEditTitleModal(group);
+                          }}
+                          className="absolute right-2 top-2 inline-flex h-9 w-9 items-center justify-center rounded-lg text-(--color-text-secondary) transition-all hover:bg-(--color-primary-light)/20 hover:text-(--color-primary) focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-primary)"
+                          aria-label="매뉴얼 이름 수정"
+                          title="매뉴얼 이름 수정"
+                        >
+                          <Pencil size={18} />
+                        </button>
+                        <span className="mb-3 inline-flex max-w-[calc(100%-2.5rem)] truncate rounded-full bg-(--color-primary-light)/40 px-2.5 py-0.5 text-xs font-semibold text-(--color-primary)">
+                          {getDisplayCategoryName(group.category)}
+                        </span>
+                        <p className="pr-10 text-lg font-bold text-(--color-text-primary) break-keep line-clamp-2">{group.title}</p>
+                        <p className="pt-3 text-xs text-(--color-text-tertiary)">세부 매뉴얼 {group.items.length}개</p>
+                      </div>
+                    ))}
                 </div>
               )}
 
@@ -1221,7 +1328,7 @@ export default function StoreManualsManagementPage() {
           ) : view === "titles" ? (
             <section>
               <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-                <div className="relative w-full md:w-[420px] md:flex-none">
+                <div className="relative flex-1 min-w-0">
                   <Search
                     size={18}
                     aria-hidden="true"
@@ -1236,11 +1343,9 @@ export default function StoreManualsManagementPage() {
                     className="h-12 w-full rounded-lg border border-(--color-border) bg-white pl-11 pr-4 text-base text-(--color-text-primary) placeholder:text-(--color-text-tertiary) focus:border-(--color-primary) focus:outline-none focus:ring-2 focus:ring-(--color-primary)/20"
                   />
                 </div>
-                <div className="flex items-center justify-end">
-                  <Button variant="primary" onClick={() => setShowTitleModal(true)} disabled={!selectedCategory}>
-                    <Plus size={16} className="mr-2" /> 타이틀 추가
-                  </Button>
-                </div>
+                <Button variant="primary" onClick={() => setShowTitleModal(true)} disabled={!selectedCategory}>
+                  <Plus size={16} className="mr-2" /> 타이틀 추가
+                </Button>
               </div>
 
               {!selectedCategory || visibleTitleGroups.length === 0 ? (
@@ -1252,42 +1357,45 @@ export default function StoreManualsManagementPage() {
               ) : (
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
                   {visibleTitleGroups.map((group) => (
-                    <button
+                    <div
                       key={group.id}
-                      type="button"
+                      role="button"
+                      tabIndex={0}
                       onClick={() => {
                         setSelectedTitleId(group.id);
                         setItemSearchQuery("");
                         cancelEditItem();
                         setView("items");
                       }}
-                      className="relative rounded-xl border border-(--color-border) bg-white p-5 text-left transition-colors hover:border-(--color-primary) hover:bg-(--color-primary-light)/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-primary)"
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setSelectedTitleId(group.id);
+                          setItemSearchQuery("");
+                          cancelEditItem();
+                          setView("items");
+                        }
+                      }}
+                      className="relative cursor-pointer rounded-xl border border-(--color-border) bg-white p-5 text-left transition-colors hover:border-(--color-primary) hover:bg-(--color-primary-light)/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-primary)"
                     >
-                      <span
-                        role="button"
-                        tabIndex={0}
+                      <button
+                        type="button"
                         onClick={(event) => {
                           event.stopPropagation();
                           openEditTitleModal(group);
                         }}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            openEditTitleModal(group);
-                          }
-                        }}
-                        className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-md border border-(--color-border) bg-white text-(--color-text-secondary) shadow-sm transition-colors hover:border-(--color-primary) hover:text-(--color-primary)"
+                        className="absolute right-2 top-2 inline-flex h-9 w-9 items-center justify-center rounded-lg text-(--color-text-secondary) transition-all hover:bg-(--color-primary-light)/20 hover:text-(--color-primary) focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-primary)"
                         aria-label="타이틀 이름 수정"
+                        title="타이틀 이름 수정"
                       >
-                        <Pencil size={15} />
-                      </span>
+                        <Pencil size={18} />
+                      </button>
                       <span className="mb-3 inline-flex max-w-[calc(100%-2.5rem)] truncate rounded-full bg-(--color-primary-light)/40 px-2.5 py-0.5 text-xs font-semibold text-(--color-primary)">
                         {getDisplayCategoryName(group.category)}
                       </span>
                       <p className="pr-10 text-base font-semibold text-(--color-text-primary) break-keep line-clamp-2">{group.title}</p>
                       <p className="pt-3 text-xs text-(--color-text-tertiary)">세부 매뉴얼 {group.items.length}개</p>
-                    </button>
+                    </div>
                   ))}
                 </div>
               )}
@@ -1295,7 +1403,7 @@ export default function StoreManualsManagementPage() {
             </section>
           ) : (
             <section>
-              <div className="mb-6 relative w-full md:w-[420px]">
+              <div className="mb-6 relative w-full">
                 <Search
                   size={18}
                   aria-hidden="true"
@@ -1325,17 +1433,21 @@ export default function StoreManualsManagementPage() {
                             type="button"
                             onClick={() => startEditItem(item)}
                             disabled={editingItemId === item.id || deletingItemId === item.id || savingItemId === item.id}
-                            className="rounded-md border border-(--color-border) bg-white px-3 py-1.5 text-xs font-bold text-(--color-text-secondary) transition-colors hover:border-(--color-primary) hover:text-(--color-primary)"
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-(--color-text-secondary) transition-all hover:bg-(--color-primary-light)/20 hover:text-(--color-primary) focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-primary) disabled:cursor-not-allowed disabled:opacity-60"
+                            aria-label="매뉴얼 수정"
+                            title="매뉴얼 수정"
                           >
-                            수정
+                            <Pencil size={18} />
                           </button>
                           <button
                             type="button"
                             onClick={() => handleDeleteItem(item)}
                             disabled={deletingItemId === item.id || savingItemId === item.id}
-                            className="rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-bold text-(--color-status-error) transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-(--color-text-secondary) transition-all hover:bg-red-100/50 hover:text-red-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                            aria-label="매뉴얼 삭제"
+                            title="매뉴얼 삭제"
                           >
-                            {deletingItemId === item.id ? "삭제 중" : "삭제"}
+                            <Trash2 size={18} />
                           </button>
                         </div>
                       </div>
@@ -1406,17 +1518,17 @@ export default function StoreManualsManagementPage() {
       {/* Delete All Manuals Confirm Modal */}
       {showDeleteAllConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="bg-white rounded-xl shadow-lg w-full max-w-sm p-6">
-            <h2 className="text-lg font-bold text-(--color-text-primary) mb-2">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-[500px] p-8">
+            <h2 className="text-xl font-bold text-(--color-text-primary) mb-3">
               지점 매뉴얼 전체 삭제
             </h2>
-            <p className="text-sm text-(--color-text-secondary) mb-6">
+            <p className="text-base text-(--color-text-secondary) mb-8 leading-relaxed">
               이 지점에 등록된 모든 매뉴얼을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
             </p>
 
-            {deleteAllError && <p className="mb-4 text-sm text-(--color-status-error)">{deleteAllError}</p>}
+            {deleteAllError && <p className="mb-6 text-sm text-(--color-status-error)">{deleteAllError}</p>}
 
-            <div className="flex items-center justify-end gap-2">
+            <div className="flex items-center justify-end gap-3">
               <Button variant="ghost" onClick={() => setShowDeleteAllConfirm(false)} disabled={isDeletingAll}>
                 취소
               </Button>

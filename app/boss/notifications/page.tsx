@@ -31,6 +31,8 @@ export default function BossNotificationsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const pageSize = 20;
 
   useEffect(() => {
@@ -123,6 +125,35 @@ export default function BossNotificationsPage() {
     }
   };
 
+  // Handle delete all confirmation
+  const handleDeleteAll = () => {
+    setShowDeleteConfirm(true);
+  };
+
+  // Confirm delete all
+  const confirmDeleteAll = async () => {
+    setIsDeleting(true);
+    setShowDeleteConfirm(false);
+    try {
+      const response = await fetch("/api/notifications/delete-all", {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const data = (await response.json()) as { success: boolean };
+
+      if (response.ok && data.success) {
+        setNotifications([]);
+        setUnreadCount(0);
+      } else {
+        console.error("Failed to delete all notifications");
+      }
+    } catch (e) {
+      console.error("Failed to delete all notifications:", e);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   // Filter notifications based on current filter
   const filteredNotifications =
     filter === "unread"
@@ -180,14 +211,24 @@ export default function BossNotificationsPage() {
                 </button>
               </div>
 
-              <button
-                type="button"
-                onClick={handleMarkAllRead}
-                disabled={unreadCount === 0}
-                className="min-h-[44px] self-start rounded-lg px-4 text-sm font-medium text-[var(--color-primary)] transition-opacity hover:enabled:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-50 sm:self-auto"
-              >
-                모두 읽음
-              </button>
+              <div className="flex gap-2 self-start sm:self-auto">
+                <button
+                  type="button"
+                  onClick={handleMarkAllRead}
+                  disabled={unreadCount === 0}
+                  className="min-h-[44px] rounded-lg px-4 text-sm font-medium text-[var(--color-primary)] transition-opacity hover:enabled:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  모두 읽음
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteAll}
+                  disabled={notifications.length === 0}
+                  className="min-h-[44px] rounded-lg px-4 text-sm font-medium text-[var(--color-status-error)] transition-opacity hover:enabled:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-status-error)] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  모두 삭제
+                </button>
+              </div>
             </div>
 
             {isLoading ? (
@@ -271,6 +312,33 @@ export default function BossNotificationsPage() {
           </div>
         </main>
       </div>
+
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
+            <h2 className="text-lg font-bold text-[var(--color-text-primary)]">모든 알림을 삭제하시겠습니까?</h2>
+            <p className="mt-2 text-sm text-[var(--color-text-secondary)]">삭제한 알림은 복구할 수 없습니다.</p>
+            <div className="mt-6 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={isDeleting}
+                className="flex-1 min-h-[44px] rounded-lg border border-[var(--color-border)] bg-white text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-bg-surface)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteAll}
+                disabled={isDeleting}
+                className="flex-1 min-h-[44px] rounded-lg bg-[var(--color-status-error)] text-sm font-medium text-white transition-opacity hover:enabled:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isDeleting ? "삭제 중..." : "모두 삭제"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

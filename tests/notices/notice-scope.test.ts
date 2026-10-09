@@ -161,11 +161,11 @@ describe("notice sorting", () => {
 describe("notice pagination", () => {
   const rows = Array.from({ length: 25 }, (_, index) => ({ id: index + 1 }));
 
-  test("defaults to page 1 and limit 10, and caps a requested limit at 50", () => {
-    assert.deepEqual(parseNoticePagination(new URLSearchParams()), { page: 1, limit: 10 });
-    assert.deepEqual(parseNoticePagination(new URLSearchParams("page=abc&limit=0")), { page: 1, limit: 10 });
-    assert.deepEqual(parseNoticePagination(new URLSearchParams("page=0&limit=abc")), { page: 1, limit: 10 });
-    assert.deepEqual(parseNoticePagination(new URLSearchParams("page=-1&limit=-10")), { page: 1, limit: 10 });
+  test("defaults to page 1 and nine cards, and caps a requested limit at 50", () => {
+    assert.deepEqual(parseNoticePagination(new URLSearchParams()), { page: 1, limit: 9 });
+    assert.deepEqual(parseNoticePagination(new URLSearchParams("page=abc&limit=0")), { page: 1, limit: 9 });
+    assert.deepEqual(parseNoticePagination(new URLSearchParams("page=0&limit=abc")), { page: 1, limit: 9 });
+    assert.deepEqual(parseNoticePagination(new URLSearchParams("page=-1&limit=-10")), { page: 1, limit: 9 });
     assert.deepEqual(parseNoticePagination(new URLSearchParams("page=2&limit=10000")), { page: 2, limit: 50 });
   });
 
@@ -306,7 +306,7 @@ describe("notice read filter", () => {
     assert.match(ownerNoticesPage, /params\.set\("read", readFilter\)/);
     assert.match(staffNoticesPage, /params\.set\("read", readFilter\)/);
     assert.match(ownerNoticesPage, /setReadFilter\(value\);\s*setPage\(DEFAULT_NOTICE_PAGE\)/);
-    assert.match(staffNoticesPage, /setReadFilter\(value\);\s*setPage\(DEFAULT_NOTICE_PAGE\)/);
+    assert.match(staffNoticesPage, /setReadFilter\(readFilter === "unread" \? "all" : "unread"\);\s*setPage\(DEFAULT_NOTICE_PAGE\)/);
     for (const page of [ownerNoticesPage, staffNoticesPage]) {
       assert.match(page, /value: "all", label: "전체"/);
       assert.match(page, /value: "unread", label: "안 읽음"/);
@@ -317,7 +317,7 @@ describe("notice read filter", () => {
   });
 });
 
-function noticePageScenario(role: "hq" | "owner" | "staff", multiple = false) {
+function noticePageScenario(role: "hq" | "owner" | "staff", multiple = false, currentPage = 1) {
   const notice = {
     id: "notice-a", title: "Kitchen Safety", content: "Check the equipment before opening.",
     createdAt: "2026-09-21T12:00:00.000Z", viewCount: 7, isRead: false,
@@ -332,8 +332,8 @@ function noticePageScenario(role: "hq" | "owner" | "staff", multiple = false) {
     ? [
         "Tester", "Cafe", rows,
         [{ id: "store-a", name: "Store A" }, { id: "store-b", name: "Store B" }],
-        { page: 1, limit: 10, totalCount: rows.length, totalPages: 1 }, 1,
-        false, "", "", "", "latest", "all", "__all__", null, "", null, null, null, false,
+        { page: currentPage, limit: 9, totalCount: 27, totalPages: 3 }, currentPage,
+        false, "", "", "", "latest", "all", "__all__", null, "", null, null, null, false, false,
       ]
     : role === "owner"
       ? [true, "Tester", "Store A", "store-a", {
@@ -348,11 +348,18 @@ function noticePageScenario(role: "hq" | "owner" | "staff", multiple = false) {
           pagination: { page: 1, limit: 10, totalCount: rows.length, totalPages: 1 },
         }, 0, "", "", "latest", 1, "store-a", "all", "all", null, "all", false];
   const harness = createHookHarness(initialStates);
+  const updates: unknown[] = [];
   const navigations: string[] = [];
   const reads: string[] = [];
   const emptyLayout = () => null;
   const overrides = {
-    react: harness.react,
+    react: {
+      ...harness.react,
+      useState(initial: unknown) {
+        const [value, setValue] = harness.react.useState(initial);
+        return [value, (update: unknown) => { updates.push(update); (setValue as (next: unknown) => void)(update); }];
+      },
+    },
     "next/navigation": { useRouter: () => ({ push: (href: string) => navigations.push(href) }) },
     "next/link": { default: (props: { children: ReactNode; href: string }) => createElement("a", { href: props.href }, props.children), __esModule: true },
     "@/lib/supabase/client": { createClient: () => { throw new Error("Unexpected auth request"); } },
@@ -369,7 +376,7 @@ function noticePageScenario(role: "hq" | "owner" | "staff", multiple = false) {
   };
   const relativePath = role === "hq" ? "app/hq/communication/page.tsx" : role === "owner" ? "app/boss/notices/page.tsx" : "app/staff/notices/page.tsx";
   const componentModule = loadComponentModule<{ default: () => ReactNode }>(relativePath, overrides);
-  return { notice, reads, navigations, render: () => harness.render(componentModule.default) };
+  return { notice, reads, navigations, updates, render: () => harness.render(componentModule.default) };
 }
 
 async function assertNoticeDetail(role: "hq" | "owner" | "staff") {
@@ -833,34 +840,69 @@ describe("notice isRead/viewCount mapping and GET queries", () => {
 });
 
 describe("notice source and target filters", () => {
+  test("multi-store selector searches, selects exact IDs and closes its results", () => {
+    const harness = createHookHarness([]);
+    const selectorModule = loadComponentModule<{ StoreMultiSelector: (props: unknown) => ReactNode }>("components/notices/StoreMultiSelector.tsx", { react: harness.react });
+    let selectedStoreIds: string[] = [];
+    const render = () => harness.render(() => selectorModule.StoreMultiSelector({
+      stores: [{ id: "store-a", name: "Store A" }, { id: "store-b", name: "Store B" }],
+      selectedStoreIds, onSelectionChange: (ids: string[]) => { selectedStoreIds = Array.from(ids); },
+    }));
+    const search = componentElements(render()).find((element) => element.props["aria-label"] === "공지 대상 지점 검색");
+    assert.ok(search);
+    (search.props.onChange as (event: unknown) => void)({ target: { value: "Store B" } });
+    let elements = componentElements(render());
+    const checkbox = elements.find((element) => element.props.type === "checkbox");
+    assert.ok(checkbox);
+    (checkbox.props.onChange as () => void)();
+    assert.deepEqual(selectedStoreIds, ["store-b"]);
+    elements = componentElements(render());
+    const outside = elements.find((element) => element.type === "div" && element.props["aria-hidden"] === "true");
+    assert.ok(outside); (outside.props.onClick as () => void)();
+    assert.equal(componentElements(render()).some((element) => element.props.type === "checkbox"), false);
+    const remove = componentElements(render()).find((element) => element.props["aria-label"] === "Store B 제거");
+    assert.ok(remove); (remove.props.onClick as () => void)();
+    assert.deepEqual(selectedStoreIds, []);
+  });
+
+  test("HQ renders server page two without slicing again and selects stores by ID", () => {
+    const scenario = noticePageScenario("hq", true, 2);
+    let elements = componentElements(scenario.render());
+    assert.ok(elements.some((element) => element.props.title === "Kitchen Safety"));
+    const pager = elements.find((element) => element.props.totalPages === 3);
+    assert.ok(pager);
+    assert.equal(pager.props.page, 2);
+    const scope = elements.find((element) => element.type === "button" && renderToStaticMarkup(element).includes("특정 지점"));
+    assert.ok(scope);
+    (scope.props.onClick as () => void)();
+    elements = componentElements(scenario.render());
+    const search = elements.find((element) => element.props["aria-label"] === "지점명 검색");
+    assert.ok(search);
+    (search.props.onChange as (event: unknown) => void)({ target: { value: "Store B" } });
+    elements = componentElements(scenario.render());
+    const store = elements.find((element) => element.props["aria-label"] === "공지 대상 지점 Store B");
+    assert.ok(store);
+    assert.equal(store.props.value, "store-b");
+    (store.props.onChange as () => void)();
+    assert.match(renderToStaticMarkup(scenario.render()), /Store B/);
+    assert.match(hqNoticesPage, /setTargetFilter\(target\.id\)/);
+    assert.match(hqNoticesPage, /params\.set\("targetStoreId", targetFilter\)/);
+  });
+
   test("role filter controls compose without resetting the other active filters (component handlers)", () => {
     for (const role of ["hq", "owner", "staff"] as const) {
       const scenario = noticePageScenario(role, true);
-      const change = (predicate: (element: ReturnType<typeof componentElements>[number]) => boolean, value: string, event = false) => {
-        const control = componentElements(scenario.render()).find(predicate);
-        assert.ok(control, `${role}: missing filter control`);
-        (control.props.onChange as (value: unknown) => void)(event ? { target: { value } } : value);
-      };
-      const hasTitles = (titles: string[]) => {
-        const markup = renderToStaticMarkup(scenario.render());
-        for (const title of ["Kitchen Safety", "Store Schedule", "Franchise Safety"]) {
-          assert.equal(markup.includes(title), titles.includes(title), `${role}: ${title}`);
-        }
-      };
-      if (role === "hq") {
-        change((element) => element.props.ariaLabel === "공지 대상 범위", "store");
-        change((element) => element.props["aria-label"] === "공지 대상 지점 필터", "store-a", true);
-        hasTitles(["Kitchen Safety", "Store Schedule", "Franchise Safety"]);
-      } else if (role === "owner") {
-        change((element) => element.props.ariaLabel === "공지 출처", "hq");
-        change((element) => element.type === "select", "기타", true);
-        hasTitles([]);
-        change((element) => element.props.ariaLabel === "공지 출처", "mine");
-        hasTitles(["Store Schedule"]);
-      } else {
-        assert.match(staffNoticesPage, /setSourceFilter\(value\);\s*setPage\(DEFAULT_NOTICE_PAGE\)/);
-        assert.match(staffNoticesPage, /setTargetFilter\(event\.target\.value as NoticeTargetFilter\);\s*setPage\(DEFAULT_NOTICE_PAGE\)/);
-      }
+      const label = role === "hq" ? "특정 지점" : "본사 공지";
+      const control = componentElements(scenario.render()).find((element) =>
+        element.type === "button" && renderToStaticMarkup(element).includes(label),
+      );
+      assert.ok(control, `${role}: missing source/scope chip`);
+      assert.equal(control.props["aria-pressed"], false);
+      (control.props.onClick as () => void)();
+      if (role === "hq") assert.deepEqual(scenario.updates, ["store", "__all__", null, "", 1]);
+      else assert.deepEqual(scenario.updates, ["hq", 1]);
+      assert.match(role === "hq" ? hqNoticesPage : role === "owner" ? ownerNoticesPage : staffNoticesPage,
+        role === "hq" ? /params\.set\("scope", scopeFilter\)/ : /params\.set\("source", sourceFilter\)/);
     }
   });
 
@@ -896,7 +938,8 @@ describe("notice source and target filters", () => {
   test("STAFF maps sourceLabel to sourceType and keeps target filters independent", () => {
     assert.deepEqual(toStaffNotice({ id: "owner", sourceLabel: "점주 공지" }), { id: "owner", sourceLabel: "점주 공지", sourceType: "owner" });
     assert.deepEqual(toStaffNotice({ id: "hq", sourceLabel: "본사 공지" }), { id: "hq", sourceLabel: "본사 공지", sourceType: "hq" });
-    assert.match(staffNoticesPage, /filterStaffNotices\(allNotices, \{ source: sourceFilter, target: targetFilter, query: "" \}\)/);
+    assert.match(staffNoticesPage, /const visibleNotices = allNotices/);
+    assert.match(staffRoute, /sourceFilter[\s\S]*targetFilter/);
     assert.match(staffNoticesPage, /setSourceFilter\(value\);\s*setPage\(DEFAULT_NOTICE_PAGE\)/);
     assert.match(staffNoticesPage, /setTargetFilter\(event\.target\.value as NoticeTargetFilter\);\s*setPage\(DEFAULT_NOTICE_PAGE\)/);
     assert.match(staffNoticesPage, /requestKey = storeId[\s\S]*?\$\{storeId\}:\$\{reloadToken\}:\$\{submittedQuery\}:\$\{sortOrder\}:\$\{sourceFilter\}:\$\{targetFilter\}:\$\{readFilter\}:\$\{page\}/);
@@ -937,14 +980,22 @@ describe("notice source and target filters", () => {
     assert.match(ownerNoticesPage, /fetchNotices\(\);\s*\}, \[selectedStoreId, submittedSearch, sortOrder, sourceFilter, categoryFilter, readFilter, page, reloadToken\]\)/);
     assert.match(staffNoticesPage, /\}, \[storeId, requestKey, router, submittedQuery, sortOrder, sourceFilter, targetFilter, readFilter, page\]\)/);
     for (const page of [hqNoticesPage, ownerNoticesPage, staffNoticesPage]) {
-      assert.match(page, /onSubmit=\{submitSearch\}/);
-      assert.match(page, /onClick=\{clearSearch\}/);
-      assert.match(page, /aria-label="검색어 초기화"/);
+      assert.match(page, /aria-label="공지사항 검색"/);
+      assert.match(page, /setPage\(DEFAULT_NOTICE_PAGE\)/);
       assert.match(page, /useState<NoticeSortOrder>\("latest"\)/);
-      assert.match(page, /value="oldest">오래된순/);
-      assert.match(page, /value="views">조회수순/);
+      assert.match(page, /(?:value="oldest">|value: "oldest"(?: as const)?, label: ")오래된순/);
+      assert.match(page, /(?:value="views">|value: "views"(?: as const)?, label: ")조회(?:수)?순/);
       assert.match(page, /params\.set\("sort", sortOrder\)/);
     }
+    for (const role of ["hq", "owner"] as const) {
+      const scenario = noticePageScenario(role);
+      const search = componentElements(scenario.render()).find((element) => element.props["aria-label"] === "공지사항 검색");
+      assert.ok(search);
+      (search.props.onChange as (event: unknown) => void)({ target: { value: "  Safety  " } });
+      assert.deepEqual(scenario.updates, ["  Safety  ", "Safety", 1]);
+    }
+    assert.match(staffNoticesPage, /onChange=\{\(event\) => handleSearchChange\(event\.target\.value\)\}/);
+    assert.match(staffNoticesPage, /setSubmittedQuery\(value\.trim\(\)\);\s*setPage\(DEFAULT_NOTICE_PAGE\)/);
   });
 });
 
@@ -1240,7 +1291,10 @@ describe("HQ notice creation form audience payload", () => {
     assert.match(hqCreatePage, /label: "점주만"/);
     assert.match(hqCreatePage, /label: "점주 \+ 직원"/);
     assert.equal(/value: "staff"/.test(hqCreatePage), false);
-    assert.match(hqCreatePage, /buildHqNoticeTarget\(targetType, targetStoreId, audience\)/);
+    assert.match(hqCreatePage, /buildHqNoticeTarget\(targetType, "", audience\)/);
+    assert.match(hqCreatePage, /for \(const storeId of targetStoreIds\)/);
+    assert.match(hqCreatePage, /buildHqNoticeTarget\(targetType, storeId, audience\)/);
+    assert.match(hqCreatePage, /targetType === "store" && targetStoreIds\.length === 0/);
   });
 
   test("API continues to reject staff audience and verify HQ franchise/store scope", () => {

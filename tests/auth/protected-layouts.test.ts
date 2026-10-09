@@ -226,6 +226,53 @@ describe("HQ layout and URL-based store selection", () => {
     assert.equal(requests.some((url) => url.includes("set-default-store")), false);
   });
 
+  test("grouped store manuals keep URL detail, category search and scoped refresh", async () => {
+    let query = new URLSearchParams("storeId=store-a");
+    const effects: Array<() => void> = [];
+    const requests: Array<{ url: string; options?: RequestInit }> = [];
+    const harness = createHookHarness([]);
+    const manuals = [
+      { id: "parent", store_id: "store-a", title: "Opening", category: "Operations", content: "Parent", parent_manual_id: null },
+      { id: "child", store_id: "store-a", title: "Check milk", category: "Operations", content: "Refrigerator", parent_manual_id: "parent" },
+      { id: "training", store_id: "store-a", title: "Training", category: "Training", content: "Staff", parent_manual_id: null },
+      { id: "foreign", store_id: "store-b", title: "Foreign", category: "Other", content: "Secret" },
+    ];
+    const page = loadComponentModule<{ default: () => ReactNode }>("app/hq/manuals/stores/page.tsx", {
+      react: { ...harness.react, useEffect: (effect: () => void) => { effects.push(effect); } },
+      "next/navigation": { useSearchParams: () => query, useRouter: () => ({ push: (href: string) => { query = new URL(href, "http://localhost").searchParams; } }) },
+    }, {
+      fetch: async (url: string, options?: RequestInit) => {
+        requests.push({ url, options });
+        return url === "/api/hq/stores" ? Response.json({ stores: [{ id: "store-a", name: "Store A", manualCount: 3 }] }) : Response.json({ manuals });
+      },
+    });
+    const render = () => { effects.length = 0; return harness.render(page.default); };
+    render(); effects[0]();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    let tree = render();
+    effects[1]();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    tree = render();
+    assert.equal(requests.at(-1)?.options?.cache, "no-store");
+    assert.ok(requests.at(-1)?.options?.signal);
+    assert.equal(renderToString(tree).includes("Foreign"), false);
+    const category = componentElements(tree).find((element) => element.type === "button" && renderToString(element).includes("Operations"));
+    assert.ok(category); (category.props.onClick as () => void)();
+    assert.equal(renderToString(render()).includes(">Training</span>"), false);
+    const search = componentElements(render()).find((element) => element.props["aria-label"] === "지점 매뉴얼 검색");
+    assert.ok(search); (search.props.onChange as (event: unknown) => void)({ target: { value: "Refrigerator" } });
+    tree = render();
+    const group = componentElements(tree).find((element) => element.type === "button" && renderToString(element).includes("Opening"));
+    assert.ok(group); (group.props.onClick as () => void)();
+    assert.equal(query.get("manualId"), "parent");
+    const detail = renderToString(render());
+    assert.ok(detail.includes("Check milk"));
+    assert.ok(detail.includes("Refrigerator"));
+    assert.equal(detail.includes("Secret"), false);
+    query = new URLSearchParams("storeId=store-a&manualId=child");
+    assert.ok(renderToString(render()).includes("Refrigerator"));
+  });
+
   test("store-list failure stays an alert with a working retry rather than an empty list", async () => {
     const effects: Array<() => void> = [];
     const harness = createHookHarness([]);

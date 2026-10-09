@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, CheckCircle2, Plus, RefreshCw, Store as StoreIcon } from "lucide-react";
+import { AlertCircle, CheckCircle2, Pencil, Plus, RefreshCw, Store as StoreIcon } from "lucide-react";
 
 import {
   ApprovedStoreRow,
@@ -14,7 +14,7 @@ import { formatStoreDisplayName } from "@/lib/stores/search-stores";
 
 import OwnerHeader from "@/components/owner/OwnerHeader";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
-import { resolveOwnerCurrentStore, type OwnerPendingStore, type OwnerStore } from "@/lib/owner/current-store";
+import { resolveOwnerCurrentStore, persistSelectedStore, type OwnerPendingStore, type OwnerStore } from "@/lib/owner/current-store";
 import { createClient } from "@/lib/supabase/client";
 
 type LoadState =
@@ -34,12 +34,28 @@ async function loadOwnerStores(): Promise<LoadState> {
   };
 }
 
+const sectionTitleClass = "mb-4 text-lg font-bold text-[var(--color-text-primary)]";
+const storeRowClass = "flex items-center gap-3 px-5";
+const storeRowMainClass = "flex min-w-0 flex-1 items-start gap-3";
+const storeRowAsideClass = "flex shrink-0 items-center justify-end gap-2 whitespace-nowrap";
+const primaryTextActionClass =
+  "inline-flex min-h-[44px] items-center rounded-lg px-2 text-sm font-semibold text-[var(--color-primary)] underline-offset-2 transition-colors hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60";
+const primaryButtonClass =
+  "inline-flex min-h-[44px] shrink-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--color-primary)] px-4 text-sm font-semibold text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60";
+const secondaryButtonClass =
+  "inline-flex min-h-[44px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-white px-4 text-sm font-semibold text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-bg-default)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60";
+
 export default function OwnerStoresPage() {
   const router = useRouter();
   const [userName, setUserName] = useState("점주");
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [cancelingId, setCancelingId] = useState<string | null>(null);
+  const [isSettingDefault, setIsSettingDefault] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   const [notice, setNotice] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  const isReady = state.status === "ready";
+  const hasAnyStore = isReady && (state.approved.length > 0 || state.pending.length > 0);
 
   const reload = useCallback(() => {
     setState({ status: "loading" });
@@ -61,6 +77,33 @@ export default function OwnerStoresPage() {
       isCancelled = true;
     };
   }, []);
+
+  const setAsDefaultStore = async (store: OwnerStore) => {
+    if (isSettingDefault) return;
+    setIsSettingDefault(true);
+    setNotice(null);
+
+    try {
+      persistSelectedStore({ storeId: store.storeId, storeName: store.storeName });
+      try {
+        sessionStorage.setItem("ownerStoreSwitchedTo", store.storeName);
+      } catch {
+        // sessionStorage를 쓸 수 없으면 안내만 생략
+      }
+      setNotice({
+        type: "success",
+        message: `${formatStoreDisplayName(store.storeName)}을(를) 기본 매장으로 설정했습니다. 페이지를 새로고침합니다.`,
+      });
+      // 페이지 새로고침
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+    } catch (error) {
+      console.error("Failed to set default store:", error);
+      setNotice({ type: "error", message: "기본 매장을 변경하지 못했습니다. 잠시 후 다시 시도해 주세요." });
+      setIsSettingDefault(false);
+    }
+  };
 
   const cancelRequest = async (request: OwnerPendingStore) => {
     if (cancelingId) return;
@@ -109,22 +152,37 @@ export default function OwnerStoresPage() {
 
         <main className="flex-1 overflow-y-auto">
           <div className="p-6 lg:p-8 max-w-7xl mx-auto">
-            <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">운영 매장</h1>
+            <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div className="min-w-0">
+                <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-3">
+                  운영 매장{isEditing && <span className="ml-2 text-base font-semibold text-[var(--color-primary)]">편집 중</span>}
+                </h1>
                 <p className="text-base text-[var(--color-text-secondary)]">
-                  운영 중인 매장과 승인 대기 중인 신청을 관리할 수 있습니다.
-                </p>
-                <p className="mt-1 text-sm text-[var(--color-text-tertiary)]">
-                  현재 운영 매장 변경은 상단의 현재 운영 매장 선택에서 할 수 있습니다.
+                  {isEditing
+                    ? "다른 운영 매장 중에서 기본 매장을 선택하세요."
+                    : "운영 중인 매장과 승인 대기 중인 신청을 관리할 수 있습니다."}
                 </p>
               </div>
-              <Link
-                href="/boss/stores/add"
-                className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-1.5 self-start rounded-lg bg-[var(--color-primary)] px-4 text-sm font-semibold text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 sm:self-auto"
-              >
-                <Plus size={18} aria-hidden="true" /> 운영 매장 추가
-              </Link>
+              {isReady && (
+                <div className="flex shrink-0 items-center gap-2 self-start sm:self-auto">
+                  {isEditing ? (
+                    <button type="button" onClick={() => setIsEditing(false)} className={secondaryButtonClass}>
+                      취소
+                    </button>
+                  ) : (
+                    <>
+                      {hasAnyStore && state.approved.length > 1 && (
+                        <button type="button" onClick={() => setIsEditing(true)} className={secondaryButtonClass}>
+                          <Pencil size={16} aria-hidden="true" /> 편집
+                        </button>
+                      )}
+                      <Link href="/boss/stores/add" className={primaryButtonClass}>
+                        <Plus size={18} aria-hidden="true" /> 운영 매장 추가
+                      </Link>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
 
             {notice && (
@@ -161,74 +219,137 @@ export default function OwnerStoresPage() {
                   <RefreshCw size={16} aria-hidden="true" /> 다시 시도
                 </button>
               </div>
+            ) : !hasAnyStore ? (
+              <div className="rounded-xl border border-[var(--color-border)] bg-white p-8 text-center">
+                <StoreIcon size={28} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+                <p className="text-base font-semibold text-[var(--color-text-primary)]">아직 운영 매장이 없습니다.</p>
+                <p className="mt-1 text-sm text-[var(--color-text-secondary)]">운영할 매장을 추가 신청하면 본사 승인 후 운영 매장으로 선택할 수 있습니다.</p>
+                <Link
+                  href="/boss/stores/add"
+                  className="mt-5 inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg bg-[var(--color-primary)] px-4 text-sm font-semibold text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2"
+                >
+                  <Plus size={18} aria-hidden="true" /> 운영 매장 추가
+                </Link>
+              </div>
+            ) : isEditing ? (
+              <div className="space-y-8">
+                {state.approved.length > 1 && (
+                  <section aria-labelledby="edit-stores-heading">
+                    <h2 id="edit-stores-heading" className={sectionTitleClass}>
+                      다른 운영 매장
+                    </h2>
+                    <StoreMembershipList label="기본 매장 설정">
+                      {state.approved
+                        .filter((store) => store.storeId !== state.currentId)
+                        .map((store) => (
+                          <li key={store.storeId} className={`${storeRowClass} py-4`}>
+                            <div className={storeRowMainClass}>
+                              <StoreIcon size={20} className="mt-0.5 shrink-0 text-[var(--color-text-secondary)]" aria-hidden="true" />
+                              <div className="min-w-0">
+                                <p className="text-base font-semibold text-[var(--color-text-primary)] break-keep">
+                                  {formatStoreDisplayName(store.storeName)}
+                                </p>
+                              </div>
+                            </div>
+                            <div className={`${storeRowAsideClass} -mr-2`}>
+                              <button
+                                type="button"
+                                onClick={() => void setAsDefaultStore(store)}
+                                disabled={isSettingDefault}
+                                className={primaryTextActionClass}
+                              >
+                                기본 설정
+                              </button>
+                            </div>
+                          </li>
+                        ))}
+                    </StoreMembershipList>
+                  </section>
+                )}
+              </div>
             ) : (
-              <div className="space-y-10">
-                <div className="flex flex-wrap gap-2" aria-label="운영 매장 요약">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-primary-light)]/40 px-3 py-1 text-sm font-semibold text-[var(--color-primary)]">
-                    운영 중 {state.approved.length}
-                  </span>
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-sm font-semibold text-amber-800">
-                    승인 대기 {state.pending.length}
-                  </span>
-                </div>
-
-                {state.approved.length === 0 && state.pending.length === 0 ? (
-                  <div className="rounded-xl border border-[var(--color-border)] bg-white p-8 text-center">
-                    <StoreIcon size={28} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" aria-hidden="true" />
-                    <p className="text-base font-semibold text-[var(--color-text-primary)]">아직 운영 매장이 없습니다.</p>
-                    <p className="mt-1 text-sm text-[var(--color-text-secondary)]">운영할 매장을 추가 신청하면 본사 승인 후 운영 매장으로 선택할 수 있습니다.</p>
-                    <Link
-                      href="/boss/stores/add"
-                      className="mt-5 inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg bg-[var(--color-primary)] px-4 text-sm font-semibold text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2"
-                    >
-                      <Plus size={18} aria-hidden="true" /> 운영 매장 추가
-                    </Link>
-                  </div>
-                ) : (
+              <div className="space-y-8">
+                {state.approved.length > 0 && (
                   <>
-                    <section aria-labelledby="approved-heading">
-                      <h2 id="approved-heading" className="mb-3 text-lg font-bold text-[var(--color-text-primary)]">
-                        운영 중
+                    <section aria-labelledby="default-store-heading">
+                      <h2 id="default-store-heading" className={sectionTitleClass}>
+                        기본 매장
                       </h2>
-                      {state.approved.length === 0 ? (
-                        <p className="rounded-xl border border-[var(--color-border)] bg-white px-5 py-4 text-sm text-[var(--color-text-secondary)]">
-                          현재 운영 중인 매장이 없습니다.
-                        </p>
-                      ) : (
-                        <StoreMembershipList label="운영 중 매장">
-                          {state.approved.map((store) => (
-                            <ApprovedStoreRow
-                              key={store.storeId}
-                              storeId={store.storeId}
-                              storeName={store.storeName}
-                              isCurrent={store.storeId === state.currentId}
-                            />
-                          ))}
-                        </StoreMembershipList>
-                      )}
+                      {state.approved
+                        .filter((store) => store.storeId === state.currentId)
+                        .map((store) => (
+                          <div key={store.storeId} className={`${storeRowClass} rounded-xl border border-[var(--color-primary)]/40 bg-[var(--color-primary-light)]/15 py-5`}>
+                            <div className={storeRowMainClass}>
+                              <StoreIcon size={22} className="mt-0.5 shrink-0 text-[var(--color-primary)]" aria-hidden="true" />
+                              <div className="min-w-0">
+                                <p className="text-lg font-bold text-[var(--color-text-primary)] break-keep">
+                                  {formatStoreDisplayName(store.storeName)}
+                                </p>
+                                <p className="mt-3 text-sm text-[var(--color-text-secondary)] break-keep">
+                                  현재 운영 중인 기본 매장입니다.
+                                </p>
+                              </div>
+                            </div>
+                            <div className={storeRowAsideClass}>
+                              <p className="text-base font-bold text-[var(--color-primary)]">기본 매장</p>
+                            </div>
+                          </div>
+                        ))}
                     </section>
 
-                    <section aria-labelledby="pending-heading">
-                      <h2 id="pending-heading" className="mb-3 text-lg font-bold text-[var(--color-text-primary)]">
-                        승인 대기
-                      </h2>
-                      {state.pending.length === 0 ? (
-                        <p className="text-sm text-[var(--color-text-secondary)]">승인 대기 중인 신청이 없습니다.</p>
-                      ) : (
-                        <StoreMembershipList label="승인 대기 신청">
-                          {state.pending.map((request) => (
-                            <PendingStoreRow
-                              key={request.membershipId}
-                              storeName={request.storeName}
-                              waitingLabel="본사 승인 대기"
-                              requestedAt={request.requestedAt}
-                              onCancelStart={() => cancelRequest(request)}
-                            />
-                          ))}
+                    {state.approved.length > 1 && (
+                      <section aria-labelledby="other-stores-heading">
+                        <h2 id="other-stores-heading" className={sectionTitleClass}>
+                          다른 운영 매장
+                        </h2>
+                        <StoreMembershipList label="다른 운영 매장">
+                          {state.approved
+                            .filter((store) => store.storeId !== state.currentId)
+                            .map((store) => (
+                              <li key={store.storeId} className={`${storeRowClass} py-4`}>
+                                <div className={storeRowMainClass}>
+                                  <StoreIcon size={20} className="mt-0.5 shrink-0 text-[var(--color-text-secondary)]" aria-hidden="true" />
+                                  <div className="min-w-0">
+                                    <p className="text-base font-semibold text-[var(--color-text-primary)] break-keep">
+                                      {formatStoreDisplayName(store.storeName)}
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className={`${storeRowAsideClass} -mr-2`}>
+                                  <button
+                                    type="button"
+                                    onClick={() => void setAsDefaultStore(store)}
+                                    disabled={isSettingDefault}
+                                    className={primaryTextActionClass}
+                                  >
+                                    기본 설정
+                                  </button>
+                                </div>
+                              </li>
+                            ))}
                         </StoreMembershipList>
-                      )}
-                    </section>
+                      </section>
+                    )}
                   </>
+                )}
+
+                {state.pending.length > 0 && (
+                  <section aria-labelledby="pending-heading">
+                    <h2 id="pending-heading" className={sectionTitleClass}>
+                      승인 대기
+                    </h2>
+                    <StoreMembershipList label="승인 대기 신청">
+                      {state.pending.map((request) => (
+                        <PendingStoreRow
+                          key={request.membershipId}
+                          storeName={request.storeName}
+                          waitingLabel="본사 승인 대기"
+                          requestedAt={request.requestedAt}
+                          onCancelStart={() => cancelRequest(request)}
+                        />
+                      ))}
+                    </StoreMembershipList>
+                  </section>
                 )}
               </div>
             )}

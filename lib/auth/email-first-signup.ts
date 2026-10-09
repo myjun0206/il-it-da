@@ -1,7 +1,7 @@
 import type { AuthEmailSettingsFetcher } from "@/lib/auth/auth-email-settings";
 import {
   isValidSignupEmail, normalizeSignupEmail, parseOwnerStaffRole, validateOwnerStaffSignup,
-  mapAuthError, type OwnerStaffRole, type OtpResult,
+  normalizeSignupName, normalizeSignupPhone, mapAuthError, type OwnerStaffRole, type OtpResult,
 } from "@/lib/auth/owner-staff-signup";
 
 export const EMAIL_FIRST_OTP_LENGTH = 6;
@@ -32,6 +32,12 @@ function unavailable(): OtpResult {
 function rejected(error = "이 가입 정보로는 인증을 완료할 수 없습니다."): OtpResult {
   return { ok: false, status: 403, code: "VERIFICATION_REJECTED", error };
 }
+function invalidCode(): OtpResult {
+  return { ok: false, status: 400, code: "CODE_INVALID", error: "인증번호가 올바르지 않습니다. 다시 확인해주세요." };
+}
+function expiredCode(): OtpResult {
+  return { ok: false, status: 400, code: "CODE_EXPIRED", error: "인증 시간이 만료되었습니다. 새 인증번호를 받아주세요." };
+}
 async function available(deps: Dependencies): Promise<boolean> {
   const settings = await deps.getSettings();
   return Boolean(settings?.emailEnabled && !settings.signupDisabled && !settings.autoconfirm);
@@ -60,7 +66,10 @@ export async function sendEmailFirstOtp(input: { email: unknown; role: unknown }
   const state = await deps.prepare(email, role, deps.action);
   const error = stateError(state);
   if (error) return error;
-  if (!state.requestId || !state.expiresAt || state.expiresAt <= (deps.now?.() ?? Date.now()) || (deps.action === "resend" && state.kind === "new")) return unavailable();
+  // New reservations are intentionally closed until the provider confirms delivery.
+  // Only the `sent` acknowledgement opens the server's 180-second verification window.
+  if (!state.requestId || typeof state.expiresAt !== "number" ||
+    (deps.action === "resend" && state.kind !== "resume")) return unavailable();
   const result = await deps.auth.signInWithOtp({ email, options: {
     shouldCreateUser: state.kind === "new",
     ...(state.kind === "new" ? { data: { role, signup_flow: "email_first" } } : {}),
@@ -80,12 +89,14 @@ export async function verifyEmailFirstOtp(input: { email: unknown; role: unknown
 }): Promise<OtpResult> {
   const email = normalizeSignupEmail(input.email);
   const role = parseOwnerStaffRole(input.role);
-  if (!role || !isValidSignupEmail(email) || typeof input.token !== "string" || !/^\d{6}$/.test(input.token)) return { ok: false, status: 400, code: "CODE_INVALID_OR_EXPIRED", error: "인증번호 6자리를 확인해주세요." };
+  if (!role || !isValidSignupEmail(email) || typeof input.token !== "string" || !/^\d{6}$/.test(input.token)) return invalidCode();
   if (!await available(deps)) return unavailable();
   const state = await deps.prepare(email, role, "inspect");
   const error = stateError(state);
   if (error) return error;
-  if (state.kind !== "resume" || !state.userId || !state.requestId || !state.expiresAt || state.expiresAt <= (deps.now?.() ?? Date.now())) return { ok: false, status: 400, code: "CODE_INVALID_OR_EXPIRED", error: "인증번호가 만료되었습니다. 다시 받아주세요." };
+  const now = deps.now?.() ?? Date.now();
+  if (state.expiresAt !== undefined && state.expiresAt <= now) return expiredCode();
+  if (state.kind !== "resume" || !state.userId || !state.requestId || !state.expiresAt) return invalidCode();
   const result = await deps.auth.verifyOtp({ email, token: input.token, type: "email" });
   if (result.error) return mapAuthError(result.error, "verify");
   const session = result.data.session as { access_token?: unknown; user?: { id?: unknown } } | null;
@@ -102,6 +113,7 @@ export async function verifyEmailFirstOtp(input: { email: unknown; role: unknown
   const verified = await deps.prepare(email, role, "verify", validated.data.user.id, state.requestId);
   if (verified.kind !== "resume" || !verified.emailVerified || verified.userId !== result.data.user.id) {
     await deps.auth.signOut({ scope: "local" });
+    if (state.expiresAt <= (deps.now?.() ?? Date.now())) return expiredCode();
     return rejected("인증 시간이 만료되었습니다. 인증번호를 다시 받아주세요.");
   }
   return { ok: true, status: 200, role, profileComplete: false };
@@ -117,11 +129,17 @@ export async function completeEmailFirstSignup(input: Record<string, unknown>, u
   if (!emailFirstUserMatches(user, email, role)) return rejected("이메일 인증이 확인된 세션이 필요합니다.");
   if (!await available(deps)) return unavailable();
   const state = await deps.prepare(email, role, "inspect");
+  if (state.kind === "complete" && state.userId === user.id) {
+    return { ok: true, status: 200, role, profileComplete: true };
+  }
   if (state.kind !== "resume" || state.userId !== user.id || !state.requestId || !state.emailVerified) return stateError(state) ?? rejected();
   const updated = await deps.auth.updateUser({ password: input.password as string, data: {
-    name: (input.name as string).trim(), phone: (input.phone as string).trim(), signupTerms: input.terms,
+    name: normalizeSignupName(input.name), phone: normalizeSignupPhone(input.phone), signupTerms: input.terms,
   } });
-  if (updated.error) return mapAuthError(updated.error, "send");
+  if (updated.error && updated.error.code !== "same_password") {
+    const mapped = mapAuthError(updated.error, "send");
+    return !mapped.ok && mapped.code === "WEAK_PASSWORD" ? { ...mapped, fields: { password: mapped.error } } : mapped;
+  }
   const completed = await deps.prepare(email, role, "complete", user.id, state.requestId);
   if (completed.kind !== "complete" || completed.userId !== user.id) return unavailable();
   return { ok: true, status: 200, role, profileComplete: true };

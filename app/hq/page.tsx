@@ -172,30 +172,29 @@ export default function HQPage() {
               <h2 className="text-base font-bold text-[var(--color-text-primary)]">
                 매뉴얼 현황
               </h2>
-              <Link href="/hq/manuals" className="text-sm font-medium text-[var(--color-primary)] hover:underline flex items-center gap-2 px-2 rounded transition-colors min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]">
-                매뉴얼 관리 <ChevronRight size={16} aria-hidden="true" />
+              <Link href="/hq/manuals/common" className="text-sm font-medium text-[var(--color-primary)] hover:underline flex items-center gap-2 px-2 rounded transition-colors min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]">
+                전체 매뉴얼 보기 <ChevronRight size={16} aria-hidden="true" />
               </Link>
             </div>
-            <div className="bg-white border border-[var(--color-border)] rounded-lg p-6 space-y-3 flex-1">
-              <div>
-                <p className="text-sm text-[var(--color-text-secondary)] mb-2">
-                  공통 매뉴얼
-                </p>
-                <p className="text-2xl font-bold text-[var(--color-text-primary)]">
+            {/* 2개의 독립적인 카드 */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              {/* 왼쪽 카드: 공통 매뉴얼 */}
+              <div className="bg-white border border-[var(--color-border)] rounded-lg p-6">
+                <p className="text-3xl font-bold text-[var(--color-text-primary)] mb-2">
                   {commonManualCount}
-                  <span className="text-sm font-normal text-[var(--color-text-secondary)] ml-1">
-                    개
-                  </span>
+                </p>
+                <p className="text-sm text-[var(--color-text-secondary)]">
+                  공통 매뉴얼<span className="text-xs font-normal ml-1">개</span>
                 </p>
               </div>
 
-              <div className="border-t border-[var(--color-border)] pt-3">
-                <p className="text-sm text-[var(--color-text-secondary)] mb-2">
-                  지점별 매뉴얼
-                </p>
-                <p className="text-base text-[var(--color-text-primary)] font-medium">
+              {/* 오른쪽 카드: 지점별 매뉴얼 */}
+              <div className="bg-white border border-[var(--color-border)] rounded-lg p-6">
+                <p className="text-3xl font-bold text-[var(--color-text-primary)] mb-2">
                   {storesWithManualsCount}
-                  <span className="text-sm font-normal text-[var(--color-text-secondary)]"> 개 지점에서 사용 중</span>
+                </p>
+                <p className="text-sm text-[var(--color-text-secondary)]">
+                  지점에서 사용 중
                 </p>
               </div>
             </div>

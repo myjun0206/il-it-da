@@ -138,6 +138,10 @@ export default function OwnerHeader({
     <>
       <header className="sticky top-0 z-20 bg-white border-b border-(--color-border) h-16 shrink-0">
         <div className="flex min-w-0 items-center justify-end gap-2 pl-16 pr-4 sm:pr-6 h-full lg:pl-6">
+          <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+            <NotificationCenter notificationPageUrl="/boss/notifications" />
+          </div>
+
           <StoreSwitcher
             compact
             label="현재 운영 매장"
@@ -150,16 +154,12 @@ export default function OwnerHeader({
             onManageStores={() => router.push("/boss/stores")}
           />
 
-          <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-            <NotificationCenter notificationPageUrl="/boss/notifications" />
-            <ProfileMenu
-              userName={userName}
-              subtitle="점주"
-              roleLabel="점주"
-              avatarUrl={avatarUrl}
-              context={activeStoreName ? { label: "현재 운영 매장", value: activeStoreName } : undefined}
-            />
-          </div>
+          <ProfileMenu
+            userName={userName}
+            subtitle="점주"
+            roleLabel="점주"
+            avatarUrl={avatarUrl}
+          />
         </div>
       </header>
 

@@ -651,21 +651,11 @@ export default function StaffSettingsPage() {
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={isUploadingAvatar}
-                  className="inline-flex h-10 items-center gap-2 px-3 text-sm font-medium text-[var(--color-text-primary)] hover:text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary-light)]/10 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex h-10 items-center gap-2 px-3 text-sm font-medium text-[var(--color-text-primary)] border-2 border-[var(--color-border)] bg-white transition-colors hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-bg-default)] rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60"
                   aria-label="프로필 사진 변경"
                 >
                   <Camera size={18} aria-hidden="true" className="flex-shrink-0" />
                   <span>사진 변경</span>
-                </button>
-              )}
-              {!avatarPreview && avatarUrl && (
-                <button
-                  type="button"
-                  onClick={handleDeleteAvatar}
-                  disabled={isUploadingAvatar}
-                  className="text-sm font-medium text-red-700 hover:text-red-600 transition-colors underline focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 rounded px-1 py-1 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  사진 삭제
                 </button>
               )}
             </div>

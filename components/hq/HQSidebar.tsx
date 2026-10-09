@@ -11,7 +11,6 @@ import {
   Settings,
   LogOut,
   Menu,
-  X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -64,42 +63,47 @@ export default function HQSidebar({
   return (
     <>
       {/* Mobile Menu Button */}
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="fixed top-4 left-4 z-50 lg:hidden bg-white rounded-lg p-2 border border-(--color-border)"
-      >
-        {isOpen ? <X size={24} /> : <Menu size={24} />}
-      </button>
+      {!isOpen && (
+        <button
+          type="button"
+          onClick={() => setIsOpen(true)}
+          aria-label="메뉴 열기"
+          aria-expanded={isOpen}
+          className="fixed top-4 left-4 z-50 lg:hidden bg-white rounded-lg p-2 border border-(--color-border)"
+        >
+          <Menu size={24} />
+        </button>
+      )}
 
       {/* Sidebar */}
       <aside
         aria-label={`${franchiseName} · ${userName} 사이드바`}
-        className={`fixed left-0 top-0 h-screen bg-white border-r border-(--color-border) flex flex-col transition-transform duration-300 lg:translate-x-0 ${
+        className={`fixed left-0 top-0 h-dvh overflow-hidden bg-white border-r border-(--color-border) flex flex-col transition-transform duration-300 lg:translate-x-0 ${
           isOpen ? "translate-x-0" : "-translate-x-full"
-        } lg:w-[240px] w-64 z-40`}
+        } lg:w-60 w-64 z-40`}
       >
         {/* Logo Section - aligned with header */}
-        <div className="flex items-center px-6 h-16 border-b border-(--color-border)">
-          <Link href="/hq" aria-label="홈으로 이동" onClick={() => setIsOpen(false)}>
+        <div className="flex shrink-0 items-center px-6 h-16 border-b border-(--color-border)">
+          <Link href="/hq" aria-label="홈으로 이동" onClick={() => setIsOpen(false)} className="min-w-0">
             <Image
               src="/logo/ilitda-wordmark.png"
               alt="일잉다"
               width={687}
               height={253}
-              className="h-8 w-auto object-contain"
+              className="h-8 w-auto max-w-full object-contain"
             />
           </Link>
         </div>
 
         {/* Menu Section */}
-        <nav className="flex-1 pt-8 px-3 overflow-y-auto">
+        <nav className="min-h-0 flex-1 py-3 px-3 overflow-y-auto">
           {menuItems.map((item, index) => {
             const isActive = activeMenu === item.id;
             const hasSubmenu = Boolean(item.submenu && item.submenu.length > 0);
             const hasActiveSubmenu = hasSubmenu && Boolean(item.submenu?.some((sub) => sub.id === activeMenu));
             const isGroupActive = isActive || hasActiveSubmenu;
 
-            const buttonClass = `w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium transition-colors ${
+            const buttonClass = `w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-base font-medium transition-colors ${
               index > 0 ? "mt-1" : ""
             } ${
               isActive
@@ -152,9 +156,9 @@ export default function HQSidebar({
         </nav>
 
         {/* Bottom Menu */}
-        <div className="py-3 px-3">
+        <div className="shrink-0 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] px-3 border-t border-(--color-border)">
           {bottomMenuItems.map((item) => {
-            const bottomClass = `w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium transition-colors ${
+            const bottomClass = `w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-base font-medium transition-colors ${
               activeMenu === item.id
                 ? "bg-(--color-primary-light)/30 text-(--color-primary)"
                 : "text-(--color-text-secondary) hover:text-(--color-text-primary)"
@@ -172,13 +176,11 @@ export default function HQSidebar({
               </button>
             );
           })}
-          
-          {/* Divider between actions */}
-          <div className="border-t border-(--color-border) my-1" />
 
           <button
+            type="button"
             onClick={onLogout}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium text-(--color-text-secondary) hover:text-red-600 transition-colors"
+            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-base font-medium text-(--color-text-secondary) hover:text-red-600 transition-colors"
           >
             <LogOut size={20} />
             <span>로그아웃</span>

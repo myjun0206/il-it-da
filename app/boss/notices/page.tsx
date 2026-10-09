@@ -3,7 +3,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
@@ -16,7 +16,6 @@ import { NoticePageHeader } from "@/components/notices/NoticePageHeader";
 import { getNoticeViewCountIncrement, markNoticeAsRead } from "@/lib/notices/mark-notice-read";
 import type { NoticeReadFilter } from "@/lib/notices/with-read-status";
 import { resolveOwnerCurrentStore } from "@/lib/owner/current-store";
-import { Input } from "@/components/common/Input";
 import type { NoticeSortOrder } from "@/lib/notices/sort-notices";
 import { NoticePagination } from "@/components/notices/NoticePagination";
 import { DEFAULT_NOTICE_LIMIT, DEFAULT_NOTICE_PAGE, type NoticePaginationMetadata } from "@/lib/notices/pagination";
@@ -267,18 +266,6 @@ export default function NoticesPage() {
     return true;
   });
 
-  const submitSearch = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setSubmittedSearch(searchQuery.trim());
-    setPage(DEFAULT_NOTICE_PAGE);
-  };
-
-  const clearSearch = () => {
-    setSearchQuery("");
-    setSubmittedSearch("");
-    setPage(DEFAULT_NOTICE_PAGE);
-  };
-
   const changeSourceFilter = (value: OwnerNoticeFilter) => {
     setSourceFilter(value);
     setPage(DEFAULT_NOTICE_PAGE);
@@ -382,17 +369,6 @@ export default function NoticesPage() {
               </p>
             </div>
 
-            {notices.notices.length > 0 && (
-              <div className="mb-6">
-                <NoticeFilter
-                  ariaLabel="공지 출처"
-                  value={sourceFilter}
-                  options={OWNER_NOTICE_FILTERS}
-                  onChange={changeSourceFilter}
-                />
-              </div>
-            )}
-
             {/* 에러 메시지 */}
             {error && (
               <div className="mb-8 p-4 bg-red-50 border border-red-200 rounded-lg">
@@ -413,50 +389,30 @@ export default function NoticesPage() {
                 )}
               </div>
 
-              {/* 검색 및 필터 */}
-              <div className="mb-6 flex flex-col lg:flex-row gap-3">
-                <form onSubmit={submitSearch} className="flex min-w-0 flex-1 gap-2">
-                  <div className="relative min-w-0 flex-1">
+              {/* 검색 및 정렬 - 한 라인 */}
+              <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:gap-3 lg:items-center">
+                {/* 검색창 */}
+                <div className="relative flex-1 min-w-0">
                   <Search
-                    size={20}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)]"
+                    size={18}
+                    aria-hidden="true"
+                    className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]"
                   />
-                  <Input
-                    type="text"
-                      placeholder="제목, 내용, 작성자 이름으로 검색"
+                  <input
+                    type="search"
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                      aria-label="제목, 내용, 작성자 이름으로 검색"
-                    className="pl-10 h-12"
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      setSubmittedSearch(e.target.value.trim());
+                      setPage(DEFAULT_NOTICE_PAGE);
+                    }}
+                    placeholder="공지사항 검색"
+                    aria-label="공지사항 검색"
+                    className="min-h-[44px] w-full rounded-lg border border-[var(--color-border)] bg-white py-2.5 pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20"
                   />
-                  </div>
-                  <button type="submit" className="min-h-[48px] rounded-lg bg-[var(--color-primary)] px-4 text-sm font-semibold text-white">검색</button>
-                  <button type="button" onClick={clearSearch} disabled={!searchQuery && !submittedSearch} aria-label="검색어 초기화" title="검색어 초기화" className="inline-flex min-h-[48px] min-w-[48px] items-center justify-center rounded-lg border border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] disabled:opacity-50">
-                    <X size={18} aria-hidden="true" />
-                  </button>
-                </form>
-
-                <NoticeFilter
-                  ariaLabel="공지 읽음 상태"
-                  value={readFilter}
-                  options={OWNER_NOTICE_READ_FILTERS}
-                  onChange={changeReadFilter}
-                />
-
-                <div className="flex-shrink-0">
-                  <select
-                    value={categoryFilter}
-                    onChange={(e) => changeCategoryFilter(e.target.value)}
-                    className="h-12 px-4 border border-[var(--color-border)] rounded-lg bg-white text-[var(--color-text-primary)] font-medium hover:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-                  >
-                    {categories.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
                 </div>
 
+                {/* 정렬 드롭다운 */}
                 <div className="flex-shrink-0">
                   <select
                     value={sortOrder}
@@ -465,18 +421,67 @@ export default function NoticesPage() {
                       setPage(DEFAULT_NOTICE_PAGE);
                     }}
                     aria-label="공지 정렬"
-                    className="h-12 px-4 border border-[var(--color-border)] rounded-lg bg-white text-[var(--color-text-primary)] font-medium hover:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
+                    className="min-h-[44px] px-4 border border-[var(--color-border)] rounded-lg bg-white text-sm text-[var(--color-text-primary)] font-medium hover:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)] w-full lg:w-auto"
                   >
                     <option value="latest">최신순</option>
                     <option value="oldest">오래된순</option>
-                    <option value="views">조회수순</option>
+                    <option value="views">조회순</option>
                   </select>
                 </div>
               </div>
 
-              {/* 공지 목록 */}
+              {/* 필터 영역 */}
+              <div className="mb-6 flex flex-col gap-3">
+                {/* 필터: 공지 유형 (전체/본사/내공지) - 칩 형태 */}
+                <div className="flex flex-wrap gap-2">
+                  {OWNER_NOTICE_FILTERS.map((filter) => {
+                    const isActive = sourceFilter === filter.value;
+                    return (
+                      <button
+                        key={filter.value}
+                        type="button"
+                        onClick={() => changeSourceFilter(filter.value)}
+                        aria-pressed={isActive}
+                        className={`min-h-[36px] rounded-full px-4 text-sm font-medium transition-all ${
+                          isActive
+                            ? "border border-[var(--color-primary)] bg-[var(--color-primary-light)]/20 text-[var(--color-primary)]"
+                            : "border border-[var(--color-border)] bg-white text-[var(--color-text-primary)] hover:border-[var(--color-primary)]/50"
+                        }`}
+                      >
+                        {filter.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* 보조 필터: 읽음 상태 + 카테고리 */}
+                <div className="flex flex-wrap gap-3">
+                  <NoticeFilter
+                    ariaLabel="공지 읽음 상태"
+                    value={readFilter}
+                    options={OWNER_NOTICE_READ_FILTERS}
+                    onChange={changeReadFilter}
+                    appearance="chip"
+                  />
+
+                  <div className="flex-shrink-0">
+                    <select
+                      value={categoryFilter}
+                      onChange={(e) => changeCategoryFilter(e.target.value)}
+                      className="h-[36px] px-3 border border-[var(--color-border)] rounded-full bg-white text-sm text-[var(--color-text-primary)] font-medium hover:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
+                    >
+                      {categories.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
               {filteredNotices.length === 0 ? (
-                <div className="bg-white border border-[var(--color-border)] rounded-lg p-12 text-center">
+                <div className="bg-white border border-[var(--color-border)] rounded-xl p-12 text-center shadow-sm">
                   {notices.notices.length === 0 && !submittedSearch ? (
                     <>
                       <p className="text-base font-semibold text-[var(--color-text-primary)] mb-1">
@@ -498,20 +503,27 @@ export default function NoticesPage() {
                   )}
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {filteredNotices.map((notice) => (
-                    <NoticeCard
-                      key={notice.id}
-                      title={notice.title}
-                      content={notice.content}
-                      sourceLabel={notice.isMine ? `점주 공지 · ${storeName} · ${notice.category}` : `본사 공지 · ${storeName} · ${notice.category}`}
-                      createdAt={notice.createdAt}
-                      viewCount={notice.viewCount}
-                      isRead={notice.isRead}
-                      onOpen={() => handleOpenModal(notice)}
-                    />
-                  ))}
-                </div>
+                <>
+                  <p className="mb-4 text-sm font-medium text-[var(--color-text-secondary)]">
+                    공지사항 <span className="text-[var(--color-primary)]">{filteredNotices.length}</span>개
+                  </p>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    {filteredNotices.map((notice) => (
+                      <NoticeCard
+                        key={notice.id}
+                        title={notice.title}
+                        content={notice.content}
+                        sourceLabel={notice.isMine ? `점주 공지 · ${storeName} · ${notice.category}` : `본사 공지 · ${storeName} · ${notice.category}`}
+                        createdAt={notice.createdAt}
+                        viewCount={notice.viewCount}
+                        isRead={notice.isRead}
+                        onOpen={() => handleOpenModal(notice)}
+                        showContent={false}
+                        showSourceLabel={true}
+                      />
+                    ))}
+                  </div>
+                </>
               )}
               <NoticePagination page={page} totalPages={notices.pagination.totalPages} onPageChange={setPage} />
             </section>

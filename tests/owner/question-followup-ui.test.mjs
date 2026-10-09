@@ -159,9 +159,18 @@ async function openFixture(options = {}, viewport = { width: 1280, height: 900 }
     };
   }, { question, manual, context, options });
   await page.goto(url);
-  try { await page.getByRole("heading", { level: 1, name: question.question }).waitFor(); }
+  try { await page.getByRole("heading", { name: question.question }).waitFor(); }
   catch (error) { await page.close(); throw new Error(errors.join("\n") || error.message); }
   return { page, errors };
+}
+
+async function selectManual(page, manualId) {
+  if (!manualId) {
+    await page.getByRole("button", { name: "매뉴얼 선택 초기화" }).click();
+    return;
+  }
+  await page.getByLabel("수정할 매장 매뉴얼을 선택하세요").click();
+  await page.locator(`[role="option"][data-manual-id="${manualId}"]`).click();
 }
 
 test("desktop and mobile: question first, keyboard selection, candidate selection and explicit edit URL", async () => {
@@ -170,7 +179,7 @@ test("desktop and mobile: question first, keyboard selection, candidate selectio
     try {
       const selector = page.getByLabel("수정할 매장 매뉴얼을 선택하세요");
       await page.getByText("아직 선택한 매뉴얼이 없습니다.").waitFor();
-      assert.equal(await selector.inputValue(), "");
+      assert.equal(await selector.getAttribute("data-selected-id"), "");
       assert.equal(await page.getByRole("link", { name: "매뉴얼 편집", exact: true }).count(), 0);
       await selector.focus();
       await page.keyboard.press("ArrowDown");
@@ -188,15 +197,17 @@ test("desktop and mobile: question first, keyboard selection, candidate selectio
       assert.ok(editBox && mainBox && footerBox && editBox.y >= mainBox.y
         && editBox.y + editBox.height <= mainBox.y + mainBox.height
         && mainBox.y + mainBox.height <= footerBox.y, "Editor action must not be covered by header or completion area");
-      assert.equal(await selector.locator("option").count(), 2);
-      const disclosure = page.getByRole("button", { name: "기존 챗봇 답변과 근거 후보" });
+      await selector.click();
+      assert.equal(await page.getByRole("option").count(), 1);
+      await page.keyboard.press("Escape");
+      const disclosure = page.getByRole("button", { name: "기존 AI 답변 확인" });
       await disclosure.focus();
       await page.keyboard.press("Enter");
       assert.equal(await disclosure.getAttribute("aria-expanded"), "true");
       await page.getByText("당시 전체 검색 근거는 저장되지 않았습니다.", { exact: false }).waitFor();
-      await selector.selectOption("");
+      await selectManual(page, "");
       await page.getByRole("button", { name: "이 근거 매뉴얼 선택" }).click();
-      assert.equal(await selector.inputValue(), "manual");
+      assert.equal(await selector.getAttribute("data-selected-id"), "manual");
       assert.equal(await selector.evaluate((element) => element === document.activeElement), true);
       await disclosure.click();
       assert.equal(await disclosure.getAttribute("aria-expanded"), "false");
@@ -230,16 +241,18 @@ test("grouped child choices preserve source headings, matching summaries, editor
     try {
       const selector = page.getByLabel("수정할 매장 매뉴얼을 선택하세요");
       await page.getByText("아직 선택한 매뉴얼이 없습니다.").waitFor();
-      assert.equal(await selector.locator('optgroup[label="운영 · 청소 및 마감 운영"]').count(), 1);
-      assert.equal(await selector.locator('option[value="parent"], option[value="foreign"]').count(), 0);
-      assert.equal(await selector.locator('option[value="child-first"]').textContent(), "7-3. 튀김기 관리 · 청소 및 마감 운영");
-      assert.equal(await selector.locator('option[value="child-second"]').textContent(), "7-4. 튀김기 관리 · 청소 및 마감 운영");
+      await selector.click();
+      assert.equal(await page.getByRole("group", { name: "운영 · 청소 및 마감 운영", exact: true }).count(), 1);
+      assert.equal(await page.locator('[role="option"][data-manual-id="parent"], [role="option"][data-manual-id="foreign"]').count(), 0);
+      assert.equal(await page.locator('[role="option"][data-manual-id="child-first"]').textContent(), "7-3. 튀김기 관리 · 청소 및 마감 운영");
+      assert.equal(await page.locator('[role="option"][data-manual-id="child-second"]').textContent(), "7-4. 튀김기 관리 · 청소 및 마감 운영");
+      await page.keyboard.press("Escape");
       await selector.focus();
       await page.keyboard.press("ArrowDown");
       await page.keyboard.press("Enter");
-      assert.equal(await selector.inputValue(), first.id);
+      assert.equal(await selector.getAttribute("data-selected-id"), first.id);
       for (const [item, heading] of [[first, "7-3. 튀김기 관리"], [second, "7-4. 튀김기 관리"], [plain, "번호 없는 매장 안내 · ID plain"], [duplicate, "번호 없는 매장 안내 · ID duplicate"]]) {
-        await selector.selectOption(item.id);
+        await selectManual(page, item.id);
         await page.locator("p").filter({ hasText: heading }).waitFor();
         const editor = new URL(await page.getByRole("link", { name: "매뉴얼 편집", exact: true }).getAttribute("href"), url);
         assert.equal(editor.searchParams.get("manualId"), item.id);
@@ -248,7 +261,7 @@ test("grouped child choices preserve source headings, matching summaries, editor
       }
       await page.getByRole("button", { name: "답변과 매뉴얼 다시 불러오기" }).click();
       await page.locator("p").filter({ hasText: "번호 없는 매장 안내 · ID duplicate" }).waitFor();
-      assert.equal(await selector.inputValue(), "duplicate");
+      assert.equal(await selector.getAttribute("data-selected-id"), "duplicate");
       const storeLink = page.getByRole("link", { name: "전체 매장 매뉴얼", exact: true });
       const hqLink = page.getByRole("link", { name: "본사 매뉴얼 확인", exact: true });
       const storeTarget = new URL(await storeLink.getAttribute("href"), url);
@@ -263,7 +276,7 @@ test("grouped child choices preserve source headings, matching summaries, editor
         assert.equal(await link.evaluate((element) => getComputedStyle(element).borderTopStyle), "solid");
         assert.ok((await link.boundingBox()).height >= 44);
       }
-      await selector.selectOption(first.id);
+      await selectManual(page, first.id);
       await page.locator("main").evaluate((element) => { element.scrollTop = 0; });
       await page.screenshot({ path: path.join(screenshots, `grouped-${viewport.width}.png`) });
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -298,8 +311,8 @@ test("context failure stays visible outside disclosures and does not prevent man
   const { page } = await openFixture({ contextFailure: true });
   try {
     await page.getByRole("alert").filter({ hasText: "기존 답변과 근거를 확인하지 못했습니다" }).waitFor();
-    assert.equal(await page.getByRole("button", { name: "기존 챗봇 답변과 근거 후보" }).getAttribute("aria-expanded"), "false");
-    await page.getByLabel("수정할 매장 매뉴얼을 선택하세요").selectOption("manual");
+    assert.equal(await page.getByRole("button", { name: "기존 AI 답변 확인" }).getAttribute("aria-expanded"), "false");
+    await selectManual(page, "manual");
     await page.getByRole("link", { name: "매뉴얼 편집", exact: true }).waitFor();
   } finally { await page.close(); }
 });
@@ -307,7 +320,7 @@ test("context failure stays visible outside disclosures and does not prevent man
 test("HQ evidence remains read-only without a candidate edit action", async () => {
   const { page } = await openFixture({ context: { ...context, source: { ...context.source, editable: false } } });
   try {
-    await page.getByRole("button", { name: "기존 챗봇 답변과 근거 후보" }).click();
+    await page.getByRole("button", { name: "기존 AI 답변 확인" }).click();
     await page.getByText("본사 공통 · 읽기 전용").waitFor();
     await page.getByText("본사 매뉴얼은 점주가 수정할 수 없습니다.", { exact: false }).waitFor();
     assert.equal(await page.getByRole("button", { name: "이 근거 매뉴얼 선택" }).count(), 0);
