@@ -32,7 +32,8 @@ begin
         ('public.owner_staff_email_signup_flows')
       ) as state_table(table_name)
       join pg_catalog.pg_class as relation on relation.oid = pg_catalog.to_regclass(state_table.table_name)
-      where not has_table_privilege(current_user, state_table.table_name, 'SELECT,DELETE')
+      where not has_table_privilege(current_user, state_table.table_name, 'SELECT')
+        or not has_table_privilege(current_user, state_table.table_name, 'DELETE')
         or (relation.relrowsecurity and not (
           active_is_superuser
           or coalesce((select rolbypassrls from pg_catalog.pg_roles where oid = active_role), false)
@@ -42,11 +43,42 @@ begin
     raise exception using errcode = '55000', message = 'AUTH_DELETE_SIGNUP_CLEANUP_REQUIRED_PRIVILEGES_MISSING';
   end if;
   if exists (
+    with recursive cascade_relations(relation_oid, visited) as (
+      select 'auth.users'::regclass::oid, array['auth.users'::regclass::oid]
+      union all
+      select dependency.conrelid, parent.visited || dependency.conrelid
+      from cascade_relations as parent
+      join pg_catalog.pg_constraint as dependency on dependency.confrelid = parent.relation_oid
+      where dependency.contype = 'f' and dependency.confdeltype = 'c'
+        and not dependency.conrelid = any(parent.visited)
+    )
+    select 1 from cascade_relations
+    where cardinality(visited) > 1
+      and relation_oid in (pg_catalog.to_regclass('public.stores'), pg_catalog.to_regclass('public.manuals'))
+  ) then
+    raise exception using errcode = '55000', message = 'AUTH_DELETE_STORE_MANUAL_CASCADE_REVIEW_REQUIRED';
+  end if;
+  if exists (
     select 1 from pg_catalog.pg_trigger
     where tgrelid = 'auth.users'::regclass
       and tgname = 'cleanup_owner_staff_signup_state_after_auth_delete'
   ) or to_regprocedure('public.cleanup_owner_staff_signup_state_after_auth_delete()') is not null then
     raise exception using errcode = '55000', message = 'AUTH_DELETE_SIGNUP_CLEANUP_OBJECT_EXISTS_REVIEW_REQUIRED';
+  end if;
+  if exists (
+    select 1 from pg_catalog.pg_trigger
+    where tgrelid in ('public.owner_staff_signup_requests'::regclass, 'public.owner_staff_email_signup_flows'::regclass)
+      and not tgisinternal and tgenabled <> 'D' and (tgtype & 8) <> 0
+  ) or exists (
+    select 1 from pg_catalog.pg_rewrite
+    where ev_class in ('public.owner_staff_signup_requests'::regclass, 'public.owner_staff_email_signup_flows'::regclass)
+      and ev_type = '4' and ev_enabled <> 'D'
+  ) or exists (
+    select 1 from pg_catalog.pg_constraint
+    where contype = 'f' and confrelid in ('public.owner_staff_signup_requests'::regclass, 'public.owner_staff_email_signup_flows'::regclass)
+      and confdeltype in ('c', 'n', 'd')
+  ) then
+    raise exception using errcode = '55000', message = 'AUTH_DELETE_SIGNUP_STATE_SIDE_EFFECT_REVIEW_REQUIRED';
   end if;
 end
 $preflight$;

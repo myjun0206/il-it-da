@@ -1,4 +1,6 @@
-export type SignupConsentKey = "service" | "privacy" | "store_connection" | "store_work";
+import { RESEARCH_CONSENT_TITLE } from "@/lib/auth/signup-research-consent";
+
+export type SignupConsentKey = "service" | "privacy" | "store_connection" | "store_work" | "research";
 export type SignupDocumentKey = SignupConsentKey | "privacy_policy";
 
 export type SignupDocumentSection = {
@@ -13,6 +15,16 @@ export type SignupDocument = {
 };
 
 export const SIGNUP_DOCUMENTS: Record<SignupDocumentKey, SignupDocument> = {
+  research: {
+    title: RESEARCH_CONSENT_TITLE,
+    draft: true,
+    sections: [
+      { heading: "선택 동의", body: "동의하지 않아도 가입과 서비스 이용에 불이익이 없습니다. 선택 여부는 필수 약관과 별도로 저장됩니다. 설문·인터뷰 안내 발송은 아직 구현되지 않았으며, 현재 안내가 발송되는 것은 아닙니다." },
+      { heading: "수집 항목", body: "계정 이메일과 사용자 식별자, 수신 동의 여부, 동의 문안 버전 및 서버 기록 시각을 관리합니다. 전화번호를 선택 안내 목적으로 추가 수집하거나 별도 발송 목록을 만들지 않습니다. 실제 설문 답변·녹음·인터뷰 자료 수집은 이 동의에 포함되지 않습니다." },
+      { heading: "이용 목적", body: "서비스 개선을 위한 선택 설문·인터뷰 참여 안내 수신 여부를 관리하기 위한 준비 항목입니다. 정식 발송 운영 전 운영주체·발송 채널·처리 조건을 확정하고 별도로 검토해야 합니다." },
+      { heading: "보유기간과 철회", body: "현재 동의 상태는 Auth 계정의 부가정보로 관리하고 계정 영구 삭제 시 함께 제거됩니다. 가입 중에는 선택을 해제할 수 있고 가입 후에는 환경설정에서 수신 동의를 철회할 수 있습니다. 철회하면 상태가 미동의로 갱신됩니다. 동의 증빙·백업의 보유기간과 정식 운영 정책은 아직 검토안이며 법률 검토 완료본이 아닙니다." },
+    ],
+  },
   service: {
     title: "서비스 이용약관",
     draft: true,

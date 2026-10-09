@@ -2,8 +2,24 @@ import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 
 import type { OtpResult, PrepareSignup } from "@/lib/auth/owner-staff-signup";
+import { hasRequiredSignupTerms, normalizeSignupEmail, validateOwnerStaffSignupProfile } from "@/lib/auth/owner-staff-signup";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { EmailFirstState, PrepareEmailFirst } from "@/lib/auth/email-first-signup";
+import { emailFirstUserMatches } from "@/lib/auth/email-first-signup";
+
+export async function canResumeCompletedSignup(userId: string, email: string, role: "owner" | "staff"): Promise<boolean> {
+  const client = createAdminClient();
+  const { data, error } = await client.auth.admin.getUserById(userId);
+  if (error && error.status !== 404) throw new Error("COMPLETED_SIGNUP_ACCOUNT_LOOKUP_UNAVAILABLE");
+  if (error || !emailFirstUserMatches(data.user, normalizeSignupEmail(email), role) ||
+      data.user.user_metadata?.signup_flow !== "email_first") return false;
+  const metadata = data.user.user_metadata ?? {};
+  if (!hasRequiredSignupTerms(metadata.signupTerms, role) ||
+      Object.keys(validateOwnerStaffSignupProfile({ name: metadata.name, phone: metadata.phone })).length) return false;
+  const state = await prepareEmailFirstSignup(email, role, "inspect");
+  if (state.kind === "unavailable") throw new Error("COMPLETED_SIGNUP_STATE_LOOKUP_UNAVAILABLE");
+  return state.kind === "complete" && state.userId === userId;
+}
 
 export const prepareEmailFirstSignup: PrepareEmailFirst = async (email, role, action, userId, requestId) => {
   const { data, error } = await createAdminClient().rpc("prepare_owner_staff_email_first_signup", {

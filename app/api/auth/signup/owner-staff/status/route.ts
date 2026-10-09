@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchAuthEmailSettings, fetchEmailFirstAuthSettings } from "@/lib/auth/auth-email-settings";
 import { checkEmailSignupConfirmation, parseOwnerStaffRole } from "@/lib/auth/owner-staff-signup";
 import { prepareEmailFirstSignup } from "@/lib/auth/owner-staff-signup-server";
+import { requiredSignupConsent } from "@/lib/auth/signup-research-consent";
 
 export const runtime = "nodejs";
 
@@ -31,7 +32,8 @@ export async function GET(): Promise<NextResponse> {
     if (!profile && (state?.userId !== user.id || (!profileComplete && !state?.emailVerified))) {
       return NextResponse.json({ ok: false, code: "SIGNUP_INCOMPLETE" }, { status: 403, headers: { "Cache-Control": "no-store" } });
     }
-    return NextResponse.json({ ok: true, role, email: user.email, name: user.user_metadata?.name ?? "", phone: user.user_metadata?.phone ?? "", profileComplete },
+    return NextResponse.json({ ok: true, role, email: user.email, name: user.user_metadata?.name ?? "", phone: user.user_metadata?.phone ?? "", profileComplete,
+      ...(profileComplete ? { terms: requiredSignupConsent(user.user_metadata?.signupTerms) } : {}) },
       { headers: { "Cache-Control": "no-store" } });
   } catch {
     return NextResponse.json({ ok: false, error: "인증 상태를 확인할 수 없습니다." }, { status: 503, headers: { "Cache-Control": "no-store" } });

@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, CheckCircle2, Camera, Trash2, LogOut } from "lucide-react";
 import ThemeSelector from "@/components/common/ThemeSelector";
+import ResearchConsentSetting from "@/components/auth/ResearchConsentSetting";
 import ProfileAvatar from "@/components/common/ProfileAvatar";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { createClient } from "@/lib/supabase/client";
@@ -708,6 +709,7 @@ export default function HqSettingsPage() {
                   일잇다의 화면 테마를 선택합니다.
                 </p>
                 <ThemeSelector />
+                <ResearchConsentSetting />
               </section>
             </>
           ) : null}

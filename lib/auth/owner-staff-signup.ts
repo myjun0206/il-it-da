@@ -25,11 +25,12 @@ export type OtpErrorCode =
   | "AUTH_UNAVAILABLE"
   | "CODE_INVALID_OR_EXPIRED"
   | "VERIFICATION_REJECTED"
+  | "SIGNUP_INCOMPLETE"
   | "SIGNUP_FAILED";
 
 export type OtpResult =
   | { ok: true; status: 200; resumed?: boolean; cooldownSeconds?: number; role?: OwnerStaffRole; expiresAt?: number; profileComplete?: boolean }
-  | { ok: false; status: number; code: OtpErrorCode; error: string; retryAfterSeconds?: number; fields?: Record<string, string> };
+  | { ok: false; status: number; code: OtpErrorCode; error: string; retryAfterSeconds?: number; fields?: Record<string, string>; nextStep?: "login" };
 
 type AuthErrorLike = { code?: string; status?: number; message?: string; name?: string } | null;
 
@@ -83,12 +84,13 @@ const MESSAGES: Record<OtpErrorCode, string> = {
   RATE_LIMITED: "인증번호 요청이 너무 잦습니다. 잠시 후 다시 시도해주세요.",
   EMAIL_SEND_FAILED: "인증 메일을 보내지 못했습니다. 잠시 후 다시 시도해주세요.",
   EMAIL_OTP_UNAVAILABLE: "지금은 이메일 인증 가입을 이용할 수 없습니다. 관리자에게 문의해주세요.",
-  CODE_INVALID: "인증번호가 올바르지 않습니다. 다시 확인해주세요.",
+  CODE_INVALID: "인증번호가 틀립니다. 다시 확인해 주세요.",
   CODE_EXPIRED: "인증 시간이 만료되었습니다. 새 인증번호를 받아주세요.",
   AUTH_UNAVAILABLE: "인증 서비스에 연결할 수 없습니다. 잠시 후 다시 시도해주세요.",
   CODE_INVALID_OR_EXPIRED: "인증번호가 올바르지 않거나 만료되었습니다. 다시 확인하거나 인증번호를 다시 받아주세요.",
   VERIFICATION_REJECTED: "이 가입 정보로는 인증을 완료할 수 없습니다. 처음부터 다시 진행해주세요.",
   SIGNUP_FAILED: "회원가입 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+  SIGNUP_INCOMPLETE: "가입 정보 제출은 완료되었습니다. 로그인 후 매장 신청을 이어가 주세요.",
 };
 
 function fail(status: number, code: OtpErrorCode, retryAfterSeconds?: number): OtpResult {
@@ -196,10 +198,14 @@ export function mapAuthError(error: NonNullable<AuthErrorLike>, context: "send" 
   }
 
   if (context === "verify") {
-    if (code === "otp_expired" || message.includes("expired")) return fail(400, "CODE_EXPIRED");
     if (code === "otp_disabled") return fail(503, "AUTH_UNAVAILABLE");
     if ((error.status ?? 0) >= 500) return fail(502, "AUTH_UNAVAILABLE");
-    return fail(400, "CODE_INVALID");
+    if (error.status === 0 || error.name === "AuthRetryableFetchError" || message.includes("fetch failed") || message.includes("network")) return fail(503, "AUTH_UNAVAILABLE");
+    if (code === "otp_expired" || /(?:otp|verification code).*expired/.test(message) ||
+      /token.*expired.*invalid/.test(message)) return fail(400, "CODE_EXPIRED");
+    if (["invalid", "otp_invalid", "invalid_otp", "invalid_token"].includes(code) ||
+      /(?:token|otp|verification code).*(?:invalid|incorrect)/.test(message)) return fail(400, "CODE_INVALID");
+    return fail(503, "AUTH_UNAVAILABLE");
   }
 
   if (code === "user_already_exists" || code === "email_exists" || message.includes("already registered")) {

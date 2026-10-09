@@ -2,7 +2,25 @@
 -- This inspects catalog objects/permissions only; it does not read signup row values.
 begin transaction read only;
 
-with trigger_check as (
+with recursive cascade_relations(relation_oid, visited) as (
+  select 'auth.users'::regclass::oid, array['auth.users'::regclass::oid]
+  union all
+  select dependency.conrelid, parent.visited || dependency.conrelid
+  from cascade_relations as parent
+  join pg_catalog.pg_constraint as dependency on dependency.confrelid = parent.relation_oid
+  where dependency.contype = 'f' and dependency.confdeltype = 'c'
+    and not dependency.conrelid = any(parent.visited)
+), delete_impact as (
+  select distinct dependency.conrelid::regclass::text as relation_name,
+    dependency.confrelid::regclass::text as referenced_relation,
+    dependency.conname,
+    case dependency.confdeltype when 'c' then 'CASCADE' when 'n' then 'SET NULL'
+      when 'a' then 'NO ACTION' when 'r' then 'RESTRICT' when 'd' then 'SET DEFAULT' end as delete_action,
+    pg_catalog.pg_get_constraintdef(dependency.oid, true) as definition
+  from pg_catalog.pg_constraint as dependency
+  join cascade_relations as parent on parent.relation_oid = dependency.confrelid
+  where dependency.contype = 'f'
+), trigger_check as (
   select
     trigger_row.tgname,
     trigger_row.tgenabled,
@@ -34,7 +52,8 @@ with trigger_check as (
     ) as public_execute_grant,
     (
       select bool_and(
-        has_table_privilege(routine.proowner, state_table.table_name, 'SELECT,DELETE')
+        has_table_privilege(routine.proowner, state_table.table_name, 'SELECT')
+        and has_table_privilege(routine.proowner, state_table.table_name, 'DELETE')
         and (
           not state_class.relrowsecurity or owner_role.rolsuper or owner_role.rolbypassrls
           or (state_class.relowner = routine.proowner and not state_class.relforcerowsecurity)
@@ -65,6 +84,36 @@ select 'trigger'::text as check_group, coalesce(to_jsonb(trigger_check), '{}'::j
 union all
 select 'function', coalesce(to_jsonb(function_check), '{}'::jsonb) from function_check
 union all
-select 'auth_delete_foreign_keys', jsonb_build_object('foreign_keys', coalesce((select jsonb_agg(to_jsonb(auth_delete_fk) order by relation_name) from auth_delete_fk), '[]'::jsonb));
+select 'auth_delete_foreign_keys', jsonb_build_object('foreign_keys', coalesce((select jsonb_agg(to_jsonb(auth_delete_fk) order by relation_name) from auth_delete_fk), '[]'::jsonb))
+union all
+select 'auth_delete_data_impact', jsonb_build_object(
+  'foreign_keys', coalesce((select jsonb_agg(to_jsonb(delete_impact) order by relation_name, conname) from delete_impact), '[]'::jsonb),
+  'stores_and_manuals_preserved_by_fk', not exists (
+    select 1 from cascade_relations where cardinality(visited) > 1
+      and relation_oid in ('public.stores'::regclass, 'public.manuals'::regclass)
+  )
+)
+union all
+select 'signup_state_delete_side_effects', jsonb_build_object(
+  'all_clear', count(*) = 0,
+  'objects', coalesce(jsonb_agg(to_jsonb(side_effect)), '[]'::jsonb)
+)
+from (
+  select 'trigger' as kind, tgrelid::regclass::text as relation_name, tgname::text as object_name,
+    pg_catalog.pg_get_triggerdef(oid, true) as definition
+  from pg_catalog.pg_trigger
+  where tgrelid in (pg_catalog.to_regclass('public.owner_staff_signup_requests'), pg_catalog.to_regclass('public.owner_staff_email_signup_flows'))
+    and not tgisinternal and tgenabled <> 'D' and (tgtype & 8) <> 0
+  union all
+  select 'rule', ev_class::regclass::text, rulename::text, pg_catalog.pg_get_ruledef(oid, true)
+  from pg_catalog.pg_rewrite
+  where ev_class in (pg_catalog.to_regclass('public.owner_staff_signup_requests'), pg_catalog.to_regclass('public.owner_staff_email_signup_flows'))
+    and ev_type = '4' and ev_enabled <> 'D'
+  union all
+  select 'mutating_foreign_key', confrelid::regclass::text, conname::text, pg_catalog.pg_get_constraintdef(oid, true)
+  from pg_catalog.pg_constraint
+  where contype = 'f' and confrelid in (pg_catalog.to_regclass('public.owner_staff_signup_requests'), pg_catalog.to_regclass('public.owner_staff_email_signup_flows'))
+    and confdeltype in ('c', 'n', 'd')
+) as side_effect;
 
 commit;

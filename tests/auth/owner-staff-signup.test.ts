@@ -1,3 +1,18 @@
+import { acceptsResearchInvitations, createResearchConsent, requiredSignupConsent } from "../../lib/auth/signup-research-consent.ts";
+test("optional research consent is explicit, separate and never supplies required consent", () => {
+  const now = new Date("2026-10-09T00:00:00Z");
+  assert.equal(createResearchConsent(undefined, now).accepted, false);
+  assert.equal(createResearchConsent("true", now).accepted, false);
+  assert.equal(createResearchConsent(true, now).accepted, true);
+  assert.equal(acceptsResearchInvitations({ accepted: true }), true);
+  assert.equal(acceptsResearchInvitations({ accepted: "true" }), false);
+  assert.deepEqual(requiredSignupConsent({ research: true }), {
+    service: false, privacy: false, store_connection: false, store_work: false,
+  });
+  assert.deepEqual(requiredSignupConsent({ service: true, privacy: true, store_connection: true, research: true }), {
+    service: true, privacy: true, store_connection: true, store_work: false,
+  });
+});
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {

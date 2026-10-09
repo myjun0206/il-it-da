@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { AlertCircle, CheckCircle2, Check, Camera, Store } from "lucide-react";
 
 import ThemeSelector from "@/components/common/ThemeSelector";
+import ResearchConsentSetting from "@/components/auth/ResearchConsentSetting";
 import ProfileAvatar from "@/components/common/ProfileAvatar";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { AccountDeleteConfirmDialog } from "@/components/common/AccountDeleteConfirmDialog";
@@ -1050,6 +1051,7 @@ export default function StaffSettingsPage() {
             일잇다의 화면 테마를 선택합니다. 시스템 설정을 선택하면 기기의 라이트/다크 모드를 따릅니다.
           </p>
           <ThemeSelector />
+          <ResearchConsentSetting />
         </section>
 
         {/* === 매장 탈퇴 확인 대화상자 === */}

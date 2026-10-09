@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
 import ThemeSelector from "@/components/common/ThemeSelector";
+import ResearchConsentSetting from "@/components/auth/ResearchConsentSetting";
 import ProfileAvatar from "@/components/common/ProfileAvatar";
 import { uploadProfileAvatarClient, deleteProfileAvatarClient } from "@/lib/supabase/storage-profile-avatar";
 
@@ -845,6 +846,7 @@ export default function SettingsPage() {
               일잇다의 화면 테마를 선택합니다.
             </p>
             <ThemeSelector />
+            <ResearchConsentSetting />
           </section>
 
           {/* 5. 회원 탈퇴 */}

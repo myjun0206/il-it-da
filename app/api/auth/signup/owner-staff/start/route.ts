@@ -4,6 +4,7 @@ import { fetchEmailFirstAuthSettings } from "@/lib/auth/auth-email-settings";
 import { sendEmailFirstOtp } from "@/lib/auth/email-first-signup";
 import {
   createEphemeralAuthClient,
+  canResumeCompletedSignup,
   prepareEmailFirstSignup,
   isSameOriginRequest,
   readJsonBody,
@@ -31,6 +32,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         auth: createEphemeralAuthClient(),
         getSettings: fetchEmailFirstAuthSettings,
         prepare: prepareEmailFirstSignup,
+        canResumeCompleted: canResumeCompletedSignup,
       },
     );
     if (!result.ok) logSafeAuthError(`OWNER_STAFF_SIGNUP_START_${result.code}`, null);
