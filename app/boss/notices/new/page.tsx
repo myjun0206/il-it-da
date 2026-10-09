@@ -112,7 +112,7 @@ export default function NewOwnerNoticePage() {
 
         <main className="flex-1 overflow-y-auto p-6 lg:p-8">
           <div className="mx-auto max-w-7xl">
-           <div className="max-w-4xl">
+            <div className="mx-auto max-w-5xl">
             <Link
               href={NOTICE_LIST_HREF}
               aria-label="공지사항 목록으로 돌아가기"

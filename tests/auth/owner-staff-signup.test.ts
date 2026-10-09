@@ -5,7 +5,7 @@ import {
   checkEmailSignupConfirmation, mapAuthError, isValidSignupToken,
   type StartSignupDeps, type VerifyAuthClient, type PrepareSignup,
   validateInitialEmailMembership,
-  validateOwnerStaffSignupProfile, isValidSignupEmail, normalizeSignupEmail,
+  validateOwnerStaffSignupProfile, isValidSignupEmail, normalizeSignupEmail, normalizeSignupName,
 } from "../../lib/auth/owner-staff-signup.ts";
 import { parseAuthEmailSettings } from "../../lib/auth/auth-email-settings.ts";
 
@@ -24,6 +24,17 @@ test("preserves existing name, phone and password boundaries without changing pa
   assert.ok(validateOwnerStaffSignup({ ...input, role: "hq" }).role);
   assert.ok(validateOwnerStaffSignup({ ...input, email: "a@b" }).email);
   assert.deepEqual(validateOwnerStaffSignup({ ...input, name: "가나", phone: "1234567890" }), {});
+});
+
+test("normalizes and validates human names without a Hangul-only restriction", () => {
+  for (const name of ["홍길동", "Kim Min-su", "O'Connor", "O’Connor", "Jose\u0301 Cruz"]) {
+    assert.equal(validateOwnerStaffSignupProfile({ name, phone: "01012345678" }).name, undefined, name);
+  }
+  assert.equal(normalizeSignupName("  Jose\u0301 Cruz  "), "José Cruz");
+  for (const name of ["", "   ", "A", "가".repeat(51), "홍길동2", "Kim 😀", "홍길동!", "ㄱㄴ", "ㅏㅓ", "\u0301", "O--Connor"]) {
+    assert.equal(validateOwnerStaffSignupProfile({ name, phone: "01012345678" }).name, "올바른 이름을 입력해 주세요.", name);
+  }
+  assert.equal(validateOwnerStaffSignupProfile({ name: "가".repeat(50), phone: "01012345678" }).name, undefined);
 });
 
 test("rejects validation bypass before calling Auth", async () => {
@@ -145,7 +156,7 @@ test("OTP format is exact and preserves leading zeroes; Auth decides invalid, ex
   assert.deepEqual(calls, ["012345"]);
   authClient.verifyOtp = async () => ({ data: { user: null, session: null }, error: { code: "otp_expired" } });
   const result = await verifyOwnerStaffSignup({ email: input.email, token: "012345", role: "owner" }, deps);
-  assert.equal(!result.ok && result.code, "CODE_INVALID_OR_EXPIRED");
+  assert.equal(!result.ok && result.code, "CODE_EXPIRED");
 });
 
 test("verification rejects changed email, social identity, wrong role and auto-confirmed users and clears session", async () => {
@@ -216,7 +227,8 @@ test("verified-profile validation reuses unchanged name and phone rules without 
   assert.deepEqual(validateOwnerStaffSignupProfile({ name: "가나", phone: "1234567890" }), {});
   assert.ok(validateOwnerStaffSignupProfile({ name: " ", phone: "1234567890" }).name);
   assert.ok(validateOwnerStaffSignupProfile({ name: "가나", phone: "123456789" }).phone);
-  assert.deepEqual(validateOwnerStaffSignupProfile({ name: "가".repeat(100), phone: "01-123456789012345" }), {});
+  assert.equal(validateOwnerStaffSignupProfile({ name: "가".repeat(50), phone: "01-123456789012345" }).name, undefined);
+  assert.equal(validateOwnerStaffSignupProfile({ name: "가".repeat(51), phone: "01-123456789012345" }).name, "올바른 이름을 입력해 주세요.");
   for (const value of [undefined, null, [], 123]) {
     const errors = validateOwnerStaffSignupProfile({ name: value, phone: value });
     assert.ok(errors.name);
@@ -239,4 +251,22 @@ test("each required consent and password confirmation is enforced before account
     assert.equal(!result.ok && Boolean(result.fields?.passwordConfirm), true);
     assert.deepEqual(calls, []);
   }
+});
+
+test("stores the trimmed NFC name in Supabase Auth metadata", async () => {
+  let savedName = "";
+  const result = await startOwnerStaffSignup({ ...input, name: "  Jose\u0301 Cruz  " }, {
+    authClient: {
+      signUp: async (credentials) => {
+        savedName = String(credentials.options.data.name);
+        return { data: { user, session: null }, error: null };
+      },
+      resend: async () => ({ error: null }),
+    },
+    getSettings: async () => settings,
+    prepare: async () => ({ kind: "new" }),
+    emailRedirectTo: "http://localhost/auth/callback",
+  });
+  assert.equal(result.ok, true);
+  assert.equal(savedName, "José Cruz");
 });

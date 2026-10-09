@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AlertCircle, ArrowLeft } from "lucide-react";
 import { buildHqNoticeTarget, type HqNoticeAudience } from "@/lib/notices/build-hq-notice-target";
+import { StoreMultiSelector } from "@/components/notices/StoreMultiSelector";
 import type { HqStoreSummary } from "@/lib/types/store";
 
 type TargetType = "all" | "store";
@@ -22,7 +23,7 @@ export default function NewNoticePage() {
   const [storesError, setStoresError] = useState("");
   const [targetType, setTargetType] = useState<TargetType>("all");
   const [audience, setAudience] = useState<HqNoticeAudience>("all_members");
-  const [targetStoreId, setTargetStoreId] = useState("");
+  const [targetStoreIds, setTargetStoreIds] = useState<string[]>([]);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
@@ -51,8 +52,8 @@ export default function NewNoticePage() {
     const trimmedTitle = title.trim();
     const trimmedContent = content.trim();
 
-    if (targetType === "store" && !targetStoreId) {
-      setErrorMessage("공지를 받을 지점을 선택해주세요.");
+    if (targetType === "store" && targetStoreIds.length === 0) {
+      setErrorMessage("공지를 받을 지점을 최소 1개 이상 선택해주세요.");
       return;
     }
     if (!trimmedTitle) {
@@ -67,18 +68,42 @@ export default function NewNoticePage() {
     setErrorMessage("");
     setIsSubmitting(true);
     try {
-      const response = await fetch("/api/hq/notices", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...buildHqNoticeTarget(targetType, targetStoreId, audience),
-          title: trimmedTitle,
-          content: trimmedContent,
-        }),
-      });
-      const result = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        throw new Error(result.error || "공지를 등록하지 못했습니다.");
+      if (targetType === "all") {
+        // 전체 지점: 기존 API 호출
+        const response = await fetch("/api/hq/notices", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...buildHqNoticeTarget(targetType, "", audience),
+            title: trimmedTitle,
+            content: trimmedContent,
+          }),
+        });
+        const result = (await response.json()) as { error?: string };
+        if (!response.ok) {
+          throw new Error(result.error || "공지를 등록하지 못했습니다.");
+        }
+      } else {
+        // 특정 지점: 각 지점별로 별도 호출
+        const errors: string[] = [];
+        for (const storeId of targetStoreIds) {
+          const response = await fetch("/api/hq/notices", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...buildHqNoticeTarget(targetType, storeId, audience),
+              title: trimmedTitle,
+              content: trimmedContent,
+            }),
+          });
+          const result = (await response.json()) as { error?: string };
+          if (!response.ok) {
+            errors.push(`${stores.find((s) => s.id === storeId)?.name || storeId}: ${result.error || "등록 실패"}`);
+          }
+        }
+        if (errors.length > 0) {
+          throw new Error(`일부 지점에 공지 등록이 실패했습니다: ${errors.join(", ")}`);
+        }
       }
       router.push(NOTICE_LIST_HREF);
     } catch (error) {
@@ -123,7 +148,7 @@ export default function NewNoticePage() {
                   return (
                     <label
                       key={option.value}
-                      className={`flex cursor-pointer items-start gap-3 rounded-lg border-2 p-4 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--color-primary)] has-[:focus-visible]:ring-offset-2 ${
+                      className={`flex cursor-pointer items-center gap-3 rounded-lg border-2 p-4 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--color-primary)] has-[:focus-visible]:ring-offset-2 ${
                         isSelected
                           ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/30"
                           : "border-[var(--color-border)] bg-white hover:border-[var(--color-primary)]/50"
@@ -135,7 +160,7 @@ export default function NewNoticePage() {
                         value={option.value}
                         checked={isSelected}
                         onChange={() => setTargetType(option.value)}
-                        className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-primary)]"
+                        className="h-4 w-4 shrink-0 flex-shrink-0 accent-[var(--color-primary)]"
                       />
                       <span>
                         <span
@@ -154,7 +179,7 @@ export default function NewNoticePage() {
 
               {targetType === "store" && (
                 <div className="mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-default)] p-4">
-                  <label htmlFor="notice-store" className="mb-2 block text-sm font-semibold text-[var(--color-text-primary)]">
+                  <label className="mb-3 block text-sm font-semibold text-[var(--color-text-primary)]">
                     지점 선택 <span className="text-red-700" aria-hidden="true">*</span>
                   </label>
                   {storesError ? (
@@ -162,19 +187,11 @@ export default function NewNoticePage() {
                   ) : stores.length === 0 ? (
                     <p className="text-sm text-[var(--color-text-secondary)]">선택할 수 있는 지점이 없습니다.</p>
                   ) : (
-                    <select
-                      id="notice-store"
-                      value={targetStoreId}
-                      onChange={(event) => setTargetStoreId(event.target.value)}
-                      className={`${fieldClass} h-11`}
-                    >
-                      <option value="">지점을 선택해주세요</option>
-                      {stores.map((store) => (
-                        <option key={store.id} value={store.id}>
-                          {store.name}
-                        </option>
-                      ))}
-                    </select>
+                    <StoreMultiSelector
+                      stores={stores}
+                      selectedStoreIds={targetStoreIds}
+                      onSelectionChange={setTargetStoreIds}
+                    />
                   )}
                 </div>
               )}
@@ -195,7 +212,7 @@ export default function NewNoticePage() {
                   return (
                     <label
                       key={option.value}
-                      className={`flex cursor-pointer items-start gap-3 rounded-lg border-2 p-4 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--color-primary)] has-[:focus-visible]:ring-offset-2 ${
+                      className={`flex cursor-pointer items-center gap-3 rounded-lg border-2 p-4 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--color-primary)] has-[:focus-visible]:ring-offset-2 ${
                         isSelected
                           ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/30"
                           : "border-[var(--color-border)] bg-white hover:border-[var(--color-primary)]/50"
@@ -207,7 +224,7 @@ export default function NewNoticePage() {
                         value={option.value}
                         checked={isSelected}
                         onChange={() => setAudience(option.value)}
-                        className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-primary)]"
+                        className="h-4 w-4 shrink-0 flex-shrink-0 accent-[var(--color-primary)]"
                       />
                       <span>
                         <span

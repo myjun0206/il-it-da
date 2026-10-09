@@ -1,59 +1,34 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, ChevronLeft, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
+import { SIGNUP_DOCUMENTS, type SignupConsentKey, type SignupDocumentKey } from "@/lib/auth/signup-terms-content";
 
-type TermsKey = "service" | "privacy" | "marketing" | "store_connection" | "store_work";
 type Role = "hq" | "owner" | "staff";
 
 interface Term {
-  id: TermsKey;
+  id: SignupConsentKey;
   title: string;
   required: boolean;
 }
 
-// 공통 약관
 const commonTerms: Term[] = [
-  {
-    id: "service",
-    title: "서비스 이용약관",
-    required: true,
-  },
-  {
-    id: "privacy",
-    title: "개인정보 수집 및 이용 동의",
-    required: true,
-  },
-  {
-    id: "marketing",
-    title: "서비스 및 혜택 정보 수신 동의",
-    required: false,
-  },
+  { id: "service", title: SIGNUP_DOCUMENTS.service.title, required: true },
+  { id: "privacy", title: SIGNUP_DOCUMENTS.privacy.title, required: true },
 ];
 
-// 점주 추가 약관
 const ownerAdditionalTerms: Term[] = [
-  {
-    id: "store_connection",
-    title: "매장 운영 및 본사 연동 동의",
-    required: true,
-  },
+  { id: "store_connection", title: SIGNUP_DOCUMENTS.store_connection.title, required: true },
 ];
 
-// 직원 추가 약관
 const staffAdditionalTerms: Term[] = [
-  {
-    id: "store_work",
-    title: "근무 매장 연결 및 업무정보 이용 동의",
-    required: true,
-  },
+  { id: "store_work", title: SIGNUP_DOCUMENTS.store_work.title, required: true },
 ];
 
-// role에 따라 약관 배열 생성
 const getTermsByRole = (role: Role): Term[] => {
-  const terms: Term[] = [commonTerms[0], commonTerms[1]]; // 필수 2개
+  const terms: Term[] = [...commonTerms];
 
   if (role === "owner") {
     terms.push(ownerAdditionalTerms[0]);
@@ -61,17 +36,14 @@ const getTermsByRole = (role: Role): Term[] => {
     terms.push(staffAdditionalTerms[0]);
   }
 
-  terms.push(commonTerms[2]); // 선택 약관은 마지막에
   return terms;
 };
 
-// role에 따른 초기 상태 생성
-const getInitialTermsState = (role: Role): Record<TermsKey, boolean> => {
+const getInitialTermsState = (role: Role): Record<SignupConsentKey, boolean> => {
   const terms = getTermsByRole(role);
-  const state: Record<TermsKey, boolean> = {
+  const state: Record<SignupConsentKey, boolean> = {
     service: false,
     privacy: false,
-    marketing: false,
     store_connection: false,
     store_work: false,
   };
@@ -100,8 +72,23 @@ export default function SignupTermsPage() {
 
   const initialData = getInitialTermsData();
   const [currentTerms] = useState<Term[]>(initialData.terms);
-  const [termsAccepted, setTermsAccepted] = useState<Record<TermsKey, boolean>>(initialData.accepted);
-  const [selectedTermModal, setSelectedTermModal] = useState<TermsKey | null>(null);
+  const [termsAccepted, setTermsAccepted] = useState<Record<SignupConsentKey, boolean>>(initialData.accepted);
+  const [selectedTermModal, setSelectedTermModal] = useState<SignupDocumentKey | null>(null);
+  const closeDocumentButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!selectedTermModal) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeDocumentButtonRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedTermModal(null);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, [selectedTermModal]);
 
   // 동적으로 required 약관이 모두 동의되었는지 확인
   const requiredAccepted = currentTerms
@@ -115,14 +102,14 @@ export default function SignupTermsPage() {
   const handleAllAccept = () => {
     if (allAccepted) {
       // 모두 해제
-      const newState: Record<TermsKey, boolean> = { ...termsAccepted };
+      const newState: Record<SignupConsentKey, boolean> = { ...termsAccepted };
       currentTerms.forEach((term) => {
         newState[term.id] = false;
       });
       setTermsAccepted(newState);
     } else {
       // 모두 동의
-      const newState: Record<TermsKey, boolean> = { ...termsAccepted };
+      const newState: Record<SignupConsentKey, boolean> = { ...termsAccepted };
       currentTerms.forEach((term) => {
         newState[term.id] = true;
       });
@@ -130,21 +117,8 @@ export default function SignupTermsPage() {
     }
   };
 
-  // 필수 약관만 동의
-  const handleAcceptRequired = () => {
-    const newState: Record<TermsKey, boolean> = { ...termsAccepted };
-    currentTerms.forEach((term) => {
-      if (term.required) {
-        newState[term.id] = true;
-      } else {
-        newState[term.id] = false;
-      }
-    });
-    setTermsAccepted(newState);
-  };
-
   // 개별 약관 체크 토글
-  const handleTermChange = (id: TermsKey) => {
+  const handleTermChange = (id: SignupConsentKey) => {
     setTermsAccepted((prev) => ({
       ...prev,
       [id]: !prev[id],
@@ -211,6 +185,9 @@ export default function SignupTermsPage() {
             >
               필수 약관을 확인하고 동의해주세요.
             </p>
+            <p role="status" className="mx-auto mt-5 max-w-[820px] rounded border border-[#f59e0b] bg-[#fffbeb] px-4 py-3 text-left text-sm text-[#713f12] dark:border-[#a16207] dark:bg-[#332b18] dark:text-[#fde68a]">
+              아래 약관과 개인정보 문서는 운영 검토 초안입니다. 운영주체, 시행일, 문의처, 보유기간과 외부 처리 조건을 확정하고 법률 검토를 마친 뒤 공개해야 합니다.
+            </p>
           </div>
 
           {/* Terms Container */}
@@ -218,91 +195,46 @@ export default function SignupTermsPage() {
             {/* Individual Terms */}
             <div className="space-y-3 mb-8 sm:mb-10">
               {currentTerms.map((term) => (
-                <button
-                  key={term.id}
-                  onClick={() => handleTermChange(term.id)}
-                  className="w-full flex items-center gap-4 p-5 sm:p-6 rounded-lg border border-[var(--color-border-light)] bg-white hover:bg-[var(--color-bg-surface)] transition-colors text-left"
-                >
-                  {/* Checkbox */}
-                  <div
-                    className={`w-6 h-6 rounded border-2 flex-shrink-0 flex items-center justify-center transition-colors ${
-                      termsAccepted[term.id]
-                        ? "border-[var(--color-primary)] bg-[var(--color-primary)]"
-                        : "border-[var(--color-border)] bg-white"
-                    }`}
+                <div key={term.id} className="flex w-full items-center gap-3 rounded border border-[var(--color-border-light)] bg-white p-4 sm:p-5">
+                  <button
+                    type="button"
+                    aria-pressed={termsAccepted[term.id]}
+                    aria-label={`${term.required ? "필수" : "선택"} ${term.title} 동의`}
+                    onClick={() => handleTermChange(term.id)}
+                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
                   >
-                    {termsAccepted[term.id] && (
-                      <Check size={16} className="text-white" strokeWidth={3} />
-                    )}
-                  </div>
-
-                  {/* Content */}
-                  <div className="flex-1 min-w-0 flex items-center justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span
-                          className={`text-xs sm:text-sm font-semibold px-2 py-1 rounded ${
-                            term.required
-                              ? "bg-[var(--color-primary)] text-white"
-                              : "bg-[var(--color-border-light)] text-[var(--color-text-secondary)]"
-                          }`}
-                        >
-                          {term.required ? "필수" : "선택"}
-                        </span>
-                        <span className="font-semibold text-sm sm:text-base text-[var(--color-text-primary)]">
-                          {term.title}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* View Button */}
-                    <div
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedTermModal(term.id);
-                      }}
-                      className="flex-shrink-0 text-xs sm:text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors whitespace-nowrap cursor-pointer"
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.stopPropagation();
-                          setSelectedTermModal(term.id);
-                        }
-                      }}
-                    >
-                      내용 보기 &gt;
-                    </div>
-                  </div>
-                </button>
+                    <span className={`flex h-6 w-6 flex-shrink-0 items-center justify-center rounded border-2 ${termsAccepted[term.id] ? "border-[var(--color-primary)] bg-[var(--color-primary)]" : "border-[var(--color-border)] bg-white"}`}>
+                      {termsAccepted[term.id] && <Check size={16} className="text-white dark:text-[var(--color-text-inverse)]" strokeWidth={3} />}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="mb-1 inline-block rounded bg-[var(--color-primary)] px-2 py-1 text-xs font-semibold text-white">필수</span>
+                      <span className="block break-words font-semibold text-sm sm:text-base text-[var(--color-text-primary)]">{term.title}</span>
+                    </span>
+                  </button>
+                  <button type="button" aria-label={`${term.title} 전문 보기`} onClick={() => setSelectedTermModal(term.id)} className="flex-shrink-0 rounded px-2 py-2 text-sm text-[var(--color-text-secondary)] underline underline-offset-2 hover:text-[var(--color-text-primary)]">
+                    전문 보기
+                  </button>
+                </div>
               ))}
+
+              <div className="flex w-full items-center justify-between gap-3 rounded border border-[var(--color-border-light)] bg-white p-4 sm:p-5">
+                <div className="min-w-0">
+                  <span className="mb-1 inline-block rounded bg-[var(--color-border-light)] px-2 py-1 text-xs font-semibold text-[var(--color-text-secondary)]">안내</span>
+                  <span className="block break-words font-semibold text-sm sm:text-base text-[var(--color-text-primary)]">{SIGNUP_DOCUMENTS.privacy_policy.title}</span>
+                  <span className="mt-1 block text-sm text-[var(--color-text-secondary)]">별도 동의 항목이 아닌 개인정보 처리 안내입니다.</span>
+                </div>
+                <button type="button" aria-label={`${SIGNUP_DOCUMENTS.privacy_policy.title} 전문 보기`} onClick={() => setSelectedTermModal("privacy_policy")} className="flex-shrink-0 rounded px-2 py-2 text-sm text-[var(--color-text-secondary)] underline underline-offset-2 hover:text-[var(--color-text-primary)]">
+                  전문 보기
+                </button>
+              </div>
             </div>
 
             {/* Consent Choice Buttons */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-              {/* Required Only Button */}
+            <div className="flex justify-end">
               <button
-                onClick={handleAcceptRequired}
-                className={`w-full flex items-center justify-center gap-3 py-4 sm:py-5 px-4 sm:px-6 rounded-lg border-2 transition-all duration-200 ${
-                  !allAccepted && requiredAccepted
-                    ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/30"
-                    : "border-[var(--color-border-light)] bg-white hover:border-[var(--color-border)]"
-                }`}
-              >
-                {!allAccepted && requiredAccepted && (
-                  <div className="w-5 h-5 rounded-full bg-[var(--color-primary)] flex items-center justify-center flex-shrink-0">
-                    <Check size={14} className="text-white" strokeWidth={3} />
-                  </div>
-                )}
-                <span className="font-semibold text-base sm:text-lg text-[var(--color-text-primary)]">
-                  필수 약관만 동의
-                </span>
-              </button>
-
-              {/* All Accept Button */}
-              <button
+                type="button"
                 onClick={handleAllAccept}
-                className={`w-full flex items-center justify-center gap-3 py-4 sm:py-5 px-4 sm:px-6 rounded-lg border-2 transition-all duration-200 ${
+                className={`w-full sm:w-auto flex items-center justify-center gap-3 py-4 px-5 rounded border-2 transition-all duration-200 ${
                   allAccepted
                     ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/30"
                     : "border-[var(--color-border-light)] bg-white hover:border-[var(--color-border)]"
@@ -310,10 +242,10 @@ export default function SignupTermsPage() {
               >
                 {allAccepted && (
                   <div className="w-5 h-5 rounded-full bg-[var(--color-primary)] flex items-center justify-center flex-shrink-0">
-                    <Check size={14} className="text-white" strokeWidth={3} />
+                    <Check size={14} className="text-white dark:text-[var(--color-text-inverse)]" strokeWidth={3} />
                   </div>
                 )}
-                <span className="font-semibold text-base sm:text-lg text-[var(--color-text-primary)]">
+                <span className="font-semibold text-base text-[var(--color-text-primary)]">
                   전체 동의
                 </span>
               </button>
@@ -337,14 +269,23 @@ export default function SignupTermsPage() {
 
       {/* Terms Detail Modal */}
       {selectedTermModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50">
-          <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[90vh] sm:max-h-[80vh] flex flex-col">
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="signup-document-title"
+          onClick={(event) => { if (event.target === event.currentTarget) setSelectedTermModal(null); }}
+        >
+          <div className="flex max-h-[90vh] max-h-[90dvh] w-full flex-col rounded-t-2xl bg-white pb-[env(safe-area-inset-bottom)] sm:max-h-[80vh] sm:max-w-2xl sm:rounded-lg">
             {/* Modal Header */}
             <div className="flex items-center justify-between px-5 sm:px-6 py-4 border-b border-[var(--color-border-light)]">
-              <h2 className="font-semibold text-base sm:text-lg text-[var(--color-text-primary)]">
-                {currentTerms.find((t) => t.id === selectedTermModal)?.title}
+              <h2 id="signup-document-title" className="min-w-0 break-words font-semibold text-base sm:text-lg text-[var(--color-text-primary)]">
+                {SIGNUP_DOCUMENTS[selectedTermModal].title}
               </h2>
               <button
+                type="button"
+                ref={closeDocumentButtonRef}
+                aria-label="전문 닫기"
                 onClick={() => setSelectedTermModal(null)}
                 className="p-1 hover:bg-[var(--color-bg-surface)] rounded transition-colors"
               >
@@ -354,45 +295,20 @@ export default function SignupTermsPage() {
 
             {/* Modal Content */}
             <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-6">
-              <div className="text-sm sm:text-base text-[var(--color-text-secondary)] leading-relaxed">
-                {selectedTermModal === "service" && (
-                  <p>
-                    이 약관은 일잇다 서비스의 이용에 관한 기본적인 사항을 정하는 약관입니다.
-                    사용자는 이 약관에 동의함으로써 일잇다 서비스를 이용할 수 있습니다.
-                  </p>
-                )}
-                {selectedTermModal === "privacy" && (
-                  <p>
-                    일잇다는 사용자의 개인정보를 보호하기 위해 최선을 다합니다.
-                    사용자가 제공하는 개인정보는 서비스 제공 및 개선을 위해서만 사용됩니다.
-                  </p>
-                )}
-                {selectedTermModal === "marketing" && (
-                  <p>
-                    선택사항입니다. 동의하시면 일잇다의 새로운 서비스, 이벤트, 혜택 정보를
-                    받아보실 수 있습니다.
-                  </p>
-                )}
-                {selectedTermModal === "store_connection" && (
-                  <p>
-                    점주 계정은 선택하신 매장 및 본사와 연결되며, 매장 운영에 필요한 정보가
-                    본사와 연동되는 구조로 운영됩니다. 이에 동의하시면 효율적인 매장 관리
-                    서비스를 이용하실 수 있습니다.
-                  </p>
-                )}
-                {selectedTermModal === "store_work" && (
-                  <p>
-                    직원 계정은 선택하신 근무 매장과 연결되며, 업무 매뉴얼 및 서비스 내
-                    업무정보를 이용할 수 있습니다. 이에 동의하시면 일잇다 서비스를
-                    활용한 직원 업무 관리가 가능합니다.
-                  </p>
-                )}
+              <div className="space-y-6 text-sm leading-relaxed text-[var(--color-text-secondary)] sm:text-base">
+                {SIGNUP_DOCUMENTS[selectedTermModal].sections.map((section) => (
+                  <section key={section.heading}>
+                    <h3 className="mb-2 font-semibold text-[var(--color-text-primary)]">{section.heading}</h3>
+                    <p className="whitespace-pre-line">{section.body}</p>
+                  </section>
+                ))}
               </div>
             </div>
 
             {/* Modal Footer */}
             <div className="border-t border-[var(--color-border-light)] px-5 sm:px-6 py-4">
               <button
+                type="button"
                 onClick={() => setSelectedTermModal(null)}
                 className="w-full py-3 bg-[var(--color-primary)] text-white rounded-lg font-semibold hover:bg-[var(--color-primary-hover)] transition-colors"
               >

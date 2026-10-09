@@ -389,46 +389,6 @@ export default function OwnerDashboardPage() {
               </p>
             </div>
 
-            {/* Current Store */}
-            <section aria-labelledby="current-store-heading" className={`${cardClass} py-5`}>
-              <p id="current-store-heading" className="text-sm font-medium text-[var(--color-text-secondary)] mb-1">
-                현재 매장
-              </p>
-              {storesError ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="text-base text-red-700" role="alert">매장 정보를 불러오지 못했습니다.</p>
-                  <button
-                    type="button"
-                    onClick={() => window.location.reload()}
-                    className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
-                  >
-                    <RefreshCw size={16} aria-hidden="true" /> 다시 시도
-                  </button>
-                </div>
-              ) : !hasStore ? (
-                <div className="flex items-start gap-3">
-                  <Store size={20} className="mt-0.5 shrink-0 text-[var(--color-text-tertiary)]" aria-hidden="true" />
-                  <div>
-                    <p className="text-base font-semibold text-[var(--color-text-primary)]">아직 연결된 매장이 없습니다.</p>
-                    <p className="mt-0.5 text-sm text-[var(--color-text-secondary)]">
-                      매장 승인 또는 등록이 완료되면 이곳에 표시됩니다.
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <p className="text-xl font-bold text-[var(--color-text-primary)]">{selectedStoreName}</p>
-                    {/* 매장 자체의 운영 상태 컬럼은 없으므로 실제 membership 상태를 표시한다. */}
-                    <span className="inline-flex items-center rounded-full bg-[var(--color-primary-light)]/40 px-2.5 py-0.5 text-sm font-medium text-[var(--color-primary)]">
-                      승인 완료
-                    </span>
-                  </div>
-                  {/* 여러 운영 매장 간 전환은 상단 헤더의 "현재 운영 매장"에서 한다. */}
-                </div>
-              )}
-            </section>
-
             {/* 오늘 확인할 업무 */}
                 <section aria-labelledby="tasks-heading">
                   <h2 id="tasks-heading" className="text-lg font-bold text-[var(--color-text-primary)] mb-4">

@@ -21,7 +21,29 @@ function formatDate(value: string | null): string {
   return Number.isNaN(date.getTime()) ? "-" : date.toLocaleDateString("ko-KR");
 }
 
-function OwnerStatusBadge({ hasOwner }: { hasOwner: boolean }) {
+function OwnerStatusBadge({ hasOwner, showText = true }: { hasOwner: boolean; showText?: boolean }) {
+  if (!showText) {
+    // 아이콘만 표시 (테이블 등에서 사용)
+    return hasOwner ? (
+      <span
+        className="inline-flex items-center justify-center text-[var(--color-primary)]"
+        title="점주 등록됨"
+        aria-label="점주 등록됨"
+      >
+        <CircleCheck size={20} aria-hidden="true" />
+      </span>
+    ) : (
+      <span
+        className="inline-flex items-center justify-center text-amber-600"
+        title="점주 미등록"
+        aria-label="점주 미등록"
+      >
+        <CircleAlert size={20} aria-hidden="true" />
+      </span>
+    );
+  }
+
+  // 아이콘 + 텍스트 표시 (모바일 카드 등에서 사용)
   return hasOwner ? (
     <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-primary-light)]/40 px-3 py-1 text-sm font-medium text-[var(--color-primary)]">
       <CircleCheck size={16} aria-hidden="true" />
@@ -184,9 +206,9 @@ function HqStoresContent() {
               {/* Stats Cards */}
               <div className={`grid grid-cols-1 md:grid-cols-3 gap-4 mb-8 ${isNoOwnerView ? "hidden" : ""}`}>
                 {statCards.map((card) => (
-                  <div key={card.label} className="bg-white border border-[var(--color-border)] rounded-lg p-4 shadow-sm">
-                    <p className="text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">{card.label}</p>
-                    <p className="text-xl font-bold text-[var(--color-text-primary)]">{card.value}</p>
+                  <div key={card.label} className="bg-white border border-[var(--color-border)] rounded-lg p-6 shadow-sm flex flex-col justify-center">
+                    <p className="text-xs font-medium text-[var(--color-text-secondary)] mb-3">{card.label}</p>
+                    <p className="text-2xl font-bold text-[var(--color-text-primary)]">{card.value}</p>
                   </div>
                 ))}
               </div>
@@ -228,18 +250,25 @@ function HqStoresContent() {
                     <div role="group" aria-label="점주 등록 상태 필터" className="flex flex-wrap gap-2 shrink-0">
                       {FILTER_OPTIONS.map((option) => {
                         const isSelected = ownerFilter === option.value;
+                        const showIcon = option.value !== "all";
                         return (
                           <button
                             key={option.value}
                             type="button"
                             aria-pressed={isSelected}
                             onClick={() => setOwnerFilter(option.value)}
-                            className={`min-h-[44px] rounded-lg border-2 px-4 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 ${
+                            className={`min-h-[44px] rounded-lg border-2 px-4 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 inline-flex items-center gap-1.5 ${
                               isSelected
                                 ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/30 text-[var(--color-primary)]"
                                 : "border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
                             }`}
                           >
+                            {showIcon && option.value === "registered" && (
+                              <CircleCheck size={16} aria-hidden="true" />
+                            )}
+                            {showIcon && option.value === "unregistered" && (
+                              <CircleAlert size={16} aria-hidden="true" />
+                            )}
                             {option.label}
                           </button>
                         );
@@ -262,7 +291,7 @@ function HqStoresContent() {
                             <thead className="bg-[var(--color-bg-default)] border-b border-[var(--color-border)]">
                               <tr>
                                 <th scope="col" className="px-6 py-3 text-left text-sm font-bold text-[var(--color-text-primary)]">지점명</th>
-                                <th scope="col" className="px-6 py-3 text-left text-sm font-bold text-[var(--color-text-primary)]">등록 상태</th>
+                                <th scope="col" className="px-6 py-3 text-center text-sm font-bold text-[var(--color-text-primary)]">등록 상태</th>
                                 <th scope="col" className="px-6 py-3 text-left text-sm font-bold text-[var(--color-text-primary)]">직원</th>
                                 <th scope="col" className="px-6 py-3 text-center text-sm font-bold text-[var(--color-text-primary)]">상세</th>
                               </tr>
@@ -274,8 +303,8 @@ function HqStoresContent() {
                                   className="min-h-[76px] border-t border-[var(--color-border)] hover:bg-[var(--color-bg-default)] transition-colors"
                                 >
                                   <td className="px-6 py-5 text-base font-semibold text-[var(--color-text-primary)] align-middle">{store.name}</td>
-                                  <td className="px-6 py-5 align-middle">
-                                    <OwnerStatusBadge hasOwner={store.ownerNames.length > 0} />
+                                  <td className="px-6 py-5 align-middle text-center">
+                                    <OwnerStatusBadge hasOwner={store.ownerNames.length > 0} showText={false} />
                                   </td>
                                   <td className="px-6 py-5 text-base font-medium text-[var(--color-text-secondary)] align-middle whitespace-nowrap">{store.staffCount}명</td>
                                   <td className="px-6 py-5 text-center align-middle">

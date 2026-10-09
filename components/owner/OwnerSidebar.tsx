@@ -59,7 +59,7 @@ export default function OwnerSidebar({
 
       {/* Sidebar */}
       <aside
-        className={`fixed left-0 top-0 h-screen bg-white border-r border-(--color-border) flex flex-col transition-transform duration-300 lg:translate-x-0 ${
+        className={`fixed left-0 top-0 h-dvh overflow-hidden bg-white border-r border-(--color-border) flex flex-col transition-transform duration-300 lg:translate-x-0 ${
           isOpen ? "translate-x-0" : "-translate-x-full"
         } lg:w-[240px] w-64 z-40`}
       >
@@ -86,10 +86,10 @@ export default function OwnerSidebar({
         </div>
 
         {/* Menu Section */}
-        <nav className="flex-1 pt-8 px-3 overflow-y-auto">
+        <nav className="min-h-0 flex-1 py-3 px-3 overflow-y-auto">
           {menuItems.map((item, index) => {
             const isActive = activeMenu === item.id;
-            const buttonClass = `w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium transition-colors ${
+            const buttonClass = `w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-base font-medium transition-colors ${
               index > 0 ? "mt-1" : ""
             } ${
               isActive
@@ -114,10 +114,10 @@ export default function OwnerSidebar({
 
         {/* Bottom Menu */}
         {/* data-app-sidebar-footer: 하단 고정 Action Bar가 이 영역 높이에 맞춰 상단 구분선을 이어 붙인다. */}
-        <div data-app-sidebar-footer className="py-3 px-3 border-t border-(--color-border)">
+        <div data-app-sidebar-footer className="shrink-0 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] px-3 border-t border-(--color-border)">
           {bottomMenuItems.map((item) => {
             const isActive = activeMenu === item.id;
-            const itemClass = `w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium transition-colors ${
+            const itemClass = `w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-base font-medium transition-colors ${
               isActive
                 ? "bg-[var(--color-primary-light)]/30 text-[var(--color-primary)]"
                 : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
@@ -149,15 +149,12 @@ export default function OwnerSidebar({
             );
           })}
 
-          {/* Divider */}
-          <div className="my-1 mx-2 border-t border-(--color-border)" />
-
           {/* Logout Button */}
           {onLogout && (
             <button
               type="button"
               onClick={onLogout}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-base font-medium text-(--color-text-secondary) hover:text-red-600 transition-colors"
+              className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-base font-medium text-(--color-text-secondary) hover:text-red-600 transition-colors"
             >
               <LogOut size={20} />
               <span>로그아웃</span>

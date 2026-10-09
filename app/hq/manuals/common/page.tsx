@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { useClientReady } from "@/lib/hq/use-client-ready";
 import { useRouter } from "next/navigation";
-import { AlertCircle, ArrowLeft, FileText, Pencil, Plus, RefreshCw, Search, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, FileText, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 import { ManualSearchReadinessPanel } from "@/components/manuals/ManualSearchReadinessPanel";
@@ -28,6 +28,10 @@ type ManualView = "categories" | "titles" | "items";
 const CATEGORY_PLACEHOLDER_CONTENT = "__HQ_MANUAL_CATEGORY_PLACEHOLDER__";
 const UUID_LIKE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const INTERNAL_ID_LIKE_PATTERN = /^[A-Za-z0-9_-]{16,}$/;
+
+function createManualItemId(): string {
+  return `manual-item-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
+}
 
 function isCategoryPlaceholder(manual: ManualRecord): boolean {
   return !manual.parent_manual_id && manual.status === "draft" && manual.content === CATEGORY_PLACEHOLDER_CONTENT;
@@ -118,8 +122,8 @@ export default function ManualDashboardPage() {
   const [isDeletingCategory, setIsDeletingCategory] = useState(false);
   const [showTitleModal, setShowTitleModal] = useState(false);
   const [titleName, setTitleName] = useState("");
-  const [titleItems, setTitleItems] = useState<{ id: string; content: string }[]>([
-    { id: crypto.randomUUID(), content: "" },
+  const [titleItems, setTitleItems] = useState<{ id: string; content: string }[]>(() => [
+    { id: createManualItemId(), content: "" },
   ]);
   const [titleError, setTitleError] = useState("");
   const [isCreatingTitle, setIsCreatingTitle] = useState(false);
@@ -261,12 +265,12 @@ export default function ManualDashboardPage() {
 
   const resetTitleForm = () => {
     setTitleName("");
-    setTitleItems([{ id: crypto.randomUUID(), content: "" }]);
+    setTitleItems([{ id: createManualItemId(), content: "" }]);
     setTitleError("");
   };
 
   const handleAddTitleItem = () => {
-    setTitleItems((prev) => [...prev, { id: crypto.randomUUID(), content: "" }]);
+    setTitleItems((prev) => [...prev, { id: createManualItemId(), content: "" }]);
   };
 
   const handleRemoveTitleItem = (id: string) => {
@@ -1052,17 +1056,21 @@ export default function ManualDashboardPage() {
                             type="button"
                             onClick={() => startEditItem(item)}
                             disabled={editingItemId === item.id || deletingItemId === item.id || savingItemId === item.id}
-                            className="rounded-md border border-[var(--color-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+                            title="수정"
+                            aria-label={`매뉴얼 ${index + 1} 수정`}
+                            className="flex min-h-9 w-9 items-center justify-center rounded-lg border border-[var(--color-border)] bg-white text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary-light)]/30 disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                           >
-                            수정
+                            <Pencil size={16} aria-hidden="true" />
                           </button>
                           <button
                             type="button"
                             onClick={() => handleDeleteItem(item)}
                             disabled={deletingItemId === item.id || savingItemId === item.id}
-                            className="rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-bold text-[var(--color-status-error)] transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            title={deletingItemId === item.id ? "삭제 중" : "삭제"}
+                            aria-label={`매뉴얼 ${index + 1} 삭제`}
+                            className="flex min-h-9 w-9 items-center justify-center rounded-lg border border-[var(--color-border)] bg-white text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
                           >
-                            {deletingItemId === item.id ? "삭제 중" : "삭제"}
+                            <Trash2 size={16} aria-hidden="true" />
                           </button>
                         </div>
                       </div>
@@ -1449,7 +1457,7 @@ function ManualGroupModal({
   };
 
   const handleAddItem = () => {
-    setItems((prev) => [...prev, { id: `new-${crypto.randomUUID()}`, title: "", content: "", isNew: true }]);
+    setItems((prev) => [...prev, { id: `new-${createManualItemId()}`, title: "", content: "", isNew: true }]);
   };
 
   const handleSaveTopic = async () => {

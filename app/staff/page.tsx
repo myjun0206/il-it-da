@@ -33,9 +33,9 @@ type ConversationDetail = {
 };
 
 const statusBadgeConfig = {
-  answered: { label: "매뉴얼 기반 답변", icon: CheckCircle2, className: "border border-[#7cd4b6] bg-[#e8f9f4] text-[#0d5d4d]" },
-  cautious: { label: "확인 권장", icon: AlertCircle, className: "border border-[#f0c965] bg-[#fffaed] text-[#7a5a18]" },
-  insufficient: { label: "관리자 확인 필요", icon: Info, className: "border border-[#e8a9a1] bg-[#fef2f0] text-[#8d3c33]" },
+  answered: { label: "매뉴얼 기반 답변", icon: CheckCircle2, className: "border border-[var(--color-badge-answered-border)] bg-[var(--color-badge-answered-bg)] text-[var(--color-badge-answered-text)]" },
+  cautious: { label: "확인 권장", icon: AlertCircle, className: "border border-[var(--color-badge-cautious-border)] bg-[var(--color-badge-cautious-bg)] text-[var(--color-badge-cautious-text)]" },
+  insufficient: { label: "관리자 확인 필요", icon: Info, className: "border border-[var(--color-badge-insufficient-border)] bg-[var(--color-badge-insufficient-bg)] text-[var(--color-badge-insufficient-text)]" },
 } as const;
 const quickQuestions = [
   "오늘 마감 순서 알려줘",
@@ -473,7 +473,7 @@ export default function StaffPage() {
 
 
             {/* Chat Container - takes remaining space */}
-            <div className="bg-white border border-[var(--color-border)] rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
+            <div className="bg-[var(--color-bg-surface)] border border-[var(--color-border)] rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
             {/* Messages Area - Only this scrolls */}
             <div ref={messagesAreaRef} className="flex-1 overflow-y-auto space-y-6 p-6 min-h-0">
               {/* Date Indicator */}
@@ -507,15 +507,15 @@ export default function StaffPage() {
 
               {/* Error Message */}
               {errorMessage && (
-                <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
+                <div role="alert" className="rounded-lg border border-[var(--color-status-error)] bg-[var(--color-status-error)]/10 p-4">
                   <div className="flex gap-3">
                     <div className="flex-1">
-                      <p className="text-sm font-medium text-red-800">{errorMessage}</p>
+                      <p className="text-sm font-medium text-[var(--color-status-error)]">{errorMessage}</p>
                     </div>
                     <button
                       type="button"
                       onClick={dismissError}
-                      className="text-red-600 hover:text-red-700 font-medium text-sm"
+                      className="text-[var(--color-status-error)] hover:text-[var(--color-status-error)]/80 font-medium text-sm"
                     >
                       닫기
                     </button>
@@ -528,9 +528,9 @@ export default function StaffPage() {
             <QuickQuestionsScroller questions={quickQuestions} canAsk={canAsk} onSelectQuestion={submitQuestion} />
 
             {/* Input Area - Fixed at bottom */}
-            <div className="bg-white px-4 pt-3 pb-4 flex-shrink-0">
+            <div className="bg-[var(--color-bg-surface)] px-4 pt-3 pb-4 flex-shrink-0">
               {readOnlyStoreName !== null && (
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900" role="note">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-status-warning)] bg-[var(--color-status-warning)]/10 px-4 py-2.5 text-sm text-[var(--color-status-warning)]" role="note">
                   <span className="flex min-w-0 items-start gap-1.5">
                     <Lock size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
                     <span>
@@ -546,7 +546,7 @@ export default function StaffPage() {
                   </button>
                 </div>
               )}
-              <form onSubmit={sendMessage} className="flex items-center gap-0 border border-[var(--color-border)] rounded-lg bg-white overflow-hidden">
+              <form onSubmit={sendMessage} className="flex items-center gap-0 border border-[var(--color-border)] rounded-lg bg-[var(--color-bg-surface)] overflow-hidden">
                 <button
                   type="button"
                   disabled
@@ -563,7 +563,7 @@ export default function StaffPage() {
                   onChange={event => setInput(event.target.value)}
                   placeholder={isLoading ? "답변을 기다리는 중이에요…" : readOnlyStoreName !== null ? "열람 전용 대화입니다" : "질문을 입력하세요"}
                   aria-label="질문 입력창"
-                  className="min-w-0 flex-1 px-4 py-3 bg-white text-base font-normal text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-secondary)]/70 transition-colors disabled:cursor-not-allowed disabled:opacity-60 border-l border-[var(--color-border)]"
+                  className="min-w-0 flex-1 px-4 py-3 bg-[var(--color-bg-surface)] text-base font-normal text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-secondary)]/70 transition-colors disabled:cursor-not-allowed disabled:opacity-60 border-l border-[var(--color-border)]"
                 />
 
                 <button
@@ -601,7 +601,7 @@ function MessageBubble({ message, showIcon = true }: { message: Message; showIco
     <div className={`flex items-end gap-3 ${message.from === "me" ? "justify-end" : "justify-start"}`}>
       {/* AI Avatar - Only show if not consecutive AI message */}
       {message.from === "ai" && showIcon && (
-        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-[#e8f5f0] text-[var(--color-primary)]">
+        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-[var(--color-bg-light-mint)] text-[var(--color-primary)]">
           <Bot size={16} strokeWidth={2} />
         </div>
       )}
@@ -630,7 +630,7 @@ function MessageBubble({ message, showIcon = true }: { message: Message; showIco
                 )}
 
                 {/* Message Text - Multiple paragraphs with proper spacing */}
-                <div className="text-base leading-relaxed text-[#1a1a1a] space-y-3">
+                <div className="text-base leading-relaxed text-[var(--color-text-primary)] space-y-3">
                   {message.text.split('\n\n').map((paragraph, idx) => (
                     <div key={idx} className="whitespace-pre-wrap break-words">
                       {paragraph}
@@ -640,40 +640,40 @@ function MessageBubble({ message, showIcon = true }: { message: Message; showIco
 
                 {/* Source Info - Inside the accent line group */}
                 {hasSource && (
-                  <div className="mt-4 pt-3 border-t border-[#dfe7dc] flex items-center justify-between gap-3">
+                  <div className="mt-4 pt-3 border-t border-[var(--color-border)] flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2 flex-1 min-w-0">
                       <span className="text-sm flex-shrink-0">📖</span>
-                      <p className="text-xs font-medium text-[#0d5d4d] truncate">
+                      <p className="text-xs font-medium text-[var(--color-message-user-text)] truncate">
                         {[message.source?.title, message.source?.category].filter(Boolean).join(" · ")}
                       </p>
                     </div>
                     {similarityPercent !== null && (
-                      <p className="text-xs font-semibold text-[#0d5d4d] flex-shrink-0 whitespace-nowrap">{similarityPercent}%</p>
+                      <p className="text-xs font-semibold text-[var(--color-message-user-text)] flex-shrink-0 whitespace-nowrap">{similarityPercent}%</p>
                     )}
                   </div>
                 )}
 
                 {/* Timestamp - Inside accent line group, below source */}
-                {message.time && <span className="mt-2 text-xs text-[#888]">{message.time}</span>}
+                {message.time && <span className="mt-2 text-xs text-[var(--color-text-tertiary)]">{message.time}</span>}
               </div>
             </div>
           </>
         ) : (
           <>
             {/* User Message Bubble */}
-            <div className="rounded-2xl rounded-br-none bg-[#d4ead7] text-[#0d5d4d] font-medium px-4 py-3 text-base leading-relaxed">
+            <div className="rounded-2xl rounded-br-none bg-[var(--color-message-user-bg)] text-[var(--color-message-user-text)] font-medium px-4 py-3 text-base leading-relaxed">
               <div className="whitespace-pre-line break-words">{message.text}</div>
             </div>
 
             {/* Timestamp - Outside */}
-            {message.time && <span className="mt-2 px-1 text-xs text-[#888]">{message.time}</span>}
+            {message.time && <span className="mt-2 px-1 text-xs text-[var(--color-text-tertiary)]">{message.time}</span>}
           </>
         )}
       </div>
 
       {/* User Avatar */}
       {message.from === "me" && (
-        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-[#d4ead7] text-[#0d5d4d]">
+        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-[var(--color-message-user-bg)] text-[var(--color-message-user-text)]">
           <UserRound size={16} strokeWidth={2} />
         </div>
       )}
@@ -684,7 +684,7 @@ function MessageBubble({ message, showIcon = true }: { message: Message; showIco
 function TypingIndicator() {
   return (
     <div className="flex items-end gap-3 justify-start">
-      <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-[#e8f5f0] text-[var(--color-primary)]">
+      <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-[var(--color-bg-light-mint)] text-[var(--color-primary)]">
         <Bot size={16} strokeWidth={2} />
       </div>
       <div className="max-w-[65%] items-start flex flex-col">
@@ -695,7 +695,7 @@ function TypingIndicator() {
           {/* Loading content - SAME STRUCTURE as MessageBubble text wrapper */}
           <div className="flex-1 flex flex-col">
             {/* Match MessageBubble's text wrapper structure exactly */}
-            <div className="text-sm font-medium text-[#1a1a1a]">
+            <div className="text-sm font-medium text-[var(--color-text-primary)]">
               <span className="inline-flex gap-1.5">
                 <i className="h-2 w-2 animate-bounce rounded-full bg-[var(--color-primary)]" />
                 <i className="h-2 w-2 animate-bounce rounded-full bg-[var(--color-primary)] [animation-delay:120ms]" />
@@ -808,18 +808,18 @@ function QuickQuestionsScroller({ questions, canAsk, onSelectQuestion }: QuickQu
   }, [questions]);
 
   return (
-    <div className="bg-white px-5 py-3 flex-shrink-0 relative overflow-hidden">
-      {/* Left Fade */}
+    <div className="bg-[var(--color-bg-surface)] px-5 py-3 flex-shrink-0 relative overflow-hidden">
+      {/* Left Fade - 라이트모드: 흰색, 다크모드: 진한 남색 */}
       {showLeftFade && (
         <div className="absolute left-5 top-0 bottom-0 w-12 pointer-events-none z-10" style={{
-          background: "linear-gradient(to right, rgb(255, 255, 255) 0%, rgba(255, 255, 255, 0) 100%)",
+          background: "linear-gradient(to right, var(--color-bg-surface) 0%, rgba(0, 0, 0, 0) 100%)",
         }} />
       )}
 
-      {/* Right Fade */}
+      {/* Right Fade - 라이트모드: 흰색, 다크모드: 진한 남색 */}
       {showRightFade && (
         <div className="absolute right-5 top-0 bottom-0 w-12 pointer-events-none z-10" style={{
-          background: "linear-gradient(to left, rgb(255, 255, 255) 0%, rgba(255, 255, 255, 0) 100%)",
+          background: "linear-gradient(to left, var(--color-bg-surface) 0%, rgba(0, 0, 0, 0) 100%)",
         }} />
       )}
 

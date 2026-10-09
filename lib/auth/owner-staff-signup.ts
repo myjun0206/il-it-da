@@ -20,6 +20,9 @@ export type OtpErrorCode =
   | "RATE_LIMITED"
   | "EMAIL_SEND_FAILED"
   | "EMAIL_OTP_UNAVAILABLE"
+  | "CODE_INVALID"
+  | "CODE_EXPIRED"
+  | "AUTH_UNAVAILABLE"
   | "CODE_INVALID_OR_EXPIRED"
   | "VERIFICATION_REJECTED"
   | "SIGNUP_FAILED";
@@ -80,6 +83,9 @@ const MESSAGES: Record<OtpErrorCode, string> = {
   RATE_LIMITED: "인증번호 요청이 너무 잦습니다. 잠시 후 다시 시도해주세요.",
   EMAIL_SEND_FAILED: "인증 메일을 보내지 못했습니다. 잠시 후 다시 시도해주세요.",
   EMAIL_OTP_UNAVAILABLE: "지금은 이메일 인증 가입을 이용할 수 없습니다. 관리자에게 문의해주세요.",
+  CODE_INVALID: "인증번호가 올바르지 않습니다. 다시 확인해주세요.",
+  CODE_EXPIRED: "인증 시간이 만료되었습니다. 새 인증번호를 받아주세요.",
+  AUTH_UNAVAILABLE: "인증 서비스에 연결할 수 없습니다. 잠시 후 다시 시도해주세요.",
   CODE_INVALID_OR_EXPIRED: "인증번호가 올바르지 않거나 만료되었습니다. 다시 확인하거나 인증번호를 다시 받아주세요.",
   VERIFICATION_REJECTED: "이 가입 정보로는 인증을 완료할 수 없습니다. 처음부터 다시 진행해주세요.",
   SIGNUP_FAILED: "회원가입 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
@@ -110,11 +116,34 @@ export function hasRequiredSignupTerms(value: unknown, role: OwnerStaffRole): bo
     terms[role === "owner" ? "store_connection" : "store_work"] === true;
 }
 
+const SIGNUP_NAME_SEPARATOR_PATTERN = /[ '\u2019-]/u;
+const HANGUL_SYLLABLE_PATTERN = /^[\uAC00-\uD7A3]$/u;
+const LATIN_LETTER_PATTERN = /^\p{L}$/u;
+const LATIN_SCRIPT_PATTERN = /^\p{Script=Latin}$/u;
+
+export function normalizeSignupName(value: unknown): string {
+  return typeof value === "string" ? value.trim().normalize("NFC") : "";
+}
+
+export function isValidSignupName(value: unknown): boolean {
+  const name = normalizeSignupName(value);
+  const length = Array.from(name).length;
+  if (length < 2 || length > 50) return false;
+  const parts = name.split(SIGNUP_NAME_SEPARATOR_PATTERN);
+  return parts.every((part) => part.length > 0 && Array.from(part).every((character) =>
+    HANGUL_SYLLABLE_PATTERN.test(character) ||
+    (LATIN_LETTER_PATTERN.test(character) && LATIN_SCRIPT_PATTERN.test(character))));
+}
+
 export function validateOwnerStaffSignupProfile(input: { name: unknown; phone: unknown }): Record<string, string> {
   const errors: Record<string, string> = {};
-  if (typeof input.name !== "string" || input.name.trim().length < 2) errors.name = "이름은 2글자 이상이어야 합니다.";
-  if (typeof input.phone !== "string" || input.phone.replace(/[^0-9]/g, "").length < 10) errors.phone = "올바른 연락처 형식이 아닙니다.";
+  if (!isValidSignupName(input.name)) errors.name = "올바른 이름을 입력해 주세요.";
+  if (normalizeSignupPhone(input.phone).length < 10) errors.phone = "올바른 연락처 형식이 아닙니다.";
   return errors;
+}
+
+export function normalizeSignupPhone(value: unknown): string {
+  return typeof value === "string" ? value.replace(/\D/g, "") : "";
 }
 
 export function validateOwnerStaffSignup(input: StartSignupInput): Record<string, string> {
@@ -167,10 +196,10 @@ export function mapAuthError(error: NonNullable<AuthErrorLike>, context: "send" 
   }
 
   if (context === "verify") {
-    if (code === "otp_expired" || code === "otp_disabled" || message.includes("expired") || message.includes("invalid")) {
-      return fail(400, "CODE_INVALID_OR_EXPIRED");
-    }
-    return fail(error.status && error.status >= 500 ? 502 : 400, "CODE_INVALID_OR_EXPIRED");
+    if (code === "otp_expired" || message.includes("expired")) return fail(400, "CODE_EXPIRED");
+    if (code === "otp_disabled") return fail(503, "AUTH_UNAVAILABLE");
+    if ((error.status ?? 0) >= 500) return fail(502, "AUTH_UNAVAILABLE");
+    return fail(400, "CODE_INVALID");
   }
 
   if (code === "user_already_exists" || code === "email_exists" || message.includes("already registered")) {
@@ -227,7 +256,7 @@ function preparationError(result: Awaited<ReturnType<PrepareSignup>>): OtpResult
 export async function startOwnerStaffSignup(input: StartSignupInput, deps: StartSignupDeps): Promise<OtpResult> {
   const email = normalizeSignupEmail(input.email);
   const role = parseOwnerStaffRole(input.role);
-  const name = cleanText(input.name);
+  const name = normalizeSignupName(input.name);
   const phone = cleanText(input.phone);
   const password = typeof input.password === "string" ? input.password : "";
 

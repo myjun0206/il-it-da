@@ -2,14 +2,12 @@
 
 import React, { useLayoutEffect, useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, CheckCircle2, Trash2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, Camera, LogOut } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
 import ThemeSelector from "@/components/common/ThemeSelector";
 import ProfileAvatar from "@/components/common/ProfileAvatar";
-import OwnerPasswordChangeForm from "@/components/owner/OwnerPasswordChangeForm";
-import OwnerAccountDeletionForm from "@/components/owner/OwnerAccountDeletionForm";
 import { uploadProfileAvatarClient, deleteProfileAvatarClient } from "@/lib/supabase/storage-profile-avatar";
 
 interface UserInfo {
@@ -33,31 +31,25 @@ interface StoreMembership {
   role: string;
 }
 
-type Feedback = { type: "success" | "error"; message: string } | null;
-
-const NAME_MAX_LENGTH = 50;
-// 기존 구현과 같은 키: 알림 설정은 이 기기(브라우저)에만 저장된다.
-const NOTIFICATION_PREFS_KEY = "notificationPreferences";
-
 const NOTIFICATION_OPTIONS: { key: keyof NotificationPreferences; label: string; description: string }[] = [
   { key: "staffJoinRequest", label: "직원 가입 승인 요청", description: "새로운 직원의 매장 가입 요청 알림" },
   { key: "hqNotices", label: "본사 공지사항", description: "새로운 본사 공지를 알려드립니다." },
   { key: "manualUpdates", label: "매뉴얼 관련 알림", description: "공통 매뉴얼 변경사항을 알려드립니다." },
 ];
 
+type Feedback = { type: "success" | "error"; message: string } | null;
+type PasswordStep = "closed" | "current" | "new";
+
+const NAME_MAX_LENGTH = 50;
+const PASSWORD_MIN_LENGTH = 8;
+// 기존 구현과 같은 키: 알림 설정은 이 기기(브라우저)에만 저장된다.
+const NOTIFICATION_PREFS_KEY = "notificationPreferences";
+
 const cardClass = "bg-white border border-[var(--color-border)] rounded-xl p-6 mb-6 shadow-sm";
-const rowClass =
-  "flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:gap-6 border-t border-[var(--color-border)] first:border-t-0 first:pt-0 last:pb-0";
-// 이름 행 아래에 이어지는 조회 전용 행: 항상 위쪽 구분선을 둔다.
-const followingRowClass =
-  "flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:gap-6 border-t border-[var(--color-border)] last:pb-0";
-const rowLabelClass = "w-40 shrink-0 text-sm font-medium text-[var(--color-text-secondary)]";
-const inputClass =
-  "h-11 w-full rounded-lg border-2 border-[var(--color-border)] bg-white px-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/30";
-const secondaryButtonClass =
-  "inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-lg border-2 border-[var(--color-border)] bg-white px-4 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-bg-default)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60";
 const primaryButtonClass =
-  "inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary)] px-4 text-sm font-medium text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex h-11 items-center justify-center rounded-lg bg-[var(--color-primary)] px-5 text-sm font-medium text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap";
+const secondaryButtonClass =
+  "inline-flex h-11 items-center justify-center rounded-lg border-2 border-[var(--color-border)] bg-white px-5 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-bg-default)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap";
 
 function FeedbackMessage({ feedback }: { feedback: Feedback }) {
   if (!feedback) return null;
@@ -66,9 +58,9 @@ function FeedbackMessage({ feedback }: { feedback: Feedback }) {
   return (
     <p
       role={isSuccess ? "status" : "alert"}
-      className={`mt-3 flex items-center gap-2 text-sm ${isSuccess ? "text-[var(--color-primary)]" : "text-red-700"}`}
+      className={`mt-3 flex items-center gap-2 text-base font-medium ${isSuccess ? "text-[var(--color-primary)]" : "text-red-700"}`}
     >
-      <Icon size={16} aria-hidden="true" />
+      <Icon size={20} aria-hidden="true" />
       {feedback.message}
     </p>
   );
@@ -133,6 +125,19 @@ export default function SettingsPage() {
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [avatarFeedback, setAvatarFeedback] = useState<Feedback>(null);
+
+  // 비밀번호 변경 상태
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [isSavingPassword, setIsSavingPassword] = useState(false);
+  const [passwordFeedback, setPasswordFeedback] = useState<Feedback>(null);
+
+  // 회원 탈퇴 상태
+  const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false);
+  const [deleteAccountPassword, setDeleteAccountPassword] = useState("");
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [deleteAccountError, setDeleteAccountError] = useState<string | null>(null);
 
   // Authorization & Data Loading
   useLayoutEffect(() => {
@@ -407,124 +412,220 @@ export default function SettingsPage() {
     }
   };
 
+  const resetPasswordForm = () => {
+    setNewPassword("");
+    setConfirmPassword("");
+  };
+
+  const cancelChangePassword = () => {
+    resetPasswordForm();
+    setIsChangingPassword(false);
+  };
+
+  const handleChangePassword = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (isSavingPassword) return;
+
+    if (newPassword.length < PASSWORD_MIN_LENGTH) {
+      setPasswordFeedback({ type: "error", message: `비밀번호는 ${PASSWORD_MIN_LENGTH}자 이상이어야 합니다.` });
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordFeedback({ type: "error", message: "새 비밀번호와 비밀번호 확인이 일치하지 않습니다." });
+      return;
+    }
+
+    setIsSavingPassword(true);
+    setPasswordFeedback(null);
+    try {
+      const { error: updateError } = await createClient().auth.updateUser({ password: newPassword });
+      if (updateError) {
+        const message = /different from the old password/i.test(updateError.message)
+          ? "현재 비밀번호와 다른 비밀번호를 입력해주세요."
+          : /reauthentication|recent/i.test(updateError.message)
+            ? "보안을 위해 다시 로그인한 뒤 비밀번호를 변경해주세요."
+            : "비밀번호를 변경하지 못했습니다. 잠시 후 다시 시도해주세요.";
+        throw new Error(message);
+      }
+
+      resetPasswordForm();
+      setIsChangingPassword(false);
+      setPasswordFeedback({ type: "success", message: "비밀번호가 변경되었습니다." });
+    } catch (e) {
+      setPasswordFeedback({
+        type: "error",
+        message: e instanceof Error ? e.message : "비밀번호를 변경하지 못했습니다.",
+      });
+    } finally {
+      setIsSavingPassword(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (isDeletingAccount) return;
+
+    setIsDeletingAccount(true);
+    setDeleteAccountError(null);
+
+    try {
+      const response = await fetch("/api/boss/delete-account", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword: deleteAccountPassword }),
+        credentials: "include",
+      });
+
+      const result = (await response.json()) as { error?: string; message?: string };
+
+      if (!response.ok) {
+        throw new Error(result.error || result.message || "회원 탈퇴 요청에 실패했습니다.");
+      }
+
+      // 탈퇴 성공: Auth 세션 로그아웃
+      await createClient().auth.signOut();
+      sessionStorage.clear();
+      router.push("/");
+    } catch (e) {
+      setDeleteAccountError(e instanceof Error ? e.message : "회원 탈퇴에 실패했습니다.");
+    } finally {
+      setIsDeletingAccount(false);
+    }
+  };
+
   if (!isReady) {
     return null;
   }
 
-  const readOnlyRows = [
-    { label: "이메일", value: userInfo.email || "등록된 이메일 없음" },
-    { label: "소속 프랜차이즈", value: userInfo.franchiseName || "연결된 프랜차이즈 정보 없음" },
-    { label: "현재 매장", value: isLoadingStore ? "불러오는 중..." : storeName || "승인된 매장 없음" },
-    { label: "역할", value: "점주" },
-  ];
-
   return (
     <div className="min-h-screen bg-[var(--color-bg-default)] flex">
-      {/* Sidebar */}
       <OwnerSidebar activeMenu="settings" onLogout={handleLogout} />
 
-      {/* Main Content */}
       <div className="flex-1 min-w-0 flex flex-col lg:ml-[240px]">
-        {/* Header */}
         <OwnerHeader userName={userInfo.name} storeName={storeName} onLogout={handleLogout} />
 
-        {/* Page Content */}
-        <main className="flex-1 overflow-y-auto">
-          <div className="p-6 lg:p-8 max-w-7xl mx-auto">
-            {/* 페이지 제목 */}
-            <div className="mb-8">
-              <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">환경설정</h1>
-              <p className="text-base text-[var(--color-text-secondary)]">
-                계정 정보와 서비스 이용 설정을 관리할 수 있습니다.
-              </p>
+        <main className="flex-1 overflow-y-auto p-6 lg:p-8 max-w-7xl mx-auto w-full">
+          <div className="mb-8">
+            <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">환경설정</h1>
+            <p className="text-base text-[var(--color-text-secondary)]">
+              계정 정보와 서비스 이용 설정을 관리할 수 있습니다.
+            </p>
+          </div>
+
+          {error && (
+            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3" role="alert">
+              <AlertCircle size={20} className="text-red-600 flex-shrink-0 mt-0.5" aria-hidden="true" />
+              <p className="text-sm text-red-700">{error}</p>
             </div>
+          )}
 
-            {/* 에러 메시지 */}
-            {error && (
-              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3" role="alert">
-                <AlertCircle size={20} className="text-red-600 flex-shrink-0 mt-0.5" aria-hidden="true" />
-                <p className="text-sm text-red-700">{error}</p>
+          {/* 1. 계정 정보 */}
+          <section aria-labelledby="account-heading" className={cardClass}>
+            <h2 id="account-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-2">
+              계정 정보
+            </h2>
+            <p className="mb-4 text-base text-[var(--color-text-primary)] opacity-70">
+              내 프로필과 계정 정보를 확인합니다.
+            </p>
+
+            {/* === 프로필 섹션 === */}
+            <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 mb-8">
+              {/* Avatar: 왼쪽 고정 */}
+              <div className="flex-shrink-0">
+                <ProfileAvatar
+                  name={userInfo.name}
+                  avatarUrl={avatarPreview || userInfo.avatarUrl}
+                  size="xl"
+                />
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                  onChange={handleAvatarFileSelect}
+                  disabled={isUploadingAvatar}
+                  className="hidden"
+                  aria-label="프로필 사진 선택"
+                />
               </div>
-            )}
 
-            {/* 1. 계정 정보 */}
-            <section aria-labelledby="account-heading" className={cardClass}>
-              <h2 id="account-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-1">
-                계정 정보
-              </h2>
-              <p className="mb-5 text-sm text-[var(--color-text-secondary)]">서비스에서 사용하는 내 정보를 확인하고 관리합니다.</p>
-
-              <div>
-                {/* 프로필 사진 */}
-                <div className={rowClass}>
-                  <span className={rowLabelClass}>프로필 사진</span>
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 flex-1">
-                    <ProfileAvatar
-                      name={userInfo.name}
-                      avatarUrl={avatarPreview || userInfo.avatarUrl}
-                      size="lg"
-                      className="w-12 h-12"
-                    />
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
-                      onChange={handleAvatarFileSelect}
-                      disabled={isUploadingAvatar}
-                      className="hidden"
-                      aria-label="프로필 사진 선택"
-                    />
-                    {avatarPreview ? (
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={handleUploadAvatar}
-                          disabled={isUploadingAvatar}
-                          className={primaryButtonClass}
-                        >
-                          {isUploadingAvatar ? "저장 중..." : "저장"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleCancelAvatarPreview}
-                          disabled={isUploadingAvatar}
-                          className={secondaryButtonClass}
-                        >
-                          취소
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => fileInputRef.current?.click()}
-                          disabled={isUploadingAvatar}
-                          className={secondaryButtonClass}
-                        >
-                          사진 변경
-                        </button>
-                        {userInfo.avatarUrl && (
-                          <button
-                            type="button"
-                            onClick={handleDeleteAvatar}
-                            disabled={isUploadingAvatar}
-                            aria-label="프로필 사진 삭제"
-                            className="inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-lg text-sm font-medium text-red-700 transition-colors hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            <Trash2 size={18} aria-hidden="true" />
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
+              {/* 사용자 정보 영역: 중앙 확장 */}
+              <div className="flex-1 flex flex-col gap-4">
+                {/* 이름 + 역할 배지 */}
+                <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-bold text-[var(--color-text-primary)]">
+                    {userInfo.name || "등록된 이름 없음"}
+                  </h3>
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-[var(--color-primary)]/10 text-xs font-medium text-[var(--color-primary)]">
+                    점주
+                  </span>
                 </div>
-                <FeedbackMessage feedback={avatarFeedback} />
 
-                {isEditingName ? (
-                  <form onSubmit={handleSaveName} className={rowClass}>
-                    <label htmlFor="owner-name" className={rowLabelClass}>
-                      이름
-                    </label>
+                {/* 이메일 */}
+                <div>
+                  <p className="text-xs text-[var(--color-text-tertiary)] mb-1">이메일</p>
+                  <p className="text-sm font-medium text-[var(--color-text-primary)] break-all">
+                    {userInfo.email || "등록된 이메일 없음"}
+                  </p>
+                </div>
+
+                {/* 피드백 메시지 */}
+                <FeedbackMessage feedback={avatarFeedback} />
+              </div>
+
+              {/* 사진 변경 액션: 오른쪽 끝 고정 */}
+              <div className="flex-shrink-0 flex flex-col gap-1 items-end justify-start">
+                {avatarPreview ? (
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handleUploadAvatar}
+                      disabled={isUploadingAvatar}
+                      className="text-sm font-medium text-[var(--color-text-primary)] hover:text-[var(--color-primary)] transition-colors underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] rounded px-1 py-1 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isUploadingAvatar ? "저장 중..." : "저장"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCancelAvatarPreview}
+                      disabled={isUploadingAvatar}
+                      className="text-sm font-medium text-[var(--color-text-primary)] hover:text-[var(--color-primary)] transition-colors underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] rounded px-1 py-1 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      취소
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isUploadingAvatar}
+                    className="inline-flex h-10 items-center gap-2 px-3 text-sm font-medium text-[var(--color-text-primary)] border-2 border-[var(--color-border)] bg-white transition-colors hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-bg-default)] rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+                    aria-label="프로필 사진 변경"
+                  >
+                    <Camera size={18} aria-hidden="true" className="flex-shrink-0" />
+                    <span>사진 변경</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </section>
+
+          {/* 2. 가입 정보 */}
+          <section aria-labelledby="signup-heading" className={cardClass}>
+            <h2 id="signup-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-2">
+              가입 정보
+            </h2>
+            <p className="mb-6 text-base text-[var(--color-text-primary)] opacity-70">
+              가입 시 등록한 정보입니다. 이름과 비밀번호만 변경할 수 있습니다.
+            </p>
+
+            {/* 가입 정보 필드 */}
+            <div className="space-y-4 mb-6">
+              {/* 이름 - 수정 가능 */}
+              {isEditingName ? (
+                <form onSubmit={handleSaveName} className="flex flex-col gap-2">
+                  <label htmlFor="owner-name" className="block text-sm font-medium text-[var(--color-text-secondary)]">
+                    이름
+                  </label>
+                  <div className="flex gap-3">
                     <input
                       id="owner-name"
                       type="text"
@@ -532,121 +633,307 @@ export default function SettingsPage() {
                       maxLength={NAME_MAX_LENGTH}
                       onChange={(event) => setNameDraft(event.target.value)}
                       autoFocus
-                      className={`${inputClass} sm:max-w-sm`}
+                      className="h-11 flex-1 rounded-lg border border-[var(--color-border)] bg-white px-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
                     />
-                    <div className="flex gap-2 sm:ml-auto">
-                      <button
-                        type="button"
-                        onClick={() => setIsEditingName(false)}
-                        disabled={isSavingName}
-                        className={secondaryButtonClass}
-                      >
-                        취소
-                      </button>
-                      <button type="submit" disabled={isSavingName} className={primaryButtonClass}>
-                        {isSavingName ? "저장 중..." : "변경사항 저장"}
-                      </button>
-                    </div>
-                  </form>
-                ) : (
-                  <div className={rowClass}>
-                    <span className={rowLabelClass}>이름</span>
-                    <span className="text-base font-medium text-[var(--color-text-primary)] break-all">
-                      {userInfo.name || "등록된 이름 없음"}
-                    </span>
                     <button
                       type="button"
-                      onClick={startEditName}
-                      aria-label="이름 수정"
-                      className={`${secondaryButtonClass} sm:ml-auto self-start sm:self-auto`}
+                      onClick={() => setIsEditingName(false)}
+                      disabled={isSavingName}
+                      className={secondaryButtonClass}
                     >
-                      수정
+                      취소
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSavingName}
+                      className={primaryButtonClass}
+                    >
+                      {isSavingName ? "저장 중..." : "저장"}
                     </button>
                   </div>
-                )}
-                <dl>
-                  {readOnlyRows.map((row) => (
-                    <div key={row.label} className={followingRowClass}>
-                      <dt className={rowLabelClass}>{row.label}</dt>
-                      <dd className="text-base font-medium text-[var(--color-text-primary)] break-all">{row.value}</dd>
-                      <dd className="text-sm text-[var(--color-text-tertiary)] sm:ml-auto">변경 불가</dd>
-                    </div>
-                  ))}
-                </dl>
-              </div>
-              <FeedbackMessage feedback={nameFeedback} />
+                  <FeedbackMessage feedback={nameFeedback} />
+                </form>
+              ) : (
+                <div>
+                  <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                    이름
+                  </label>
+                  <input
+                    type="text"
+                    value={userInfo.name || "등록된 이름 없음"}
+                    disabled
+                    className="w-full px-4 py-3 rounded-lg bg-[var(--color-bg-default)] border border-[var(--color-border)] text-[var(--color-text-primary)] cursor-not-allowed opacity-70"
+                  />
+                  <FeedbackMessage feedback={nameFeedback} />
+                </div>
+              )}
 
-              <p className="text-sm text-[var(--color-text-secondary)] mt-5 pt-5 border-t border-[var(--color-border)]">
-                이메일, 소속 프랜차이즈, 매장 및 역할 변경이 필요한 경우 본사에 문의해주세요.
-              </p>
-            </section>
-
-            <OwnerPasswordChangeForm />
-
-            {/* 2. 알림 설정 */}
-            <section aria-labelledby="notification-heading" className={cardClass}>
-              <h2 id="notification-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-1">
-                알림 설정
-              </h2>
-              <p className="mb-5 text-sm text-[var(--color-text-secondary)]">받고 싶은 알림을 선택합니다.</p>
-
+              {/* 이메일 - 읽기 전용 */}
               <div>
-                {NOTIFICATION_OPTIONS.map((option) => (
-                  <div key={option.key} className={`${rowClass} sm:justify-between`}>
-                    <div className="min-w-0">
-                      <p className="text-base font-medium text-[var(--color-text-primary)]">{option.label}</p>
-                      <p className="mt-0.5 text-sm text-[var(--color-text-secondary)]">{option.description}</p>
-                    </div>
-                    <Toggle
-                      checked={notificationPrefs[option.key]}
-                      onChange={() => handleNotificationChange(option.key)}
-                      label={option.label}
+                <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                  이메일
+                </label>
+                <input
+                  type="email"
+                  value={userInfo.email || "등록된 이메일 없음"}
+                  disabled
+                  className="w-full px-4 py-3 rounded-lg bg-[var(--color-bg-default)] border border-[var(--color-border)] text-[var(--color-text-primary)] cursor-not-allowed opacity-70"
+                />
+              </div>
+
+              {/* 소속 프랜차이즈 - 읽기 전용 */}
+              <div>
+                <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                  소속 프랜차이즈
+                </label>
+                <input
+                  type="text"
+                  value={userInfo.franchiseName || "연결된 프랜차이즈 정보 없음"}
+                  disabled
+                  className="w-full px-4 py-3 rounded-lg bg-[var(--color-bg-default)] border border-[var(--color-border)] text-[var(--color-text-primary)] cursor-not-allowed opacity-70"
+                />
+              </div>
+
+              {/* 현재 매장 - 읽기 전용 */}
+              <div>
+                <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                  현재 매장
+                </label>
+                <input
+                  type="text"
+                  value={isLoadingStore ? "불러오는 중..." : storeName || "승인된 매장 없음"}
+                  disabled
+                  className="w-full px-4 py-3 rounded-lg bg-[var(--color-bg-default)] border border-[var(--color-border)] text-[var(--color-text-primary)] cursor-not-allowed opacity-70"
+                />
+              </div>
+
+              {/* 역할 - 읽기 전용 */}
+              <div>
+                <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                  역할
+                </label>
+                <input
+                  type="text"
+                  value="점주"
+                  disabled
+                  className="w-full px-4 py-3 rounded-lg bg-[var(--color-bg-default)] border border-[var(--color-border)] text-[var(--color-text-primary)] cursor-not-allowed opacity-70"
+                />
+              </div>
+            </div>
+
+            {/* 구분선 */}
+            <div className="border-t border-[var(--color-border)] my-6" />
+
+            {/* 비밀번호 변경 섹션 */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-bold text-[var(--color-text-primary)]">비밀번호</h3>
+                <p className="text-base text-[var(--color-text-secondary)] mt-1">계정 보안을 위해 비밀번호를 변경할 수 있습니다.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (isChangingPassword) {
+                    cancelChangePassword();
+                  } else {
+                    setPasswordFeedback(null);
+                    setIsChangingPassword(true);
+                  }
+                }}
+                className="h-11 px-5 rounded-lg border border-[var(--color-border)] bg-white text-sm font-medium text-[var(--color-text-primary)] hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-bg-default)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap"
+              >
+                {isChangingPassword ? "취소" : "비밀번호 변경"}
+              </button>
+            </div>
+
+            {/* 비밀번호 변경 폼 */}
+            {isChangingPassword && (
+              <div className="mt-6 pt-6 border-t border-[var(--color-border)] space-y-4">
+                <form onSubmit={handleChangePassword} noValidate>
+                  <div>
+                    <label htmlFor="new-password" className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                      새 비밀번호
+                    </label>
+                    <input
+                      id="new-password"
+                      type="password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      autoComplete="new-password"
+                      placeholder={`최소 ${PASSWORD_MIN_LENGTH}자 이상`}
+                      className="w-full h-11 px-4 rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] disabled:opacity-60"
+                      disabled={isSavingPassword}
                     />
                   </div>
-                ))}
+
+                  <div>
+                    <label htmlFor="confirm-password" className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                      새 비밀번호 확인
+                    </label>
+                    <input
+                      id="confirm-password"
+                      type="password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      autoComplete="new-password"
+                      placeholder="새 비밀번호를 다시 입력하세요"
+                      className="w-full h-11 px-4 rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] disabled:opacity-60"
+                      disabled={isSavingPassword}
+                    />
+                  </div>
+
+                  <div className="flex gap-3 justify-end pt-2">
+                    <button
+                      type="button"
+                      onClick={cancelChangePassword}
+                      disabled={isSavingPassword}
+                      className={secondaryButtonClass}
+                    >
+                      취소
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSavingPassword}
+                      className={primaryButtonClass}
+                    >
+                      {isSavingPassword ? "변경 중..." : "변경"}
+                    </button>
+                  </div>
+                </form>
+
+                <FeedbackMessage feedback={passwordFeedback} />
               </div>
-              <FeedbackMessage feedback={prefsFeedback} />
+            )}
 
-              <p className="text-sm text-[var(--color-text-secondary)] mt-5 pt-5 border-t border-[var(--color-border)]">
-                알림 설정은 이 기기(브라우저)에만 저장되며, 계정 단위 알림 수신 설정에는 아직 반영되지 않습니다.
-              </p>
-            </section>
+            {!isChangingPassword && <FeedbackMessage feedback={passwordFeedback} />}
+          </section>
 
-            {/* 3. 화면 설정 */}
-            <section aria-labelledby="display-heading" className={cardClass}>
-              <h2 id="display-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-1">
-                화면 설정
-              </h2>
-              <p className="mb-5 text-sm text-[var(--color-text-secondary)]">
-                일잇다 화면의 테마를 설정합니다. 시스템 설정은 기기의 라이트/다크 설정을 따릅니다.
-              </p>
-              <ThemeSelector />
-            </section>
+          {/* 3. 알림 설정 */}
+          <section aria-labelledby="notification-heading" className={cardClass}>
+            <h2 id="notification-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-2">
+              알림 설정
+            </h2>
+            <p className="mb-6 text-base text-[var(--color-text-primary)] opacity-70">
+              받고 싶은 알림을 선택합니다.
+            </p>
 
-            {/* 4. 보안 */}
-            <section aria-labelledby="security-heading" className={cardClass}>
-              <h2 id="security-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-1">
-                보안
-              </h2>
-              <p className="mb-5 text-sm text-[var(--color-text-secondary)]">현재 로그인된 계정과 세션을 관리합니다.</p>
-              <div className={rowClass}>
-                <span className={rowLabelClass}>로그인 계정</span>
-                <span className="text-base font-medium text-[var(--color-text-primary)] break-all">
-                  {userInfo.email || "등록된 이메일 없음"}
-                </span>
-                <button
-                  type="button"
-                  onClick={handleLogout}
-                  className="inline-flex min-h-[44px] shrink-0 items-center justify-center self-start rounded-lg border-2 border-red-200 bg-transparent px-4 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 sm:ml-auto sm:self-auto"
-                >
-                  로그아웃
-                </button>
+            <div className="divide-y divide-[var(--color-border)]">
+              {NOTIFICATION_OPTIONS.map((option, index) => (
+                <div key={option.key} className={`flex items-center justify-between py-4 ${index === 0 ? 'pt-0' : ''}`}>
+                  <div>
+                    <p className="text-base font-medium text-[var(--color-text-primary)]">{option.label}</p>
+                    <p className="mt-0.5 text-sm text-[var(--color-text-secondary)]">{option.description}</p>
+                  </div>
+                  <Toggle
+                    checked={notificationPrefs[option.key]}
+                    onChange={() => handleNotificationChange(option.key)}
+                    label={option.label}
+                  />
+                </div>
+              ))}
+            </div>
+
+            <FeedbackMessage feedback={prefsFeedback} />
+          </section>
+
+          {/* 4. 화면 설정 */}
+          <section aria-labelledby="display-heading" className={cardClass}>
+            <h2 id="display-heading" className="text-xl font-bold text-[var(--color-text-primary)] mb-2">
+              화면 설정
+            </h2>
+            <p className="text-base text-[var(--color-text-primary)] opacity-70 mb-6">
+              일잇다의 화면 테마를 선택합니다.
+            </p>
+            <ThemeSelector />
+          </section>
+
+          {/* 5. 회원 탈퇴 */}
+          <section aria-labelledby="delete-account-heading" className={cardClass}>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <h2 id="delete-account-heading" className="text-xl font-bold text-[var(--color-text-primary)]">
+                  회원 탈퇴
+                </h2>
+                <p className="text-base text-[var(--color-text-secondary)] mt-1">
+                  일잇다 서비스 이용을 종료하고 계정을 삭제합니다.
+                </p>
               </div>
-              <OwnerAccountDeletionForm />
-            </section>
-          </div>
+              <button
+                type="button"
+                onClick={() => setShowDeleteAccountConfirm(true)}
+                className="h-11 px-5 rounded-lg border border-red-200 bg-white text-sm font-medium text-red-700 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap inline-flex items-center gap-1.5 sm:flex-shrink-0"
+              >
+                <LogOut size={16} aria-hidden="true" />
+                회원 탈퇴
+              </button>
+            </div>
+          </section>
         </main>
       </div>
+
+      {/* 회원 탈퇴 확인 다이얼로그 */}
+      {showDeleteAccountConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl max-w-sm w-full p-6 shadow-lg">
+            <h2 className="text-lg font-bold text-[var(--color-text-primary)] mb-3">회원 탈퇴</h2>
+            <p className="text-base text-[var(--color-text-secondary)] mb-6">
+              계정을 완전히 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
+            </p>
+
+            {deleteAccountError && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
+                <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" aria-hidden="true" />
+                <p className="text-sm text-red-700">{deleteAccountError}</p>
+              </div>
+            )}
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void handleDeleteAccount();
+              }}
+              className="space-y-4"
+            >
+              <div>
+                <label htmlFor="delete-password" className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
+                  현재 비밀번호 확인
+                </label>
+                <input
+                  id="delete-password"
+                  type="password"
+                  value={deleteAccountPassword}
+                  onChange={(e) => setDeleteAccountPassword(e.target.value)}
+                  placeholder="현재 비밀번호를 입력하세요"
+                  disabled={isDeletingAccount}
+                  className="w-full h-11 px-4 rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] disabled:opacity-60"
+                />
+              </div>
+
+              <div className="flex gap-3 justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowDeleteAccountConfirm(false);
+                    setDeleteAccountPassword("");
+                    setDeleteAccountError(null);
+                  }}
+                  disabled={isDeletingAccount}
+                  className={secondaryButtonClass}
+                >
+                  취소
+                </button>
+                <button
+                  type="submit"
+                  disabled={isDeletingAccount || !deleteAccountPassword}
+                  className="inline-flex h-11 items-center justify-center rounded-lg border border-red-200 bg-red-50 px-5 text-sm font-medium text-red-700 hover:bg-red-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap"
+                >
+                  {isDeletingAccount ? "탈퇴 중..." : "탈퇴"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

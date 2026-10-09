@@ -31,6 +31,21 @@
   --color-status-error: #c53030;
   --color-status-info: #0066cc;
 
+  /* Badge Colors for RAG Status */
+  --color-badge-answered-border: #7cd4b6;
+  --color-badge-answered-bg: #e8f9f4;
+  --color-badge-answered-text: #0d5d4d;
+  --color-badge-cautious-border: #f0c965;
+  --color-badge-cautious-bg: #fffaed;
+  --color-badge-cautious-text: #7a5a18;
+  --color-badge-insufficient-border: #e8a9a1;
+  --color-badge-insufficient-bg: #fef2f0;
+  --color-badge-insufficient-text: #8d3c33;
+
+  /* Message Colors */
+  --color-message-user-bg: #d4ead7;
+  --color-message-user-text: #0d5d4d;
+
   /* Background Colors */
   --color-bg-default: #f7f9f5;
   --color-bg-surface: #ffffff;
@@ -79,6 +94,21 @@ html.dark {
   --color-status-warning: #f5b946;
   --color-status-error: #e85252;
   --color-status-info: #4d94ff;
+
+  /* Badge Colors for RAG Status - Dark Mode */
+  --color-badge-answered-border: #4da89d;
+  --color-badge-answered-bg: #1a3a35;
+  --color-badge-answered-text: #7dd4b8;
+  --color-badge-cautious-border: #c39c4d;
+  --color-badge-cautious-bg: #3a3220;
+  --color-badge-cautious-text: #f5d680;
+  --color-badge-insufficient-border: #c97070;
+  --color-badge-insufficient-bg: #3a2520;
+  --color-badge-insufficient-text: #f5a9a0;
+
+  /* Message Colors - Dark Mode */
+  --color-message-user-bg: #1c6b52;
+  --color-message-user-text: #7dd4b8;
 
   /* Background Colors */
   --color-bg-default: #0f1419;

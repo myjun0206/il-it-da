@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { sendEmailFirstOtp, verifyEmailFirstOtp, completeEmailFirstSignup, type EmailFirstState } from "../../lib/auth/email-first-signup.ts";
+import { normalizeSignupPhone } from "../../lib/auth/owner-staff-signup.ts";
 import { loadComponentModule } from "../support/component-harness.ts";
 
 const settings = async () => ({ emailEnabled: true, autoconfirm: false, signupDisabled: false });
@@ -10,7 +11,8 @@ const pending: EmailFirstState = { kind: "resume", userId: user.id, expiresAt: 1
 test("email alone sends passwordless OTP without fabricated credentials", async () => {
   const requests: unknown[] = [];
   const result = await sendEmailFirstOtp({ email: "person@example.org", role: "owner" }, {
-    action: "start", getSettings: settings, now: () => 1000, prepare: async () => ({ kind: "new", expiresAt: 181000, requestId: "reservation-1" }),
+    action: "start", getSettings: settings, now: () => 1000,
+    prepare: async (_email, _role, action) => ({ kind: "new", expiresAt: action === "start" ? 1000 : 181000, requestId: "reservation-1" }),
     auth: { signInWithOtp: async (input) => { requests.push(input); return { error: null }; } },
   });
   assert.equal(result.ok, true);
@@ -30,7 +32,10 @@ test("expired server deadline refuses verification before provider access", asyn
     auth: { verifyOtp: async () => assert.fail("Expired code must not reach provider"), getUser: async () => assert.fail("Expired code"), signOut: async () => {} },
   });
   assert.equal(result.ok, false);
-  if (!result.ok) assert.equal(result.code, "CODE_INVALID_OR_EXPIRED");
+  if (!result.ok) {
+    assert.equal(result.code, "CODE_EXPIRED");
+    assert.equal(result.error, "인증 시간이 만료되었습니다. 새 인증번호를 받아주세요.");
+  }
 });
 test("final password and terms require verified identity before any mutation", async () => {
   const result = await completeEmailFirstSignup({ email: user.email, role: "owner", name: "Person", phone: "01012345678", password: "password-1", passwordConfirm: "password-1", terms: { service: true, privacy: true, store_connection: true } }, null, {
@@ -57,8 +62,20 @@ for (const token of ["12345", "1234567", "abcdef", 123456]) {
       auth: { verifyOtp: async () => assert.fail("Invalid input"), getUser: async () => assert.fail("Invalid input"), signOut: async () => {} },
     });
     assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.code, "CODE_INVALID");
   });
 }
+
+test("provider invalid and expired OTP errors remain distinct", async () => {
+  for (const [providerError, expectedCode] of [[{ code: "invalid" }, "CODE_INVALID"], [{ code: "otp_expired" }, "CODE_EXPIRED"]]) {
+    const result = await verifyEmailFirstOtp({ email: user.email, role: "owner", token: "012345" }, {
+      getSettings: settings, prepare: async () => pending, now: () => 1000,
+      auth: { verifyOtp: async () => ({ data: { user: null, session: null }, error: providerError }), getUser: async () => assert.fail("Provider rejected OTP"), signOut: async () => {} },
+    });
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.code, expectedCode);
+  }
+});
 
 test("successful OTP preserves leading zero and records the exact authenticated user", async () => {
   const actions: string[] = [];
@@ -96,7 +113,7 @@ test("verified final signup sets password and profile metadata but never changes
       if (action === "complete") { assert.equal(userId, user.id); assert.equal(requestId, pending.requestId); return { kind: "complete", userId }; }
       return { ...pending, emailVerified: true };
     },
-    auth: { updateUser: async (input) => { writes.push(input); assert.equal(Object.hasOwn(input.data, "role"), false); return { error: null }; } },
+    auth: { updateUser: async (input) => { writes.push(input); assert.equal(Object.hasOwn(input.data, "role"), false); assert.equal(input.data.name, "Person"); assert.equal(input.data.phone, "01012345678"); return { error: null }; } },
   });
   assert.equal(result.ok, true);
   assert.equal(writes.length, 1);
@@ -252,4 +269,47 @@ test("actual verify route refuses foreign Origin before SDK or RPC access", asyn
   const fixture = actualRouteFixture();
   assert.equal((await fixture.verify.POST(fixture.request("/api/auth/signup/owner-staff/verify", {}, "https://foreign.example.invalid"))).status, 403);
   assert.deepEqual(fixture.events, []);
+});
+
+test("same-password retry completes a verified partial signup without repeating role changes", async () => {
+  let updateCalls = 0;
+  let completionCalls = 0;
+  const result = await completeEmailFirstSignup({ email: user.email, role: "owner", name: "Person", phone: "01012345678", password: "password-1", passwordConfirm: "password-1", terms: { service: true, privacy: true, store_connection: true } }, user, {
+    getSettings: settings,
+    prepare: async (_email, _role, action, userId) => {
+      if (action === "complete") { completionCalls++; return { kind: "complete", userId }; }
+      return { ...pending, emailVerified: true };
+    },
+    auth: { updateUser: async () => { updateCalls++; return { error: { code: "same_password" } }; } },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(updateCalls, 1);
+  assert.equal(completionCalls, 1);
+});
+
+test("lost completion response is idempotent only for the same authenticated user", async () => {
+  const result = await completeEmailFirstSignup({ email: user.email, role: "owner", name: "Person", phone: "01012345678", password: "password-1", passwordConfirm: "password-1", terms: { service: true, privacy: true, store_connection: true } }, user, {
+    getSettings: settings, prepare: async () => ({ kind: "complete", userId: user.id }),
+    auth: { updateUser: async () => assert.fail("Completed account must not repeat a password update") },
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.profileComplete, true);
+});
+
+test("provider password-policy rejection is attached to the password field", async () => {
+  const result = await completeEmailFirstSignup({ email: user.email, role: "owner", name: "Person", phone: "01012345678", password: "password-1", passwordConfirm: "password-1", terms: { service: true, privacy: true, store_connection: true } }, user, {
+    getSettings: settings, prepare: async (_email, _role, action) => action === "inspect" ? { ...pending, emailVerified: true } : assert.fail("Provider rejected before complete RPC"),
+    auth: { updateUser: async () => ({ error: { code: "weak_password" } }) },
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.code, "WEAK_PASSWORD");
+    assert.equal(result.fields?.password, result.error);
+  }
+});
+
+test("existing phone policy accepts ten formatted digits and canonicalizes only for storage", () => {
+  assert.equal(normalizeSignupPhone(" 010-1234-5678 "), "01012345678");
+  assert.equal(normalizeSignupPhone("+82 (10) 1234 5678"), "821012345678");
+  assert.equal(normalizeSignupPhone("010-123-456"), "010123456");
 });

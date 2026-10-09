@@ -67,11 +67,16 @@ export default function StaffHeader() {
   return (
     <header className="sticky top-0 z-20 bg-white border-b border-[var(--color-border)] h-16 shrink-0">
       <div className="flex min-w-0 items-center justify-end gap-2 pl-16 pr-4 sm:pr-6 h-full lg:pl-6">
+        {/* 알림 */}
+        <div className="flex shrink-0 items-center">
+          <NotificationCenter notificationPageUrl="/staff/notifications" />
+        </div>
+
         {/* 기본 매장 선택 */}
         <StoreSelector stores={stores} defaultStoreId={defaultStoreId} isStoresLoading={isStoresLoading} onSetDefaultStore={handleSetDefaultStore} />
 
+        {/* 직원 프로필 */}
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-          <NotificationCenter notificationPageUrl="/staff/notifications" />
           <ProfileMenu
             userName={userName || " "}
             subtitle={roleLabel}

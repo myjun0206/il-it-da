@@ -148,7 +148,7 @@ function ManualNavigationCard({
     <button
       type="button"
       onClick={onClick}
-      className="flex h-full w-full flex-col items-start rounded-xl border border-[var(--color-border)] bg-[#ffffff] p-5 text-left transition-colors hover:border-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+      className="flex h-full w-full flex-col items-start rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-surface)] p-5 text-left transition-colors hover:border-[var(--color-primary)] hover:bg-[var(--color-primary)]/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
     >
       <span className="mb-3 inline-flex max-w-full truncate rounded-full bg-[var(--color-primary-light)]/40 px-2.5 py-0.5 text-xs font-semibold text-[var(--color-primary)]">
         {category}
@@ -215,7 +215,7 @@ function StateBox({ children, tone = "neutral" }: { children: React.ReactNode; t
     <div
       role={tone === "error" ? "alert" : undefined}
       className={`rounded-xl border p-8 text-center ${
-        tone === "error" ? "border-red-200 bg-red-50" : "border-[var(--color-border)] bg-white"
+        tone === "error" ? "border-[var(--color-status-error)] bg-[var(--color-status-error)]/10" : "border-[var(--color-border)] bg-[var(--color-bg-surface)]"
       }`}
     >
       {children}
@@ -362,26 +362,29 @@ export default function StaffManualBrowser({ scope }: { scope: Scope }) {
           </div>
 
           {!selectedManual ? (
-            <>
-              <p className="mb-3 text-sm text-[var(--color-text-secondary)]">
-                매뉴얼 <span className="font-bold text-[var(--color-text-primary)]">{titleGroups.length}</span>개
-              </p>
-              <ul className={MANUAL_GRID_CLASS_NAME}>
-                {titleGroups.map((group) => (
-                  <li key={group.id} className="min-w-0">
-                    <ManualNavigationCard
-                      category={openGroup.category}
-                      title={group.title}
-                      description="상세 매뉴얼"
-                      onClick={() => {
-                        if (!storeId) return;
-                        navigateDetail({ storeId, groupId: openGroup.id, subId: group.id });
-                      }}
-                    />
-                  </li>
-                ))}
-              </ul>
-            </>
+            // selectedManual이 없을 때: 모든 매뉴얼 항목의 content 표시 또는 안내
+            openGroup.items && openGroup.items.length > 0 ? (
+              <div className="space-y-4">
+                {uniqueManualContents(openGroup.items).map((item) => {
+                  return (
+                    <article
+                      key={item.id}
+                      id={`sub-manual-${item.id}`}
+                      className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-surface)] p-5 lg:p-6 scroll-mt-24"
+                    >
+                      {item.title && (
+                        <h2 className="mb-3 text-lg font-semibold text-[var(--color-text-primary)]">{item.title}</h2>
+                      )}
+                      <p className="whitespace-pre-wrap break-words text-base leading-7 text-[var(--color-text-primary)]">{item.content}</p>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-surface)] p-8 text-center">
+                <p className="text-base text-[var(--color-text-secondary)]">등록된 매뉴얼 내용이 없습니다.</p>
+              </div>
+            )
           ) : (
           <div className="space-y-4">
             {(selectedTitleGroup ? uniqueManualContents(selectedTitleGroup.items) : [selectedManual]).map((item) => {
@@ -390,12 +393,15 @@ export default function StaffManualBrowser({ scope }: { scope: Scope }) {
                 <article
                   key={item.id}
                   id={`sub-manual-${item.id}`}
-                  className={`rounded-xl border bg-[#ffffff] p-5 lg:p-6 scroll-mt-24 transition-colors ${
+                  className={`rounded-xl border bg-[var(--color-bg-surface)] p-5 lg:p-6 scroll-mt-24 transition-colors ${
                     isHighlighted
                       ? "border-[var(--color-primary)]/50"
                       : "border-[var(--color-border)]"
                   }`}
                 >
+                  {item.title && (
+                    <h2 className="mb-3 text-lg font-semibold text-[var(--color-text-primary)]">{item.title}</h2>
+                  )}
                   <p className="whitespace-pre-wrap break-words text-base leading-7 text-[var(--color-text-primary)]">{item.content}</p>
                 </article>
               );
@@ -422,11 +428,11 @@ export default function StaffManualBrowser({ scope }: { scope: Scope }) {
           </StateBox>
         ) : storesError ? (
           <StateBox tone="error">
-            <p className="text-sm text-red-700">{storesError}</p>
+            <p className="text-sm text-[var(--color-status-error)]">{storesError}</p>
             <button
               type="button"
               onClick={reloadStores}
-              className="mt-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-[var(--color-primary)] hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+              className="mt-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-[var(--color-primary)] hover:bg-[var(--color-bg-surface)]/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
             >
               <RefreshCw size={16} aria-hidden="true" /> 다시 시도
             </button>
@@ -449,13 +455,13 @@ export default function StaffManualBrowser({ scope }: { scope: Scope }) {
           </StateBox>
         ) : currentResult.status === "error" ? (
           <StateBox tone="error">
-            <p className="flex items-center justify-center gap-1.5 text-sm text-red-700">
+            <p className="flex items-center justify-center gap-1.5 text-sm text-[var(--color-status-error)]">
               <AlertCircle size={16} aria-hidden="true" /> {currentResult.message}
             </p>
             <button
               type="button"
               onClick={() => setReloadToken((value) => value + 1)}
-              className="mt-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-[var(--color-primary)] hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+              className="mt-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-[var(--color-primary)] hover:bg-[var(--color-bg-surface)]/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
             >
               <RefreshCw size={16} aria-hidden="true" /> 다시 시도
             </button>
@@ -483,7 +489,7 @@ export default function StaffManualBrowser({ scope }: { scope: Scope }) {
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="매뉴얼 검색"
                 aria-label="매뉴얼 검색"
-                className="h-12 w-full rounded-lg border border-[var(--color-border)] bg-white pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
+                className="h-12 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-surface)] pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
               />
             </div>
 
@@ -500,8 +506,8 @@ export default function StaffManualBrowser({ scope }: { scope: Scope }) {
                       onClick={() => setActiveCategory(category)}
                       className={`min-h-[36px] rounded-full border px-3.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${
                         isActive
-                          ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/40 text-[var(--color-primary)]"
-                          : "border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]/50 hover:text-[var(--color-text-primary)]"
+                          ? "border-[var(--color-primary)] bg-[var(--color-primary)]/15 text-[var(--color-primary)]"
+                          : "border-[var(--color-border)] bg-[var(--color-bg-surface)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-bg-surface)]/50 hover:text-[var(--color-text-primary)]"
                       }`}
                     >
                       {category ?? "전체"}
@@ -533,7 +539,7 @@ export default function StaffManualBrowser({ scope }: { scope: Scope }) {
                             if (!storeId) return;
                             navigateDetail({ storeId, groupId: parentGroup.id });
                           }}
-                          className="flex w-full flex-col rounded-lg border border-[var(--color-border)] bg-[#ffffff] px-5 py-4 text-left transition-colors hover:border-[var(--color-border)]/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                          className="flex w-full flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-5 py-4 text-left transition-colors hover:border-[var(--color-border)]/70 hover:bg-[var(--color-primary)]/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                         >
                           <div className="flex w-full items-start justify-between gap-3">
                             <div className="flex items-start gap-3 flex-1 min-w-0">

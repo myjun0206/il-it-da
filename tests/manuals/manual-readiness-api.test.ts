@@ -389,7 +389,7 @@ describe("기존 화면/계약 회귀 없음", () => {
     assert.match(page, /setLoadError\([\s\S]*?e instanceof Error && e\.message\.includes\("지점"\)/);
     assert.match(page, /\) : loadError \?/);
     assert.match(page, /role="alert"/);
-    assert.match(page, /setReloadKey\(\(prev\) => prev \+ 1\)/);
+    assert.match(page, /setReloadKey\(\(value\) => value \+ 1\)/);
   });
 
   test("확정 저장 API의 성공 응답 shape({ manuals })는 바뀌지 않았다", () => {
