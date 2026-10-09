@@ -1,4 +1,5 @@
 import type { AuthEmailSettingsFetcher } from "@/lib/auth/auth-email-settings";
+import { createResearchConsent, requiredSignupConsent, RESEARCH_CONSENT_KEY } from "@/lib/auth/signup-research-consent";
 import {
   isValidSignupEmail, normalizeSignupEmail, parseOwnerStaffRole, validateOwnerStaffSignup,
   normalizeSignupName, normalizeSignupPhone, mapAuthError, type OwnerStaffRole, type OtpResult,
@@ -33,7 +34,7 @@ function rejected(error = "이 가입 정보로는 인증을 완료할 수 없�
   return { ok: false, status: 403, code: "VERIFICATION_REJECTED", error };
 }
 function invalidCode(): OtpResult {
-  return { ok: false, status: 400, code: "CODE_INVALID", error: "인증번호가 올바르지 않습니다. 다시 확인해주세요." };
+  return { ok: false, status: 400, code: "CODE_INVALID", error: "인증번호가 틀립니다. 다시 확인해 주세요." };
 }
 function expiredCode(): OtpResult {
   return { ok: false, status: 400, code: "CODE_EXPIRED", error: "인증 시간이 만료되었습니다. 새 인증번호를 받아주세요." };
@@ -57,6 +58,7 @@ export function emailFirstUserMatches(user: EmailFirstUser | null, email: string
 
 export async function sendEmailFirstOtp(input: { email: unknown; role: unknown }, deps: Dependencies & {
   action: "start" | "resend";
+  canResumeCompleted?: (userId: string, email: string, role: OwnerStaffRole) => Promise<boolean>;
   auth: { signInWithOtp: (input: { email: string; options: { shouldCreateUser: boolean; data?: Record<string, unknown> } }) => Promise<{ error: ProviderError }> };
 }): Promise<OtpResult> {
   const email = normalizeSignupEmail(input.email);
@@ -64,6 +66,11 @@ export async function sendEmailFirstOtp(input: { email: unknown; role: unknown }
   if (!role || !isValidSignupEmail(email)) return { ok: false, status: 400, code: "INVALID_EMAIL", error: "올바른 이메일과 가입 역할을 확인해주세요." };
   if (!await available(deps)) return unavailable();
   const state = await deps.prepare(email, role, deps.action);
+  if (state.kind === "complete" && state.userId &&
+      await deps.canResumeCompleted?.(state.userId, email, role)) {
+    return { ok: false, status: 409, code: "SIGNUP_INCOMPLETE", nextStep: "login",
+      error: "가입 정보 제출은 완료되었습니다. 로그인 후 매장 신청을 이어가 주세요." };
+  }
   const error = stateError(state);
   if (error) return error;
   // New reservations are intentionally closed until the provider confirms delivery.
@@ -98,7 +105,21 @@ export async function verifyEmailFirstOtp(input: { email: unknown; role: unknown
   if (state.expiresAt !== undefined && state.expiresAt <= now) return expiredCode();
   if (state.kind !== "resume" || !state.userId || !state.requestId || !state.expiresAt) return invalidCode();
   const result = await deps.auth.verifyOtp({ email, token: input.token, type: "email" });
-  if (result.error) return mapAuthError(result.error, "verify");
+  if (result.error) {
+    const mapped = mapAuthError(result.error, "verify");
+    if (!mapped.ok && (mapped.code === "RATE_LIMITED" || mapped.code === "AUTH_UNAVAILABLE")) return mapped;
+    const message = (result.error.message ?? "").toLowerCase();
+    const ambiguous = (result.error.code === "otp_expired" && (!message || message.includes("invalid"))) ||
+      /(?:token|otp|verification code)/.test(message) && message.includes("expired") && message.includes("invalid");
+    const current = await deps.prepare(email, role, "inspect");
+    if (current.kind === "unavailable") return unavailable();
+    if (current.kind !== "resume" || current.requestId !== state.requestId || current.userId !== state.userId) {
+      return rejected("인증 요청이 변경되었습니다. 가장 최근 인증번호를 확인해 주세요.");
+    }
+    if (!current.expiresAt) return unavailable();
+    if (current.expiresAt <= (deps.now?.() ?? Date.now())) return expiredCode();
+    return ambiguous ? invalidCode() : mapped;
+  }
   const session = result.data.session as { access_token?: unknown; user?: { id?: unknown } } | null;
   if (!session || typeof session.access_token !== "string" || !session.access_token ||
     !emailFirstUserMatches(result.data.user, email, role) || result.data.user.id !== state.userId || session.user?.id !== state.userId) {
@@ -120,7 +141,7 @@ export async function verifyEmailFirstOtp(input: { email: unknown; role: unknown
 }
 
 export async function completeEmailFirstSignup(input: Record<string, unknown>, user: EmailFirstUser | null, deps: Dependencies & {
-  auth: { updateUser: (input: { password: string; data: Record<string, unknown> }) => Promise<{ error: ProviderError }> };
+  auth: { updateUser: (input: { password?: string; data: Record<string, unknown> }) => Promise<{ error: ProviderError }> };
 }): Promise<OtpResult> {
   const email = normalizeSignupEmail(input.email);
   const role = parseOwnerStaffRole(input.role);
@@ -133,10 +154,14 @@ export async function completeEmailFirstSignup(input: Record<string, unknown>, u
     return { ok: true, status: 200, role, profileComplete: true };
   }
   if (state.kind !== "resume" || state.userId !== user.id || !state.requestId || !state.emailVerified) return stateError(state) ?? rejected();
-  const updated = await deps.auth.updateUser({ password: input.password as string, data: {
-    name: normalizeSignupName(input.name), phone: normalizeSignupPhone(input.phone), signupTerms: input.terms,
-  } });
-  if (updated.error && updated.error.code !== "same_password") {
+  const metadata = {
+    name: normalizeSignupName(input.name), phone: normalizeSignupPhone(input.phone),
+    signupTerms: requiredSignupConsent(input.terms),
+    [RESEARCH_CONSENT_KEY]: createResearchConsent(input.researchConsent, new Date(deps.now?.() ?? Date.now())),
+  };
+  let updated = await deps.auth.updateUser({ password: input.password as string, data: metadata });
+  if (updated.error?.code === "same_password") updated = await deps.auth.updateUser({ data: metadata });
+  if (updated.error) {
     const mapped = mapAuthError(updated.error, "send");
     return !mapped.ok && mapped.code === "WEAK_PASSWORD" ? { ...mapped, fields: { password: mapped.error } } : mapped;
   }

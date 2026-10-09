@@ -1,7 +1,26 @@
 -- READ ONLY preflight for the proposed 040 Auth-delete signup-state trigger.
 -- This file is one read-only SELECT so SQL Editor shows its result as the final result set.
 
-with expected(schema_name, table_name, column_name, allowed_types) as (
+with recursive cascade_relations(relation_oid, visited) as (
+  select pg_catalog.to_regclass('auth.users'), array[pg_catalog.to_regclass('auth.users')::oid]
+  union all
+  select dependency.conrelid, parent.visited || dependency.conrelid
+  from cascade_relations as parent
+  join pg_catalog.pg_constraint as dependency on dependency.confrelid = parent.relation_oid
+  where dependency.contype = 'f' and dependency.confdeltype = 'c'
+    and not dependency.conrelid = any(parent.visited)
+), delete_impact as (
+  select distinct
+    dependency.conrelid::regclass::text as relation_name,
+    dependency.confrelid::regclass::text as referenced_relation,
+    dependency.conname,
+    case dependency.confdeltype when 'c' then 'CASCADE' when 'n' then 'SET NULL'
+      when 'a' then 'NO ACTION' when 'r' then 'RESTRICT' when 'd' then 'SET DEFAULT' end as delete_action,
+    pg_catalog.pg_get_constraintdef(dependency.oid, true) as definition
+  from pg_catalog.pg_constraint as dependency
+  join cascade_relations as parent on parent.relation_oid = dependency.confrelid
+  where dependency.contype = 'f'
+), expected(schema_name, table_name, column_name, allowed_types) as (
   values
     ('auth', 'users', 'id', array['uuid']),
     ('auth', 'users', 'email', array['text', 'varchar']),
@@ -22,7 +41,7 @@ with expected(schema_name, table_name, column_name, allowed_types) as (
     expected.column_name,
     expected.allowed_types,
     actual_type.typname as actual_type,
-    actual_type.typname = any(expected.allowed_types) as matches
+    coalesce(actual_type.typname = any(expected.allowed_types), false) as matches
   from expected
   left join pg_catalog.pg_namespace as namespace on namespace.nspname = expected.schema_name
   left join pg_catalog.pg_class as relation on relation.relnamespace = namespace.oid and relation.relname = expected.table_name
@@ -122,7 +141,8 @@ with expected(schema_name, table_name, column_name, allowed_types) as (
       and has_table_privilege(current_user, 'auth.users', 'TRIGGER'),
     'signup_table_privileges_and_rls_access', (
       select bool_and(
-        has_table_privilege(current_user, state_relation.table_name, 'SELECT,DELETE')
+        has_table_privilege(current_user, state_relation.table_name, 'SELECT')
+        and has_table_privilege(current_user, state_relation.table_name, 'DELETE')
         and (
           not state_class.relrowsecurity or active_role.rolsuper or active_role.rolbypassrls
           or (state_class.relowner = active_role.oid and not state_class.relforcerowsecurity)
@@ -169,6 +189,20 @@ select
 from role_and_privileges
 union all
 select
+  'auth_delete_data_impact',
+  jsonb_build_object(
+    'foreign_keys', coalesce((select jsonb_agg(to_jsonb(delete_impact) order by relation_name, conname) from delete_impact), '[]'::jsonb),
+    'stores_and_manuals_preserved_by_fk', not exists (
+      select 1 from cascade_relations
+      where cardinality(visited) > 1
+        and relation_oid in (pg_catalog.to_regclass('public.stores'), pg_catalog.to_regclass('public.manuals'))
+    ),
+    'no_action_or_restrict_require_row_review', exists (
+      select 1 from delete_impact where delete_action in ('NO ACTION', 'RESTRICT')
+    )
+  )
+union all
+select
   'new_object_names_available',
   jsonb_build_object(
     'trigger_name_available', not exists (
@@ -178,4 +212,26 @@ select
     ),
     'function_name_available', not expected_function.already_exists
   )
-from expected_function;
+from expected_function
+union all
+select 'signup_state_delete_side_effects', jsonb_build_object(
+  'all_clear', count(*) = 0,
+  'objects', coalesce(jsonb_agg(to_jsonb(side_effect)), '[]'::jsonb)
+)
+from (
+  select 'trigger' as kind, tgrelid::regclass::text as relation_name, tgname::text as object_name,
+    pg_catalog.pg_get_triggerdef(oid, true) as definition
+  from pg_catalog.pg_trigger
+  where tgrelid in (pg_catalog.to_regclass('public.owner_staff_signup_requests'), pg_catalog.to_regclass('public.owner_staff_email_signup_flows'))
+    and not tgisinternal and tgenabled <> 'D' and (tgtype & 8) <> 0
+  union all
+  select 'rule', ev_class::regclass::text, rulename::text, pg_catalog.pg_get_ruledef(oid, true)
+  from pg_catalog.pg_rewrite
+  where ev_class in (pg_catalog.to_regclass('public.owner_staff_signup_requests'), pg_catalog.to_regclass('public.owner_staff_email_signup_flows'))
+    and ev_type = '4' and ev_enabled <> 'D'
+  union all
+  select 'mutating_foreign_key', confrelid::regclass::text, conname::text, pg_catalog.pg_get_constraintdef(oid, true)
+  from pg_catalog.pg_constraint
+  where contype = 'f' and confrelid in (pg_catalog.to_regclass('public.owner_staff_signup_requests'), pg_catalog.to_regclass('public.owner_staff_email_signup_flows'))
+    and confdeltype in ('c', 'n', 'd')
+) as side_effect;

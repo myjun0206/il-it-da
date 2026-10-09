@@ -4,9 +4,10 @@
 
 ## Current Flow and Consent Storage
 
+- Local signup refinement adds optional "서비스 개선을 위한 선택 설문·인터뷰 참여 안내 수신 동의" separately from required signupTerms. Auth metadata stores latest choice/version/server timestamp; settings allows withdrawal, but no invitation delivery exists. The yellow screen banner is removed; legal/operator review remains pending. See `docs/signup-consent-resume-cleanup-handover-20261009.md` for scope, retention caveats and actual/mocked evidence.
 - `/signup/terms` presents the service terms, personal-information collection/use consent, and one role-specific store consent. The server checks `service`, `privacy`, and `store_connection` for owners or `store_work` for staff before account completion and again before initial store membership creation.
 - `signupTerms` is first held in `sessionStorage`, then written as booleans in Supabase Auth `user_metadata`. The flow has no document version, acceptance timestamp, display-language, or durable consent event. Auth user metadata is not an immutable consent audit record.
-- A separate privacy policy is informational, not a second checkbox. The previous optional marketing checkbox had no corresponding marketing delivery/processing path in application code; it is removed from this signup screen.
+- A separate privacy policy is informational, not a second checkbox. The previous marketing checkbox remains absent. The new optional research-invitation choice is not a claim that marketing/research delivery is operational and does not cover collection of interview responses or recordings.
 - The exact operator/contracting entity, public support contact, retention periods, Supabase project region, configured SMTP provider, and vendor contract terms are not established by this repository.
 
 ## A. Service Terms Draft

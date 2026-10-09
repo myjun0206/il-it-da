@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { sendEmailFirstOtp, verifyEmailFirstOtp, completeEmailFirstSignup, type EmailFirstState } from "../../lib/auth/email-first-signup.ts";
 import { normalizeSignupPhone } from "../../lib/auth/owner-staff-signup.ts";
 import { loadComponentModule } from "../support/component-harness.ts";
+import { incompleteSignupGraceHours, previewIncompleteSignupCleanup, type IncompleteSignupSnapshot } from "../../lib/auth/incomplete-signup-cleanup.ts";
 
 const settings = async () => ({ emailEnabled: true, autoconfirm: false, signupDisabled: false });
 const user = { id: "user-1", email: "person@example.org", email_confirmed_at: "2026-10-07", app_metadata: { provider: "email" }, user_metadata: { role: "owner" } };
@@ -67,7 +68,7 @@ for (const token of ["12345", "1234567", "abcdef", 123456]) {
 }
 
 test("provider invalid and expired OTP errors remain distinct", async () => {
-  for (const [providerError, expectedCode] of [[{ code: "invalid" }, "CODE_INVALID"], [{ code: "otp_expired" }, "CODE_EXPIRED"]]) {
+  for (const [providerError, expectedCode] of [[{ code: "invalid" }, "CODE_INVALID"], [{ code: "otp_expired", message: "OTP expired" }, "CODE_EXPIRED"]]) {
     const result = await verifyEmailFirstOtp({ email: user.email, role: "owner", token: "012345" }, {
       getSettings: settings, prepare: async () => pending, now: () => 1000,
       auth: { verifyOtp: async () => ({ data: { user: null, session: null }, error: providerError }), getUser: async () => assert.fail("Provider rejected OTP"), signOut: async () => {} },
@@ -280,10 +281,10 @@ test("same-password retry completes a verified partial signup without repeating 
       if (action === "complete") { completionCalls++; return { kind: "complete", userId }; }
       return { ...pending, emailVerified: true };
     },
-    auth: { updateUser: async () => { updateCalls++; return { error: { code: "same_password" } }; } },
+    auth: { updateUser: async (input) => { updateCalls++; return { error: input.password ? { code: "same_password" } : null }; } },
   });
   assert.equal(result.ok, true);
-  assert.equal(updateCalls, 1);
+  assert.equal(updateCalls, 2);
   assert.equal(completionCalls, 1);
 });
 
@@ -312,4 +313,163 @@ test("existing phone policy accepts ten formatted digits and canonicalizes only 
   assert.equal(normalizeSignupPhone(" 010-1234-5678 "), "01012345678");
   assert.equal(normalizeSignupPhone("+82 (10) 1234 5678"), "821012345678");
   assert.equal(normalizeSignupPhone("010-123-456"), "010123456");
+});
+
+test("completed email-first account resumes through login without OTP or new user", async () => {
+  const result = await sendEmailFirstOtp({ email: user.email, role: "owner" }, {
+    action: "start", getSettings: settings, prepare: async () => ({ kind: "complete", userId: user.id }),
+    canResumeCompleted: async (id, email, role) => id === user.id && email === user.email && role === "owner",
+    auth: { signInWithOtp: async () => assert.fail("Completed signup must use login") },
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) { assert.equal(result.code, "SIGNUP_INCOMPLETE"); assert.equal(result.nextStep, "login"); }
+});
+
+test("stale completed flow without a valid account stays blocked", async () => {
+  const result = await sendEmailFirstOtp({ email: user.email, role: "owner" }, {
+    action: "start", getSettings: settings, prepare: async () => ({ kind: "complete", userId: "deleted-user" }),
+    canResumeCompleted: async () => false, auth: { signInWithOtp: async () => assert.fail("No OTP from stale complete state") },
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.code, "EMAIL_EXISTS");
+});
+
+test("research acceptance and refusal are separate from mandatory terms on server completion", async () => {
+  for (const researchConsent of [false, true]) {
+    const result = await completeEmailFirstSignup({ email: user.email, role: "owner", name: "Person", phone: "01012345678", password: "password-1", passwordConfirm: "password-1", terms: { service: true, privacy: true, store_connection: true, research: true }, researchConsent }, user, {
+      getSettings: settings, now: () => 1000,
+      prepare: async (_email, _role, action, userId) => action === "complete" ? { kind: "complete", userId } : { ...pending, emailVerified: true },
+      auth: { updateUser: async (input) => {
+        assert.equal((input.data.signupResearchConsent as { accepted: boolean }).accepted, researchConsent);
+        assert.equal(Object.hasOwn(input.data.signupTerms as object, "research"), false);
+        assert.equal(Object.hasOwn(input.data, "role"), false);
+        return { error: null };
+      } },
+    });
+    assert.equal(result.ok, true);
+  }
+});
+
+test("incomplete cleanup preview is conservative, configurable and never includes completed/active/social users", () => {
+  const now = Date.parse("2026-10-09T12:00:00Z");
+  const past = "2026-10-07T12:00:00Z";
+  const snapshot: IncompleteSignupSnapshot = {
+    user: { id: "user-1", email: "person@example.org", created_at: past, updated_at: past,
+      app_metadata: { provider: "email" }, identities: [{ provider: "email" }], user_metadata: { role: "owner", signup_flow: "email_first" } },
+    flow: { email: "person@example.org", role: "owner", requested_at: past, available_at: past, expires_at: past, request_id: "request-1" },
+    profileCount: 0, membershipCount: 0,
+  };
+  assert.equal(incompleteSignupGraceHours(undefined), 24);
+  assert.equal(incompleteSignupGraceHours("48"), 48);
+  assert.throws(() => incompleteSignupGraceHours("invalid"));
+  assert.throws(() => incompleteSignupGraceHours("0"));
+  assert.equal(previewIncompleteSignupCleanup(snapshot, { now, graceHours: 24 }).eligible, true);
+  for (const change of [
+    { profileCount: 1 }, { membershipCount: 1 }, { profileCount: null }, { flow: null },
+    { flow: { ...snapshot.flow!, completed_at: past } },
+    { flow: { ...snapshot.flow!, completed_user_id: "user-1" } },
+    { flow: { ...snapshot.flow!, expires_at: "2026-10-10T12:00:00Z" } },
+    { user: { ...snapshot.user, identities: [{ provider: "google" }] } },
+    { user: { ...snapshot.user, last_sign_in_at: "2026-10-09T11:59:00Z" } },
+    { user: { ...snapshot.user, user_metadata: { role: "owner" } } },
+  ]) assert.equal(previewIncompleteSignupCleanup({ ...snapshot, ...change }, { now, graceHours: 24 }).eligible, false);
+});
+
+test("research consent API requires own authentication and Origin, and updates only its own metadata key", async () => {
+  const writes: Record<string, unknown>[] = [];
+  let authenticated = true;
+  let updateFailed = false;
+  const route = loadComponentModule<{ GET: () => Promise<Response>; PATCH: (request: Request) => Promise<Response> }>("app/api/auth/research-consent/route.ts", {
+    "next/server": { NextResponse: { json: (body: unknown, init?: ResponseInit) => Response.json(body, init) } },
+    "@/lib/supabase/server": { createClient: async () => ({ auth: {
+      getUser: async () => ({ data: { user: authenticated ? { id: "user-1", user_metadata: { signupResearchConsent: { accepted: true } } } : null }, error: null }),
+      updateUser: async (input: { data: Record<string, unknown> }) => { writes.push(input.data); return { error: updateFailed ? { code: "unavailable" } : null }; },
+    } }) },
+    "@/lib/auth/owner-staff-signup-server": {
+      isSameOriginRequest: (request: Request) => request.headers.get("origin") === new URL(request.url).origin,
+      readJsonBody: async (request: Request) => request.json(),
+    },
+  });
+  const request = (accepted: unknown, origin = "http://localhost:3000") => new Request("http://localhost:3000/api/auth/research-consent", {
+    method: "PATCH", headers: { origin, "Content-Type": "application/json" }, body: JSON.stringify({ accepted, role: "hq", signupTerms: {} }),
+  });
+  assert.equal((await route.GET()).status, 200);
+  assert.equal((await route.PATCH(request(false, "https://foreign.example.invalid"))).status, 403);
+  assert.equal((await route.PATCH(request("true"))).status, 400);
+  authenticated = false;
+  assert.equal((await route.PATCH(request(true))).status, 401);
+  assert.equal(writes.length, 0);
+  authenticated = true;
+  assert.equal((await route.PATCH(request(false))).status, 200);
+  assert.deepEqual(Object.keys(writes[0]), ["signupResearchConsent"]);
+  assert.equal((writes[0].signupResearchConsent as { accepted: boolean }).accepted, false);
+  updateFailed = true;
+  assert.equal((await route.PATCH(request(true))).status, 503);
+});
+
+test("completed resume lookup protects social, foreign, deleted and already registered identities", async () => {
+  const account = { ...user, identities: [{ provider: "email" }], user_metadata: {
+    role: "owner", signup_flow: "email_first", name: "Person", phone: "01012345678",
+    signupTerms: { service: true, privacy: true, store_connection: true },
+  } };
+  let current: typeof account | null = account;
+  let kind = "complete";
+  const moduleExports = loadComponentModule<{ canResumeCompletedSignup: (id: string, email: string, role: "owner") => Promise<boolean> }>("lib/auth/owner-staff-signup-server.ts", {
+    "next/server": { NextResponse: {} },
+    "@/lib/supabase/admin": { createAdminClient: () => ({
+      auth: { admin: { getUserById: async () => ({ data: { user: current }, error: current ? null : { status: 404 } }) } },
+      rpc: async (_name: string, params: Record<string, unknown>) => {
+        assert.equal(params.p_action, "inspect");
+        return { data: { kind, userId: user.id }, error: null };
+      },
+    }) },
+  }, { process: { env: { NEXT_PUBLIC_SIGNUP_EMAIL_OTP_LENGTH: "6" } } });
+  assert.equal(await moduleExports.canResumeCompletedSignup(user.id, user.email, "owner"), true);
+  assert.equal(await moduleExports.canResumeCompletedSignup(user.id, "different@example.org", "owner"), false);
+  current = { ...account, identities: [{ provider: "google" }] };
+  assert.equal(await moduleExports.canResumeCompletedSignup(user.id, user.email, "owner"), false);
+  current = null;
+  assert.equal(await moduleExports.canResumeCompletedSignup(user.id, user.email, "owner"), false);
+  current = account;
+  kind = "exists";
+  assert.equal(await moduleExports.canResumeCompletedSignup(user.id, user.email, "owner"), false);
+});
+
+test("ambiguous provider OTP failure uses current server deadline and never masks throttling or outages", async () => {
+  for (const [providerError, expectedCode, now] of [
+    [{ code: "otp_expired", message: "Token has expired or is invalid", status: 403 }, "CODE_INVALID", 1000],
+    [{ message: "Token has expired or is invalid", status: 403 }, "CODE_INVALID", 1000],
+    [{ code: "otp_expired", message: "Token has expired or is invalid", status: 403 }, "CODE_EXPIRED", 182000],
+    [{ code: "invalid", status: 400 }, "CODE_EXPIRED", 182000],
+    [{ status: 429, code: "over_request_rate_limit" }, "RATE_LIMITED", 1000],
+    [{ status: 503, code: "unexpected_failure" }, "AUTH_UNAVAILABLE", 1000],
+    [{ status: 503, code: "otp_expired", message: "Token has expired or is invalid" }, "AUTH_UNAVAILABLE", 1000],
+    [{ message: "fetch failed" }, "AUTH_UNAVAILABLE", 1000],
+    [{ status: 400, code: "unexpected_code" }, "AUTH_UNAVAILABLE", 1000],
+    [{ status: 401, code: "bad_jwt", message: "JWT expired" }, "AUTH_UNAVAILABLE", 1000],
+  ] as const) {
+    let afterProvider = false;
+    const result = await verifyEmailFirstOtp({ email: user.email, role: "owner", token: "123456" }, {
+      getSettings: settings, now: () => afterProvider ? now : 1000, prepare: async () => pending,
+      auth: { verifyOtp: async () => { afterProvider = true; return { data: { user: null, session: null }, error: providerError }; },
+        getUser: async () => assert.fail("Failed code never authenticates"), signOut: async () => {} },
+    });
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.code, expectedCode);
+      if (expectedCode === "CODE_INVALID") assert.equal(result.error, "인증번호가 틀립니다. 다시 확인해 주세요.");
+    }
+  }
+});
+
+test("ambiguous failure during another tab's resend is rejected rather than called wrong or expired", async () => {
+  let inspections = 0;
+  const result = await verifyEmailFirstOtp({ email: user.email, role: "owner", token: "123456" }, {
+    getSettings: settings, now: () => 1000,
+    prepare: async () => ++inspections === 1 ? pending : { ...pending, requestId: "other-tab-new-request" },
+    auth: { verifyOtp: async () => ({ data: { user: null, session: null }, error: { code: "otp_expired", message: "Token has expired or is invalid", status: 403 } }),
+      getUser: async () => assert.fail("Changed request must not become authentication"), signOut: async () => {} },
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.code, "VERIFICATION_REJECTED");
 });

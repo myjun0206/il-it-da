@@ -10,6 +10,19 @@ const ALLOWED_AUTH_NEXT_PATHS = new Set([
 ]);
 const AUTH_QUERY_PARAMS = ["code", "token_hash", "type"] as const;
 
+export function getOAuthErrorMessage(code: unknown): string {
+  switch (code) {
+    case "cancelled": return "SNS 로그인이 취소되었습니다. 다시 로그인할 수 있습니다.";
+    case "provider_failed": return "SNS 인증을 완료하지 못했습니다. 다시 시도해주세요. (provider_failed)";
+    case "exchange_failed": return "로그인 인증이 만료되었거나 확인되지 않았습니다. 로그인을 다시 시작해주세요. (exchange_failed)";
+    case "profile_failed": return "계정 정보를 확인하지 못했습니다. 잠시 후 다시 시도해주세요. (profile_failed)";
+    case "user_failed": return "로그인 세션을 확인하지 못했습니다. 로그인을 다시 시작해주세요. (user_failed)";
+    case "OAUTH_START_FAILED": return "SNS 로그인을 시작하지 못했습니다. 잠시 후 다시 시도해주세요. (OAUTH_START_FAILED)";
+    case "OAUTH_REDIRECT_INVALID": return "SNS 로그인 연결을 확인하지 못했습니다. (OAUTH_REDIRECT_INVALID)";
+    default: return "SNS 로그인을 완료하지 못했습니다. 다시 시도해주세요.";
+  }
+}
+
 export function getSafeAuthNextPath(value: string | null): string {
   if (!value) return DEFAULT_AUTH_NEXT_PATH;
 

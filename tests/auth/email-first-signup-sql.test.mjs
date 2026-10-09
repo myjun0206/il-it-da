@@ -20,6 +20,48 @@ create table public.store_memberships(user_id uuid);`;
 const userId = "11111111-1111-4111-8111-111111111111";
 const otherId = "22222222-2222-4222-8222-222222222222";
 
+test("039 reauthenticates abandoned email-first signup without a profile, membership or previous-request reuse", async () => {
+  const db = new PGlite();
+  const email = "abandoned@example.invalid";
+  try {
+    await db.exec(setup);
+    await db.exec(migration);
+    const rpc = async (action, requestId = null) => (await db.query(
+      "select public.prepare_owner_staff_email_first_signup($1,'owner',$2,$3::uuid,$4::uuid) result",
+      [email, action, userId, requestId],
+    )).rows[0].result;
+    const first = await rpc("start");
+    assert.equal(first.kind, "new");
+    await db.query("insert into auth.users values($1,$2,null,null,$3::jsonb,$4::jsonb,'')", [userId, email, JSON.stringify({ provider: "email" }), JSON.stringify({ role: "owner", signup_flow: "email_first" })]);
+    await rpc("sent", first.requestId);
+    assert.equal((await rpc("start")).kind, "rate_limited");
+    await db.query("update public.owner_staff_email_signup_flows set available_at=now()-interval '1 second' where email=$1", [email]);
+    const second = await rpc("start");
+    assert.equal(second.kind, "resume");
+    assert.notEqual(second.requestId, first.requestId);
+    await rpc("sent", second.requestId);
+    await db.query("update auth.users set email_confirmed_at=clock_timestamp(),last_sign_in_at=clock_timestamp() where id=$1", [userId]);
+    assert.equal((await rpc("verify", second.requestId)).emailVerified, true);
+    assert.equal((await rpc("complete", second.requestId)).kind, "unavailable");
+    await db.query("update public.owner_staff_email_signup_flows set available_at=now()-interval '1 second' where email=$1", [email]);
+    const reopened = await rpc("start");
+    assert.equal(reopened.kind, "resume");
+    assert.notEqual(reopened.requestId, second.requestId);
+    assert.equal((await rpc("inspect")).emailVerified, false);
+    assert.equal((await rpc("verify", second.requestId)).kind, "unavailable");
+    await rpc("sent", reopened.requestId);
+    await db.query("update auth.users set last_sign_in_at=clock_timestamp() where id=$1", [userId]);
+    assert.equal((await rpc("verify", reopened.requestId)).emailVerified, true);
+    assert.equal((await db.query("select count(*)::int count from public.profiles")).rows[0].count, 0);
+    assert.equal((await db.query("select count(*)::int count from public.store_memberships")).rows[0].count, 0);
+    await db.query("update auth.users set encrypted_password='synthetic-hash' where id=$1", [userId]);
+    assert.equal((await rpc("complete", reopened.requestId)).kind, "complete");
+    assert.equal((await rpc("start")).kind, "complete");
+    assert.equal((await db.query("select count(*)::int count from public.profiles")).rows[0].count, 0);
+    assert.equal((await db.query("select count(*)::int count from public.store_memberships")).rows[0].count, 0);
+  } finally { await db.close(); }
+});
+
 test("039 local PostgreSQL request lifecycle, protection and privileges", async () => {
   const db = new PGlite();
   try {
@@ -174,11 +216,43 @@ test("Auth deletion clears only that user's 038/039 signup state and allows a ne
     assert.equal(privilegeResult.can_create_auth_delete_trigger, true);
     assert.equal(privilegeResult.auth_users_full_row_visibility, true);
     assert.equal(privilegeResult.signup_table_privileges_and_rls_access, true);
+    for (const privilege of ["SELECT", "DELETE"]) {
+      await db.exec(`reset role; revoke ${privilege} on public.owner_staff_email_signup_flows from migration_user; set role migration_user`);
+      const incompletePrivileges = await db.exec(readFileSync("docs/sql/040_auth_delete_signup_state_preflight.readonly.sql", "utf8"));
+      assert.equal(incompletePrivileges[0].rows.find((row) => row.check_group === "execution_role_and_privileges").details.signup_table_privileges_and_rls_access, false);
+      await assert.rejects(() => db.exec(authDeleteCleanupDraft),
+        (error) => error.code === "55000" && error.message.includes("AUTH_DELETE_SIGNUP_CLEANUP_REQUIRED_PRIVILEGES_MISSING"));
+      await db.exec(`rollback; reset role; grant ${privilege} on public.owner_staff_email_signup_flows to migration_user; set role migration_user`);
+    }
     const objectNames = preflightRows.find((row) => row.check_group === "new_object_names_available").details;
     assert.equal(objectNames.trigger_name_available, true);
     assert.equal(objectNames.function_name_available, true);
     const triggers = preflightRows.find((row) => row.check_group === "existing_auth_users_triggers_review_required").details;
     assert.ok(triggers.some((trigger) => trigger.trigger_name === "existing_auth_delete_audit"));
+    const impact = preflightRows.find((row) => row.check_group === "auth_delete_data_impact").details;
+    assert.equal(impact.stores_and_manuals_preserved_by_fk, true);
+    assert.ok(impact.foreign_keys.some((relation) => relation.relation_name === "stores" && relation.delete_action === "SET NULL"));
+    await db.exec("reset role; alter table public.manuals rename column store_id to previous_store_id; set role migration_user");
+    const missingColumn = await db.exec(readFileSync("docs/sql/040_auth_delete_signup_state_preflight.readonly.sql", "utf8"));
+    assert.equal(missingColumn[0].rows.find((row) => row.check_group === "column_contract").details.all_columns_match, false);
+    await db.exec(`
+      reset role;
+      alter table public.manuals rename column previous_store_id to store_id;
+      alter table public.stores drop constraint stores_boss_id_fkey;
+      alter table public.stores add constraint stores_boss_id_fkey foreign key (boss_id) references public.profiles(id) on delete cascade;
+      set role migration_user;
+    `);
+    const dangerousCascade = await db.exec(readFileSync("docs/sql/040_auth_delete_signup_state_preflight.readonly.sql", "utf8"));
+    assert.equal(dangerousCascade[0].rows.find((row) => row.check_group === "auth_delete_data_impact").details.stores_and_manuals_preserved_by_fk, false);
+    await assert.rejects(() => db.exec(authDeleteCleanupDraft),
+      (error) => error.code === "55000" && error.message.includes("AUTH_DELETE_STORE_MANUAL_CASCADE_REVIEW_REQUIRED"));
+    await db.exec(`
+      rollback;
+      reset role;
+      alter table public.stores drop constraint stores_boss_id_fkey;
+      alter table public.stores add constraint stores_boss_id_fkey foreign key (boss_id) references public.profiles(id) on delete set null;
+      set role migration_user;
+    `);
     await assert.rejects(
       () => db.exec(authDeleteCleanupDraft),
       (error) => error.code === "55000" && error.message.includes("AUTH_DELETE_TRIGGER_INVENTORY_REVIEW_REQUIRED"),
@@ -190,6 +264,14 @@ test("Auth deletion clears only that user's 038/039 signup state and allows a ne
       "auth_trigger_inventory_reviewed boolean := false",
       "auth_trigger_inventory_reviewed boolean := true",
     );
+    await db.exec(`reset role;
+      create function public.synthetic_state_delete() returns trigger language plpgsql as $$ begin return old; end $$;
+      create trigger synthetic_state_delete before delete on public.owner_staff_email_signup_flows
+        for each row execute function public.synthetic_state_delete();
+      set role migration_user;`);
+    await assert.rejects(() => db.exec(reviewedDraft),
+      (error) => error.code === "55000" && error.message.includes("AUTH_DELETE_SIGNUP_STATE_SIDE_EFFECT_REVIEW_REQUIRED"));
+    await db.exec("rollback; reset role; drop trigger synthetic_state_delete on public.owner_staff_email_signup_flows; drop function public.synthetic_state_delete(); set role migration_user");
     await db.exec(reviewedDraft);
     await db.exec("reset role");
 

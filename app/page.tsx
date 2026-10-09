@@ -10,8 +10,10 @@ import { Input, PasswordInput } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
 import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
+import { getOAuthErrorMessage } from "@/lib/auth/auth-callback";
 
 type OAuthProvider = "google" | "kakao" | "apple" | "custom:naver";
+const SHOW_NAVER_KAKAO_LOGIN_BUTTONS = false;
 
 export default function LoginPage() {
   return (
@@ -39,7 +41,7 @@ function LoginPageContent() {
       try {
         const oauthError = new URLSearchParams(window.location.search).get("oauthError");
         if (oauthError) {
-          setErrors({ email: "SNS 로그인을 완료하지 못했습니다. 다시 시도해주세요." });
+          setErrors({ email: getOAuthErrorMessage(oauthError) });
         }
 
         const supabase = createClient();
@@ -166,7 +168,10 @@ function LoginPageContent() {
         body: JSON.stringify({ provider, rememberMe }),
       });
       const result = await response.json();
-      if (!response.ok || typeof result.url !== "string") throw new Error("OAuth login failed.");
+      if (!response.ok || typeof result.url !== "string") {
+        setErrors({ email: getOAuthErrorMessage(result.code) });
+        return;
+      }
       window.location.assign(result.url);
     } catch (error) {
       logSafeAuthError("LOGIN_OAUTH_FAILED", error);
@@ -359,6 +364,7 @@ function LoginPageContent() {
               </div>
 
               <div className="flex items-center justify-center gap-4">
+                {SHOW_NAVER_KAKAO_LOGIN_BUTTONS && (<>
                 <a
                   href="#"
                   onClick={(e) => {
@@ -393,6 +399,7 @@ function LoginPageContent() {
                     className="block"
                   />
                 </a>
+                </>)}
                 <a
                   href="#"
                   onClick={(e) => {
@@ -581,6 +588,7 @@ function LoginPageContent() {
               </div>
 
               <div className="flex items-center justify-center gap-3">
+                {SHOW_NAVER_KAKAO_LOGIN_BUTTONS && (<>
                 <a
                   href="#"
                   onClick={(e) => {
@@ -615,6 +623,7 @@ function LoginPageContent() {
                     className="block"
                   />
                 </a>
+                </>)}
                 <a
                   href="#"
                   onClick={(e) => {

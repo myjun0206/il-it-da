@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Check, ChevronLeft, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { SIGNUP_DOCUMENTS, type SignupConsentKey, type SignupDocumentKey } from "@/lib/auth/signup-terms-content";
+import { requiredSignupConsent } from "@/lib/auth/signup-research-consent";
 
 type Role = "hq" | "owner" | "staff";
 
@@ -36,6 +37,7 @@ const getTermsByRole = (role: Role): Term[] => {
     terms.push(staffAdditionalTerms[0]);
   }
 
+  terms.push({ id: "research", title: SIGNUP_DOCUMENTS.research.title, required: false });
   return terms;
 };
 
@@ -46,6 +48,7 @@ const getInitialTermsState = (role: Role): Record<SignupConsentKey, boolean> => 
     privacy: false,
     store_connection: false,
     store_work: false,
+    research: false,
   };
 
   terms.forEach((term) => {
@@ -75,6 +78,7 @@ export default function SignupTermsPage() {
   const [termsAccepted, setTermsAccepted] = useState<Record<SignupConsentKey, boolean>>(initialData.accepted);
   const [selectedTermModal, setSelectedTermModal] = useState<SignupDocumentKey | null>(null);
   const closeDocumentButtonRef = useRef<HTMLButtonElement>(null);
+  const documentDialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!selectedTermModal) return;
@@ -82,6 +86,16 @@ export default function SignupTermsPage() {
     closeDocumentButtonRef.current?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setSelectedTermModal(null);
+      if (event.key === "Tab") {
+        const controls = Array.from(documentDialogRef.current?.querySelectorAll<HTMLElement>('button, a[href], input, select, textarea, [tabindex="0"]') ?? [])
+          .filter((element) => !element.hasAttribute("disabled") && element.getClientRects().length > 0);
+        const first = controls[0];
+        const last = controls.at(-1);
+        if (first && last && ((event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last))) {
+          event.preventDefault();
+          (event.shiftKey ? last : first).focus();
+        }
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => {
@@ -97,24 +111,14 @@ export default function SignupTermsPage() {
 
   // 모든 약관이 동의되었는지 확인
   const allAccepted = currentTerms.every((term) => termsAccepted[term.id]);
+  const requiredOnlyAccepted = requiredAccepted && currentTerms.filter((term) => !term.required).every((term) => !termsAccepted[term.id]);
 
-  // 전체 동의 토글
-  const handleAllAccept = () => {
-    if (allAccepted) {
-      // 모두 해제
-      const newState: Record<SignupConsentKey, boolean> = { ...termsAccepted };
-      currentTerms.forEach((term) => {
-        newState[term.id] = false;
-      });
-      setTermsAccepted(newState);
-    } else {
-      // 모두 동의
-      const newState: Record<SignupConsentKey, boolean> = { ...termsAccepted };
-      currentTerms.forEach((term) => {
-        newState[term.id] = true;
-      });
-      setTermsAccepted(newState);
-    }
+  const handleSelectTerms = (includeOptional: boolean) => {
+    setTermsAccepted((current) => {
+      const next = { ...current };
+      currentTerms.forEach((term) => { next[term.id] = term.required || includeOptional; });
+      return next;
+    });
   };
 
   // 개별 약관 체크 토글
@@ -127,7 +131,8 @@ export default function SignupTermsPage() {
 
   const handleNext = () => {
     if (requiredAccepted) {
-      sessionStorage.setItem("signupTerms", JSON.stringify(termsAccepted));
+      sessionStorage.setItem("signupTerms", JSON.stringify(requiredSignupConsent(termsAccepted)));
+      sessionStorage.setItem("signupResearchConsent", JSON.stringify({ accepted: termsAccepted.research }));
       router.push("/signup/profile");
     }
   };
@@ -169,24 +174,14 @@ export default function SignupTermsPage() {
           {/* Title Section */}
           <div className="mb-8 sm:mb-12 lg:mb-16 text-center">
             <h1
-              className="mb-4 sm:mb-5 lg:mb-6 font-bold text-[var(--color-text-primary)]"
-              style={{
-                fontSize: "clamp(32px, 2.5vw, 42px)",
-                fontWeight: 800,
-              }}
+              className="mb-4 sm:mb-5 lg:mb-6 break-keep text-2xl font-extrabold text-[var(--color-text-primary)] sm:text-3xl"
             >
               서비스 이용을 위해 약관에 동의해주세요
             </h1>
             <p
-              className="text-[var(--color-text-secondary)]"
-              style={{
-                fontSize: "clamp(16px, 1.2vw, 20px)",
-              }}
+              className="text-base text-[var(--color-text-secondary)] sm:text-lg"
             >
-              필수 약관을 확인하고 동의해주세요.
-            </p>
-            <p role="status" className="mx-auto mt-5 max-w-[820px] rounded border border-[#f59e0b] bg-[#fffbeb] px-4 py-3 text-left text-sm text-[#713f12] dark:border-[#a16207] dark:bg-[#332b18] dark:text-[#fde68a]">
-              아래 약관과 개인정보 문서는 운영 검토 초안입니다. 운영주체, 시행일, 문의처, 보유기간과 외부 처리 조건을 확정하고 법률 검토를 마친 뒤 공개해야 합니다.
+              필수 동의는 가입에 필요하며, 선택 동의는 거절해도 가입할 수 있습니다.
             </p>
           </div>
 
@@ -207,7 +202,7 @@ export default function SignupTermsPage() {
                       {termsAccepted[term.id] && <Check size={16} className="text-white dark:text-[var(--color-text-inverse)]" strokeWidth={3} />}
                     </span>
                     <span className="min-w-0">
-                      <span className="mb-1 inline-block rounded bg-[var(--color-primary)] px-2 py-1 text-xs font-semibold text-white">필수</span>
+                      <span className={`mb-1 inline-block rounded px-2 py-1 text-xs font-semibold ${term.required ? "bg-[var(--color-primary)] text-white" : "bg-[var(--color-border-light)] text-[var(--color-text-secondary)]"}`}>{term.required ? "필수" : "선택"}</span>
                       <span className="block break-words font-semibold text-sm sm:text-base text-[var(--color-text-primary)]">{term.title}</span>
                     </span>
                   </button>
@@ -230,11 +225,16 @@ export default function SignupTermsPage() {
             </div>
 
             {/* Consent Choice Buttons */}
-            <div className="flex justify-end">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2" role="group" aria-label="약관 빠른 선택">
+              <button type="button" onClick={() => handleSelectTerms(false)} aria-pressed={requiredOnlyAccepted}
+                className={`flex min-h-14 min-w-0 items-center justify-center rounded border-2 px-5 py-4 font-semibold text-[var(--color-text-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${requiredOnlyAccepted ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/30" : "border-[var(--color-border-light)] bg-white"}`}>
+                필수만 선택
+              </button>
               <button
                 type="button"
-                onClick={handleAllAccept}
-                className={`w-full sm:w-auto flex items-center justify-center gap-3 py-4 px-5 rounded border-2 transition-all duration-200 ${
+                onClick={() => handleSelectTerms(true)}
+                aria-pressed={allAccepted}
+                className={`min-h-14 min-w-0 flex items-center justify-center gap-3 py-4 px-5 rounded border-2 transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${
                   allAccepted
                     ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/30"
                     : "border-[var(--color-border-light)] bg-white hover:border-[var(--color-border)]"
@@ -246,10 +246,13 @@ export default function SignupTermsPage() {
                   </div>
                 )}
                 <span className="font-semibold text-base text-[var(--color-text-primary)]">
-                  전체 동의
+                  전체 선택
                 </span>
               </button>
             </div>
+            <p role="status" aria-live="polite" className="mt-3 text-sm text-[var(--color-text-secondary)]">
+              {allAccepted ? "필수·선택 항목이 모두 선택되었습니다." : requiredOnlyAccepted ? "필수 항목만 선택되었습니다. 선택 동의는 미선택입니다." : requiredAccepted ? "필수 동의가 완료되었습니다." : "필수 동의 항목을 확인해주세요."}
+            </p>
           </div>
 
           {/* Next Button */}
@@ -272,6 +275,7 @@ export default function SignupTermsPage() {
         <div
           className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center"
           role="dialog"
+          ref={documentDialogRef}
           aria-modal="true"
           aria-labelledby="signup-document-title"
           onClick={(event) => { if (event.target === event.currentTarget) setSelectedTermModal(null); }}
