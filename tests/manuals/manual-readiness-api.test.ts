@@ -320,7 +320,8 @@ describe("기존 화면/계약 회귀 없음", () => {
   test("기존 목록 조회/업로드 호출부는 그대로 남아 있다", () => {
     const storePage = readSource("app/boss/store-manuals/page.tsx");
     assert.match(storePage, /\/api\/store-manuals\?storeId=\$\{storeId\}&includeCategoryPlaceholders=1/);
-    assert.match(storePage, /openAnalyzeFilePicker/);
+    assert.match(storePage, /<ManualFileDropzone/);
+    assert.match(storePage, /handleAnalyzeFileSelected/);
   });
 
   test("저장 완료 문구가 검색 준비 완료를 뜻하지 않도록 안내한다", () => {

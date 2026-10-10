@@ -3,14 +3,16 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, ArrowLeft, FileText, Pencil, Plus, RefreshCw, Search, Sparkles, Store, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, FileText, Pencil, Plus, RefreshCw, Search, Store, Trash2, UploadCloud, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
 import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
-import { ManualPreviewEditor, type ManualEditState } from "@/components/manuals/ManualPreviewEditor";
+import type { ManualEditState } from "@/components/manuals/ManualPreviewEditor";
+import ManualFileDropzone from "@/components/manuals/ManualFileDropzone";
+import ManualUploadReviewModal from "@/components/manuals/ManualUploadReviewModal";
 import type { ManualRecord } from "@/lib/types/manual";
 import { resolveOwnerCurrentStore } from "@/lib/owner/current-store";
 import { buildBossQuestionDetailUrl, pickQuestionsStore } from "@/lib/owner/boss-questions-view";
@@ -18,6 +20,7 @@ import { validateManualEdit } from "@/lib/manuals/validate-manual-edit";
 import { manualSaveMessage } from "@/lib/manuals/manual-save-result";
 import type { ManualEditSearchStatus } from "@/lib/manuals/save-store-manual-edit";
 import { buildConfirmedManualsPayload, type ManualUploadPreview } from "@/lib/manuals/build-manual-preview";
+import { MAX_UPLOAD_FILE_SIZE_BYTES, isFileSizeWithinLimit } from "@/lib/manuals/upload-limits";
 
 type ManualGroup = {
   id: string;
@@ -35,6 +38,7 @@ type ManualCategory = {
 type ManualView = "categories" | "titles" | "items";
 
 const SUPPORTED_ANALYZE_EXTENSIONS = [".txt", ".md", ".docx", ".csv", ".xlsx", ".xls"];
+const MAX_UPLOAD_MB = Math.round(MAX_UPLOAD_FILE_SIZE_BYTES / (1024 * 1024));
 
 const STORE_MANUAL_CATEGORY_PLACEHOLDER_CONTENT = "__STORE_MANUAL_CATEGORY_PLACEHOLDER__";
 const UUID_LIKE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -173,9 +177,9 @@ export default function StoreManualsManagementPage() {
   const [isDeletingAll, setIsDeletingAll] = useState(false);
   const [deleteAllError, setDeleteAllError] = useState("");
   const [toastMessage, setToastMessage] = useState("");
-  const analyzeFileInputRef = useRef<HTMLInputElement>(null);
   const isSubmittingRef = useRef(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [showUploadPanel, setShowUploadPanel] = useState(false);
   const [analyzeError, setAnalyzeError] = useState("");
   const [preview, setPreview] = useState<ManualUploadPreview | null>(null);
   const [categoryLabels, setCategoryLabels] = useState<Record<string, string>>({});
@@ -844,13 +848,15 @@ export default function StoreManualsManagementPage() {
     }
   };
 
-  const openAnalyzeFilePicker = () => {
+  const closeAnalyzeUpload = () => {
     if (isAnalyzing) return;
-    analyzeFileInputRef.current?.click();
+    setShowUploadPanel(false);
+    setAnalyzeError("");
   };
 
   const closeAnalyzeReview = () => {
     setPreview(null);
+    setShowUploadPanel(false);
     setCategoryLabels({});
     setManualEdits({});
     setCollapsedCategories(new Set());
@@ -860,6 +866,21 @@ export default function StoreManualsManagementPage() {
 
   const handleAnalyzeFileSelected = async (file: File) => {
     setAnalyzeError("");
+
+    const extension = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
+    if (extension === ".pdf") {
+      setAnalyzeError("PDF는 아직 지원하지 않습니다. .txt, .md, .docx, .csv, .xlsx, .xls 파일을 선택해주세요.");
+      return;
+    }
+    if (!SUPPORTED_ANALYZE_EXTENSIONS.includes(extension)) {
+      setAnalyzeError(`지원하지 않는 형식입니다. ${SUPPORTED_ANALYZE_EXTENSIONS.join(", ")} 파일을 선택해주세요.`);
+      return;
+    }
+    if (!isFileSizeWithinLimit(file.size)) {
+      setAnalyzeError(`파일 용량은 최대 ${MAX_UPLOAD_MB}MB까지 가능합니다.`);
+      return;
+    }
+
     setIdempotencyKey("");
     setAnalysisSaveError("");
     setIsAnalyzing(true);
@@ -884,6 +905,7 @@ export default function StoreManualsManagementPage() {
       }
 
       setPreview(data.preview);
+      setShowUploadPanel(false);
       setIdempotencyKey(data.idempotencyKey);
       setCategoryLabels(
         Object.fromEntries(data.preview.categories.map((category) => [category.tempId, category.label])),
@@ -975,10 +997,6 @@ export default function StoreManualsManagementPage() {
     }
   };
 
-  const includedAnalysisCount = preview
-    ? preview.manuals.filter((manual) => !(manualEdits[manual.tempId]?.excluded ?? false)).length
-    : 0;
-
   const goToTitles = () => {
     setItemSearchQuery("");
     cancelEditItem();
@@ -1015,8 +1033,8 @@ export default function StoreManualsManagementPage() {
       <div className="lg:ml-[240px]">
         <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
 
-        <main className="p-6 lg:p-8 max-w-7xl mx-auto">
-          {detailHeader ? (
+        <main className={`p-6 lg:p-8 max-w-7xl mx-auto ${view === "categories" ? "pt-4 lg:pt-5" : ""}`}>
+          {view !== "categories" && detailHeader && (
             <div className="mb-8 flex items-start gap-3">
               <button
                 type="button"
@@ -1031,35 +1049,6 @@ export default function StoreManualsManagementPage() {
                 <h1 className="text-2xl font-bold text-(--color-text-primary) mb-2 break-keep">{detailHeader.title}</h1>
                 <p className="text-base text-(--color-text-secondary)">{detailHeader.description}</p>
               </div>
-            </div>
-          ) : (
-            <div className="mb-8">
-              <h1 className="text-2xl font-bold text-(--color-text-primary) mb-2">
-                지점 매뉴얼 관리
-              </h1>
-              <p className="text-base text-(--color-text-secondary)">
-                우리 매장의 업무 절차와 운영 노하우를 등록하고 관리하세요.
-              </p>
-            </div>
-          )}
-
-          <input
-            ref={analyzeFileInputRef}
-            type="file"
-            accept={SUPPORTED_ANALYZE_EXTENSIONS.join(",")}
-            className="hidden"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              event.target.value = "";
-              if (file) {
-                void handleAnalyzeFileSelected(file);
-              }
-            }}
-          />
-
-          {analyzeError && (
-            <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-5" role="alert">
-              <p className="text-sm text-red-700">{analyzeError}</p>
             </div>
           )}
 
@@ -1149,14 +1138,74 @@ export default function StoreManualsManagementPage() {
                       전체 삭제
                     </button>
                   )}
-                  <Button variant="outline" onClick={openAnalyzeFilePicker} isLoading={isAnalyzing}>
-                    <Sparkles size={16} className="mr-2" /> 매뉴얼 등록
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setAnalyzeError("");
+                      setShowUploadPanel(true);
+                    }}
+                  >
+                    <UploadCloud size={16} className="mr-2" aria-hidden="true" /> 매뉴얼 등록
                   </Button>
                   <Button variant="primary" onClick={() => setShowCategoryModal(true)}>
                     <Plus size={16} className="mr-2" /> 카테고리 추가
                   </Button>
                 </div>
               </div>
+
+              {showUploadPanel && (
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-4 sm:px-6"
+                  onClick={closeAnalyzeUpload}
+                >
+                  <section
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="store-manual-upload-title"
+                    className="relative max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-5 shadow-xl sm:p-6"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <div className="mb-5 flex items-start justify-between gap-4">
+                      <div>
+                        <h2 id="store-manual-upload-title" className="text-lg font-bold text-(--color-text-primary)">
+                          매뉴얼 파일을 올려주세요
+                        </h2>
+                        <p className="mt-1 text-sm text-(--color-text-secondary)">
+                          업로드한 파일 내용을 분석해 매뉴얼 항목을 자동으로 정리해드려요.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={closeAnalyzeUpload}
+                        disabled={isAnalyzing}
+                        aria-label="등록 창 닫기"
+                        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-(--color-text-tertiary) transition-colors hover:bg-(--color-bg-default) hover:text-(--color-text-primary) disabled:opacity-50"
+                      >
+                        <X size={20} aria-hidden="true" />
+                      </button>
+                    </div>
+
+                    <ManualFileDropzone
+                      isAnalyzing={isAnalyzing}
+                      supportedExtensions={SUPPORTED_ANALYZE_EXTENSIONS}
+                      maxUploadMb={MAX_UPLOAD_MB}
+                      onFileSelected={(file) => void handleAnalyzeFileSelected(file)}
+                    />
+
+                    {analyzeError && (
+                      <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                        {analyzeError}
+                      </p>
+                    )}
+
+                    <div className="mt-5 flex justify-end gap-2">
+                      <Button variant="ghost" onClick={closeAnalyzeUpload} disabled={isAnalyzing}>
+                        취소
+                      </Button>
+                    </div>
+                  </section>
+                </div>
+              )}
 
               {/* Filter Buttons */}
               <div className="mb-6 flex flex-wrap gap-2" role="group" aria-label="검색 필터">
@@ -1753,59 +1802,21 @@ export default function StoreManualsManagementPage() {
       )}
 
       {preview && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-xl">
-            <button
-              type="button"
-              onClick={closeAnalyzeReview}
-              disabled={isSavingAnalysis}
-              className="absolute right-4 top-4 text-(--color-text-tertiary) hover:text-(--color-text-primary) disabled:opacity-50"
-              aria-label="닫기"
-            >
-              <X size={20} />
-            </button>
-            <div className="shrink-0 border-b border-(--color-border) px-6 py-5">
-              <h2 className="mb-1 text-lg font-bold text-(--color-text-primary)">매뉴얼 등록 미리보기</h2>
-              <p className="text-sm text-(--color-text-secondary)">
-                {preview.totalDetailManualCount}개 세부 매뉴얼을 {preview.topCategoryCount}개 카테고리로 분류했습니다. 분류와 저장 항목을 확인하세요.
-              </p>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 overscroll-contain">
-              <ManualPreviewEditor
-                preview={preview}
-                categoryLabels={categoryLabels}
-                manualEdits={manualEdits}
-                collapsedCategories={collapsedCategories}
-                onCategoryLabelChange={handleCategoryLabelChange}
-                onManualTitleChange={handleManualTitleChange}
-                onManualCategoryMove={handleManualCategoryMove}
-                onManualExcludeToggle={handleManualExcludeToggle}
-                onToggleCategoryCollapsed={handleToggleCategoryCollapsed}
-              />
-            </div>
-
-            <div className="shrink-0 border-t border-(--color-border) bg-white px-6 py-4">
-              {analysisSaveError && (
-                <p role="alert" className="mb-3 text-sm text-(--color-status-error)">{analysisSaveError}</p>
-              )}
-              <div className="flex gap-3">
-                <Button variant="ghost" className="flex-1" onClick={closeAnalyzeReview} disabled={isSavingAnalysis}>
-                  취소
-                </Button>
-                <Button
-                  variant="primary"
-                  className="flex-1"
-                  isLoading={isSavingAnalysis}
-                  disabled={isSavingAnalysis}
-                  onClick={handleSaveAnalysis}
-                >
-                  세부 매뉴얼 {includedAnalysisCount}개 저장
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <ManualUploadReviewModal
+          preview={preview}
+          categoryLabels={categoryLabels}
+          manualEdits={manualEdits}
+          collapsedCategories={collapsedCategories}
+          error={analysisSaveError}
+          isSaving={isSavingAnalysis}
+          onCategoryLabelChange={handleCategoryLabelChange}
+          onManualTitleChange={handleManualTitleChange}
+          onManualCategoryMove={handleManualCategoryMove}
+          onManualExcludeToggle={handleManualExcludeToggle}
+          onToggleCategoryCollapsed={handleToggleCategoryCollapsed}
+          onClose={closeAnalyzeReview}
+          onSave={handleSaveAnalysis}
+        />
       )}
 
       {toastMessage && (

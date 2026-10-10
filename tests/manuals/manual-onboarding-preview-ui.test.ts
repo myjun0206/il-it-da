@@ -60,38 +60,38 @@ describe("components/manuals/ManualPreviewEditor.tsx (shared preview editor acce
 
 describe("app/hq/manuals/onboarding/page.tsx (preview screen usability contract)", () => {
   const source = readSource("app/hq/manuals/onboarding/page.tsx");
+  const reviewModal = readSource("components/manuals/ManualUploadReviewModal.tsx");
 
   test("renders the preview in a centered, scrollable dialog with a close button", () => {
-    const previewModal = source.slice(source.indexOf("{step === \"review\" && preview && ("), source.indexOf("{/* 승인 전 정리 결과를 버리고 나갈 때 확인 모달 */}"));
-    assert.match(previewModal, /className="fixed inset-0 z-50[^\"]*bg-black\/40/);
-    assert.match(previewModal, /role="dialog"/);
-    assert.match(previewModal, /aria-modal="true"/);
-    assert.match(previewModal, /max-h-\[88vh\]/);
-    assert.match(previewModal, /overflow-y-auto/);
-    assert.match(previewModal, /aria-label="미리보기 닫기"/);
-    assert.match(previewModal, /세부 매뉴얼 \{preview\.totalDetailManualCount\}개/);
-    assert.match(previewModal, /카테고리 \{preview\.topCategoryCount\}개/);
+    assert.match(source, /<ManualUploadReviewModal/);
+    assert.match(reviewModal, /className="fixed inset-0 z-50[^\"]*bg-black\/40/);
+    assert.match(reviewModal, /role="dialog"/);
+    assert.match(reviewModal, /aria-modal="true"/);
+    assert.match(reviewModal, /max-h-\[88vh\]/);
+    assert.match(reviewModal, /overflow-y-auto/);
+    assert.match(reviewModal, /aria-label="미리보기 닫기"/);
+    assert.match(reviewModal, /세부 매뉴얼 \{preview\.totalDetailManualCount\}개/);
+    assert.match(reviewModal, /카테고리 \{preview\.topCategoryCount\}개/);
   });
 
   test("modal footer contains only cancel and green primary batch-register actions", () => {
-    const previewModal = source.slice(source.indexOf("{step === \"review\" && preview && ("), source.indexOf("{/* 승인 전 정리 결과를 버리고 나갈 때 확인 모달 */}"));
-    const footer = previewModal.slice(previewModal.indexOf("shrink-0 border-t"));
+    const footer = reviewModal.slice(reviewModal.indexOf("shrink-0 border-t"));
     assert.equal((footer.match(/<Button/g) ?? []).length, 2);
     assert.match(footer, />\s*취소\s*</);
     assert.match(footer, /variant="primary"[\s\S]*?>\s*일괄 등록\s*</);
-    assert.match(footer, /onClick=\{handleSave\}/);
-    assert.match(footer, /onClick=\{handleReupload\}/);
+    assert.match(footer, /onClick=\{onSave\}/);
+    assert.match(footer, /onClick=\{onClose\}/);
   });
 
   test("reuses the shared ManualPreviewEditor component instead of duplicating the editing UI", () => {
-    assert.match(source, /from "@\/components\/manuals\/ManualPreviewEditor"/);
-    assert.match(source, /<ManualPreviewEditor/);
+    assert.match(source, /<ManualUploadReviewModal/);
+    assert.match(reviewModal, /from "@\/components\/manuals\/ManualPreviewEditor"/);
+    assert.match(reviewModal, /<ManualPreviewEditor/);
   });
 
   test("the save button is disabled while saving (prevents duplicate-click double submits)", () => {
-    const buttonBlock = source.slice(source.indexOf("onClick={handleSave}") - 200, source.indexOf("onClick={handleSave}") + 50);
-    assert.match(buttonBlock, /disabled=\{isSaving\}/);
-    assert.match(buttonBlock, /isLoading=\{isSaving\}/);
+    assert.match(reviewModal, /disabled=\{isSaving\}/);
+    assert.match(reviewModal, /isLoading=\{isSaving\}/);
   });
 
   test("handleSave has an in-flight guard (isSubmittingRef) in addition to the isSaving disabled state", () => {
@@ -101,7 +101,7 @@ describe("app/hq/manuals/onboarding/page.tsx (preview screen usability contract)
 
   test("save success/failure feedback uses plain Korean sentences, and errors are announced (role=alert)", () => {
     assert.match(source, /매뉴얼 저장 중 오류가 발생했습니다\./);
-    assert.match(source, /role="alert"/);
+    assert.match(reviewModal, /role="alert"/);
   });
 
   test("this page calls the preview endpoint (not the direct-save upload endpoint) for every supported extension", () => {
