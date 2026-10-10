@@ -3,7 +3,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, ArrowLeft, FileText, Pencil, Plus, RefreshCw, Search, Sparkles, Store, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, FileText, Loader2, Pencil, Plus, RefreshCw, Search, Store, Trash2, UploadCloud, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
@@ -18,6 +18,7 @@ import { validateManualEdit } from "@/lib/manuals/validate-manual-edit";
 import { manualSaveMessage } from "@/lib/manuals/manual-save-result";
 import type { ManualEditSearchStatus } from "@/lib/manuals/save-store-manual-edit";
 import { buildConfirmedManualsPayload, type ManualUploadPreview } from "@/lib/manuals/build-manual-preview";
+import { MAX_UPLOAD_FILE_SIZE_BYTES, isFileSizeWithinLimit } from "@/lib/manuals/upload-limits";
 
 type ManualGroup = {
   id: string;
@@ -35,6 +36,7 @@ type ManualCategory = {
 type ManualView = "categories" | "titles" | "items";
 
 const SUPPORTED_ANALYZE_EXTENSIONS = [".txt", ".md", ".docx", ".csv", ".xlsx", ".xls"];
+const MAX_UPLOAD_MB = Math.round(MAX_UPLOAD_FILE_SIZE_BYTES / (1024 * 1024));
 
 const STORE_MANUAL_CATEGORY_PLACEHOLDER_CONTENT = "__STORE_MANUAL_CATEGORY_PLACEHOLDER__";
 const UUID_LIKE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -176,6 +178,9 @@ export default function StoreManualsManagementPage() {
   const analyzeFileInputRef = useRef<HTMLInputElement>(null);
   const isSubmittingRef = useRef(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [showUploadPanel, setShowUploadPanel] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [analyzeError, setAnalyzeError] = useState("");
   const [preview, setPreview] = useState<ManualUploadPreview | null>(null);
   const [categoryLabels, setCategoryLabels] = useState<Record<string, string>>({});
@@ -849,8 +854,17 @@ export default function StoreManualsManagementPage() {
     analyzeFileInputRef.current?.click();
   };
 
+  const closeAnalyzeUpload = () => {
+    if (isAnalyzing) return;
+    setShowUploadPanel(false);
+    setAnalyzeError("");
+    setSelectedFile(null);
+  };
+
   const closeAnalyzeReview = () => {
     setPreview(null);
+    setShowUploadPanel(false);
+    setSelectedFile(null);
     setCategoryLabels({});
     setManualEdits({});
     setCollapsedCategories(new Set());
@@ -860,6 +874,22 @@ export default function StoreManualsManagementPage() {
 
   const handleAnalyzeFileSelected = async (file: File) => {
     setAnalyzeError("");
+    setSelectedFile(file);
+
+    const extension = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
+    if (extension === ".pdf") {
+      setAnalyzeError("PDF는 아직 지원하지 않습니다. .txt, .md, .docx, .csv, .xlsx, .xls 파일을 선택해주세요.");
+      return;
+    }
+    if (!SUPPORTED_ANALYZE_EXTENSIONS.includes(extension)) {
+      setAnalyzeError(`지원하지 않는 형식입니다. ${SUPPORTED_ANALYZE_EXTENSIONS.join(", ")} 파일을 선택해주세요.`);
+      return;
+    }
+    if (!isFileSizeWithinLimit(file.size)) {
+      setAnalyzeError(`파일 용량은 최대 ${MAX_UPLOAD_MB}MB까지 가능합니다.`);
+      return;
+    }
+
     setIdempotencyKey("");
     setAnalysisSaveError("");
     setIsAnalyzing(true);
@@ -884,6 +914,7 @@ export default function StoreManualsManagementPage() {
       }
 
       setPreview(data.preview);
+      setShowUploadPanel(false);
       setIdempotencyKey(data.idempotencyKey);
       setCategoryLabels(
         Object.fromEntries(data.preview.categories.map((category) => [category.tempId, category.label])),
@@ -1015,8 +1046,8 @@ export default function StoreManualsManagementPage() {
       <div className="lg:ml-[240px]">
         <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
 
-        <main className="p-6 lg:p-8 max-w-7xl mx-auto">
-          {detailHeader ? (
+        <main className={`p-6 lg:p-8 max-w-7xl mx-auto ${view === "categories" ? "pt-4 lg:pt-5" : ""}`}>
+          {view !== "categories" && detailHeader && (
             <div className="mb-8 flex items-start gap-3">
               <button
                 type="button"
@@ -1032,15 +1063,6 @@ export default function StoreManualsManagementPage() {
                 <p className="text-base text-(--color-text-secondary)">{detailHeader.description}</p>
               </div>
             </div>
-          ) : (
-            <div className="mb-8">
-              <h1 className="text-2xl font-bold text-(--color-text-primary) mb-2">
-                지점 매뉴얼 관리
-              </h1>
-              <p className="text-base text-(--color-text-secondary)">
-                우리 매장의 업무 절차와 운영 노하우를 등록하고 관리하세요.
-              </p>
-            </div>
           )}
 
           <input
@@ -1048,6 +1070,7 @@ export default function StoreManualsManagementPage() {
             type="file"
             accept={SUPPORTED_ANALYZE_EXTENSIONS.join(",")}
             className="hidden"
+            disabled={isAnalyzing}
             onChange={(event) => {
               const file = event.target.files?.[0];
               event.target.value = "";
@@ -1056,12 +1079,6 @@ export default function StoreManualsManagementPage() {
               }
             }}
           />
-
-          {analyzeError && (
-            <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-5" role="alert">
-              <p className="text-sm text-red-700">{analyzeError}</p>
-            </div>
-          )}
 
           {questionReturnId && selectedStoreId && (
             <div className="mb-5 rounded-xl border border-(--color-primary)/30 bg-(--color-primary-light)/15 px-5 py-4 text-sm">
@@ -1149,14 +1166,120 @@ export default function StoreManualsManagementPage() {
                       전체 삭제
                     </button>
                   )}
-                  <Button variant="outline" onClick={openAnalyzeFilePicker} isLoading={isAnalyzing}>
-                    <Sparkles size={16} className="mr-2" /> 매뉴얼 등록
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setAnalyzeError("");
+                      setShowUploadPanel(true);
+                    }}
+                  >
+                    <UploadCloud size={16} className="mr-2" aria-hidden="true" /> 매뉴얼 등록
                   </Button>
                   <Button variant="primary" onClick={() => setShowCategoryModal(true)}>
                     <Plus size={16} className="mr-2" /> 카테고리 추가
                   </Button>
                 </div>
               </div>
+
+              {showUploadPanel && (
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-4 sm:px-6"
+                  onClick={closeAnalyzeUpload}
+                >
+                  <section
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="store-manual-upload-title"
+                    className="relative max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-5 shadow-xl sm:p-6"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <div className="mb-5 flex items-start justify-between gap-4">
+                      <div>
+                        <h2 id="store-manual-upload-title" className="text-lg font-bold text-(--color-text-primary)">
+                          매뉴얼 등록
+                        </h2>
+                        <p className="mt-1 text-sm text-(--color-text-secondary)">
+                          파일을 선택하면 내용을 분석한 뒤 등록 항목을 확인할 수 있습니다.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={closeAnalyzeUpload}
+                        disabled={isAnalyzing}
+                        aria-label="등록 창 닫기"
+                        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-(--color-text-tertiary) transition-colors hover:bg-(--color-bg-default) hover:text-(--color-text-primary) disabled:opacity-50"
+                      >
+                        <X size={20} aria-hidden="true" />
+                      </button>
+                    </div>
+
+                    <div
+                      role="button"
+                      tabIndex={isAnalyzing ? -1 : 0}
+                      aria-busy={isAnalyzing}
+                      aria-disabled={isAnalyzing}
+                      aria-label="매뉴얼 파일 선택"
+                      onClick={openAnalyzeFilePicker}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          openAnalyzeFilePicker();
+                        }
+                      }}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        if (!isAnalyzing) setIsDraggingFile(true);
+                      }}
+                      onDragLeave={() => setIsDraggingFile(false)}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        setIsDraggingFile(false);
+                        if (isAnalyzing) return;
+                        const file = event.dataTransfer.files[0];
+                        if (file) void handleAnalyzeFileSelected(file);
+                      }}
+                      className={`flex min-h-56 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-6 text-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-primary)/40 ${
+                        isAnalyzing
+                          ? "cursor-wait border-(--color-border) opacity-80"
+                          : isDraggingFile
+                            ? "border-(--color-primary) bg-(--color-primary-light)/20"
+                            : "border-(--color-border) hover:border-(--color-primary)"
+                      }`}
+                    >
+                      {isAnalyzing ? (
+                        <Loader2 size={36} className="mb-3 animate-spin text-(--color-primary)" aria-hidden="true" />
+                      ) : (
+                        <UploadCloud size={36} className="mb-3 text-(--color-primary)" aria-hidden="true" />
+                      )}
+                      <p className="text-base font-semibold text-(--color-text-primary)">
+                        {isAnalyzing
+                          ? "파일을 분석하고 있어요..."
+                          : selectedFile
+                            ? `${selectedFile.name} 선택됨`
+                            : "파일을 선택하거나 이곳에 드래그하세요."}
+                      </p>
+                      <p className="mt-2 text-sm text-(--color-text-secondary)">
+                        {SUPPORTED_ANALYZE_EXTENSIONS.join(", ")} · 최대 {MAX_UPLOAD_MB}MB · PDF 미지원
+                      </p>
+                    </div>
+
+                    {analyzeError && (
+                      <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                        {analyzeError}
+                      </p>
+                    )}
+
+                    <div className="mt-5 flex justify-end gap-2">
+                      <Button variant="ghost" onClick={closeAnalyzeUpload} disabled={isAnalyzing}>
+                        취소
+                      </Button>
+                      <Button variant="primary" onClick={openAnalyzeFilePicker} isLoading={isAnalyzing}>
+                        파일 선택
+                      </Button>
+                    </div>
+                  </section>
+                </div>
+              )}
 
               {/* Filter Buttons */}
               <div className="mb-6 flex flex-wrap gap-2" role="group" aria-label="검색 필터">
