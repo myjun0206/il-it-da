@@ -3,14 +3,16 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, ArrowLeft, FileText, Loader2, Pencil, Plus, RefreshCw, Search, Store, Trash2, UploadCloud, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, FileText, Pencil, Plus, RefreshCw, Search, Store, Trash2, UploadCloud, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
 import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
 import OwnerHeader from "@/components/owner/OwnerHeader";
-import { ManualPreviewEditor, type ManualEditState } from "@/components/manuals/ManualPreviewEditor";
+import type { ManualEditState } from "@/components/manuals/ManualPreviewEditor";
+import ManualFileDropzone from "@/components/manuals/ManualFileDropzone";
+import ManualUploadReviewModal from "@/components/manuals/ManualUploadReviewModal";
 import type { ManualRecord } from "@/lib/types/manual";
 import { resolveOwnerCurrentStore } from "@/lib/owner/current-store";
 import { buildBossQuestionDetailUrl, pickQuestionsStore } from "@/lib/owner/boss-questions-view";
@@ -175,12 +177,9 @@ export default function StoreManualsManagementPage() {
   const [isDeletingAll, setIsDeletingAll] = useState(false);
   const [deleteAllError, setDeleteAllError] = useState("");
   const [toastMessage, setToastMessage] = useState("");
-  const analyzeFileInputRef = useRef<HTMLInputElement>(null);
   const isSubmittingRef = useRef(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [showUploadPanel, setShowUploadPanel] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [analyzeError, setAnalyzeError] = useState("");
   const [preview, setPreview] = useState<ManualUploadPreview | null>(null);
   const [categoryLabels, setCategoryLabels] = useState<Record<string, string>>({});
@@ -849,22 +848,15 @@ export default function StoreManualsManagementPage() {
     }
   };
 
-  const openAnalyzeFilePicker = () => {
-    if (isAnalyzing) return;
-    analyzeFileInputRef.current?.click();
-  };
-
   const closeAnalyzeUpload = () => {
     if (isAnalyzing) return;
     setShowUploadPanel(false);
     setAnalyzeError("");
-    setSelectedFile(null);
   };
 
   const closeAnalyzeReview = () => {
     setPreview(null);
     setShowUploadPanel(false);
-    setSelectedFile(null);
     setCategoryLabels({});
     setManualEdits({});
     setCollapsedCategories(new Set());
@@ -874,7 +866,6 @@ export default function StoreManualsManagementPage() {
 
   const handleAnalyzeFileSelected = async (file: File) => {
     setAnalyzeError("");
-    setSelectedFile(file);
 
     const extension = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
     if (extension === ".pdf") {
@@ -1006,10 +997,6 @@ export default function StoreManualsManagementPage() {
     }
   };
 
-  const includedAnalysisCount = preview
-    ? preview.manuals.filter((manual) => !(manualEdits[manual.tempId]?.excluded ?? false)).length
-    : 0;
-
   const goToTitles = () => {
     setItemSearchQuery("");
     cancelEditItem();
@@ -1064,21 +1051,6 @@ export default function StoreManualsManagementPage() {
               </div>
             </div>
           )}
-
-          <input
-            ref={analyzeFileInputRef}
-            type="file"
-            accept={SUPPORTED_ANALYZE_EXTENSIONS.join(",")}
-            className="hidden"
-            disabled={isAnalyzing}
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              event.target.value = "";
-              if (file) {
-                void handleAnalyzeFileSelected(file);
-              }
-            }}
-          />
 
           {questionReturnId && selectedStoreId && (
             <div className="mb-5 rounded-xl border border-(--color-primary)/30 bg-(--color-primary-light)/15 px-5 py-4 text-sm">
@@ -1196,10 +1168,10 @@ export default function StoreManualsManagementPage() {
                     <div className="mb-5 flex items-start justify-between gap-4">
                       <div>
                         <h2 id="store-manual-upload-title" className="text-lg font-bold text-(--color-text-primary)">
-                          매뉴얼 등록
+                          매뉴얼 파일을 올려주세요
                         </h2>
                         <p className="mt-1 text-sm text-(--color-text-secondary)">
-                          파일을 선택하면 내용을 분석한 뒤 등록 항목을 확인할 수 있습니다.
+                          업로드한 파일 내용을 분석해 매뉴얼 항목을 자동으로 정리해드려요.
                         </p>
                       </div>
                       <button
@@ -1213,55 +1185,12 @@ export default function StoreManualsManagementPage() {
                       </button>
                     </div>
 
-                    <div
-                      role="button"
-                      tabIndex={isAnalyzing ? -1 : 0}
-                      aria-busy={isAnalyzing}
-                      aria-disabled={isAnalyzing}
-                      aria-label="매뉴얼 파일 선택"
-                      onClick={openAnalyzeFilePicker}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          openAnalyzeFilePicker();
-                        }
-                      }}
-                      onDragOver={(event) => {
-                        event.preventDefault();
-                        if (!isAnalyzing) setIsDraggingFile(true);
-                      }}
-                      onDragLeave={() => setIsDraggingFile(false)}
-                      onDrop={(event) => {
-                        event.preventDefault();
-                        setIsDraggingFile(false);
-                        if (isAnalyzing) return;
-                        const file = event.dataTransfer.files[0];
-                        if (file) void handleAnalyzeFileSelected(file);
-                      }}
-                      className={`flex min-h-56 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-6 text-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-primary)/40 ${
-                        isAnalyzing
-                          ? "cursor-wait border-(--color-border) opacity-80"
-                          : isDraggingFile
-                            ? "border-(--color-primary) bg-(--color-primary-light)/20"
-                            : "border-(--color-border) hover:border-(--color-primary)"
-                      }`}
-                    >
-                      {isAnalyzing ? (
-                        <Loader2 size={36} className="mb-3 animate-spin text-(--color-primary)" aria-hidden="true" />
-                      ) : (
-                        <UploadCloud size={36} className="mb-3 text-(--color-primary)" aria-hidden="true" />
-                      )}
-                      <p className="text-base font-semibold text-(--color-text-primary)">
-                        {isAnalyzing
-                          ? "파일을 분석하고 있어요..."
-                          : selectedFile
-                            ? `${selectedFile.name} 선택됨`
-                            : "파일을 선택하거나 이곳에 드래그하세요."}
-                      </p>
-                      <p className="mt-2 text-sm text-(--color-text-secondary)">
-                        {SUPPORTED_ANALYZE_EXTENSIONS.join(", ")} · 최대 {MAX_UPLOAD_MB}MB · PDF 미지원
-                      </p>
-                    </div>
+                    <ManualFileDropzone
+                      isAnalyzing={isAnalyzing}
+                      supportedExtensions={SUPPORTED_ANALYZE_EXTENSIONS}
+                      maxUploadMb={MAX_UPLOAD_MB}
+                      onFileSelected={(file) => void handleAnalyzeFileSelected(file)}
+                    />
 
                     {analyzeError && (
                       <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
@@ -1272,9 +1201,6 @@ export default function StoreManualsManagementPage() {
                     <div className="mt-5 flex justify-end gap-2">
                       <Button variant="ghost" onClick={closeAnalyzeUpload} disabled={isAnalyzing}>
                         취소
-                      </Button>
-                      <Button variant="primary" onClick={openAnalyzeFilePicker} isLoading={isAnalyzing}>
-                        파일 선택
                       </Button>
                     </div>
                   </section>
@@ -1876,59 +1802,21 @@ export default function StoreManualsManagementPage() {
       )}
 
       {preview && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-xl">
-            <button
-              type="button"
-              onClick={closeAnalyzeReview}
-              disabled={isSavingAnalysis}
-              className="absolute right-4 top-4 text-(--color-text-tertiary) hover:text-(--color-text-primary) disabled:opacity-50"
-              aria-label="닫기"
-            >
-              <X size={20} />
-            </button>
-            <div className="shrink-0 border-b border-(--color-border) px-6 py-5">
-              <h2 className="mb-1 text-lg font-bold text-(--color-text-primary)">매뉴얼 등록 미리보기</h2>
-              <p className="text-sm text-(--color-text-secondary)">
-                {preview.totalDetailManualCount}개 세부 매뉴얼을 {preview.topCategoryCount}개 카테고리로 분류했습니다. 분류와 저장 항목을 확인하세요.
-              </p>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 overscroll-contain">
-              <ManualPreviewEditor
-                preview={preview}
-                categoryLabels={categoryLabels}
-                manualEdits={manualEdits}
-                collapsedCategories={collapsedCategories}
-                onCategoryLabelChange={handleCategoryLabelChange}
-                onManualTitleChange={handleManualTitleChange}
-                onManualCategoryMove={handleManualCategoryMove}
-                onManualExcludeToggle={handleManualExcludeToggle}
-                onToggleCategoryCollapsed={handleToggleCategoryCollapsed}
-              />
-            </div>
-
-            <div className="shrink-0 border-t border-(--color-border) bg-white px-6 py-4">
-              {analysisSaveError && (
-                <p role="alert" className="mb-3 text-sm text-(--color-status-error)">{analysisSaveError}</p>
-              )}
-              <div className="flex gap-3">
-                <Button variant="ghost" className="flex-1" onClick={closeAnalyzeReview} disabled={isSavingAnalysis}>
-                  취소
-                </Button>
-                <Button
-                  variant="primary"
-                  className="flex-1"
-                  isLoading={isSavingAnalysis}
-                  disabled={isSavingAnalysis}
-                  onClick={handleSaveAnalysis}
-                >
-                  세부 매뉴얼 {includedAnalysisCount}개 저장
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <ManualUploadReviewModal
+          preview={preview}
+          categoryLabels={categoryLabels}
+          manualEdits={manualEdits}
+          collapsedCategories={collapsedCategories}
+          error={analysisSaveError}
+          isSaving={isSavingAnalysis}
+          onCategoryLabelChange={handleCategoryLabelChange}
+          onManualTitleChange={handleManualTitleChange}
+          onManualCategoryMove={handleManualCategoryMove}
+          onManualExcludeToggle={handleManualExcludeToggle}
+          onToggleCategoryCollapsed={handleToggleCategoryCollapsed}
+          onClose={closeAnalyzeReview}
+          onSave={handleSaveAnalysis}
+        />
       )}
 
       {toastMessage && (
