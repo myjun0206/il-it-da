@@ -159,6 +159,7 @@ export default function OwnerHeader({
             subtitle="점주"
             roleLabel="점주"
             avatarUrl={avatarUrl}
+            context={{ label: "현재 운영 매장", value: activeStoreName }}
           />
         </div>
       </header>

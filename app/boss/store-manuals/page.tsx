@@ -125,6 +125,7 @@ export default function StoreManualsManagementPage() {
   const [storeName, setStoreName] = useState("");
   const [selectedStoreId, setSelectedStoreId] = useState("");
   const [manuals, setManuals] = useState<ManualRecord[]>([]);
+  const manualRequestSequence = useRef(0);
   const [isLoadingManuals, setIsLoadingManuals] = useState(true);
   // 현재 매장 결정 상태: loading → none(승인 매장 없음) | ready | error. 서로 동시에 표시되지 않는다.
   const [storeStatus, setStoreStatus] = useState<"loading" | "none" | "ready" | "error">("loading");
@@ -263,9 +264,11 @@ export default function StoreManualsManagementPage() {
 
   const refetchManuals = async () => {
     if (!selectedStoreId) return;
+    const sequence = ++manualRequestSequence.current;
     setIsLoadingManuals(true);
     try {
       const manuals = await fetchManualsData(selectedStoreId);
+      if (sequence !== manualRequestSequence.current) return;
       if (manuals) {
         setManuals(manuals);
         setManualsError(false);
@@ -273,18 +276,26 @@ export default function StoreManualsManagementPage() {
         setManualsError(true);
       }
     } catch (e) {
+      if (sequence !== manualRequestSequence.current) return;
       console.error("지점 매뉴얼 목록 조회 실패:", e);
       setManualsError(true);
     } finally {
-      setIsLoadingManuals(false);
+      if (sequence === manualRequestSequence.current) setIsLoadingManuals(false);
     }
   };
 
   useEffect(() => {
     if (!isReady || !selectedStoreId) return;
-
-    fetchManualsData(selectedStoreId)
+    const sequence = ++manualRequestSequence.current;
+    Promise.resolve().then(() => {
+      if (sequence !== manualRequestSequence.current) return null;
+      setIsLoadingManuals(true);
+      setManualsError(false);
+      setManuals([]);
+      return fetchManualsData(selectedStoreId);
+    })
       .then((manuals) => {
+        if (sequence !== manualRequestSequence.current) return;
         if (manuals) {
           setManuals(manuals);
           const targetId = new URLSearchParams(window.location.search).get("manualId");
@@ -303,10 +314,12 @@ export default function StoreManualsManagementPage() {
         }
       })
       .catch((e) => {
+        if (sequence !== manualRequestSequence.current) return;
         console.error("지점 매뉴얼 목록 조회 실패:", e);
         setManualsError(true);
       })
-      .finally(() => setIsLoadingManuals(false));
+      .finally(() => { if (sequence === manualRequestSequence.current) setIsLoadingManuals(false); });
+    return () => { if (sequence === manualRequestSequence.current) manualRequestSequence.current++; };
   }, [isReady, selectedStoreId]);
 
   const handleLogout = async () => {

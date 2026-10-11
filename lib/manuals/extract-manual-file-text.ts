@@ -1,3 +1,4 @@
+import { CsvError, parse } from "csv-parse/sync";
 import { extractDocxTextFromXml } from "@/lib/manuals/extract-docx-text";
 import { isRowCountWithinLimit, isSheetCountWithinLimit } from "@/lib/manuals/upload-limits";
 
@@ -58,44 +59,23 @@ export async function extractSpreadsheetManualText(file: File): Promise<string> 
   return rowsToFlatText(rows);
 }
 
-// 따옴표로 감싼 쉼표를 지원하는 최소한의 CSV 파서 (한 줄에 개행이 포함된 필드는 지원하지 않음).
-function parseCsvLine(line: string): string[] {
-  const cells: string[] = [];
-  let current = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < line.length; i += 1) {
-    const char = line[i];
-
-    if (inQuotes) {
-      if (char === '"' && line[i + 1] === '"') {
-        current += '"';
-        i += 1;
-      } else if (char === '"') {
-        inQuotes = false;
-      } else {
-        current += char;
-      }
-    } else if (char === '"') {
-      inQuotes = true;
-    } else if (char === ",") {
-      cells.push(current);
-      current = "";
-    } else {
-      current += char;
-    }
-  }
-
-  cells.push(current);
-  return cells;
-}
-
 // CSV를 시트 없는 단일 표로 보고 원본 행렬(string[][])로 읽는다.
 export async function extractCsvRows(file: File): Promise<string[][]> {
-  const rows = (await file.text())
-    .split(/\r\n|\r|\n/)
-    .filter((line) => line.trim().length > 0)
-    .map((line) => parseCsvLine(line).map((cell) => cell.trim()));
+  let parsedRows: string[][];
+  try {
+    parsedRows = parse(await file.text(), {
+      bom: true,
+      skip_empty_lines: true,
+      trim: true,
+      relax_column_count: true,
+    });
+  } catch (error) {
+    if (error instanceof CsvError) {
+      throw new Error("CSV 파일 형식이 올바르지 않습니다. 따옴표가 올바르게 닫혔는지 확인해 주세요.");
+    }
+    throw error;
+  }
+  const rows = parsedRows.map((row) => row.map((cell) => cell.trim()));
 
   if (!isRowCountWithinLimit(rows.length)) {
     throw new Error("CSV 파일의 행 수가 허용 개수를 초과했습니다.");

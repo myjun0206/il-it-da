@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+import { Script } from "node:vm";
+import ts from "typescript";
 
 import {
   MEMBERSHIP_PENDING_STATUSES,
@@ -14,6 +17,173 @@ import {
 
 const USER_A = "user-a";
 const USER_B = "user-b";
+
+test("HQ approval reads canonical master names by user ID rather than profile row ID", async () => {
+  const require = createRequire(import.meta.url);
+  const brand = "11111111-1111-4111-8111-111111111111";
+  const foreign = "22222222-2222-4222-8222-222222222222";
+  const tables: Record<string, Record<string, unknown>[]> = {
+    store_memberships: [{ id: "approval", user_id: USER_A, store_id: "store-a", franchise_id: brand, role: "owner", status: "approved" },
+      { id: "foreign-approval", user_id: USER_B, store_id: "store-b", franchise_id: null, role: "owner", status: "pending" }],
+    stores: [{ id: "store-a", store_name: "Synthetic Store", franchise_id: brand }, { id: "store-b", store_name: "Foreign Store", franchise_id: foreign }],
+    profiles: [{ id: "independent-master-row", user_id: USER_A, brand_id: null, full_name: "Current Synthetic Name", approval_status: "approved" },
+      { id: USER_A, user_id: USER_A, brand_id: brand, full_name: "Old Brand Name", approval_status: "pending" }],
+  };
+  const client = { from(table: string) {
+    const filters: ((row: Record<string, unknown>) => boolean)[] = [];
+    const query = {
+      select: () => query,
+      eq: (key: string, value: unknown) => { filters.push(row => row[key] === value); return query; },
+      in: (key: string, values: unknown[]) => { filters.push(row => values.includes(row[key])); return query; },
+      is: (key: string, value: unknown) => { filters.push(row => row[key] === value); return query; },
+      not: (key: string, _op: string, value: unknown) => { filters.push(row => row[key] !== value); return query; },
+      or: () => query, order: () => query,
+      then: (resolve: (value: unknown) => unknown) => Promise.resolve({ data: tables[table].filter(row => filters.every(filter => filter(row))), error: null }).then(resolve),
+    };
+    return query;
+  } };
+  const route = { exports: {} as { GET: (request: unknown) => Promise<Response> } };
+  const source = readFileSync(new URL("../../app/api/hq/approvals/route.ts", import.meta.url), "utf8");
+  const dependencies: Record<string, unknown> = {
+    "next/server": require("next/server.js"), "@/lib/supabase/admin": { createAdminClient: () => client },
+    "@/lib/supabase/hq-auth": { requireHqUser: async () => ({ userId: "hq", franchiseId: brand }) },
+    "@/lib/hq/approval-scope": require("../../lib/hq/approval-scope.ts"), "@/lib/notifications": {},
+    "@/lib/signup/approval-recovery": require("../../lib/signup/approval-recovery.ts"), "@/lib/signup/store-membership-service": {},
+  };
+  new Script(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText)
+    .runInNewContext({ module: route, exports: route.exports, require: (name: string) => dependencies[name], console });
+  const response = await route.exports.GET({ nextUrl: new URL("http://localhost/api/hq/approvals") });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.data.length, 1);
+  assert.equal(body.data[0].membership.user_name, "Current Synthetic Name");
+  assert.equal(body.data[0].membership.needs_brand_profile_recovery, false);
+});
+
+test("HQ and owner approval synchronization update only the canonical master even when its row ID differs", async () => {
+  for (const file of ["../../app/api/hq/approvals/route.ts", "../../app/api/boss/employees/[id]/route.ts"]) {
+    const source = ts.createSourceFile("route.ts", readFileSync(new URL(file, import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
+    const sync = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "syncProfileApprovalStatus");
+    assert.ok(sync);
+    const rows = [{ id: "different-master-id", user_id: USER_A, brand_id: null, approval_status: "rejected" },
+      { id: USER_A, user_id: USER_A, brand_id: "brand", approval_status: "pending" }];
+    const client = { from(table: string) {
+      const filters: Record<string, unknown> = {};
+      let payload: Record<string, unknown> | undefined;
+      const query = { select: () => query, update: (value: Record<string, unknown>) => { payload = value; return query; },
+        eq: (key: string, value: unknown) => { filters[key] = value; return query; },
+        is: (key: string, value: unknown) => { filters[key] = value; return query; },
+        then: (resolve: (value: unknown) => unknown) => {
+          if (table === "profiles") for (const row of rows) if (Object.entries(filters).every(([key, value]) => (row as Record<string, unknown>)[key] === value)) Object.assign(row, payload);
+          return Promise.resolve({ data: table === "store_memberships" ? [{ id: "membership", status: "approved" }] : null, error: null }).then(resolve);
+        },
+      }; return query;
+    } };
+    const loaded = { exports: undefined as unknown as (client: unknown, user: string) => Promise<void> };
+    const compiled = ts.transpileModule(`${sync.getText(source)}\nmodule.exports=syncProfileApprovalStatus;`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+    new Script(compiled).runInNewContext({ module: loaded, buildMasterApprovalUpdate });
+    await loaded.exports(client, USER_A);
+    assert.equal(rows[0].approval_status, "approved", file);
+    assert.equal(rows[1].approval_status, "pending", file);
+  }
+});
+
+test("concurrent and repeated staff approval does not duplicate the membership transition or decision notification", async () => {
+  const require = createRequire(import.meta.url);
+  const ownerId = "owner-user";
+  const storeId = "store-a";
+  const membership = {
+    id: "staff-membership",
+    user_id: USER_A,
+    store_id: storeId,
+    franchise_id: "brand-a",
+    role: "staff",
+    status: "pending",
+    approved_at: null,
+    approved_by: null,
+    rejected_at: null,
+    rejected_by: null,
+  };
+  const ownerMembership = { user_id: ownerId, store_id: storeId, role: "owner", status: "approved" };
+  const memberships = [membership, ownerMembership];
+  const profiles = [{ id: USER_A, user_id: USER_A, brand_id: null, role: "staff", approval_status: "approved" }];
+  const counters = { membershipUpdates: 0, profileUpdates: 0, brandRecovery: 0, notifications: 0 };
+  const adminClient = {
+    from(table: string) {
+      const filters: Record<string, unknown> = {};
+      let operation = "select";
+      let payload: Record<string, unknown> = {};
+      const rows: Record<string, unknown>[] = table === "store_memberships" ? memberships : table === "profiles" ? profiles : [{ id: storeId, store_name: "Synthetic Store" }];
+      const query = {
+        select: () => query,
+        update: (value: Record<string, unknown>) => { operation = "update"; payload = value; return query; },
+        eq: (key: string, value: unknown) => { filters[key] = value; return query; },
+        is: (key: string, value: unknown) => { filters[key] = value; return query; },
+        maybeSingle: async () => {
+          const row = rows.find((candidate) => Object.entries(filters).every(([key, value]) => candidate[key] === value));
+          if (operation !== "update") return { data: row ? { ...row } : null, error: null };
+          if (!row) return { data: null, error: null };
+          Object.assign(row, payload);
+          if (table === "store_memberships") counters.membershipUpdates += 1;
+          else if (table === "profiles") counters.profileUpdates += 1;
+          return { data: { id: row.id }, error: null };
+        },
+        then: (resolve: (value: unknown) => unknown) => {
+          const matching = rows.filter((candidate) => Object.entries(filters).every(([key, value]) => candidate[key] === value));
+          if (operation === "update") {
+            for (const row of matching) Object.assign(row, payload);
+            if (table === "profiles") counters.profileUpdates += 1;
+            return Promise.resolve({ data: null, error: null }).then(resolve);
+          }
+          return Promise.resolve({ data: matching, error: null }).then(resolve);
+        },
+      };
+      return query;
+    },
+  };
+  const route = { exports: {} as { PUT: (request: Request, context: unknown) => Promise<Response> } };
+  const notifications = { createNotification: () => { counters.notifications += 1; return Promise.resolve({ success: true }); } };
+  const membershipService = {
+    ensureBrandProfileForApprovedMembership: async () => { counters.brandRecovery += 1; return true; },
+    MembershipAuthNotReadyError: class extends Error {},
+    requireConfirmedMembershipAuthUser: async () => ({ id: USER_A }),
+  };
+  const dependencies: Record<string, unknown> = {
+    "next/server": require("next/server.js"),
+    "@/lib/supabase/admin": { createAdminClient: () => adminClient },
+    "@/lib/supabase/server": { createClient: async () => ({ auth: { getUser: async () => ({ data: { user: { id: ownerId } }, error: null }) } }) },
+    "@/lib/notifications": notifications,
+    "@/lib/signup/approval-recovery": require("../../lib/signup/approval-recovery.ts"),
+    "@/lib/signup/store-membership-service": membershipService,
+    "@/lib/owner/remove-staff-membership": { removeStaffMembershipByOwner: async () => ({}) },
+  };
+  const source = readFileSync(new URL("../../app/api/boss/employees/[id]/route.ts", import.meta.url), "utf8");
+  new Script(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText)
+    .runInNewContext({ module: route, exports: route.exports, require: (name: string) => dependencies[name], console, process: { env: {} } });
+  const context = { params: Promise.resolve({ id: membership.id }) };
+  const put = () => route.exports.PUT(new Request("http://localhost/api/boss/employees/staff-membership", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "approved" }),
+  }), context);
+
+  const concurrentResponses = await Promise.all([put(), put()]);
+  for (const response of concurrentResponses) {
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).success, true);
+  }
+  assert.equal(membership.status, "approved");
+  assert.equal(counters.membershipUpdates, 1);
+  assert.equal(counters.notifications, 1);
+  assert.equal(counters.brandRecovery, 2);
+  const replayResponse = await put();
+  assert.equal(replayResponse.status, 200);
+  assert.equal((await replayResponse.json()).success, true);
+  assert.equal(membership.status, "approved");
+  assert.equal(counters.membershipUpdates, 1);
+  assert.equal(counters.notifications, 1);
+  assert.equal(counters.brandRecovery, 3);
+});
 
 const COMPLETE = {
   membershipStatus: "approved",
@@ -291,7 +461,7 @@ describe("목록 API 계약", () => {
   });
 
   test("마스터 승인 상태를 조회해 비교한다", () => {
-    assert.match(hqRoute, /\.select\("id, full_name, email, approval_status"\)/);
+    assert.match(hqRoute, /\.select\("user_id, full_name, email, approval_status"\)/);
     assert.match(employeesRoute, /\.select\("user_id, full_name, email, approval_status"\)/);
   });
 
@@ -334,7 +504,7 @@ describe("목록 API 계약", () => {
     const staffApprovalRoute = read("app/api/boss/employees/[id]/route.ts");
     for (const source of [hqRoute, staffApprovalRoute]) {
       assert.match(source, /\.update\(buildMasterApprovalUpdate\(memberships \?\? \[\]\)\)/);
-      assert.match(source, /\.eq\("id", userId\)/);
+      assert.match(source, /\.eq\("user_id", userId\)\s*\.is\("brand_id", null\)/);
       // 조회 실패는 빈 목록으로 바꾸지 않고 그대로 던진다.
       assert.match(source, /if \(error\) \{\s*\n\s*throw error;/);
     }

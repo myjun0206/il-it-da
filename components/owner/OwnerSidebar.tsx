@@ -51,6 +51,7 @@ export default function OwnerSidebar({
           onClick={() => setIsOpen(true)}
           aria-label="메뉴 열기"
           aria-expanded={isOpen}
+          aria-controls="owner-sidebar"
           className="fixed top-4 left-4 z-50 lg:hidden bg-white rounded-lg p-2 border border-(--color-border)"
         >
           <Menu size={24} />
@@ -59,6 +60,7 @@ export default function OwnerSidebar({
 
       {/* Sidebar */}
       <aside
+        id="owner-sidebar"
         className={`fixed left-0 top-0 h-dvh overflow-hidden bg-white border-r border-(--color-border) flex flex-col transition-transform duration-300 lg:translate-x-0 ${
           isOpen ? "translate-x-0" : "-translate-x-full"
         } lg:w-[240px] w-64 z-40`}
@@ -78,6 +80,8 @@ export default function OwnerSidebar({
             type="button"
             onClick={() => setIsOpen(false)}
             aria-label="메뉴 닫기"
+            aria-expanded={isOpen}
+            aria-controls="owner-sidebar"
             title="메뉴 닫기"
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-(--color-border) bg-white lg:hidden"
           >

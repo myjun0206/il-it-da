@@ -33,6 +33,7 @@ function integratedMembershipRoute(options: {
   incompleteFlow?: boolean;
   completeFlow?: boolean;
   signupRole?: "owner" | "staff";
+  profileName?: string;
 } = {}) {
   const profileWrites: Row[] = [];
   const submissions: Row[] = [];
@@ -51,7 +52,8 @@ function integratedMembershipRoute(options: {
       const builder = {
         select: () => builder,
         eq: () => builder,
-        maybeSingle: async () => ({ data: options.socialApproved ? { role: "owner", approval_status: "approved" } : null, error: null }),
+        is: () => builder,
+        maybeSingle: async () => ({ data: options.socialApproved ? { role: "owner", approval_status: "approved", full_name: options.profileName ?? null } : null, error: null }),
       };
       return builder;
     },
@@ -83,6 +85,17 @@ function integratedMembershipRoute(options: {
 }
 
 describe("integrated initial-email membership handler", () => {
+  test("existing social profile name overrides old Auth metadata, and diagnostic IDs are request-specific", async () => {
+    const fixture = integratedMembershipRoute({ socialApproved: true, profileName: "현재 프로필 이름" });
+    const first = await fixture.submit();
+    const second = await fixture.submit();
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+    assert.equal(fixture.submissions[0].userName, "현재 프로필 이름");
+    assert.notEqual(first.headers.get("X-Request-Id"), second.headers.get("X-Request-Id"));
+    assert.equal(fixture.profileWrites.length, 0);
+  });
+
   test("email verification without final signup cannot create a profile or request", async () => {
     const fixture = integratedMembershipRoute({ incompleteFlow: true });
     const response = await fixture.submit();
@@ -167,6 +180,11 @@ function fakeClient(options: {
   membershipUpdateError?: { code: string; message: string };
   missingAuthUser?: boolean;
   unconfirmedAuthUser?: boolean;
+  socialProvider?: string;
+  appMetadataProvider?: string;
+  userMetadataProvider?: string;
+  omitAuthIdentities?: boolean;
+  authUserId?: string;
   raceBrandInsert?: boolean;
 } = {}) {
   const tables: Record<string, Row[]> = {
@@ -216,9 +234,11 @@ function fakeClient(options: {
   const client = {
     auth: { admin: { getUserById: async () => ({
       data: { user: options.missingAuthUser ? null : {
-        id: USER_ID, email: "Owner@Example.com",
+        id: options.authUserId ?? USER_ID, email: "Owner@Example.com",
         email_confirmed_at: options.unconfirmedAuthUser ? null : "2026-09-29T00:00:00Z",
-        user_metadata: { name: "김점주", phone: "01011112222" },
+        app_metadata: { provider: options.appMetadataProvider ?? options.socialProvider ?? "email" },
+        identities: options.omitAuthIdentities ? undefined : [{ provider: options.socialProvider ?? "email" }],
+        user_metadata: { name: "김점주", phone: "01011112222", provider: options.userMetadataProvider },
       } }, error: null,
     }) } },
     from(table: string) {
@@ -528,6 +548,25 @@ test("placeholder user ID is rejected before any database lookup", async () => {
   assert.equal(db.calls.length, 0);
 });
 
+test("confirmed custom Naver identity may be approved without optional contact-confirmation timestamps", async () => {
+  const social = fakeClient({ unconfirmedAuthUser: true, socialProvider: "custom:naver", appMetadataProvider: "email", userMetadataProvider: "email" });
+  const user = await requireConfirmedMembershipAuthUser(social.client, USER_ID);
+  assert.equal(user.identities?.[0]?.provider, "custom:naver");
+
+  const email = fakeClient({ unconfirmedAuthUser: true });
+  await assert.rejects(requireConfirmedMembershipAuthUser(email.client, USER_ID), MembershipAuthNotReadyError);
+
+  const unknownProvider = fakeClient({ unconfirmedAuthUser: true, socialProvider: "unknown-provider" });
+  await assert.rejects(requireConfirmedMembershipAuthUser(unknownProvider.client, USER_ID), MembershipAuthNotReadyError);
+
+  const metadataOnly = fakeClient({ unconfirmedAuthUser: true, socialProvider: "custom:naver", omitAuthIdentities: true,
+    appMetadataProvider: "custom:naver", userMetadataProvider: "custom:naver" });
+  await assert.rejects(requireConfirmedMembershipAuthUser(metadataOnly.client, USER_ID), MembershipAuthNotReadyError);
+
+  const otherAuthUser = fakeClient({ unconfirmedAuthUser: true, socialProvider: "custom:naver", authUserId: "99999999-9999-4999-8999-999999999999" });
+  await assert.rejects(requireConfirmedMembershipAuthUser(otherAuthUser.client, USER_ID), MembershipAuthNotReadyError);
+});
+
 describe("upsertSignupProfile - 기존 계정", () => {
   const existing = {
     id: USER_ID,
@@ -556,6 +595,16 @@ describe("upsertSignupProfile - 기존 계정", () => {
     assert.equal(db.callsFor("profiles", "update").length, 0);
     // 승인 상태를 pending으로 되돌리지 않는다.
     assert.equal(db.tables.profiles[0].approval_status, "approved");
+  });
+
+  test("기존 rejected 마스터는 신청 프로필 보완만으로 approved로 승격하지 않는다", async () => {
+    const rejected = { ...existing, approval_status: "rejected" };
+    const db = fakeClient({ profiles: [rejected] });
+    const result = await upsertSignupProfile(db.client, PROFILE_INPUT);
+
+    assert.equal(result.success, true);
+    assert.equal(db.callsFor("profiles", "update").length, 0);
+    assert.equal(db.tables.profiles[0].approval_status, "rejected");
   });
 
   test("비어 있는 필드만 보완한다", async () => {
@@ -669,6 +718,18 @@ describe("submitStoreMembershipRequest - 중복 요청", () => {
 
     assert.equal(result.created, false);
     assert.equal(result.membershipStatus, "approved");
+  });
+
+  test("rejected 신청을 같은 매장에 다시 POST해도 새 pending이나 membership을 만들지 않는다", async () => {
+    const rejectedMembership = { ...pendingMembership, status: "rejected" };
+    const db = fakeClient({ stores: [STORE_ROW], memberships: [rejectedMembership] });
+    const result = await submitStoreMembershipRequest(db.client, MEMBERSHIP_INPUT);
+
+    assert.equal(result.success, true);
+    assert.equal(result.created, false);
+    assert.equal(result.membershipStatus, "rejected");
+    assert.equal(db.tables.store_memberships.length, 1);
+    assert.equal(db.callsFor("store_memberships", "insert").length, 0);
   });
 
   test("다른 역할로 이미 등록돼 있으면 409로 막는다", async () => {

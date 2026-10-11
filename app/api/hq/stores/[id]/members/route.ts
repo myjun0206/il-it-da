@@ -80,7 +80,7 @@ export async function GET(_request: Request, context: RouteContext): Promise<Nex
   const profilesByUserId = new Map(
     (profiles ?? []).map((profile) => [profile.user_id, { name: profile.full_name, email: profile.email }]),
   );
-  const members: StoreMember[] = (memberships ?? []).map((membership) => {
+  const members: StoreMember[] = (memberships ?? []).filter((membership) => profilesByUserId.has(membership.user_id)).map((membership) => {
     const profile = profilesByUserId.get(membership.user_id);
     return {
       id: membership.id,

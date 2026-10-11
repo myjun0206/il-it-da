@@ -109,7 +109,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<OwnerStor
     const { data: profile, error: profileError } = await adminClient
       .from("profiles")
       .select("role, approval_status, full_name")
-      .eq("id", userData.user.id)
+      .eq("user_id", userData.user.id)
+      .is("brand_id", null)
       .maybeSingle<{ role: string; approval_status: string | null; full_name: string | null }>();
 
     if (profileError) throw profileError;

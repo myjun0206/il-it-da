@@ -9,29 +9,41 @@ import { formatStoreDisplayName } from "@/lib/stores/search-stores";
 interface StoreSelectorProps {
   /** 승인된 근무 매장 목록 */
   stores: StaffStore[];
-  /** 현재 기본 매장 ID */
+  /** 현재 탭에서 업무에 사용하는 매장 ID */
+  selectedStoreId: string | null;
+  /** 계정에 저장된 기본 매장 ID */
   defaultStoreId: string | null;
   /** 로딩 중 여부 */
   isStoresLoading?: boolean;
+  /** 탭의 현재 업무 매장만 바꾼다. */
+  onSelectStore?: (storeId: string) => void;
   /** 기본 매장 변경 핸들러 */
   onSetDefaultStore?: (storeId: string) => Promise<void>;
 }
 
 export default function StoreSelector({
   stores,
+  selectedStoreId,
   defaultStoreId,
   isStoresLoading = false,
+  onSelectStore,
   onSetDefaultStore,
 }: StoreSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isSettingDefault, setIsSettingDefault] = useState(false);
   const selectorRef = useRef<HTMLDivElement>(null);
 
-  const currentStore = stores.find((s) => s.id === defaultStoreId);
+  const currentStore = stores.find((s) => s.id === selectedStoreId);
   const hasMultipleStores = stores.length > 1;
 
-  const handleSelectStore = async (storeId: string) => {
-    if (!onSetDefaultStore || isSettingDefault || isStoresLoading) return;
+  const handleSelectStore = (storeId: string) => {
+    if (!onSelectStore || isSettingDefault || isStoresLoading) return;
+    onSelectStore(storeId);
+    setIsOpen(false);
+  };
+
+  const handleSetDefaultStore = async (storeId: string) => {
+    if (!onSetDefaultStore || storeId === defaultStoreId || isSettingDefault || isStoresLoading) return;
     setIsSettingDefault(true);
     try {
       await onSetDefaultStore(storeId);
@@ -67,23 +79,26 @@ export default function StoreSelector({
 
   return (
     <div ref={selectorRef} className="relative">
-      {/* 헤더 버튼: 현재 기본 매장 표시 */}
+      {/* 현재 업무 매장과 계정 기본 매장은 별도로 관리한다. */}
       <button
         type="button"
         onClick={() => hasMultipleStores && setIsOpen((prev) => !prev)}
         disabled={isStoresLoading || isSettingDefault || !hasMultipleStores}
+        aria-label={`현재 업무 매장 ${isStoresLoading ? "매장을 불러오는 중" : currentStore ? formatStoreDisplayName(currentStore.name) : "승인된 매장이 없습니다"}`}
         aria-haspopup={hasMultipleStores ? "menu" : undefined}
         aria-expanded={isOpen}
         aria-controls={hasMultipleStores ? "store-selector-menu" : undefined}
         className={`
-          flex items-center gap-2 px-3 py-2 rounded-lg transition-colors
+          flex h-12 max-h-12 min-w-0 items-center gap-2 px-2 py-0 rounded-lg transition-colors
           ${hasMultipleStores ? "hover:bg-[var(--color-primary-light)]/10 cursor-pointer" : "cursor-default"}
           focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]
         `}
       >
-        {/* 매장명 */}
-        <span className="max-w-[200px] text-sm font-medium text-[var(--color-text-primary)] truncate">
-          {isStoresLoading ? "매장 불러오는 중..." : currentStore ? formatStoreDisplayName(currentStore.name) : ""}
+        <span className="flex min-w-0 max-w-[180px] flex-col items-start">
+          <span className="text-[10px] leading-4 text-[var(--color-text-secondary)]">현재 업무 매장</span>
+          <span className="max-w-full truncate text-xs font-medium leading-4 text-[var(--color-text-primary)]">
+            {isStoresLoading ? "매장 불러오는 중..." : currentStore ? formatStoreDisplayName(currentStore.name) : "승인된 매장이 없습니다"}
+          </span>
         </span>
 
         {/* Chevron 아이콘: 여러 매장일 때만 표시 */}
@@ -101,36 +116,52 @@ export default function StoreSelector({
         <div
           id="store-selector-menu"
           role="menu"
-          aria-label="기본 매장 선택"
-          className="absolute right-0 top-full z-50 mt-2 w-[280px] rounded-xl border border-[var(--color-border)] bg-white shadow-md overflow-hidden"
+          aria-label="현재 업무 매장 선택"
+          className="absolute right-0 top-full z-50 mt-2 w-[300px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-[var(--color-border)] bg-white shadow-md"
         >
-          {/* 헤더: "기본 매장" 라벨 */}
           <div className="px-3 py-3 border-b border-[var(--color-border)]">
-            <p className="text-sm font-medium text-[var(--color-text-secondary)]">기본 매장</p>
+            <p className="text-sm font-medium text-[var(--color-text-secondary)]">현재 업무 매장</p>
           </div>
 
-          {/* 매장 목록 */}
           <div className="max-h-[320px] overflow-y-auto">
             {stores.map((store) => {
-              const isSelected = store.id === defaultStoreId;
+              const isSelected = store.id === selectedStoreId;
+              const isDefault = store.id === defaultStoreId;
               return (
-                <button
-                  key={store.id}
-                  type="button"
-                  onClick={() => void handleSelectStore(store.id)}
-                  disabled={isStoresLoading || isSettingDefault}
-                  className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-primary-light)]/10 transition-colors text-left disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  <div className="w-5 flex-shrink-0 flex items-center justify-center">
+                <div key={store.id} className="flex items-center gap-1 border-b border-[var(--color-border)]/60 px-2 py-1 last:border-b-0">
+                  <button
+                    type="button"
+                    onClick={() => handleSelectStore(store.id)}
+                    disabled={isStoresLoading || isSettingDefault}
+                    aria-label={`${formatStoreDisplayName(store.name)} 현재 업무 매장으로 전환`}
+                    aria-pressed={isSelected}
+                    className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-left text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-primary-light)]/10 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <span className="flex w-5 flex-shrink-0 items-center justify-center">
                     <Check
                       size={16}
                       className={`${isSelected ? "text-[var(--color-primary)]" : "text-transparent"}`}
                       strokeWidth={2.5}
                       aria-hidden="true"
                     />
-                  </div>
-                  <span className="flex-1 break-keep">{formatStoreDisplayName(store.name)}</span>
-                </button>
+                    </span>
+                    <span className="min-w-0 flex-1 truncate break-keep">{formatStoreDisplayName(store.name)}</span>
+                    {isSelected && <span className="shrink-0 text-xs text-[var(--color-primary)]">현재</span>}
+                  </button>
+                  {isDefault ? (
+                    <span className="shrink-0 px-2 text-xs text-[var(--color-text-secondary)]">기본 매장</span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void handleSetDefaultStore(store.id)}
+                      disabled={isStoresLoading || isSettingDefault || !onSetDefaultStore}
+                      aria-label={`${formatStoreDisplayName(store.name)} 기본 매장으로 설정`}
+                      className="min-h-11 shrink-0 rounded-lg px-2 text-xs font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-primary-light)]/10 hover:text-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      기본 설정
+                    </button>
+                  )}
+                </div>
               );
             })}
           </div>

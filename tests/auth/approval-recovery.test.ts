@@ -162,6 +162,14 @@ const brandRows = (tables: Record<string, Row[]>) =>
   tables.profiles.filter((row) => row.brand_id === BRAND_ID);
 
 describe("정상 승인", () => {
+  test("canonical user profile with a distinct row ID preserves its name instead of recreating Auth metadata", async () => {
+    const { client, tables, writes } = fakeClient({ profiles: [{ ...MASTER_PROFILE, id: "independent-profile-row", full_name: "현재 프로필 이름" }] });
+    assert.equal(await ensureBrandProfileForApprovedMembership(client, USER_ID, STORE_ID), true);
+    assert.equal(tables.profiles.filter(row => row.brand_id === null).length, 1);
+    assert.equal(brandRows(tables)[0].full_name, "현재 프로필 이름");
+    assert.equal(writes.some(write => write.table === "profiles" && write.op === "insert" && write.payload.brand_id === null), false);
+  });
+
   test("승인된 멤버십에 브랜드 프로필을 만든다", async () => {
     const { client, tables } = fakeClient();
 

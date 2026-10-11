@@ -215,11 +215,15 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
     const adminClient = createAdminClient();
     stage = "profile.authorization_lookup";
     databaseTable = "profiles";
-    const { data: authorizedProfile, error: authorizedProfileError } = await adminClient
+    const canonicalProfile = await adminClient
       .from("profiles")
-      .select("role, approval_status")
-      .eq("id", userId)
-      .maybeSingle<{ role: string; approval_status: string | null }>();
+      .select("role, approval_status, full_name")
+      .eq("user_id", userId)
+      .is("brand_id", null)
+      .maybeSingle<{ role: string; approval_status: string | null; full_name: string | null }>();
+    const { data: authorizedProfile, error: authorizedProfileError } = canonicalProfile.error || canonicalProfile.data ? canonicalProfile : await adminClient
+      .from("profiles").select("role, approval_status, full_name").eq("id", userId).is("brand_id", null)
+      .maybeSingle<{ role: string; approval_status: string | null; full_name: string | null }>();
 
     if (authorizedProfileError) {
       logFailure(authorizedProfileError);
@@ -259,9 +263,9 @@ export async function POST(request: Request): Promise<NextResponse<CreateMembers
       if (validationError) return respond({ success: false, error: validationError }, 400);
     }
 
-    const applicantName = typeof user.user_metadata?.name === "string" && user.user_metadata.name.trim()
+    const applicantName = authorizedProfile?.full_name?.trim() || (typeof user.user_metadata?.name === "string" && user.user_metadata.name.trim()
       ? user.user_metadata.name.trim()
-      : user.email || (role === "staff" ? "알바" : "점주");
+      : user.email || (role === "staff" ? "알바" : "점주"));
     userName = applicantName;
     const userPhone = typeof user.user_metadata?.phone === "string" ? user.user_metadata.phone : null;
 

@@ -10,8 +10,12 @@ import { createClient } from "@/lib/supabase/client";
 // 직원 공통 Header: StoreSelector(기본 매장 전환) + NotificationCenter(알림) + ProfileMenu(계정 메뉴)
 // 이름/역할/근무 매장은 모두 StaffShell 공통 상태에서 읽는다(별도 매장 state 없음).
 export default function StaffHeader() {
-  const { userName, roleLabel, isStoresLoading, stores, defaultStoreId, saveStorePreferences } = useStaffShell();
+  const { userName, roleLabel, isStoresLoading, stores, selectedStore, selectStore, defaultStoreId, saveStorePreferences } = useStaffShell();
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+
+  const handleSelectStore = (storeId: string) => {
+    selectStore(storeId);
+  };
 
   const handleSetDefaultStore = async (storeId: string) => {
     await saveStorePreferences({ defaultStoreId: storeId, order: stores.map((s) => s.id) });
@@ -72,8 +76,14 @@ export default function StaffHeader() {
           <NotificationCenter notificationPageUrl="/staff/notifications" />
         </div>
 
-        {/* 기본 매장 선택 */}
-        <StoreSelector stores={stores} defaultStoreId={defaultStoreId} isStoresLoading={isStoresLoading} onSetDefaultStore={handleSetDefaultStore} />
+        <StoreSelector
+          stores={stores}
+          selectedStoreId={selectedStore?.id ?? defaultStoreId}
+          defaultStoreId={defaultStoreId}
+          isStoresLoading={isStoresLoading}
+          onSelectStore={handleSelectStore}
+          onSetDefaultStore={handleSetDefaultStore}
+        />
 
         {/* 직원 프로필 */}
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">

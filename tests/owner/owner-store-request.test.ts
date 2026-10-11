@@ -13,6 +13,7 @@ import {
   resolveOwnerRequestHqRecipientIds,
   submitStoreMembershipRequest,
 } from "../../lib/signup/store-membership-service.ts";
+import { getDatabaseStoreId } from "../../lib/stores/search-stores.ts";
 
 const OWNER_ID = "11111111-1111-4111-8111-111111111111";
 const STORE_A = "22222222-2222-4222-8222-222222222222";
@@ -136,6 +137,11 @@ function storeSeed() {
 }
 
 describe("점주 매장 추가 (submitStoreMembershipRequest 실제 실행)", () => {
+  test("UUID store IDs stay exact and Naver composite search IDs are not sent as database IDs", () => {
+    assert.equal(getDatabaseStoreId(STORE_A), STORE_A);
+    assert.equal(getDatabaseStoreId("서울시청후문점|주소|37.1|127.1"), undefined);
+  });
+
   test("마스터 brand_id가 NULL이어도 같은 브랜드 두 번째 매장을 신청할 수 있다", async () => {
     const { client, tables } = fakeClient({ stores: storeSeed(), memberships: [APPROVED_A] });
 
@@ -179,6 +185,29 @@ describe("점주 매장 추가 (submitStoreMembershipRequest 실제 실행)", ()
       tables.store_memberships.find((row) => row.store_id === STORE_OTHER_BRAND)?.franchise_id,
       BRAND_B,
     );
+  });
+
+  test("선택 storeId는 다른 브랜드의 동명 매장과 구분해 서버 브랜드를 결정한다", async () => {
+    const duplicateName = "공용 표시명 매장";
+    const selected = { id: STORE_OTHER_BRAND, store_name: duplicateName, franchise_id: BRAND_B };
+    const otherBrand = { id: STORE_B, store_name: duplicateName, franchise_id: BRAND_A };
+    const { client, tables } = fakeClient({ stores: [storeSeed()[0], selected, otherBrand], memberships: [APPROVED_A] });
+
+    const result = await submitStoreMembershipRequest(client, {
+      userId: OWNER_ID,
+      userName: "김점주",
+      role: "owner",
+      storeId: selected.id,
+      storeName: duplicateName,
+      franchiseId: BRAND_B,
+      currentApprovalStatus: "approved",
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(tables.store_memberships.find(row => row.store_id === selected.id)?.franchise_id, BRAND_B);
+    assert.equal(tables.store_memberships.some(row => row.store_id === otherBrand.id), false);
+    assert.equal(tables.stores.find(row => row.id === selected.id)?.franchise_id, BRAND_B);
+    assert.equal(tables.stores.find(row => row.id === otherBrand.id)?.franchise_id, BRAND_A);
   });
 
   test("기존 approved 매장 권한은 그대로 남는다", async () => {
@@ -346,18 +375,39 @@ describe("라우트 소스 계약", () => {
   const readSource = (relativePath: string) => readFileSync(path.join(repoRoot, relativePath), "utf8");
   const storeRequest = readSource("app/api/boss/stores/requests/route.ts");
   const bossProfile = readSource("app/api/boss/profile/route.ts");
+  const ownerAddPage = readSource("app/boss/stores/add/page.tsx");
+  const staffAddPage = readSource("app/staff/stores/add/page.tsx");
+  const sharedStoreRequestFlow = readSource("components/stores/StoreRequestFlow.tsx");
   /** 설명 주석은 계약 검사 대상이 아니므로 제외한다. */
   const withoutComments = (source: string) => source.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
 
   test("매장 추가에서 마스터 brand_id 기반 차단을 제거했다", () => {
     assert.equal(/NO_BRAND/.test(storeRequest), false);
     assert.equal(/BRAND_MISMATCH/.test(storeRequest), false);
-    assert.equal(/brand_id/.test(withoutComments(storeRequest)), false);
+    assert.equal(/profile(?:\?|)\.brand_id/.test(withoutComments(storeRequest)), false);
+    assert.match(storeRequest, /\.eq\("user_id", userData\.user\.id\)\s*\.is\("brand_id", null\)/);
   });
 
   test("대상 매장 브랜드는 stores.franchise_id로 정한다", () => {
     assert.match(storeRequest, /from\("stores"\)\s*\n\s*\.select\("store_name, franchise_id"\)\s*\n\s*\.eq\("id", requestedStoreId\)/);
     assert.match(storeRequest, /franchiseId: storeFranchiseId/);
+  });
+
+  test("점주·직원 추가 UI는 검색에서 선택한 storeId를 route payload에 보존한다", () => {
+    assert.match(ownerAddPage, /const storeId = getDatabaseStoreId\(store\.id\)/);
+    assert.match(ownerAddPage, /body:\s*JSON\.stringify\(\{\s*\.\.\.\(storeId \? \{ storeId \} : \{\}\),\s*storeName: store\.name\s*\}\)/);
+    assert.match(staffAddPage, /const storeId = getDatabaseStoreId\(store\.id\)/);
+    assert.match(staffAddPage, /body:\s*JSON\.stringify\(\{\s*\.\.\.\(storeId \? \{ storeId \} : \{\}\),\s*storeName: store\.name,\s*role: "staff"\s*\}\)/);
+  });
+
+  test("공용 신청 화면은 이름이 아닌 storeId로 기존 membership 중복을 표시한다", () => {
+    assert.match(sharedStoreRequestFlow, /export interface StoreRequestMembership\s*\{\s*storeId:\s*string;/);
+    assert.match(sharedStoreRequestFlow, /\[membership\.storeId, membership\.status\]/);
+    assert.match(sharedStoreRequestFlow, /const selectedDatabaseStoreId = selectedStore \? getDatabaseStoreId\(selectedStore\.id\) : undefined/);
+    assert.match(sharedStoreRequestFlow, /membershipStatusById\.get\(selectedDatabaseStoreId\)/);
+    assert.match(sharedStoreRequestFlow, /const databaseStoreId = getDatabaseStoreId\(store\.id\)/);
+    assert.match(sharedStoreRequestFlow, /membershipStatusById\.get\(databaseStoreId\)/);
+    assert.doesNotMatch(sharedStoreRequestFlow, /membershipStatusByName\.get\(selectedStore\.name\)/);
   });
 
   test("브랜드를 확인할 수 없으면 고정 안내로 거절한다", () => {
@@ -410,13 +460,15 @@ describe("owner store request POST with injected Auth/DB clients", () => {
     approvalStatus?: string;
     stores?: readonly Row[];
     storeError?: boolean;
+    independentProfileId?: boolean;
   } = {}) {
     const require = createRequire(import.meta.url);
     const next = require("next/server.js") as typeof import("next/server");
     const queries: QueryCall[] = [];
     const submissions: Submission[] = [];
     const rows: Record<string, Row[]> = {
-      profiles: [{ id: OWNER_ID, role: options.role ?? "owner", approval_status: options.approvalStatus ?? "approved", full_name: "점주" }],
+      profiles: [{ id: options.independentProfileId ? "independent-owner-profile" : OWNER_ID, user_id: OWNER_ID, brand_id: null,
+        role: options.role ?? "owner", approval_status: options.approvalStatus ?? "approved", full_name: "점주" }],
       stores: (options.stores ?? storeSeed()).map((row) => ({ ...row })),
     };
     const admin = {
@@ -428,6 +480,7 @@ describe("owner store request POST with injected Auth/DB clients", () => {
             queries.push(query);
             const builder = {
               eq(column: string, value: unknown) { query.filters[column] = value; return builder; },
+              is(column: string, value: unknown) { query.filters[column] = value; return builder; },
               maybeSingle: async () => {
                 if (table === "stores" && options.storeError) return { data: null, error: { code: "STORE_READ_FAILED" } };
                 const matches = rows[table].filter((row) => Object.entries(query.filters).every(([column, value]) => row[column] === value));
@@ -443,7 +496,7 @@ describe("owner store request POST with injected Auth/DB clients", () => {
     };
     const dependencies: Record<string, unknown> = {
       "next/server": next,
-      "@/lib/auth/diagnostic-error-log": { createDiagnosticRequestId: () => "request-fixture", logDiagnosticError: () => {} },
+      "@/lib/auth/diagnostic-error-log": { createDiagnosticRequestId: require("../../lib/auth/diagnostic-error-log.ts").createDiagnosticRequestId, logDiagnosticError: () => {} },
       "@/lib/supabase/server": { createClient: async () => ({ auth: { getUser: async () => ({ data: { user: options.authenticated === false ? null : { id: OWNER_ID } }, error: null }) } }) },
       "@/lib/supabase/admin": { createAdminClient: () => admin },
       "@/lib/supabase/resolve-store-franchise": { resolveFranchiseIdForStoreName: async () => { throw new Error("store ID requests must not use the name resolver"); } },
@@ -464,13 +517,32 @@ describe("owner store request POST with injected Auth/DB clients", () => {
     })) };
   }
 
+  test("independent canonical owner profile permits a pending request without granting new store access", async () => {
+    const api = handler({ independentProfileId: true });
+    const response = await api.post({ storeId: STORE_A });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).membershipStatus, "pending");
+    assert.equal(api.submissions[0].role, "owner");
+  });
+
+  test("owner inquiry IDs are unique per request rather than account or membership identifiers", async () => {
+    const api = handler();
+    const first = await api.post({ storeId: STORE_A });
+    const second = await api.post({ storeId: STORE_A });
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+    assert.match(first.headers.get("X-Request-Id") ?? "", /^[0-9a-f-]{36}$/);
+    assert.notEqual(first.headers.get("X-Request-Id"), second.headers.get("X-Request-Id"));
+    assert.notEqual(first.headers.get("X-Request-Id"), OWNER_ID);
+  });
+
   test("reads the requested DB store brand/name and session owner, ignoring forged client identity and brand", async () => {
     const api = handler();
     const response = await api.post({ storeId: STORE_OTHER_BRAND, storeName: "forged name", franchiseId: BRAND_A, userId: HQ_A, role: "hq", approval_status: "approved" });
     assert.equal(response.status, 200);
     assert.equal((await response.json()).membershipStatus, "pending");
     assert.deepEqual(api.queries.map((query) => ({ table: query.table, columns: query.columns, filters: query.filters })), [
-      { table: "profiles", columns: "role, approval_status, full_name", filters: { id: OWNER_ID } },
+      { table: "profiles", columns: "role, approval_status, full_name", filters: { user_id: OWNER_ID, brand_id: null } },
       { table: "stores", columns: "store_name, franchise_id", filters: { id: STORE_OTHER_BRAND } },
     ]);
     assert.equal(api.submissions.length, 1);

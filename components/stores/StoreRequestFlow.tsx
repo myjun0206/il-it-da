@@ -7,7 +7,7 @@ import { AlertCircle, ArrowLeft, Check, CheckCircle2, Clock3, Loader2, MapPin, S
 import { RequestStatusBadge } from "@/components/common/ResultPanel";
 
 import StoreMap from "@/components/signup/StoreMap";
-import { formatStoreDisplayName, searchStores } from "@/lib/stores/search-stores";
+import { formatStoreDisplayName, getDatabaseStoreId, searchStores } from "@/lib/stores/search-stores";
 import type { Store } from "@/lib/types/store";
 
 const MIN_QUERY_LENGTH = 2;
@@ -35,6 +35,7 @@ export interface StoreRequestCopy {
 }
 
 export interface StoreRequestMembership {
+  storeId: string;
   storeName: string;
   status: string;
 }
@@ -139,13 +140,14 @@ export default function StoreRequestFlow({ copy, memberships, onSubmit }: StoreR
   const resultIds = useMemo(() => results.map((store) => store.id), [results]);
   const selectedStore = results.find((store) => store.id === selectedStoreId) ?? null;
 
-  // 서버(store-membership 서비스)와 같은 기준(정확한 매장명)으로 기존 신청 여부를 미리 안내한다.
+  // 중복 여부는 매장명보다 검색 결과의 고유 store ID로 판단한다.
   // 표시용 안내일 뿐이며, 실제 중복 방지·권한 판단은 서버가 매장 ID 기준으로 한다.
-  const membershipStatusByName = useMemo(
-    () => new Map(memberships.map((membership) => [membership.storeName, membership.status])),
+  const membershipStatusById = useMemo(
+    () => new Map(memberships.map((membership) => [membership.storeId, membership.status])),
     [memberships],
   );
-  const existingStatus = selectedStore ? membershipStatusByName.get(selectedStore.name) ?? null : null;
+  const selectedDatabaseStoreId = selectedStore ? getDatabaseStoreId(selectedStore.id) : undefined;
+  const existingStatus = selectedDatabaseStoreId ? membershipStatusById.get(selectedDatabaseStoreId) ?? null : null;
   const existingMembership = existingStatus ? { status: existingStatus } : null;
 
   const selectStore = (store: Store) => {
@@ -289,7 +291,8 @@ export default function StoreRequestFlow({ copy, memberships, onSubmit }: StoreR
                 <ul className="flex-1 overflow-y-auto [scrollbar-width:thin]">
                   {results.map((store) => {
                     const isSelected = store.id === selectedStoreId;
-                    const status = membershipStatusByName.get(store.name);
+                    const databaseStoreId = getDatabaseStoreId(store.id);
+                    const status = databaseStoreId ? membershipStatusById.get(databaseStoreId) : undefined;
                     return (
                       <li key={store.id} className="border-b border-[var(--color-border)] last:border-b-0">
                         <button

@@ -117,12 +117,34 @@ async function openShell(role, viewport, options = {}) {
   await page.route("**/*", (route) => route.request().url().startsWith(url) ? route.continue() : route.abort());
   await page.addInitScript(({ role, stores, options }) => {
     const staffStores = stores.map((store) => ({ id: store.storeId, name: store.storeName }));
+    const staffDefaultStoreId = options.defaultStaffStoreId || staffStores[0]?.id || null;
+    const staffSelectedStore = staffStores.find((store) => store.id === options.activeStaffStoreId)
+      || staffStores.find((store) => store.id === staffDefaultStoreId)
+      || staffStores[0]
+      || null;
     window.fixture = {
       role,
       navigation: [],
       stores,
       userName: options.userName || "김점주",
-      staff: { userName: options.userName || "김직원", roleLabel: "직원", isStoresLoading: false, stores: staffStores, defaultStoreId: staffStores[0]?.id ?? null, saveStorePreferences: async () => true },
+      activeStoreChanges: [],
+      preferenceWrites: [],
+      staff: {
+        userName: options.userName || "김직원",
+        roleLabel: "직원",
+        isStoresLoading: false,
+        stores: staffStores,
+        selectedStore: staffSelectedStore,
+        defaultStoreId: staffDefaultStoreId,
+        selectStore: (storeId) => {
+          window.fixture.activeStoreChanges.push(storeId);
+          sessionStorage.setItem("fixtureStaffSelectedStoreId", storeId);
+        },
+        saveStorePreferences: async (preferences) => {
+          window.fixture.preferenceWrites.push(preferences);
+          return true;
+        },
+      },
       ...options,
     };
     window.fetch = async (input) => {
@@ -160,8 +182,9 @@ test("owner store switcher sits right of notifications and left of profile, matc
         assert.ok(bellBox.x + bellBox.width <= storeBox.x + 1, `${role} ${viewport.width}: store must be right of notifications`);
         assert.ok(storeBox.x + storeBox.width <= profileBox.x + 1, `${role} ${viewport.width}: store must be left of profile`);
         assert.ok(profileBox.x + profileBox.width <= viewport.width, `${role} ${viewport.width}: profile must stay in view`);
-        for (const box of [bellBox, storeBox, profileBox]) {
-          assert.ok(box.y >= headerBox.y && box.y + box.height <= headerBox.y + headerBox.height + 1);
+        for (const [name, box] of [["notification", bellBox], ["store", storeBox], ["profile", profileBox]]) {
+          assert.ok(box.y >= headerBox.y && box.y + box.height <= headerBox.y + headerBox.height + 1,
+            `${role} ${viewport.width} ${name} exceeds header bounds: ${JSON.stringify({ headerBox, box })}`);
         }
         assert.equal(await noHorizontalOverflow(page), true, `${role} ${viewport.width}: horizontal overflow`);
         geometry[role] = { header: headerBox, profile: profileBox };
@@ -173,6 +196,36 @@ test("owner store switcher sits right of notifications and left of profile, matc
     assert.equal(geometry.owner.header.x, geometry.staff.header.x, "header start matches staff");
     assert.ok(Math.abs(geometry.owner.profile.x + geometry.owner.profile.width - (geometry.staff.profile.x + geometry.staff.profile.width)) <= 1, "profile right edge matches staff");
   }
+});
+
+test("staff header distinguishes active session store from saved default without writing preferences", async () => {
+  const { page, errors } = await openShell("staff", { width: 320, height: 740 }, {
+    activeStaffStoreId: "store-b",
+    defaultStaffStoreId: "store-a",
+  });
+  try {
+    const header = page.locator("header").first();
+    const trigger = header.getByRole("button", { name: new RegExp(`현재 업무 매장 ${LONG_STORE}`) });
+    await trigger.waitFor();
+    const triggerText = await trigger.innerText();
+    assert.match(triggerText, /현재 업무 매장/);
+    assert.match(triggerText, /아주아주 긴 이름/);
+    await trigger.click();
+
+    const menu = page.getByRole("menu", { name: "현재 업무 매장 선택" });
+    await menu.waitFor();
+    const activeOption = menu.getByRole("button", { name: "서울 중앙점 현재 업무 매장으로 전환" });
+    const longActiveOption = menu.getByRole("button", { name: `${LONG_STORE} 현재 업무 매장으로 전환` });
+    assert.equal(await longActiveOption.getAttribute("aria-pressed"), "true");
+    await menu.getByText("기본 매장", { exact: true }).waitFor();
+    await activeOption.click();
+
+    assert.deepEqual(await page.evaluate(() => window.fixture.activeStoreChanges), ["store-a"]);
+    assert.deepEqual(await page.evaluate(() => window.fixture.preferenceWrites), []);
+    assert.equal(await page.evaluate(() => sessionStorage.getItem("fixtureStaffSelectedStoreId")), "store-a");
+    assert.equal(await noHorizontalOverflow(page), true);
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
 });
 
 test("owner profile shows name and role without duplicated store text; store name stays in the profile menu", async () => {

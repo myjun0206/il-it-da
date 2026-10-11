@@ -28,7 +28,10 @@ export async function requireConfirmedMembershipAuthUser(adminClient: SupabaseCl
     console.warn("[AUTH] STORE_MEMBERSHIP_AUTH_USER_MISSING");
     throw new MembershipAuthNotReadyError();
   }
-  if (!data.user.email_confirmed_at && !data.user.phone_confirmed_at && !data.user.confirmed_at) {
+  const hasVerifiedSocialIdentity = data.user.identities?.some(identity =>
+    typeof identity.provider === "string" && ["google", "kakao", "apple", "custom:naver"].includes(identity.provider),
+  );
+  if (!data.user.email_confirmed_at && !data.user.phone_confirmed_at && !data.user.confirmed_at && !hasVerifiedSocialIdentity) {
     throw new MembershipAuthNotReadyError();
   }
   return data.user;
@@ -168,7 +171,7 @@ export async function ensureBrandProfileForApprovedMembership(
   const { data: existingMasterProfile, error: profileError } = await adminClient
     .from("profiles")
     .select("email, full_name, role, phone, company_email, approval_status, approved_at, approved_by, user_id")
-    .eq("id", userId)
+    .eq("user_id", userId)
     .is("brand_id", null)
     .maybeSingle();
 
@@ -209,7 +212,7 @@ export async function ensureBrandProfileForApprovedMembership(
       const { data: concurrentProfile, error: concurrentError } = await adminClient
         .from("profiles")
         .select("email, full_name, role, phone, company_email, approval_status, approved_at, approved_by, user_id")
-        .eq("id", userId)
+        .eq("user_id", userId)
         .is("brand_id", null)
         .maybeSingle();
       if (concurrentError || !concurrentProfile) {
@@ -423,11 +426,14 @@ export async function upsertSignupProfile(
     // 예전에는 insert의 중복 키 에러(23505)로 기존 profile을 감지했는데, 실제 DB의 profiles에
     // NOT NULL 컬럼이 추가되면서 insert가 23505보다 먼저 not-null 에러(23502)로 실패해 기존 사용자도 막혔다.
     // user_id까지 읽어 023의 복수 브랜드 프로필 계약(auth 사용자 역참조)을 아래에서 보완한다.
-    const { data: existingProfile, error: fetchError } = await adminClient
+    const canonical = await adminClient
       .from("profiles")
-      .select("email, full_name, phone, approval_status, brand_id, user_id")
-      .eq("id", userId)
+      .select("id, email, full_name, phone, approval_status, brand_id, user_id")
+      .eq("user_id", userId)
+      .is("brand_id", null)
       .maybeSingle();
+    const { data: existingProfile, error: fetchError } = canonical.error || canonical.data ? canonical : await adminClient
+      .from("profiles").select("id, email, full_name, phone, approval_status, brand_id, user_id").eq("id", userId).is("brand_id", null).maybeSingle();
 
     if (fetchError) {
       logProfileFailure("profile.lookup", fetchError);
@@ -462,7 +468,7 @@ export async function upsertSignupProfile(
           const { error: updateError } = await adminClient
             .from("profiles")
             .update(profileUpdates)
-            .eq("id", userId);
+            .eq("id", existingProfile.id);
 
           if (updateError) {
             logProfileFailure("profile.update", updateError);

@@ -15,7 +15,7 @@ const cookiePolicy = readFileSync(path.join(root, "lib/supabase/session-cookies.
 
 function notificationScenario(targetUrl: string) {
   const notification = { id: "notification-a", title: "Notice A", message: "Notification content", targetUrl, createdAt: "2026-09-21T12:00:00.000Z", isRead: false };
-  const harness = createHookHarness([[notification], 1, "all", false, "", 1, false, false, null]);
+  const harness = createHookHarness([[notification], 1, 1, "all", false, "", 1, false, false, null]);
   const navigations: string[] = [];
   const requests: string[] = [];
   let requestSucceeded = true;

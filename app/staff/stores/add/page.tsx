@@ -9,6 +9,7 @@ import StoreRequestFlow, {
   type StoreRequestOutcome,
 } from "@/components/stores/StoreRequestFlow";
 import type { Store } from "@/lib/types/store";
+import { getDatabaseStoreId } from "@/lib/stores/search-stores";
 
 interface StaffMembership {
   membershipId: string;
@@ -73,11 +74,12 @@ export default function StaffAddStorePage() {
   // 직원 신청: 기존 가입 신청 API. 서버가 로그인 사용자/역할을 검증하고 pending membership만 만든다.
   const submitRequest = async (store: Store): Promise<StoreRequestOutcome> => {
     try {
+      const storeId = getDatabaseStoreId(store.id);
       const response = await fetch("/api/signup/store-membership", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storeName: store.name, role: "staff" }),
+        body: JSON.stringify({ ...(storeId ? { storeId } : {}), storeName: store.name, role: "staff" }),
       });
       const result = (await response.json()) as {
         success?: boolean;

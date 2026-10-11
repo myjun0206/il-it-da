@@ -27,6 +27,7 @@ export default function BossNotificationsPage() {
   const [userName, setUserName] = useState("점주");
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
   const [filter, setFilter] = useState<FilterType>("all");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -58,6 +59,7 @@ export default function BossNotificationsPage() {
 
   // Fetch notifications
   useEffect(() => {
+    const controller = new AbortController();
     const fetchNotifications = async () => {
       setIsLoading(true);
       setError("");
@@ -65,29 +67,33 @@ export default function BossNotificationsPage() {
       try {
         const response = await fetch(
           `/api/notifications?limit=${pageSize * page}&includeRead=${filter === "all"}`,
-          { credentials: "include" },
+          { credentials: "include", signal: controller.signal },
         );
         const data = (await response.json()) as {
           success: boolean;
-          data?: { notifications: Notification[]; unreadCount: number };
+          data?: { notifications: Notification[]; unreadCount: number; totalCount: number };
           error?: string;
         };
 
+        if (controller.signal.aborted) return;
         if (response.ok && data.success && data.data) {
           setNotifications(data.data.notifications);
           setUnreadCount(data.data.unreadCount);
+          setTotalCount(data.data.totalCount);
         } else {
           setError(data.error || "알림을 불러올 수 없습니다.");
         }
       } catch (e) {
+        if (controller.signal.aborted) return;
         console.error("Failed to fetch notifications:", e);
         setError("알림을 불러올 수 없습니다.");
       } finally {
-        setIsLoading(false);
+        if (!controller.signal.aborted) setIsLoading(false);
       }
     };
 
     fetchNotifications();
+    return () => controller.abort();
   }, [filter, page]);
 
   // Handle notification click
@@ -95,10 +101,11 @@ export default function BossNotificationsPage() {
     // Mark as read
     if (!notification.isRead) {
       try {
-        await fetch(`/api/notifications/${notification.id}/mark-read`, {
+        const response = await fetch(`/api/notifications/${notification.id}/mark-read`, {
           method: "PUT",
           credentials: "include",
         });
+        if (!response.ok) { setError("읽음 처리하지 못했습니다."); return; }
         setNotifications((prev) =>
           prev.map((n) => (n.id === notification.id ? { ...n, isRead: true } : n))
         );
@@ -117,7 +124,8 @@ export default function BossNotificationsPage() {
   // Handle mark all as read
   const handleMarkAllRead = async () => {
     try {
-      await fetch("/api/notifications/read-all", { method: "PUT", credentials: "include" });
+      const response = await fetch("/api/notifications/read-all", { method: "PUT", credentials: "include" });
+      if (!response.ok) { setError("읽음 처리하지 못했습니다."); return; }
       setUnreadCount(0);
       setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
     } catch (e) {
@@ -144,6 +152,7 @@ export default function BossNotificationsPage() {
       if (response.ok && data.success) {
         setNotifications([]);
         setUnreadCount(0);
+        setTotalCount(0);
       } else {
         console.error("Failed to delete all notifications");
       }
@@ -160,7 +169,7 @@ export default function BossNotificationsPage() {
       ? notifications.filter((n) => !n.isRead)
       : notifications;
 
-  const hasMore = filteredNotifications.length >= pageSize * page;
+  const hasMore = filteredNotifications.length < (filter === "all" ? totalCount : unreadCount);
 
   const filterButtonClass = (isActive: boolean) =>
     `min-h-[44px] px-4 rounded-lg text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${

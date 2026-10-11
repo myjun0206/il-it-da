@@ -12,6 +12,7 @@ import StoreRequestFlow, {
 } from "@/components/stores/StoreRequestFlow";
 import { resolveOwnerCurrentStore } from "@/lib/owner/current-store";
 import { createClient } from "@/lib/supabase/client";
+import { getDatabaseStoreId } from "@/lib/stores/search-stores";
 import type { Store } from "@/lib/types/store";
 
 const OWNER_COPY: StoreRequestCopy = {
@@ -38,8 +39,8 @@ async function loadOwnerMemberships(): Promise<{ list: StoreRequestMembership[];
   if (resolution.status === "error") return { list: [], currentName: "" };
   return {
     list: [
-      ...resolution.stores.map((store) => ({ storeName: store.storeName, status: "approved" })),
-      ...resolution.pending.map((store) => ({ storeName: store.storeName, status: "pending" })),
+      ...resolution.stores.map((store) => ({ storeId: store.storeId, storeName: store.storeName, status: "approved" })),
+      ...resolution.pending.map((store) => ({ storeId: store.storeId, storeName: store.storeName, status: "pending" })),
     ],
     currentName: resolution.current?.storeName ?? "",
   };
@@ -72,11 +73,12 @@ export default function OwnerAddStorePage() {
   // 점주 신청: 전용 API(브랜드 일치 검증 + owner pending membership). 승인은 기존 HQ 승인 화면에서만 한다.
   const submitRequest = async (store: Store): Promise<StoreRequestOutcome> => {
     try {
+      const storeId = getDatabaseStoreId(store.id);
       const response = await fetch("/api/boss/stores/requests", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storeName: store.name }),
+        body: JSON.stringify({ ...(storeId ? { storeId } : {}), storeName: store.name }),
       });
       const result = (await response.json()) as {
         success?: boolean;

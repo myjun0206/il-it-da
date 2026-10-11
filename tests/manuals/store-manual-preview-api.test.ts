@@ -3,11 +3,13 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
+import vm from "node:vm";
+import ts from "typescript";
+import * as extraction from "../../lib/manuals/extract-manual-groups.ts";
+import { extractStoreManualGroups } from "../../lib/manuals/extract-store-manual-groups.ts";
+import * as limits from "../../lib/manuals/upload-limits.ts";
+import { buildManualPreview } from "../../lib/manuals/build-manual-preview.ts";
 
-// app/api/store-manuals/preview/route.ts and .../preview/confirm/route.ts need next/server,
-// Supabase admin client construction, and cookies() - none of which resolve outside the
-// Next.js runtime, so (like the HQ preview route tests) their contracts are locked as a
-// static source-text contract rather than executed directly.
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 function readSource(relativePath: string): string {
@@ -57,6 +59,66 @@ describe("app/api/store-manuals/preview/route.ts (store preview never writes to 
 
   test("never logs the raw parse error object with request content, only a fixed prefix", () => {
     assert.match(source, /console\.error\("\[STORE_MANUALS_PREVIEW\] parse failed:", parseError\)/);
+  });
+});
+
+describe("CSV 미리보기 실제 handler (인증·DB만 synthetic)", () => {
+  function previewHandler() {
+    let databaseCalls = 0;
+    const exportsObject = {} as { POST: (request: Request) => Promise<Response> };
+    const dependencies: Record<string, unknown> = {
+      "node:crypto": { randomUUID: () => "11111111-1111-4111-8111-111111111111" },
+      "next/server": { NextResponse: { json: Response.json } },
+      "@/lib/supabase/admin": { createAdminClient: () => ({ from: () => { databaseCalls += 1; throw new Error("Unexpected database call"); } }) },
+      "@/lib/supabase/server": { createClient: async () => ({ auth: { getUser: async () => ({ data: { user: { id: "owner-fixture" } }, error: null }) } }) },
+      "@/lib/manuals/store-manual-auth": { requireStoreOwner: async () => ({ storeId: "store-fixture", franchiseId: "brand-fixture" }) },
+      "@/lib/manuals/extract-manual-groups": extraction,
+      "@/lib/manuals/extract-store-manual-groups": { extractStoreManualGroups },
+      "@/lib/manuals/upload-limits": limits,
+      "@/lib/manuals/build-manual-preview": { buildManualPreview },
+    };
+    const compiled = ts.transpileModule(readSource("app/api/store-manuals/preview/route.ts"), {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+    }).outputText;
+    vm.runInNewContext(compiled, {
+      exports: exportsObject, File, Error, console: { error: () => undefined },
+      require: (name: string) => {
+        assert.ok(Object.hasOwn(dependencies, name), `Unexpected module ${name}`);
+        return dependencies[name];
+      },
+    });
+    return { post: exportsObject.POST, databaseCalls: () => databaseCalls };
+  }
+
+  function csvRequest(content: string) {
+    const data = new FormData();
+    data.set("storeId", "store-fixture");
+    data.set("file", new File([content], "test.csv", { type: "text/csv" }));
+    return new Request("http://localhost/api/store-manuals/preview", { method: "POST", body: data });
+  }
+
+  test("승인 V1 두 줄 본문이 HTTP200 미리보기에서 그대로 유지된다", async () => {
+    const content = "TEST ONLY. 검증표식 E2E-R1의 확인 문자열은\nPOC-CHECK-R1-V1이다. 운영 지침이 아닌 시험 자료다.";
+    const handler = previewHandler();
+    const response = await handler.post(csvRequest(`category,title,content\n__poc_escalation_20261011_R1,__poc_marker_E2E_R1,"${content}"`));
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.preview.totalDetailManualCount, 1);
+    assert.equal(body.preview.manuals[0].content, content);
+    assert.equal(handler.databaseCalls(), 0);
+  });
+
+  test("잘못 닫힌 따옴표는 잘린 미리보기 없이 HTTP400 명확한 오류다", async () => {
+    const handler = previewHandler();
+    for (const content of ['"닫히지 않은 본문\n확인값', '"본문"뒤문자', '본문"따옴표']) {
+      const response = await handler.post(csvRequest(`category,title,content\n안내,제목,${content}`));
+      const body = await response.json();
+      assert.equal(response.status, 400);
+      assert.match(body.error, /CSV.*따옴표/);
+      assert.equal(body.preview, undefined);
+      assert.equal(body.idempotencyKey, undefined);
+    }
+    assert.equal(handler.databaseCalls(), 0);
   });
 });
 

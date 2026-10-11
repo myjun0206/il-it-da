@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { requireManualWriteContract, sameManualRevision } from "../../lib/manuals/manual-write-contract.ts";
+import { requireManualWriteContract, sameManualRevision, ManualWriteUnavailableError } from "../../lib/manuals/manual-write-contract.ts";
 import { saveManualGroupsWithBatchGuard } from "../../lib/manuals/save-manuals-with-batch.ts";
 import { manualSaveResult, manualSaveMessage } from "../../lib/manuals/manual-save-result.ts";
 import type { ManualRecord } from "../../lib/types/manual.ts";
@@ -101,4 +101,13 @@ test("disposable runner has bounded retries and cleanup ownership without claimi
   const source = readFileSync(new URL("../../scripts/verify-manual-postgres.mjs", import.meta.url), "utf8");
   for (const term of ["--host", "--network", "--rm", "ilitda.manual-test-owner", "if (created)", "actual === ownership", "retryDelay", "Date.now() < deadline", "no embedding generator run", "unchanged parent ID", "parents with children", "indirect cycles", "parent relationship change", "equivalent unique index"]) assert.ok(source.includes(term), term);
   assert.equal(source.includes("rm\", \"--force\", \"--volumes"), false);
+});
+
+test("contract diagnostics distinguish missing RPC, access and version without leaking raw errors", async () => {
+  for (const [data, error, expected] of [[null, { code: "PGRST202", message: "private@example.test sk-secret" }, "PGRST202"],
+    [0, null, "MANUAL_CONTRACT_VERSION_MISMATCH"], [null, { code: "42501" }, "42501"]] as const) {
+    const client = { rpc: async () => ({ data, error }), from: () => assert.fail("no writes") } as unknown as SupabaseClient;
+    await assert.rejects(requireManualWriteContract(client), (failure: unknown) => failure instanceof ManualWriteUnavailableError
+      && failure.code === expected && !failure.message.includes("private@example.test") && !failure.message.includes("sk-secret"));
+  }
 });
