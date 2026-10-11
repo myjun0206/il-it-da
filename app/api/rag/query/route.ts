@@ -1,4 +1,6 @@
-﻿import { NextResponse } from "next/server";
+﻿import { appendFileSync } from "node:fs";
+import path from "node:path";
+import { NextResponse } from "next/server";
 
 import { buildGroundedAnswerMessages } from "@/lib/rag/answer-prompt";
 import {
@@ -6,7 +8,9 @@ import {
   resolveRagStoreFranchiseForRequest,
 } from "@/lib/rag/authorize-rag-store-access";
 import { finalizeRagQueryResponse } from "@/lib/rag/finalize-rag-query-response";
-import { resolveRagAnswer } from "@/lib/rag/resolve-rag-answer";
+import { resolveRagAnswer, type RagPrivateDecisionReview } from "@/lib/rag/resolve-rag-answer";
+import { createQuestionInterpreter, loadQuestionContext, shouldInterpretQuestion, type QuestionInterpretation } from "@/lib/rag/question-interpretation";
+import { StructuredAnswerParseError, buildGroundedAnswerResponseFormat, requestedSupportKinds } from "@/lib/rag/structured-answer";
 import { saveQuestionLog } from "@/lib/rag/save-question-log";
 import { createQuestionLogFollowUp } from "@/lib/notifications/notify-repeated-question";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -14,7 +18,7 @@ import { searchManualChunks } from "@/lib/rag/search-manual-chunks";
 import { validateQueryRequest } from "@/lib/rag/validate-query-request";
 import { canUseFamilyPackHistory, priorFamilyPackVariant } from "@/lib/rag/manual-menu-intent";
 import { createClient } from "@/lib/supabase/server";
-import { conversationTraceTag } from "@/lib/rag/trace-identifiers";
+import { conversationTraceTag, createRagDiagnosticTrace, annotateCandidateScopes } from "@/lib/rag/trace-identifiers";
 import type {
   ManualChunkMatch,
   RagQueryResponse,
@@ -32,17 +36,12 @@ const CAUTION_NOTICE =
   "\n\n※ 검색 신뢰도가 낮은 답변이니, 정확한 확인을 위해 매장 관리자에게 다시 문의해 주세요.";
 
 type OpenAiChatResponse = { //답변글
-  choices?: Array<{ message?: { content?: string | null } }>;
+  choices?: Array<{ message?: { content?: string | null }; finish_reason?: string | null }>;
 };
 
-function getSafeErrorDetails(error: unknown): { name: string; message: string } {
-  const name = error instanceof Error ? error.name : "UnknownError";
-  const rawMessage = error instanceof Error ? error.message : "Unknown error";
-  const message = rawMessage
-    .replace(/sk-[A-Za-z0-9_-]+/g, "[REDACTED]")
-    .replace(/(api[_ -]?key|password|secret|token)\s*[:=]\s*\S+/gi, "$1=[REDACTED]");
-
-  return { name, message };
+function getSafeErrorDetails(error: unknown): { name: string } {
+  const name = error instanceof Error && ["Error", "TypeError", "AbortError"].includes(error.name) ? error.name : "UnknownError";
+  return { name };
 }
 
 function getOpenAiApiKey() { // OPENAI_API_KEY 환경변수 존재 여부 확인 후 반환
@@ -108,11 +107,35 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
   const { question, storeId } = validation.data;
   const traceEnabled = process.env.NODE_ENV === "development" && process.env.RAG_TRACE === "1";
   const conversationTag = conversationTraceTag((body as { conversationId?: unknown }).conversationId);
-  const trace = (event: { stage: string; [key: string]: unknown }) => {
-    if (traceEnabled) {
-      try { console.info("[RAG_TRACE]", { ...event, conversationTag, requestOrigin: new URL(request.url).origin, storeId }); } catch {}
-    }
-  };
+  const development = process.env.NODE_ENV === "development";
+  let privateDecision: RagPrivateDecisionReview | undefined;
+  const trace = createRagDiagnosticTrace({ enabled: development, conversationId: (body as { conversationId?: unknown }).conversationId,
+    storeId, emit: (event) => {
+      if (event.stage === "final") {
+        try {
+          appendFileSync(path.join(process.cwd(), ".next", "dev", "rag-private-decisions.jsonl"),
+            `${JSON.stringify({ traceId: event.traceId, observedAt: event.observedAt, storeTag: event.storeTag,
+              review: privateDecision ?? null, final: { status: event.status, reason: event.reason, failureLayer: event.failureLayer },
+              expectedRequirementKinds: privateDecision?.expectedRequirementKinds ?? requestedSupportKinds(question),
+              metadataAvailable: Boolean(privateDecision) })}\n`, { encoding: "utf8", mode: 0o600 });
+          console.info(`[RAG_PRIVATE_DECISION] ${JSON.stringify({ traceId: event.traceId, captured: true })}`);
+        } catch {
+          console.info(`[RAG_PRIVATE_DECISION] ${JSON.stringify({ traceId: event.traceId, captured: false })}`);
+        }
+      }
+      if (traceEnabled) console.info("[RAG_TRACE]", event);
+      if (event.validation === "rejected" || ["request", "search", "prompt_delivery", "external_api", "model_completion", "final", "condition_delivery", "interpretation_validation"].includes(String(event.stage))) {
+        console.info(`[RAG_VALIDATION] ${JSON.stringify({ observedAt: event.observedAt, traceId: event.traceId, stage: event.stage,
+          conversationTag: event.conversationTag, storeTag: event.storeTag,
+          fieldPath: event.fieldPath, validationKind: event.validationKind, failureLayer: event.failureLayer, finishReason: event.finishReason,
+          expectedRequirementKinds: event.expectedRequirementKinds, receivedRequirementKinds: event.receivedRequirementKinds,
+          requestedCount: event.requestedCount, receivedCount: event.receivedCount, allowedCoverageValues: event.allowedCoverageValues,
+          httpStatus: event.httpStatus, service: event.service, status: event.status, reason: event.reason,
+          candidateCount: event.candidateCount, conditionCount: event.conditionCount, contextTargetPresent: event.contextTargetPresent,
+          conditionsIncluded: event.conditionsIncluded, mode: event.mode, candidates: event.candidates })}`);
+      }
+    } });
+  const diagnosticHeaders = development ? { "X-RAG-Trace-ID": trace.traceId } : undefined;
   trace({ stage: "request", traceVersion: "follow-up-trace-v1", conversationPresent: Boolean(conversationTag) });
 
   try {
@@ -133,20 +156,39 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
     }
 
     const familyPackVariant = await confirmedFamilyPackVariant(body, question, storeId, trace);
+    let interpretationContext;
+    const interpretQuestion = shouldInterpretQuestion(question) && !canUseFamilyPackHistory(question);
+    if (interpretQuestion) {
+      const session = await createClient();
+      const user = await session.auth.getUser();
+      if (user.error || !user.data.user) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+      const conversation = await loadQuestionContext(createAdminClient(), user.data.user.id, storeId,
+        (body as { conversationId?: unknown }).conversationId);
+      interpretationContext = { userId: user.data.user.id, storeId, conversation };
+    }
     const outcome = await resolveRagAnswer(
       {
         question,
         familyPackVariant,
+        interpretationContext,
         thresholds: GATE_THRESHOLDS,
         noManualAnswer: NO_MANUAL_ANSWER,
         cautionNotice: CAUTION_NOTICE,
+        requireCoverage: true,
+        requireSupportAssessment: true,
+        requireEvidenceScope: true,
       },
       {
+        interpret: interpretQuestion ? (originalQuestion, messages) => createQuestionInterpreter(fetch, getOpenAiApiKey(), trace)(originalQuestion, messages) : undefined,
         search: async (userQuestion) => {
           trace({ stage: "search_input", augmented: userQuestion !== question, originalLength: question.length,
             searchInputLength: userQuestion.length, confirmedTargetIncluded: Boolean(familyPackVariant && userQuestion.includes(`${familyPackVariant} 패밀리팩`)),
             includesBFamilyPack: /B\s*패밀리\s*팩/u.test(userQuestion), franchiseId: franchiseScope.franchiseId });
-          try { return await searchManualChunks(userQuestion, storeId, franchiseScope.franchiseId); }
+          try {
+            const matches = await searchManualChunks(userQuestion, storeId, franchiseScope.franchiseId);
+            return development && matches.length ? await annotateCandidateScopes(matches, storeId, franchiseScope.franchiseId,
+              async ids => await createAdminClient().from("manuals").select("id, status, scope_type, store_id, franchise_id").in("id", ids)) : matches;
+          }
           catch (error) {
             console.error("RAG search failed:", getSafeErrorDetails(error));
             const failure = error as { diagnosticService?: unknown; diagnosticHttpStatus?: unknown };
@@ -155,22 +197,31 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
             throw error;
           }
         },
-        generate: async (rawQuestion, chunks, variant) => {
+        generate: async (rawQuestion, chunks, variant, interpretation) => {
           try {
-            return await createGroundedAnswer(rawQuestion, chunks, variant, trace);
+            return await createGroundedAnswer(rawQuestion, chunks, variant, trace, interpretation);
           } catch (error) {
             console.error("RAG generation failed:", getSafeErrorDetails(error));
             throw error;
           }
         },
-        onDiagnostic: traceEnabled ? trace : undefined,
+        onDiagnostic: development ? trace : undefined,
+        onPrivateDecisionReview: development ? review => { privateDecision = review; } : undefined,
+        onPrivateTargetRelationFailure: (diagnostic) => {
+          if (!development) return;
+          try {
+            appendFileSync(path.join(process.cwd(), ".next", "dev", "rag-private-target-relations.jsonl"),
+              `${JSON.stringify({ traceId: trace.traceId, observedAt: new Date().toISOString(), ...diagnostic })}\n`, { encoding: "utf8", mode: 0o600 });
+          } catch {}
+        },
       },
     );
 
     // 검색·생성 장애는 근거 부족이 아니다. 로그·점주 알림 없이 기존 500 계약을 그대로 쓴다.
     if (outcome.kind === "system_error") {
-      console.error("RAG query failed:", { code: outcome.code });
-      return NextResponse.json({ error: "Unable to answer the question." }, { status: 500 });
+      for (const stage of ["question_log", "escalation", "repeated_alert"]) trace({ stage, status: "skipped", reason: "SYSTEM_ERROR" });
+      console.error(`RAG query failed: ${outcome.code}`);
+      return NextResponse.json({ error: "Unable to answer the question.", code: outcome.code }, { status: 500, headers: diagnosticHeaders });
     }
 
     console.info("RAG answer decision", {
@@ -191,17 +242,27 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
         storeId,
         escalate: outcome.escalate,
         getClient: createAdminClient,
+        onDiagnostic: traceEnabled ? trace : undefined,
       }),
-    }, saveQuestionLog);
-    return NextResponse.json(response);
+    }, async (input) => {
+      try {
+        const result = await saveQuestionLog(input);
+        trace({ stage: "question_log", saved: result.saved, status: result.saved ? "saved" : "failed", questionLogId: result.saved ? result.questionLogId : undefined });
+        return result;
+      } catch (error) {
+        trace({ stage: "question_log", saved: false, status: "failed" });
+        throw error;
+      }
+    });
+    return NextResponse.json(response, { headers: diagnosticHeaders });
   } catch (error) {
-    console.error("RAG query failed:", getSafeErrorDetails(error));
-    return NextResponse.json({ error: "Unable to answer the question." }, { status: 500 });
+    console.error(`RAG query failed: RAG_QUERY_FAILED ${getSafeErrorDetails(error).name}`);
+    return NextResponse.json({ error: "Unable to answer the question.", code: "RAG_QUERY_FAILED" }, { status: 500, headers: diagnosticHeaders });
   }
 }
 
 async function createGroundedAnswer(question: string, chunks: ManualChunkMatch[], familyPackVariant?: string,
-  trace?: (event: { stage: string; [key: string]: unknown }) => void): Promise<string> { // OpenAI Chat Completions API로 매뉴얼 근거 답변 생성
+  trace?: (event: { stage: string; [key: string]: unknown }) => void, interpretation?: QuestionInterpretation): Promise<string> { // OpenAI Chat Completions API로 매뉴얼 근거 답변 생성
   const apiKey = getOpenAiApiKey();
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), GPT_TIMEOUT_MS);
@@ -217,8 +278,8 @@ async function createGroundedAnswer(question: string, chunks: ManualChunkMatch[]
         model: "gpt-4o",
         temperature: 0.2,
         max_tokens: GPT_MAX_OUTPUT_TOKENS,
-        response_format: { type: "json_object" },
-        messages: buildGroundedAnswerMessages(question, chunks, familyPackVariant),
+        response_format: buildGroundedAnswerResponseFormat(question, interpretation?.requirements),
+        messages: buildGroundedAnswerMessages(question, chunks, familyPackVariant, interpretation?.requirements, interpretation),
       }),
       signal: controller.signal,
     });
@@ -231,10 +292,14 @@ async function createGroundedAnswer(question: string, chunks: ManualChunkMatch[]
     }
 
     const payload = (await response.json()) as OpenAiChatResponse;
+    const finish = payload.choices?.[0]?.finish_reason;
+    const finishReason = ["stop", "length", "content_filter", "tool_calls", "function_call"].includes(finish ?? "") ? finish : "unknown";
+    trace?.({ stage: "model_completion", finishReason });
+    if (finishReason === "length") throw new StructuredAnswerParseError("$", "response_truncated");
     const answer = payload.choices?.[0]?.message?.content?.trim();
 
     if (!answer) {
-      throw new Error("OpenAI returned an empty answer.");
+      throw new StructuredAnswerParseError("$", "empty_response");
     }
 
     return answer;

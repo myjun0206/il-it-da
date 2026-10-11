@@ -1,10 +1,9 @@
 import { getNumberedManualItemHeading, splitTextIntoManualItems } from "@/lib/manuals/detect-manual-item";
+import { extractLatteTargets } from "@/lib/rag/latte-target";
 import type { ManualChunkMatch } from "@/lib/rag/types";
 
 function latteNames(text: string): string[] {
-  const names = [...text.matchAll(/[가-힣A-Za-z]+(?:[ \t]+카페)?[ \t]*라떼/gu)].map((match) => match[0]
-    .replace(/[ \t]/g, "").toLowerCase()
-    .replace(/^(?:따뜻한|따듯한|뜨거운|차가운|일반|기본|iced|ice|hot)/u, ""));
+  const names = extractLatteTargets(text).map((target) => target.name);
   return [...new Set(names.filter((name) => name !== "라떼"))];
 }
 
@@ -15,6 +14,13 @@ function isLatteRecipeQuestion(question: string): boolean {
 
 function hasContrast(question: string): boolean {
   return /말고|아니|않|금지|안\s|하지\s*마/u.test(question);
+}
+
+function recipeTemperatureModes(text: string): string[] {
+  const modes: string[] = [];
+  if (/\bICE(?:D)?\b|아이스/u.test(text.toUpperCase())) modes.push("ICE");
+  if (/\bHOT\b|따뜻한|따듯한|뜨거운|핫\s*(?:카페|바닐라|라떼)/u.test(text.toUpperCase())) modes.push("HOT");
+  return modes;
 }
 
 export function canUseFamilyPackHistory(question: string): boolean {
@@ -53,13 +59,17 @@ export function candidateMenuNames(match: Pick<ManualChunkMatch, "title" | "cont
 export function selectMenuCandidates(question: string, matches: readonly ManualChunkMatch[]) {
   const requestedMenus = latteNames(question);
   const active = isLatteRecipeQuestion(question) && !hasContrast(question);
+  const requestedTemperatures = active ? recipeTemperatureModes(question) : [];
   const requestedPackVariants = isFamilyPackOperation(question) && !hasContrast(question) ? familyPackVariants(question) : [];
   const rejectedChunkIds: string[] = [];
   const selected = matches.filter((match) => {
     const menus = candidateMenuNames(match);
     const packKinds = familyPackVariants(`${match.title}\n${match.content}`);
+    const temperatureModes = recipeTemperatureModes(`${match.title}\n${match.content}`);
+    const temperatureConflict = requestedTemperatures.length > 0 && temperatureModes.length > 0
+      && temperatureModes.every(mode => !requestedTemperatures.includes(mode));
     const packConflict = requestedPackVariants.length > 0 && packKinds.length > 0 && packKinds.every((kind) => !requestedPackVariants.includes(kind));
-    const conflict = packConflict || active && requestedMenus.length > 0 && menus.length > 0
+    const conflict = packConflict || temperatureConflict || active && requestedMenus.length > 0 && menus.length > 0
       && menus.every((menu) => !requestedMenus.includes(menu));
     if (conflict) rejectedChunkIds.push(match.chunk_id);
     return !conflict;
@@ -73,7 +83,19 @@ export function buildMenuClarification(question: string, provided: readonly Manu
     if (packs.length === 0) return { answerable: false, answer: "", usedChunkIds: [] as string[] };
     return { answerable: true, answer: "어떤 종류의 패밀리팩을 말씀하시나요? 정확한 종류를 알려주세요.", usedChunkIds: packs.map((match) => match.chunk_id) };
   }
-  if (!isLatteRecipeQuestion(question) || latteNames(question).length > 0) return null;
+  if (!isLatteRecipeQuestion(question)) return null;
+  const requestedMenus = latteNames(question);
+  if (requestedMenus.length > 0) {
+    if (recipeTemperatureModes(question).length > 0 || requestedMenus.length !== 1) return null;
+    const identified = provided.filter((match) => extractLatteTargets(`${match.title}\n${match.content}`)
+      .some((target) => target.name === requestedMenus[0]));
+    if (identified.length === 0) return null;
+    const modes = new Set(identified.flatMap((match) => extractLatteTargets(`${match.title}\n${match.content}`)
+      .filter((target) => target.name === requestedMenus[0] && target.temperature)
+      .map((target) => target.temperature!)));
+    if (modes.size === 1) return null;
+    return { answerable: true, answer: "ICE와 HOT 중 어떤 온도 기준의 카페라떼를 말씀하시나요?", usedChunkIds: identified.map((match) => match.chunk_id) };
+  }
   const identified = provided.filter((match) => candidateMenuNames(match).length > 0 || /라떼/u.test(`${match.title}\n${match.content}`));
   if (identified.length === 0) return { answerable: false, answer: "", usedChunkIds: [] as string[] };
   return {

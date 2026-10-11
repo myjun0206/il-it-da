@@ -67,6 +67,24 @@ describe("키워드 가산점이 answered를 강제하지 못한다", () => {
 });
 
 describe("정상 검색은 과도하게 막지 않는다", () => {
+  test("observed procedure and hand evidence use one capped support term, not the RPC rank or rounded UI percent", () => {
+    const observed = [
+      { raw: 0.409292845030823, boost: 0.25, expected: 0.559292845030823, status: "cautious" },
+      { raw: 0.34180288319707, boost: 0.25, expected: 0.49180288319707, status: "cautious" },
+      { raw: 0.372179099708857, boost: 0.25, expected: 0.522179099708857, status: "cautious" },
+      { raw: 0.55574014189241, boost: 0.35, expected: 0.70574014189241, status: "answered" },
+    ];
+    for (const value of observed) {
+      const candidate = chunk({ raw_similarity_score: value.raw, keyword_boost: value.boost });
+      assert.ok(Math.abs(scoreChunk(candidate).evidenceScore - value.expected) < 1e-12);
+      assert.equal(applyEvidenceGate([candidate], THRESHOLDS).searchStatus, value.status);
+      assert.ok(candidate.similarity_score > value.expected);
+    }
+    const nearBoundary = chunk({ raw_similarity_score: 0.446382245618982, keyword_boost: 0.2 });
+    assert.equal(Math.round(scoreChunk(nearBoundary).evidenceScore * 100), 60);
+    assert.equal(applyEvidenceGate([nearBoundary], THRESHOLDS).searchStatus, "cautious");
+  });
+
   test("근거가 충분하면 answered로 남는다", () => {
     const gate = applyEvidenceGate([chunk({ raw_similarity_score: 0.72, keyword_boost: 0 })], THRESHOLDS);
     assert.equal(gate.searchStatus, "answered");

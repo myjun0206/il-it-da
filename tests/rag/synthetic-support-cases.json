@@ -1,0 +1,30 @@
+{
+  "provenance": "Synthetic regression fixtures. No production logs, request identifiers, timestamps or manual snapshots.",
+  "cases": [
+    {"id":"S1","question":"테스트 물품은 어디에 있나요?","answer":"테스트 물품은 가상 창고 선반에 있습니다.","coverage":"direct","raw":0.45,"boost":0.2,"status":"answered","support":"direct","excerpt":"테스트 물품은 가상 창고 선반에 있습니다."},
+    {"id":"S2","question":"가상 재고는 어떤 순서로 확인하나요?","answer":"가상 재고를 세고 테스트 담당자에게 보고합니다.","coverage":"direct","raw":0.5,"boost":0.2,"status":"answered","support":"direct","excerpt":"가상 재고를 세고 테스트 담당자에게 보고합니다."},
+    {"id":"S3","question":"테스트 묶음의 구성과 수량은 무엇인가요?","answer":"테스트 묶음은 가상 상자 2개와 표식 3개입니다.","coverage":"direct","raw":0.4,"boost":0.2,"status":"cautious","support":"direct","excerpt":"테스트 묶음은 가상 상자 2개와 표식 3개입니다."},
+    {"id":"S4","question":"가상 음료의 우유량은 얼마인가요?","answer":"가상 음료의 우유량은 100ml입니다.","coverage":"direct","raw":0.4,"boost":0.2,"status":"cautious","support":"direct","excerpt":"가상 음료의 우유량은 100ml입니다."},
+    {"id":"S5","question":"테스트 표식은 어떻게 붙이나요?","answer":"가상 상자 위에 테스트 표식을 붙입니다.","coverage":"direct","raw":0.5,"boost":0.2,"status":"answered","support":"direct","excerpt":"가상 상자 위에 테스트 표식을 붙입니다."},
+    {"id":"P1","question":"손 위생은 언제, 어떻게 해야 하나요?","answer":"조리 및 제조 업무 전 손을 씻는다는 가상 지침만 있습니다.","coverage":"direct","raw":0.4,"boost":0.2,"status":"cautious","support":"partial","excerpt":"조리 및 제조 업무 전 손을 씻는다는 가상 지침만 있습니다."},
+    {"id":"P2","question":"가상 용기 관리 방법은 무엇인가요?","answer":"","coverage":"policy_only","raw":0.35,"boost":0.2,"status":"insufficient","support":"missing","excerpt":"테스트 표식 색상은 파란색이다."},
+    {"id":"P3","question":"가상 장비 내부 부품 분해 순서는 무엇인가요?","answer":"가상 장비 내부 부품은 임의로 분해하지 않고 테스트 담당자에게 보고한다.","coverage":"direct","raw":0.45,"boost":0.2,"status":"insufficient","support":"policy_only","excerpt":"가상 장비 내부 부품은 임의로 분해하지 않고 테스트 담당자에게 보고한다."},
+    {"id":"P4","question":"가상 재료는 어떻게 보관해야 하나요?","answer":"가상 재료의 구체적인 보관 기준은 테스트 담당자에게 확인한다.","coverage":"policy_only","raw":0.5,"boost":0.2,"status":"insufficient","support":"policy_only","excerpt":"가상 재료의 구체적인 보관 기준은 테스트 담당자에게 확인한다."},
+    {"id":"P5","question":"가상 세척장비의 내부 부품 청소 순서는 무엇인가요?","answer":"가상 세척장비 내부 부품은 임의로 분해하지 않는다.","coverage":"direct","raw":0.5,"boost":0.2,"status":"insufficient","support":"policy_only","excerpt":"가상 세척장비 내부 부품은 임의로 분해하지 않는다.","additionalSource":{"raw":0.5,"boost":0.2,"excerpt":"구체적인 청소 절차는 테스트 담당자에게 보고해 확인한다."}}
+  ],
+  "dairySupport": {
+    "question":"유제품은 어떻게 보관해야 하나요?",
+    "coverage":"partial",
+    "requestedTarget":"유제품은 어떻게 보관해야 하나요?",
+    "expectedStatus":"insufficient",
+    "expectedEvidenceScore":0.65,
+    "sources":[
+      {"id":"synthetic-dairy-location","raw":0.6,"boost":0.2,"target":"우유: 가상 냉장고 테스트 선반","quote":"우유: 가상 냉장고 테스트 선반","role":"location","relation":"subset"},
+      {"id":"synthetic-dairy-referral","raw":0.5,"boost":0.2,"target":"가상 재료의 구체적인 보관 기준은 테스트 담당자에게 확인한다.","quote":"가상 재료의 구체적인 보관 기준은 테스트 담당자에게 확인한다.","role":"referral","relation":"covers_requested"}
+    ]
+  },
+  "validationFailures":{"cases":[
+    {"stage":"support_validation","fieldPath":"supportAssessment.requirements","validationKind":"requirement_mismatch","failureLayer":"support_semantics","finishReason":"stop"},
+    {"stage":"structured_validation","fieldPath":"coverage","validationKind":"invalid_enum","failureLayer":"response_schema","finishReason":"stop"}
+  ]}
+}

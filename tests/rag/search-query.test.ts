@@ -8,6 +8,44 @@ import {
 } from "../../lib/rag/search-query.ts";
 
 describe("Korean RAG search query expansion", () => {
+  test("preserves noun originals and removes attached particles without losing domain meaning", () => {
+    for (const noun of ["당도", "온도", "습도", "산도", "밀도", "난이도", "나이", "메가"]) {
+      assert.ok(extractSearchKeywords(noun).includes(noun), noun);
+      for (const particle of ["는", "가", "를", "에서", "에는", "도"]) {
+        assert.ok(extractSearchKeywords(`${noun}${particle}`).includes(noun), `${noun}${particle}`);
+      }
+    }
+    for (const [question, expected] of [["재고는 확인하고 원두를 주문해요", "재고"], ["딸기청을 보관해요", "딸기청"], ["환불에서는 결제 내역을 확인해요", "환불"]]) {
+      assert.ok(extractSearchKeywords(question).includes(expected));
+    }
+  });
+
+  test("generic circumstance words do not boost unrelated emergency manuals", () => {
+    const question = "근무 중 손 위생을 실시해야 하는 상황은 언제인가요?";
+    const keywords = extractSearchKeywords(question);
+    assert.ok(keywords.includes("위생"));
+    for (const generic of ["상황", "상황은", "경우", "경우에", "사항", "사항을"]) {
+      assert.equal(extractSearchKeywords(generic).includes(generic), false, generic);
+    }
+    assert.equal(keywords.includes("상황"), false);
+    assert.ok(extractSearchKeywords("고객의 당도 변경 요청은 어떤 방식으로 처리하나요?").includes("당도"));
+    assert.ok(formatSearchEmbeddingInput(question).startsWith(`매뉴얼 검색 질문: ${question}`));
+  });
+
+  test("hand washing and hand hygiene share retrieval intent without inventing washing instructions", () => {
+    for (const question of ["손 위생은 언제, 어떻게 해야 하나요?", "손을 씻어야 하는 상황을 알려주세요.", "손 씻는 기준은 무엇인가요?"]) {
+      const keywords = extractSearchKeywords(question);
+      assert.ok(keywords.includes("위생"));
+      assert.ok(keywords.includes("개인위생"));
+      const expanded = expandSearchQuestion(question);
+      assert.ok(expanded.startsWith(question));
+      for (const invented of ["30초", "소독제", "장갑 교체"]) assert.equal(expanded.includes(invented), false);
+    }
+    for (const question of ["손님 환불은 어떻게 해요?", "커피머신 세척은 어떻게 해요?"]) {
+      assert.equal(extractSearchKeywords(question).includes("손 씻기"), false);
+    }
+  });
+
   test("beverage temperature and steaming hints preserve the question without assigning a latte menu", () => {
     const question = "따뜻한 라떼 우유 얼마나 넣고 몇 도까지 데워요?";
     const expanded = expandSearchQuestion(question);

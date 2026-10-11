@@ -8,6 +8,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { escalateQuestionLogToStoreOwners } from "../../lib/notifications/escalate-question-log.ts";
 import { finalizeRagQueryResponse } from "../../lib/rag/finalize-rag-query-response.ts";
+import { resolveRagAnswer } from "../../lib/rag/resolve-rag-answer.ts";
 import {
   createQuestionLogWriter,
   saveQuestionLog,
@@ -157,6 +158,84 @@ async function runInsufficientFlow(options: {
 }
 
 describe("insufficient 질문 -> 매장 점주 알림 (실제 함수 조합)", () => {
+  test("scope-limited partial answer retains facts/source/score and joins same-store pending notification", async () => {
+    const content = "테스트 봉투: 창고 선반";
+    const outcome = await resolveRagAnswer({ question: "소모품은 어떻게 보관하나요?", thresholds: { answered: .6, cautious: .4 },
+      noManualAnswer: "근거 부족", cautionNotice: "확인 권장", requireEvidenceScope: true, requireSupportAssessment: true }, {
+      search: async () => [{ chunk_id: "partial", manual_id: "manual-partial", title: "위치", category: "재고", content, raw_similarity_score: .8, keyword_boost: 0, similarity_score: .8 }],
+      generate: async () => JSON.stringify({ answerable: true, coverage: "direct", answer: content, usedChunkIds: ["partial"],
+        supportAssessment: { requestedTarget: "소모품", requirements: [{ kind: "method", support: "direct", evidence: [
+          { chunkId: "partial", quote: content, role: "location", target: "테스트 봉투", targetRelation: "subset" },
+        ] }] } }),
+    });
+    assert.equal(outcome.kind, "resolved");
+    if (outcome.kind !== "resolved") throw new Error("Expected resolved partial response");
+    const { client, notifications } = fakeEscalationClient();
+    await finalizeRagQueryResponse({ httpStatus: 200, question: "소모품은 어떻게 보관하나요?", storeId: STORE_A, response: outcome.response,
+      afterQuestionLogSaved: async (result) => { if (outcome.escalate && result.saved && result.questionLogId) await escalateQuestionLogToStoreOwners(client, { questionLogId: result.questionLogId, storeId: STORE_A }); },
+    }, async input => { assert.equal(input.status, "insufficient"); assert.equal(input.similarityScore, .8); assert.equal(input.sourceManualId, "manual-partial"); return { saved: true, questionLogId: LOG_ID }; });
+    assert.equal(notifications.length, 1);
+    assert.equal(notifications[0].recipient_user_id, OWNER_A);
+    assert.ok(outcome.response.answer.includes(content));
+  });
+
+  test("stored P3/P5 direct metadata is overridden by reviewed procedure-policy support and joins scoped escalation", async () => {
+    const fixture = JSON.parse(readFileSync(new URL("./synthetic-support-cases.json", import.meta.url), "utf8"));
+    for (const observed of fixture.cases.filter((item: { id: string }) => ["P3", "P5"].includes(item.id))) {
+      const manualId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+      const match = { chunk_id: observed.id, manual_id: manualId, title: "정책 근거", category: "장비", content: observed.excerpt,
+        raw_similarity_score: observed.raw, keyword_boost: observed.boost, similarity_score: observed.raw + observed.boost };
+      const outcome = await resolveRagAnswer({ question: observed.question, thresholds: { answered: .6, cautious: .4 },
+        noManualAnswer: "근거 부족", cautionNotice: "확인 권장", requireCoverage: true, requireSupportAssessment: true }, {
+        search: async () => [match], generate: async () => JSON.stringify({ answerable: true, answer: observed.answer, coverage: "direct", usedChunkIds: [observed.id],
+          supportAssessment: { requirements: [{ kind: "procedure", support: "policy_only", evidence: [{ chunkId: observed.id, quote: observed.excerpt }] }] } }),
+      });
+      assert.equal(outcome.kind, "resolved");
+      if (outcome.kind !== "resolved") throw new Error("Expected policy-only procedure resolution");
+      assert.equal(outcome.escalate, true);
+      assert.equal(outcome.response.status, "insufficient");
+      assert.ok(outcome.response.answer.includes(observed.excerpt));
+      assert.ok(outcome.response.answer.includes("현재 제공된 근거에서 구체적인 작업 절차"));
+      const { client, notifications } = fakeEscalationClient();
+      const payloads: Row[] = [];
+      for (const attempt of [1, 2]) {
+        await finalizeRagQueryResponse({ httpStatus: 200, question: observed.question, storeId: STORE_A, response: outcome.response,
+          afterQuestionLogSaved: async (result) => { if (result.saved && result.questionLogId) await escalateQuestionLogToStoreOwners(client, { questionLogId: result.questionLogId, storeId: STORE_A }); },
+        }, input => saveQuestionLog(input, async payload => { payloads.push(payload); return { error: null, id: LOG_ID }; }));
+        assert.equal(notifications.length, 1, `same-log attempt ${attempt}`);
+      }
+      assert.equal(payloads[0].status, "insufficient");
+      assert.equal(payloads[0].source_manual_id, manualId);
+      assert.ok(Math.abs(Number(payloads[0].similarity_score) - observed.raw - .15) < 1e-12);
+      assert.equal(notifications[0].recipient_user_id, OWNER_A);
+      assert.equal(notifications.some((row) => row.recipient_user_id === OWNER_B), false);
+    }
+  });
+
+  test("policy-only answer saves insufficient with its cited source and notifies only scoped owners once", async () => {
+    const manualId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const outcome = await resolveRagAnswer({ question: "유제품 보관 기준은?", thresholds: { answered: 0.6, cautious: 0.4 },
+      noManualAnswer: "근거 부족", cautionNotice: "확인 권장", requireCoverage: true }, {
+      search: async () => [{ chunk_id: "policy", manual_id: manualId, title: "재고 관리", category: "재고", content: "미등록 보관 기준은 관리자에게 확인한다.", raw_similarity_score: 0.8, keyword_boost: 0, similarity_score: 0.8 }],
+      generate: async () => JSON.stringify({ answerable: true, coverage: "policy_only", answer: "구체 기준은 관리자에게 확인해야 합니다.", usedChunkIds: ["policy"] }),
+    });
+    assert.equal(outcome.kind, "resolved");
+    if (outcome.kind !== "resolved") throw new Error("Expected resolved policy guidance");
+    const { client, notifications } = fakeEscalationClient();
+    const payloads: Row[] = [];
+    for (const attempt of [1, 2]) {
+      await finalizeRagQueryResponse({ httpStatus: 200, question: "유제품 보관 기준은?", storeId: STORE_A, response: outcome.response,
+        afterQuestionLogSaved: async (result) => { if (outcome.escalate && result.saved && result.questionLogId) await escalateQuestionLogToStoreOwners(client, { questionLogId: result.questionLogId, storeId: STORE_A }); },
+      }, input => saveQuestionLog(input, async payload => { payloads.push(payload); return { error: null, id: LOG_ID }; }));
+      assert.equal(notifications.length, 1, `attempt ${attempt}`);
+    }
+    assert.equal(payloads[0].status, "insufficient");
+    assert.equal(payloads[0].source_manual_id, manualId);
+    assert.equal(payloads[0].similarity_score, 0.8);
+    assert.equal(notifications[0].recipient_user_id, OWNER_A);
+    assert.equal(outcome.response.source?.manualId, manualId);
+  });
+
   test("검증된 storeId가 question_logs.store_id로 기록된다", async () => {
     const { client } = fakeEscalationClient();
     const { savedPayloads } = await runInsufficientFlow({ storeId: STORE_A, escalationClient: client });
@@ -377,7 +456,7 @@ describe("app/api/rag/query/route.ts 연결 계약", () => {
   });
 
   test("저장 성공과 로그 id를 확인한 뒤에만 알림을 보낸다", () => {
-    assert.match(followUpSource, /if \(!logResult\.saved \|\| !logResult\.questionLogId\) \{\s*\n\s*return;/);
+    assert.match(followUpSource, /if \(!logResult\.saved \|\| !logResult\.questionLogId\) \{[^}]*LOG_NOT_SAVED[\s\S]*?return;/);
   });
 
   test("클라이언트가 보낸 franchise id를 알림에 쓰지 않는다", () => {
@@ -388,7 +467,7 @@ describe("app/api/rag/query/route.ts 연결 계약", () => {
   test("fire-and-forget이 아니라 응답 전에 await 한다", () => {
     assert.equal(/void escalateQuestionLogToStoreOwners/.test(followUpSource), false);
     assert.match(followUpSource, /const result = await escalateQuestionLogToStoreOwners\(/);
-    assert.match(followUpSource, /const repeated = await notifyRepeatedQuestion\(/);
+    assert.match(followUpSource, /repeated = await notifyRepeatedQuestion\(/);
   });
 
   test("에스컬레이션 실패를 응답에 섞지 않는다", () => {

@@ -45,7 +45,7 @@ export async function finalizeRagQueryResponse(
   input: RagQueryFinalizationInput,
   saver: RagQueryFinalizationSaver,
 ): Promise<RagQueryFinalizationInput["response"]> {
-  if (input.httpStatus !== 200 || !isSuccessfulRagResponse(input.response)) {
+  if (input.httpStatus !== 200 || !isSuccessfulRagResponse(input.response) || input.response.responseKind === "clarification") {
     return input.response;
   }
 
@@ -65,5 +65,5 @@ export async function finalizeRagQueryResponse(
     }
   }
 
-  return input.response;
+  return saveResult.saved ? input.response : { ...input.response, questionLogSaveError: "QUESTION_LOG_SAVE_FAILED" };
 }

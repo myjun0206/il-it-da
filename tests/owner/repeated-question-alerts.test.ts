@@ -283,6 +283,31 @@ describe("반복 질문 알림 (가짜 저장소·알림 client, 고정 시각�
     assert.equal(fake.tables.repeated_question_alerts[0].category, "guidance_gap_candidate");
   });
 
+  test("follow-up diagnostics preserve save guards, scoped notification retry and omit recipient IDs", async () => {
+    const fake = createFake({ now: () => new Date() });
+    const events: Record<string, unknown>[] = [];
+    let clientCalls = 0;
+    const followUp = createQuestionLogFollowUp({ storeId: STORE_A, escalate: true, getClient: () => { clientCalls++; return fake.client; },
+      onDiagnostic: (event) => events.push(event) });
+    await followUp({ saved: false, code: "QUESTION_LOG_SAVE_FAILED" });
+    assert.equal(clientCalls, 0);
+    assert.equal(events[0].reason, "LOG_NOT_SAVED");
+    const questionLogId = fake.addLog("fixture pending question", { status: "insufficient" });
+    await followUp({ saved: true, questionLogId });
+    await followUp({ saved: true, questionLogId });
+    assert.equal(fake.escalationNotifications().length, 1);
+    const single = events.filter((event) => event.stage === "escalation" && event.status === "notified");
+    assert.equal(single[0].notifiedCount, 1);
+    assert.equal(single[1].skippedCount, 1);
+    for (const privateValue of [OWNER_A, OWNER_B, STAFF_A, "fixture pending question"]) assert.equal(JSON.stringify(events).includes(privateValue), false);
+    const noOwner = createFake({ memberships: [], now: () => new Date() });
+    await createQuestionLogFollowUp({ storeId: STORE_A, escalate: true, getClient: () => noOwner.client,
+      onDiagnostic: (event) => events.push(event) })({ saved: true, questionLogId: noOwner.addLog("another fixture", { status: "insufficient" }) });
+    assert.ok(events.some((event) => event.stage === "escalation" && event.status === "no_recipient"));
+    await createQuestionLogFollowUp({ storeId: STORE_A, escalate: false, getClient: () => fake.client,
+      onDiagnostic: () => { throw new Error("fixture diagnostics failed"); } })({ saved: true, questionLogId });
+  });
+
   test("H. insufficient 반복은 단건 보류 알림과 반복 알림을 각각 유지한다", async () => {
     const fake = createFake({ now: () => new Date() });
     const followUp = createQuestionLogFollowUp({ storeId: STORE_A, escalate: true, getClient: () => fake.client });

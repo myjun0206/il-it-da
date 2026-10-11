@@ -3,6 +3,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const CONVERSATION_TITLE_MAX_LENGTH = 36;
 
+export function isMissingResponseKindColumn(error: { code?: string; message?: string } | null | undefined): boolean {
+  return (error?.code === "42703" || error?.code === "PGRST204") && Boolean(error.message?.includes("response_kind"));
+}
+
 /** 첫 질문으로 대화 제목을 만든다. (별도 AI 호출 없이 공백 정리 + 길이 제한) */
 export function buildConversationTitle(question: string): string {
   const normalized = question.replace(/\s+/g, " ").trim();
@@ -16,6 +20,7 @@ export function isMissingConversationTable(error: { code?: string } | null | und
 }
 
 export interface ConversationMessageDto {
+  responseKind?: "answer" | "clarification" | null;
   id: string;
   role: "user" | "assistant";
   content: string;
@@ -175,14 +180,17 @@ export async function getStaffConversationDetail(
   }
   if (!membership) return notFound;
 
-  const [{ data: messages, error: messageError }, { data: store }] = await Promise.all([
-    adminClient
-      .from("conversation_messages")
-      .select("id, role, content, status, source_title, source_category, similarity, created_at")
-      .eq("conversation_id", conversation.id)
-      .order("created_at", { ascending: true }),
+  const messageColumns = "id, role, content, status, source_title, source_category, similarity, created_at";
+  const readMessages = (columns: string) => adminClient.from("conversation_messages").select(columns)
+    .eq("conversation_id", conversation.id).order("created_at", { ascending: true });
+  const [messageResult, { data: store }] = await Promise.all([
+    readMessages(`${messageColumns}, response_kind`),
     adminClient.from("stores").select("store_name").eq("id", conversation.store_id).maybeSingle<{ store_name: string }>(),
   ]);
+  let { data: messages, error: messageError } = messageResult;
+  if (isMissingResponseKindColumn(messageError)) {
+    ({ data: messages, error: messageError } = await readMessages(messageColumns));
+  }
 
   if (messageError) {
     console.error("[STAFF_CONVERSATIONS] Failed to fetch messages:", {
@@ -194,6 +202,7 @@ export async function getStaffConversationDetail(
   }
 
   type MessageRow = {
+    response_kind?: "answer" | "clarification" | null;
     id: string;
     role: ConversationMessageDto["role"];
     content: string;
@@ -214,7 +223,8 @@ export async function getStaffConversationDetail(
       updatedAt: conversation.updated_at,
       canContinue: true,
     },
-    messages: ((messages ?? []) as MessageRow[]).map((row) => ({
+    messages: ((messages ?? []) as unknown as MessageRow[]).map((row) => ({
+      responseKind: row.role === "assistant" && (row.response_kind === "answer" || row.response_kind === "clarification") ? row.response_kind : null,
       id: row.id,
       role: row.role,
       content: row.content,

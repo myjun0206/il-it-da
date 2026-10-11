@@ -20,6 +20,7 @@ export type RagSearchMatch = {
 };
 
 export type RagQuerySuccessResponse = {
+  responseKind?: "answer" | "clarification";
   answer: string;
   similarity: number | null;
   /** 하위 호환용 대표 출처. sources[0]과 같다. */
@@ -28,15 +29,18 @@ export type RagQuerySuccessResponse = {
   sources?: RagSource[];
   status?: RagStatus;
   matches: RagSearchMatch[];
+  questionLogSaveError?: "QUESTION_LOG_SAVE_FAILED";
 };
 
 export type RagQueryErrorResponse = {
   error: string;
+  code?: "SEARCH_FAILED" | "GENERATION_FAILED" | "GENERATION_UNPARSABLE" | "RAG_QUERY_FAILED";
 };
 
 export type RagQueryResponse = RagQuerySuccessResponse | RagQueryErrorResponse;
 
 export type ManualChunkMatch = {
+  diagnostic_scope?: "hq" | "store" | "unknown";
   chunk_id: string;
   manual_id: string;
   title: string;

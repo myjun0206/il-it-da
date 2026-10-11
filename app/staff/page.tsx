@@ -20,6 +20,7 @@ import { createClient } from "@/lib/supabase/client";
 type Message = {
   from: "ai" | "me";
   text: string;
+  responseKind?: "answer" | "clarification";
   /** 비어 있으면 시간 표시 생략 (안내 메시지) */
   time: string;
   status?: RagStatus;
@@ -33,6 +34,7 @@ type ConversationDetail = {
 };
 
 const statusBadgeConfig = {
+  clarification: { label: "질문 확인", icon: Info, className: "border border-[var(--color-border)] bg-[var(--color-bg-light-mint)] text-[var(--color-text-primary)]" },
   answered: { label: "매뉴얼 기반 답변", icon: CheckCircle2, className: "border border-[var(--color-badge-answered-border)] bg-[var(--color-badge-answered-bg)] text-[var(--color-badge-answered-text)]" },
   cautious: { label: "확인 권장", icon: AlertCircle, className: "border border-[var(--color-badge-cautious-border)] bg-[var(--color-badge-cautious-bg)] text-[var(--color-badge-cautious-text)]" },
   insufficient: { label: "관리자 확인 필요", icon: Info, className: "border border-[var(--color-badge-insufficient-border)] bg-[var(--color-badge-insufficient-bg)] text-[var(--color-badge-insufficient-text)]" },
@@ -95,6 +97,7 @@ function toChatMessages(rows: ConversationMessageDto[]): Message[] {
   return rows.map((row) => {
     const message: Message = { from: row.role === "user" ? "me" : "ai", text: row.content, time: formatMessageTime(row.createdAt) };
     if (row.role === "assistant") {
+      if (row.responseKind === "answer" || row.responseKind === "clarification") message.responseKind = row.responseKind;
       if (isRagStatus(row.status)) message.status = row.status;
       if (row.sourceTitle || row.sourceCategory) {
         message.source = { title: row.sourceTitle ?? undefined, category: row.sourceCategory ?? undefined };
@@ -359,6 +362,7 @@ export default function StaffPage() {
       if (!response.ok || !answer) throw new Error(error);
 
       const message: Message = { from: "ai", text: answer, time: formatMessageTime(new Date()) };
+      if (payload.responseKind === "answer" || payload.responseKind === "clarification") message.responseKind = payload.responseKind;
       if (isRagStatus(payload.status)) message.status = payload.status;
 
       const source = normalizeSource(payload.source);
@@ -370,15 +374,20 @@ export default function StaffPage() {
 
       setMessages(current => [...current, message]);
 
+      const saveWarnings: string[] = [];
+      if (payload.questionLogSaveError === "QUESTION_LOG_SAVE_FAILED") {
+        saveWarnings.push("답변은 표시했지만 질문 기록을 저장하지 못했습니다. 관리자 확인이 필요하면 직접 알려주세요.");
+      }
       // 새 대화인데 conversationId가 저장되지 않은 경우 감지
       if (typeof payload.conversationId === "string" && payload.conversationId) {
         setConversationId(payload.conversationId);
         writeStaffConversationId(payload.conversationId);
-      } else if (!conversationId) {
-        // 새 대화 시작 중이었는데 저장 실패
-        const saveErr = typeof payload.saveError === "string" ? payload.saveError : "대화 기록을 저장하지 못했습니다.";
-        setErrorMessage(saveErr);
       }
+      if (payload.historyAvailable === false || !conversationId && !(typeof payload.conversationId === "string" && payload.conversationId)) {
+        const saveErr = typeof payload.saveError === "string" ? payload.saveError : "대화 기록을 저장하지 못했습니다.";
+        saveWarnings.push(saveErr);
+      }
+      if (saveWarnings.length) setErrorMessage(saveWarnings.join(" "));
     } catch {
       if (previousStoreIdRef.current !== selectedStore.id) return;
       setErrorMessage("답변을 불러오지 못했어요. 잠시 후 다시 시도해주세요.");
@@ -592,10 +601,12 @@ export default function StaffPage() {
 }
 
 function MessageBubble({ message, showIcon = true }: { message: Message; showIcon?: boolean }) {
-  const badge = message.from === "ai" && message.status ? statusBadgeConfig[message.status] : null;
+  const badge = message.from !== "ai" ? null : message.responseKind === "clarification"
+    ? statusBadgeConfig.clarification : message.status ? statusBadgeConfig[message.status] : null;
   const StatusIcon = badge?.icon;
   const hasSource = message.from === "ai" && (message.source?.title || message.source?.category);
-  const similarityPercent = typeof message.similarity === "number" ? Math.min(100, Math.max(0, Math.round(message.similarity * 100))) : null;
+  const evidenceRelevance = typeof message.similarity === "number" && Number.isFinite(message.similarity)
+    ? Math.min(1, Math.max(0, message.similarity)).toFixed(2) : null;
 
   return (
     <div className={`flex items-end gap-3 ${message.from === "me" ? "justify-end" : "justify-start"}`}>
@@ -640,15 +651,18 @@ function MessageBubble({ message, showIcon = true }: { message: Message; showIco
 
                 {/* Source Info - Inside the accent line group */}
                 {hasSource && (
-                  <div className="mt-4 pt-3 border-t border-[var(--color-border)] flex items-center justify-between gap-3">
+                  <div className="mt-4 pt-3 border-t border-[var(--color-border)] flex flex-col gap-2">
                     <div className="flex items-center gap-2 flex-1 min-w-0">
                       <span className="text-sm flex-shrink-0">📖</span>
                       <p className="text-xs font-medium text-[var(--color-message-user-text)] truncate">
                         {[message.source?.title, message.source?.category].filter(Boolean).join(" · ")}
                       </p>
                     </div>
-                    {similarityPercent !== null && (
-                      <p className="text-xs font-semibold text-[var(--color-message-user-text)] flex-shrink-0 whitespace-nowrap">{similarityPercent}%</p>
+                    {evidenceRelevance !== null && (
+                      <div className="text-xs break-words">
+                        <p className="font-semibold text-[var(--color-message-user-text)]">인용 근거 관련도 {evidenceRelevance}</p>
+                        <p className="mt-1 text-[var(--color-text-tertiary)]">정답 확률이나 답변의 완전성을 뜻하지 않습니다</p>
+                      </div>
                     )}
                   </div>
                 )}
