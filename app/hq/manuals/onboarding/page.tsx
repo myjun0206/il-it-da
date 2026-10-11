@@ -3,9 +3,11 @@ import { manualSaveMessage } from "@/lib/manuals/manual-save-result";
 
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { UploadCloud, Loader2, ArrowLeft, Download, Check, X } from "lucide-react";
+import { ArrowLeft, Download, Check } from "lucide-react";
 import { Button } from "@/components/common/Button";
-import { ManualPreviewEditor, type ManualEditState } from "@/components/manuals/ManualPreviewEditor";
+import type { ManualEditState } from "@/components/manuals/ManualPreviewEditor";
+import ManualFileDropzone from "@/components/manuals/ManualFileDropzone";
+import ManualUploadReviewModal from "@/components/manuals/ManualUploadReviewModal";
 import { createClient } from "@/lib/supabase/client";
 import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import { MAX_UPLOAD_FILE_SIZE_BYTES, isFileSizeWithinLimit } from "@/lib/manuals/upload-limits";
@@ -34,12 +36,10 @@ type PendingLeave = { title: string; run: () => void };
 
 export default function ManualOnboardingPage() {
   const router = useRouter();
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const isLeavingRef = useRef(false);
   // isSaving state와 별개로, 같은 클릭이 겹쳐 들어오는 것까지 막는 동기 가드.
   const isSubmittingRef = useRef(false);
   const [step, setStep] = useState<Step>("upload");
-  const [isDragging, setIsDragging] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [preview, setPreview] = useState<ManualUploadPreview | null>(null);
@@ -176,21 +176,6 @@ export default function ManualOnboardingPage() {
     },
     [isAnalyzing],
   );
-
-  const openFilePicker = () => {
-    if (isAnalyzing) return;
-    fileInputRef.current?.click();
-  };
-
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragging(false);
-    if (isAnalyzing) return;
-    const file = e.dataTransfer.files?.[0];
-    if (file) {
-      handleFile(file);
-    }
-  };
 
   const resetToUpload = () => {
     setPreview(null);
@@ -369,77 +354,12 @@ export default function ManualOnboardingPage() {
                 </p>
               </div>
 
-              <div
-                role="button"
-                tabIndex={isAnalyzing ? -1 : 0}
-                aria-busy={isAnalyzing}
-                aria-disabled={isAnalyzing}
-                aria-label="매뉴얼 파일 선택"
-                onClick={openFilePicker}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    openFilePicker();
-                  }
-                }}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  if (!isAnalyzing) setIsDragging(true);
-                }}
-                onDragLeave={() => setIsDragging(false)}
-                onDrop={handleDrop}
-                className={`flex min-h-[360px] flex-col items-center justify-center bg-white rounded-2xl border-2 border-dashed p-8 sm:p-12 text-center transition-colors shadow-sm break-keep focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/40 ${
-                  isAnalyzing
-                    ? "cursor-wait opacity-80 border-[var(--color-border)]"
-                    : isDragging
-                      ? "cursor-pointer border-[var(--color-primary)] bg-[var(--color-bg-surface)]"
-                      : "cursor-pointer border-[var(--color-border)] hover:border-[var(--color-primary)]"
-                }`}
-              >
-                {isAnalyzing ? (
-                  <Loader2 size={48} className="mb-5 animate-spin text-[var(--color-primary)]" />
-                ) : (
-                  <UploadCloud size={48} className="mb-5 text-[var(--color-primary)]" />
-                )}
-                <p className="text-lg sm:text-xl font-semibold text-[var(--color-text-primary)] mb-2">
-                  {isAnalyzing ? "파일을 분석하고 있어요..." : "파일을 올려주세요."}
-                </p>
-                <p className="text-sm text-[var(--color-text-secondary)] mb-6">
-                  {isAnalyzing
-                    ? "잠시만 기다려주세요."
-                    : "클릭하거나 파일을 이 영역으로 드래그하세요."}
-                </p>
-
-                <div className="flex flex-wrap items-center justify-center gap-2">
-                  {SUPPORTED_EXTENSIONS.map((ext) => (
-                    <span
-                      key={ext}
-                      className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-default)] px-3 py-1 text-xs font-medium text-[var(--color-text-secondary)]"
-                    >
-                      {ext}
-                    </span>
-                  ))}
-                  <span className="text-xs text-[var(--color-text-tertiary)]">
-                    · 최대 {MAX_UPLOAD_MB}MB · PDF는 준비 중
-                  </span>
-                </div>
-
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept={SUPPORTED_EXTENSIONS.join(",")}
-                  className="hidden"
-                  disabled={isAnalyzing}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    // 같은 파일을 다시 선택해도 change 이벤트가 발생하도록 초기화한다.
-                    e.target.value = "";
-                    if (file) {
-                      handleFile(file);
-                    }
-                  }}
-                />
-              </div>
+              <ManualFileDropzone
+                isAnalyzing={isAnalyzing}
+                supportedExtensions={SUPPORTED_EXTENSIONS}
+                maxUploadMb={MAX_UPLOAD_MB}
+                onFileSelected={handleFile}
+              />
 
               {error && (
                 <p className="mt-4 text-center text-sm text-[var(--color-status-error)] break-keep">
@@ -463,71 +383,21 @@ export default function ManualOnboardingPage() {
       </main>
 
       {step === "review" && preview && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-4 sm:px-6"
-          onClick={() => handleReupload()}
-        >
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="manual-preview-title"
-            className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-xl"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <button
-              type="button"
-              onClick={handleReupload}
-              disabled={isSaving}
-              aria-label="미리보기 닫기"
-              className="absolute right-4 top-4 z-10 rounded-md p-1 text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-default)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
-            >
-              <X size={20} aria-hidden="true" />
-            </button>
-
-            <div className="shrink-0 border-b border-[var(--color-border)] px-5 py-4 pr-14 sm:px-6">
-              <h2 id="manual-preview-title" className="mb-1 text-lg font-bold text-[var(--color-text-primary)]">
-                AI 분석 결과 미리보기
-              </h2>
-              <p className="text-sm text-[var(--color-text-secondary)]">
-                세부 매뉴얼 {preview.totalDetailManualCount}개 · 카테고리 {preview.topCategoryCount}개
-              </p>
-            </div>
-
-            <p role="status" aria-live="polite" className="sr-only">
-              {isSaving ? "매뉴얼을 저장하고 있어요." : ""}
-            </p>
-
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 overscroll-contain sm:px-6 sm:py-5">
-              <ManualPreviewEditor
-                preview={preview}
-                categoryLabels={categoryLabels}
-                manualEdits={manualEdits}
-                collapsedCategories={collapsedCategories}
-                onCategoryLabelChange={handleCategoryLabelChange}
-                onManualTitleChange={handleManualTitleChange}
-                onManualCategoryMove={handleManualCategoryMove}
-                onManualExcludeToggle={handleManualExcludeToggle}
-                onToggleCategoryCollapsed={toggleCategoryCollapsed}
-              />
-              {error && (
-                <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-[var(--color-status-error)] break-keep">
-                  {error}
-                </p>
-              )}
-            </div>
-
-            <div className="shrink-0 border-t border-[var(--color-border)] bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:px-6 sm:py-4">
-              <div className="flex gap-3">
-                <Button variant="ghost" className="flex-1" onClick={handleReupload} disabled={isSaving}>
-                  취소
-                </Button>
-                <Button variant="primary" className="flex-1" isLoading={isSaving} disabled={isSaving} onClick={handleSave}>
-                  일괄 등록
-                </Button>
-              </div>
-            </div>
-          </section>
-        </div>
+        <ManualUploadReviewModal
+          preview={preview}
+          categoryLabels={categoryLabels}
+          manualEdits={manualEdits}
+          collapsedCategories={collapsedCategories}
+          error={error}
+          isSaving={isSaving}
+          onCategoryLabelChange={handleCategoryLabelChange}
+          onManualTitleChange={handleManualTitleChange}
+          onManualCategoryMove={handleManualCategoryMove}
+          onManualExcludeToggle={handleManualExcludeToggle}
+          onToggleCategoryCollapsed={toggleCategoryCollapsed}
+          onClose={handleReupload}
+          onSave={() => void handleSave()}
+        />
       )}
 
       {/* 승인 전 정리 결과를 버리고 나갈 때 확인 모달 */}

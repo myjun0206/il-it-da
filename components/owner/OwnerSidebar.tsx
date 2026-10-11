@@ -31,7 +31,7 @@ export default function OwnerSidebar({
   const menuItems = [
     { id: "home", label: "홈", icon: House, href: "/boss" },
     { id: "manual-common", label: "공통 매뉴얼 관리", icon: BookOpen, href: "/boss/manuals" },
-    { id: "manual-store", label: "지점 매뉴얼 관리", icon: FileText, href: "/boss/store-manuals" },
+    { id: "manual-store", label: "지점 매뉴얼", icon: FileText, href: "/boss/store-manuals" },
     { id: "staff", label: "직원 관리", icon: Users, href: "/boss/employees" },
     { id: "questions", label: "보류 질문", icon: MessageCircleQuestionMark, href: "/boss/questions" },
     { id: "stores", label: "운영 매장", icon: Store, href: "/boss/stores" },

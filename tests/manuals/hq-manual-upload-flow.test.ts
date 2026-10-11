@@ -198,8 +198,12 @@ describe("HQ 공통 매뉴얼 화면의 공식 업로드 경로", () => {
   });
 
   test("저장 진행 상태를 aria-live로 알리고 오류는 role=alert로 알린다", () => {
-    assert.match(onboardingPage, /role="status" aria-live="polite"/);
-    assert.match(onboardingPage, /role="alert"/);
+    const reviewModal = readSource("components/manuals/ManualUploadReviewModal.tsx");
+    assert.match(onboardingPage, /<ManualUploadReviewModal/);
+    assert.match(onboardingPage, /isSaving=\{isSaving\}/);
+    assert.match(onboardingPage, /error=\{error\}/);
+    assert.match(reviewModal, /role="status" aria-live="polite"/);
+    assert.match(reviewModal, /role="alert"/);
   });
 
   test("확인이 필요한 이동은 window.confirm이 아니라 기존 확인 UI를 쓴다", () => {
