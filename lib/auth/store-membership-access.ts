@@ -8,13 +8,13 @@ export async function getStoreMembershipAccess(
   adminClient: SupabaseClient,
   userId: string,
 ): Promise<StoreMembershipAccess> {
-  const { data, error } = await adminClient
+  const { data: membershipData, error } = await adminClient
     .from("store_memberships")
     .select("status")
-    .eq("user_id", userId)
-    .returns<MembershipStatusRow[]>();
+    .eq("user_id", userId);
 
   if (error) return "ERROR";
+  const data = membershipData as MembershipStatusRow[] | null;
   if (data?.some((membership) => membership.status === "approved")) return "ACTIVE";
   if (data?.some((membership) => membership.status === "pending")) return "PENDING";
   return "UNLINKED";

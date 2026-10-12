@@ -201,7 +201,7 @@ export default function BossQuestionDetailView({
   const userName = detail.kind === "ready" ? detail.userName : "점주";
 
   return (
-    <div className="h-dvh overflow-hidden bg-[var(--color-bg-default)] flex">
+    <div className="h-dvh overflow-hidden bg-[var(--color-bg-default)] flex max-sm:h-auto max-sm:min-h-dvh max-sm:overflow-visible">
       <OwnerSidebar activeMenu="questions" onLogout={handleLogout} />
       <div className="min-h-0 min-w-0 flex-1 ml-0 lg:ml-[240px] flex flex-col">
         {detail.kind === "loading" ? (
@@ -210,7 +210,7 @@ export default function BossQuestionDetailView({
           <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
         )}
 
-        <main className="min-h-0 flex-1 overflow-y-auto">
+        <main className="min-h-0 flex-1 overflow-y-auto max-sm:overflow-visible">
           <div className="p-6 lg:p-8 w-full">
            <div className="w-full">
             {/* 상단: 뒤로가기 + 제목 + 상태 배지 */}

@@ -410,11 +410,11 @@ export default function StaffPage() {
   }
 
   return (
-    <div className="h-full p-6 lg:p-8">
-          <div className="max-w-7xl mx-auto h-full flex flex-col">
+        <div className="h-full min-h-0 overflow-hidden px-1 pt-14 sm:h-full sm:min-h-[calc(100dvh-4rem)] sm:overflow-visible sm:p-4 sm:pb-4 md:p-6 lg:p-8">
+          <div className="mx-auto flex h-full min-h-0 max-w-7xl flex-col sm:h-full sm:min-h-0">
             {/* Title Section */}
-            <div className="mb-8 flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
-              <div className="min-w-0">
+          <div className="fixed inset-x-0 top-16 z-40 flex h-14 shrink-0 items-center justify-start bg-[var(--color-bg-default)] px-1 sm:static sm:mt-0 sm:mb-3 sm:h-auto sm:justify-between sm:bg-transparent sm:px-0 sm:py-0 md:mb-8 sm:z-auto flex-wrap gap-3">
+              <div className="hidden min-w-0 md:block">
                 <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
                   일잇다 AI
                 </h1>
@@ -486,9 +486,9 @@ export default function StaffPage() {
 
 
             {/* Chat Container - takes remaining space */}
-            <div className="bg-[var(--color-bg-surface)] border border-[var(--color-border)] rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
+            <div className="bg-[var(--color-bg-surface)] border border-[var(--color-border)] rounded-lg overflow-hidden flex flex-col flex-1 min-h-0 sm:min-h-0">
             {/* Messages Area - Only this scrolls */}
-            <div ref={messagesAreaRef} className="flex-1 overflow-y-auto space-y-6 p-6 min-h-0">
+            <div ref={messagesAreaRef} className="flex-1 min-h-0 overflow-y-auto space-y-3 sm:space-y-6 p-1 sm:min-h-0 sm:p-6">
               {/* Date Indicator */}
               <div className="flex justify-center">
                 <span className="flex items-center gap-1.5 rounded-full bg-[var(--color-bg-surface)] px-3 py-1.5 text-xs font-semibold text-[var(--color-text-secondary)]">
@@ -537,11 +537,12 @@ export default function StaffPage() {
               )}
             </div>
 
-            {/* Quick Questions - Scrollable with drag support */}
-            <QuickQuestionsScroller questions={quickQuestions} canAsk={canAsk} onSelectQuestion={submitQuestion} />
+            <div className="shrink-0 bg-transparent">
+              {/* Quick Questions - Scrollable with drag support */}
+              <QuickQuestionsScroller questions={quickQuestions} canAsk={canAsk} onSelectQuestion={submitQuestion} />
 
-            {/* Input Area - Fixed at bottom */}
-            <div className="bg-[var(--color-bg-surface)] px-4 pt-3 pb-4 flex-shrink-0">
+              {/* Input Area - Fixed at bottom on mobile */}
+              <div className="bg-[var(--color-bg-surface)] mb-0 px-1 pt-0 pb-0 sm:px-4 sm:pt-3 sm:pb-4 flex-shrink-0">
               {readOnlyStoreName !== null && (
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-status-warning)] bg-[var(--color-status-warning)]/10 px-4 py-2.5 text-sm text-[var(--color-status-warning)]" role="note">
                   <span className="flex min-w-0 items-start gap-1.5">
@@ -588,6 +589,7 @@ export default function StaffPage() {
                   <Send size={20} />
                 </button>
               </form>
+              </div>
             </div>
           </div>
           </div>
@@ -627,7 +629,7 @@ function MessageBubble({ message, showIcon = true, allowFullSupportBadge = false
         <div className="h-9 w-9 flex-shrink-0" />
       )}
 
-      <div className={`max-w-[65%] ${message.from === "me" ? "items-end" : "items-start"} flex flex-col`}>
+      <div className={`min-w-0 w-full max-w-[calc(100%-3rem)] sm:min-w-auto sm:w-auto sm:max-w-[65%] ${message.from === "me" ? "items-end" : "items-start"} flex flex-col`}>
         {message.from === "ai" ? (
           <>
             {/* AI Answer - Document-style with left accent line */}
@@ -636,7 +638,7 @@ function MessageBubble({ message, showIcon = true, allowFullSupportBadge = false
               <div className="w-0.5 bg-[var(--color-primary)] flex-shrink-0" />
 
               {/* AI Answer Content */}
-              <div className="flex-1 flex flex-col">
+              <div className="min-w-0 sm:min-w-auto flex-1 flex flex-col">
                 {/* Status Badge - Small label */}
                 {badge && (
                   <div className={`mb-3 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold w-fit ${badge.className}`}>
@@ -662,7 +664,7 @@ function MessageBubble({ message, showIcon = true, allowFullSupportBadge = false
                 )}
                 <div className="text-base leading-relaxed text-[var(--color-text-primary)] space-y-3">
                   {message.text.split('\n\n').map((paragraph, idx) => (
-                    <div key={idx} className="whitespace-pre-wrap break-words">
+                    <div key={idx} className="whitespace-pre-wrap break-keep break-words sm:break-normal">
                       {paragraph}
                     </div>
                   ))}
@@ -720,7 +722,7 @@ function TypingIndicator() {
       <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-[var(--color-bg-light-mint)] text-[var(--color-primary)]">
         <Bot size={16} strokeWidth={2} />
       </div>
-      <div className="max-w-[65%] items-start flex flex-col">
+      <div className="min-w-0 w-full max-w-[calc(100%-3rem)] sm:min-w-auto sm:w-auto sm:max-w-[65%] items-start flex flex-col">
         <div role="status" aria-label="AI가 답변을 작성 중" className="flex gap-4 items-start">
           {/* Accent line placeholder for alignment */}
           <div className="w-0.5 bg-transparent flex-shrink-0" />
@@ -841,7 +843,7 @@ function QuickQuestionsScroller({ questions, canAsk, onSelectQuestion }: QuickQu
   }, [questions]);
 
   return (
-    <div className="bg-[var(--color-bg-surface)] px-5 py-3 flex-shrink-0 relative overflow-hidden">
+    <div className="bg-[var(--color-bg-surface)] px-2 py-2 sm:px-5 sm:py-3 flex-shrink-0 relative overflow-hidden">
       {/* Left Fade - 라이트모드: 흰색, 다크모드: 진한 남색 */}
       {showLeftFade && (
         <div className="absolute left-5 top-0 bottom-0 w-12 pointer-events-none z-10" style={{
@@ -880,7 +882,7 @@ function QuickQuestionsScroller({ questions, canAsk, onSelectQuestion }: QuickQu
             aria-label={`질문: ${question}`}
             disabled={!canAsk}
             onClick={(e) => handleButtonClick(e, question)}
-            className="shrink-0 whitespace-nowrap rounded-full border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-4 py-2.5 text-sm font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-primary-light)]/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)] select-none"
+            className="shrink-0 whitespace-nowrap rounded-full border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-4 py-2.5 text-base font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-primary-light)]/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)] select-none sm:text-sm"
           >
             {question}
           </button>

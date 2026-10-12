@@ -9,7 +9,7 @@ import {
   FileText,
   Users,
   Store,
-  Bell,
+  Megaphone,
   MessageCircleQuestionMark,
   Settings,
   LogOut,
@@ -35,7 +35,7 @@ export default function OwnerSidebar({
     { id: "staff", label: "직원 관리", icon: Users, href: "/boss/employees" },
     { id: "questions", label: "보류 질문", icon: MessageCircleQuestionMark, href: "/boss/questions" },
     { id: "stores", label: "운영 매장", icon: Store, href: "/boss/stores" },
-    { id: "notice", label: "공지사항", icon: Bell, href: "/boss/notices" },
+    { id: "notice", label: "공지사항", icon: Megaphone, href: "/boss/notices" },
   ];
 
   const bottomMenuItems = [

@@ -47,7 +47,7 @@ export default function StaffSidebar({
           onClick={() => setIsOpen(true)}
           aria-label="메뉴 열기"
           aria-expanded={isOpen}
-          className="fixed top-4 left-4 z-50 lg:hidden bg-white rounded-lg p-2 border border-(--color-border)"
+          className="fixed top-3 left-4 z-60 bg-white rounded-lg p-2 border border-(--color-border) sm:z-50 lg:hidden"
         >
           <Menu size={24} />
         </button>
@@ -55,7 +55,7 @@ export default function StaffSidebar({
 
       {/* Sidebar */}
       <aside
-        className={`fixed left-0 top-0 h-dvh bg-white border-r border-(--color-border) flex flex-col transition-transform duration-300 w-64 lg:w-[240px] z-40 ${
+        className={`fixed left-0 top-0 h-dvh bg-white border-r border-(--color-border) flex flex-col transition-transform duration-300 w-64 lg:w-[240px] z-[9999] sm:z-40 ${
           isOpen ? "translate-x-0" : "-translate-x-full"
         } lg:translate-x-0`}
       >
@@ -144,7 +144,7 @@ export default function StaffSidebar({
       {/* Mobile Overlay */}
       {isOpen && (
         <div
-          className="fixed inset-0 bg-black/20 z-30 lg:hidden"
+          className="fixed inset-0 bg-black/20 z-[9998] sm:z-30 lg:hidden"
           onClick={() => setIsOpen(false)}
         />
       )}

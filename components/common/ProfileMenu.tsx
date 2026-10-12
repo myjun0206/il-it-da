@@ -1,9 +1,24 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { Bell, Building2, ChevronDown, Mail, Phone, X } from "lucide-react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import ProfileAvatar from "@/components/common/ProfileAvatar";
+import { formatNotificationTime } from "@/lib/notifications";
+import { NOTIFICATIONS_CHANGED_EVENT } from "@/lib/notifications/escalation-popup";
+import { resolveNotificationClick } from "@/lib/notifications/notification-href";
+
+interface ProfileNotification {
+  id: string;
+  type: string;
+  title: string;
+  message: string;
+  targetUrl?: string | null;
+  relatedId?: string | null;
+  isRead: boolean;
+  createdAt: string;
+}
 
 interface ProfileMenuProps {
   userName: string;
@@ -15,6 +30,9 @@ interface ProfileMenuProps {
   avatarUrl?: string | null;
   /** 드롭다운에 표시할 현재 소속 정보 (예: 본사 관리자). 없으면 생략 */
   context?: { label: string; value: string };
+  /** 모바일 통합 모달에만 표시할 소속 정보 */
+  mobileContext?: { label: string; value: string };
+  notificationPageUrl?: string;
 }
 
 // HQ/Owner/Staff 헤더 우측의 사용자 정보 드롭다운
@@ -24,19 +42,167 @@ export default function ProfileMenu({
   roleLabel,
   avatarUrl,
   context,
+  mobileContext,
+  notificationPageUrl = "/notifications",
 }: ProfileMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [notifications, setNotifications] = useState<ProfileNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [isNotificationsLoading, setIsNotificationsLoading] = useState(false);
+  const [notificationError, setNotificationError] = useState("");
+  const [notificationToast, setNotificationToast] = useState("");
+  const [navigationTarget, setNavigationTarget] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const loadEmail = async () => {
-      const { data } = await createClient().auth.getUser();
-      setEmail(data.user?.email ?? "");
+    let isCancelled = false;
+    const supabase = createClient();
+
+    void (async () => {
+      const { data } = await supabase.auth.getUser();
+      if (isCancelled || !data.user) return;
+
+      setEmail(data.user.email ?? "");
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("phone")
+        .eq("id", data.user.id)
+        .maybeSingle<{ phone: string | null }>();
+      if (!isCancelled) {
+        const metadataPhone = data.user.user_metadata?.phone;
+        setPhone(profile?.phone ?? (typeof metadataPhone === "string" ? metadataPhone : ""));
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const refreshUnreadCount = async () => {
+      try {
+        const response = await fetch("/api/notifications?limit=1", { credentials: "include" });
+        if (isCancelled) return;
+        if (response.status === 401) {
+          setUnreadCount(0);
+          return;
+        }
+        const result = (await response.json()) as { success?: boolean; data?: { unreadCount?: number } };
+        if (response.ok && result.success && typeof result.data?.unreadCount === "number") {
+          setUnreadCount(result.data.unreadCount);
+        }
+      } catch {
+        // Keep the last known badge count when the notification service is unavailable.
+      }
     };
 
-    void loadEmail();
+    void refreshUnreadCount();
+    window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, refreshUnreadCount);
+    return () => {
+      isCancelled = true;
+      window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, refreshUnreadCount);
+    };
   }, []);
+
+  useEffect(() => {
+    if (!isMobileOpen) return;
+    const controller = new AbortController();
+
+    void (async () => {
+      setIsNotificationsLoading(true);
+      setNotificationError("");
+      try {
+        const response = await fetch("/api/notifications?limit=15", {
+          credentials: "include",
+          signal: controller.signal,
+        });
+        const result = (await response.json()) as {
+          success?: boolean;
+          data?: { notifications?: ProfileNotification[]; unreadCount?: number };
+          error?: string;
+        };
+        if (response.ok && result.success && result.data) {
+          setNotifications(result.data.notifications ?? []);
+          setUnreadCount(result.data.unreadCount ?? 0);
+        } else {
+          setNotificationError(result.error || "알림을 불러오지 못했습니다.");
+        }
+      } catch {
+        if (!controller.signal.aborted) setNotificationError("알림을 불러오지 못했습니다.");
+      } finally {
+        if (!controller.signal.aborted) setIsNotificationsLoading(false);
+      }
+    })();
+
+    return () => controller.abort();
+  }, [isMobileOpen]);
+
+  useEffect(() => {
+    if (!isMobileOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsMobileOpen(false);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isMobileOpen]);
+
+  useEffect(() => {
+    if (!notificationToast) return;
+    const timer = setTimeout(() => setNotificationToast(""), 2500);
+    return () => clearTimeout(timer);
+  }, [notificationToast]);
+
+  useEffect(() => {
+    if (navigationTarget) window.location.href = navigationTarget;
+  }, [navigationTarget]);
+
+  const handleMobileNotificationClick = async (notification: ProfileNotification) => {
+    if (!notification.isRead) {
+      try {
+        const response = await fetch(`/api/notifications/${notification.id}/mark-read`, {
+          method: "PUT",
+          credentials: "include",
+        });
+        if (response.ok) {
+          setNotifications((current) => current.map((item) =>
+            item.id === notification.id ? { ...item, isRead: true } : item,
+          ));
+          setUnreadCount((count) => Math.max(0, count - 1));
+          window.dispatchEvent(new Event(NOTIFICATIONS_CHANGED_EVENT));
+        }
+      } catch {
+        // Navigation should still work when marking as read fails.
+      }
+    }
+
+    const action = resolveNotificationClick(notification);
+    if (action.kind === "navigate") {
+      setNavigationTarget(action.href);
+    } else if (action.kind === "notice") {
+      setNotificationToast(action.message);
+    }
+  };
+
+  const handleMarkAllMobileNotificationsRead = async () => {
+    try {
+      const response = await fetch("/api/notifications/read-all", {
+        method: "PUT",
+        credentials: "include",
+      });
+      if (!response.ok) return;
+      setNotifications((current) => current.map((item) => ({ ...item, isRead: true })));
+      setUnreadCount(0);
+      window.dispatchEvent(new Event(NOTIFICATIONS_CHANGED_EVENT));
+    } catch {
+      setNotificationError("알림을 읽음 처리하지 못했습니다.");
+    }
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -62,11 +228,26 @@ export default function ProfileMenu({
     <div ref={menuRef} className="relative pl-3 sm:pl-6 border-l border-[var(--color-border)]">
       <button
         type="button"
+        onClick={() => setIsMobileOpen(true)}
+        aria-label={unreadCount > 0 ? `내 정보 및 알림, 읽지 않은 알림 ${unreadCount}개` : "내 정보 및 알림"}
+        aria-haspopup="dialog"
+        aria-expanded={isMobileOpen}
+        className="relative flex min-h-[44px] items-center rounded-lg p-1 sm:hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+      >
+        <ProfileAvatar name={userName} avatarUrl={avatarUrl} size="md" />
+        {unreadCount > 0 && (
+          <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold leading-none text-white">
+            {unreadCount > 99 ? "99+" : unreadCount}
+          </span>
+        )}
+      </button>
+      <button
+        type="button"
         onClick={() => setIsOpen((open) => !open)}
         aria-haspopup="menu"
         aria-expanded={isOpen}
         aria-controls="profile-menu"
-        className="flex min-h-[44px] items-center gap-3 rounded-lg px-2 -mx-2 transition-colors hover:bg-[var(--color-bg-default)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+        className="hidden min-h-[44px] items-center gap-3 rounded-lg px-2 -mx-2 transition-colors hover:bg-[var(--color-bg-default)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] sm:flex"
       >
         {/* 좁은 화면에서는 이름/소속 문구를 숨기고 아바타만 보여 준다. (드롭다운에 같은 정보가 있다) */}
         <span className="hidden text-right sm:block">
@@ -80,6 +261,105 @@ export default function ProfileMenu({
           className={`text-[var(--color-text-secondary)] transition-transform ${isOpen ? "rotate-180" : ""}`}
         />
       </button>
+
+      {isMobileOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-2 sm:hidden"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setIsMobileOpen(false);
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-label="내 정보 및 알림"
+            className="grid h-[min(620px,calc(100dvh-1rem))] w-full max-w-lg grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] overflow-hidden rounded-xl border border-[var(--color-border)] bg-white shadow-xl"
+          >
+            <aside className="flex min-w-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-bg-default)] p-3">
+              <p className="mb-5 text-[10px] font-bold uppercase text-[var(--color-text-tertiary)]">My Information</p>
+              <div className="mb-5 flex flex-col items-start gap-2">
+                <ProfileAvatar name={userName} avatarUrl={avatarUrl} size="md" />
+                <div className="min-w-0">
+                  <p className="break-words text-sm font-semibold text-[var(--color-text-primary)]">{userName}</p>
+                  <p className="mt-1 text-xs font-medium text-[var(--color-primary)]">{roleLabel || subtitle}</p>
+                </div>
+              </div>
+
+              <div className="space-y-4 text-[11px]">
+                {phone && (
+                  <div className="min-w-0">
+                    <p className="mb-1 flex items-center gap-1 text-[var(--color-text-tertiary)]"><Phone size={12} /> 연락처</p>
+                    <p className="break-all font-medium text-[var(--color-text-primary)]">{phone}</p>
+                  </div>
+                )}
+                {email && (
+                  <div className="min-w-0">
+                    <p className="mb-1 flex items-center gap-1 text-[var(--color-text-tertiary)]"><Mail size={12} /> 이메일</p>
+                    <p className="break-all font-medium text-[var(--color-text-primary)]">{email}</p>
+                  </div>
+                )}
+                {(mobileContext ?? context) && (
+                  <div className="min-w-0">
+                    <p className="mb-1 flex items-center gap-1 text-[var(--color-text-tertiary)]"><Building2 size={12} /> {(mobileContext ?? context)?.label}</p>
+                    <p className="break-words font-medium text-[var(--color-text-primary)]">{(mobileContext ?? context)?.value}</p>
+                  </div>
+                )}
+              </div>
+            </aside>
+
+            <div className="flex min-h-0 min-w-0 flex-col">
+              <header className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--color-border)] px-3 py-3">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <Bell size={16} className="shrink-0 text-[var(--color-primary)]" aria-hidden="true" />
+                  <h2 className="truncate text-sm font-semibold text-[var(--color-text-primary)]">Notifications</h2>
+                  {unreadCount > 0 && <span className="rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{unreadCount > 99 ? "99+" : unreadCount}</span>}
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  {unreadCount > 0 && (
+                    <button type="button" onClick={handleMarkAllMobileNotificationsRead} className="text-[10px] font-medium text-[var(--color-primary)]">모두 읽음</button>
+                  )}
+                  <button type="button" onClick={() => setIsMobileOpen(false)} aria-label="닫기" className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-default)]">
+                    <X size={18} aria-hidden="true" />
+                  </button>
+                </div>
+              </header>
+
+              <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                {isNotificationsLoading ? (
+                  <p className="py-8 text-center text-xs text-[var(--color-text-secondary)]">불러오는 중...</p>
+                ) : notificationError ? (
+                  <p role="alert" className="py-8 text-center text-xs text-red-600">{notificationError}</p>
+                ) : notifications.length === 0 ? (
+                  <p className="py-8 text-center text-xs text-[var(--color-text-secondary)]">새로운 알림이 없습니다.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {notifications.map((notification) => (
+                      <button
+                        key={notification.id}
+                        type="button"
+                        onClick={() => void handleMobileNotificationClick(notification)}
+                        className={`w-full rounded-lg border border-[var(--color-border)] p-2 text-left ${notification.isRead ? "bg-white" : "bg-[var(--color-primary-light)]/10"}`}
+                      >
+                        <p className="line-clamp-2 text-xs font-semibold text-[var(--color-text-primary)]">{notification.title}</p>
+                        <p className="mt-1 line-clamp-3 text-[11px] leading-4 text-[var(--color-text-secondary)]">{notification.message}</p>
+                        <p className="mt-1 text-[10px] text-[var(--color-text-tertiary)]">{formatNotificationTime(notification.createdAt)}</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <Link href={notificationPageUrl} onClick={() => setIsMobileOpen(false)} className="shrink-0 border-t border-[var(--color-border)] px-3 py-2.5 text-center text-xs font-semibold text-[var(--color-primary)]">알림 전체보기</Link>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {notificationToast && (
+        <div role="status" className="fixed bottom-6 left-1/2 z-[110] -translate-x-1/2 rounded-lg bg-[var(--color-text-primary)] px-4 py-3 text-sm text-white shadow-md sm:hidden">
+          {notificationToast}
+        </div>
+      )}
 
       {isOpen && (
         <div
