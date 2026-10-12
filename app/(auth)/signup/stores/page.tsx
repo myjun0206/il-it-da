@@ -28,8 +28,6 @@ export default function SignupStoresPage() {
   useLayoutEffect(() => {
     const savedRole = sessionStorage.getItem("signupRole") as UserRole | null;
     if (!savedRole) {
-      console.log("[SIGNUP_STEP4] Redirecting: signupRole is missing");
-      router.push("/signup/role");
       return;
     }
     if (savedRole === "hq") {
@@ -47,8 +45,6 @@ export default function SignupStoresPage() {
     const profileData = sessionStorage.getItem("signupProfile");
 
     if (!profileData) {
-      console.log("[SIGNUP_STEP4] Redirecting: signupProfile is missing");
-      router.replace("/signup/profile");
       return;
     }
 
@@ -108,6 +104,44 @@ export default function SignupStoresPage() {
     if (restoredStores.length > 0) {
       setSelectedStores(restoredStores);
     }
+  }, [router, role]);
+
+  useEffect(() => {
+    const savedRole = sessionStorage.getItem("signupRole");
+    const savedProfile = sessionStorage.getItem("signupProfile");
+    if (savedRole && savedProfile) return;
+
+    const restoreAuthenticatedProfile = async () => {
+      try {
+        const response = await fetch("/api/auth/session", { cache: "no-store" });
+        const session = await response.json() as {
+          authenticated?: boolean;
+          role?: string;
+          email?: string;
+          name?: string;
+          phone?: string;
+        };
+        if (!response.ok || !session.authenticated ||
+          (session.role !== "owner" && session.role !== "staff")) {
+          router.replace("/signup/role");
+          return;
+        }
+
+        const profile = {
+          email: session.email ?? "",
+          name: session.name ?? "",
+          phone: session.phone ?? "",
+          role: session.role,
+        };
+        sessionStorage.setItem("signupRole", session.role);
+        sessionStorage.setItem("signupProfile", JSON.stringify(profile));
+        setRole(session.role);
+      } catch {
+        router.replace("/");
+      }
+    };
+
+    void restoreAuthenticatedProfile();
   }, [router]);
 
   if (!role) {
