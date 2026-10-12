@@ -27,6 +27,78 @@ test("existing accounts are refused before a passwordless login mail", async () 
   assert.equal(result.ok, false);
   if (!result.ok) assert.equal(result.code, "EMAIL_EXISTS");
 });
+
+test("completed flow without its Auth account is unavailable, not an existing email, and sends no mail", async () => {
+  for (const lookup of [
+    { data: { user: null }, error: { status: 404 } },
+    { data: { user: null }, error: { status: 503 } },
+    { data: { user: { id: "old-user", email: "different@example.org" } }, error: null },
+  ]) {
+    const helper = loadComponentModule<{ prepareEmailFirstSignup: (email: string, role: string, action: string) => Promise<EmailFirstState> }>("lib/auth/owner-staff-signup-server.ts", {
+      "@/lib/supabase/admin": { createAdminClient: () => ({
+        rpc: async () => ({ data: { kind: "complete", userId: "old-user" }, error: null }),
+        auth: { admin: { getUserById: async () => lookup } },
+      }) },
+    }, { process });
+    const result = await sendEmailFirstOtp({ email: "  Person@Example.Org  ", role: "owner" }, {
+      action: "start", getSettings: settings, prepare: helper.prepareEmailFirstSignup,
+      auth: { signInWithOtp: async () => assert.fail("Orphaned or unverified completion must not send mail") },
+    });
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.status, 503);
+      assert.equal(result.code, "EMAIL_OTP_UNAVAILABLE");
+    }
+  }
+});
+
+test("completed flow with its matching Auth account remains an existing signup", async () => {
+  const helper = loadComponentModule<{ prepareEmailFirstSignup: (email: string, role: string, action: string) => Promise<EmailFirstState> }>("lib/auth/owner-staff-signup-server.ts", {
+    "@/lib/supabase/admin": { createAdminClient: () => ({
+      rpc: async () => ({ data: { kind: "complete", userId: user.id }, error: null }),
+      auth: { admin: { getUserById: async () => ({ data: { user }, error: null }) } },
+    }) },
+  }, { process });
+  assert.equal((await helper.prepareEmailFirstSignup(" PERSON@EXAMPLE.ORG ", "owner", "start")).kind, "complete");
+});
+
+test("only a confirmed Auth 404 may restart and overlapping starts send at most one OTP", async () => {
+  let reserved = false;
+  let restarts = 0;
+  let sends = 0;
+  let lookupStatus = 404;
+  const helper = loadComponentModule<{ prepareEmailFirstSignup: (email: string, role: string, action: string, userId?: string, requestId?: string) => Promise<EmailFirstState> }>("lib/auth/owner-staff-signup-server.ts", {
+    "@/lib/supabase/admin": { createAdminClient: () => ({
+      rpc: async (name: string, args: Record<string, unknown>) => {
+        if (name === "restart_deleted_owner_staff_email_signup") {
+          restarts++;
+          assert.equal(args.p_email, "person@example.org");
+          if (reserved) return { data: { kind: "unavailable" }, error: null };
+          reserved = true;
+          return { data: { kind: "new", requestId: "fresh-reservation", expiresAt: 181000 }, error: null };
+        }
+        if (args.p_action === "sent") return { data: { kind: "new", expiresAt: 181000 }, error: null };
+        return { data: { kind: "complete", userId: "deleted-user" }, error: null };
+      },
+      auth: { admin: { getUserById: async () => ({ data: { user: null }, error: { status: lookupStatus } }) } },
+    }) },
+  }, { process });
+  const send = () => sendEmailFirstOtp({ email: " PERSON@EXAMPLE.ORG ", role: "owner" }, {
+    action: "start", getSettings: settings, now: () => 1000, prepare: helper.prepareEmailFirstSignup,
+    auth: { signInWithOtp: async () => { sends++; return { error: null }; } },
+  });
+  lookupStatus = 503;
+  assert.equal((await send()).ok, false);
+  assert.equal(restarts, 0);
+  assert.equal(sends, 0);
+  lookupStatus = 404;
+  const results = await Promise.all([send(), send()]);
+  assert.equal(results.filter(result => result.ok).length, 1);
+  assert.equal(sends, 1);
+  const callsBeforeResend = restarts;
+  assert.equal((await helper.prepareEmailFirstSignup("person@example.org", "owner", "resend")).kind, "unavailable");
+  assert.equal(restarts, callsBeforeResend);
+});
 test("expired server deadline refuses verification before provider access", async () => {
   const result = await verifyEmailFirstOtp({ email: user.email, role: "owner", token: "012345" }, {
     getSettings: settings, prepare: async () => pending, now: () => 181000,

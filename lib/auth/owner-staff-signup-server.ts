@@ -27,6 +27,26 @@ export const prepareEmailFirstSignup: PrepareEmailFirst = async (email, role, ac
   });
   if (error || !data || typeof data !== "object") return { kind: "unavailable" };
   if (!["new", "resume", "complete", "legacy", "exists", "role_mismatch", "unavailable", "rate_limited"].includes(data.kind)) return { kind: "unavailable" };
+  if (data.kind === "complete" && (action === "start" || action === "resend")) {
+    if (typeof data.userId !== "string" || !data.userId) return { kind: "unavailable" };
+    try {
+      const account = await createAdminClient().auth.admin.getUserById(data.userId);
+      if (account.error?.status === 404 && !account.data.user && action === "start") {
+        const restarted = await createAdminClient().rpc("restart_deleted_owner_staff_email_signup", {
+          p_email: normalizeSignupEmail(email), p_role: role, p_completed_user_id: data.userId,
+        });
+        if (restarted.error || !restarted.data || restarted.data.kind !== "new"
+          || typeof restarted.data.requestId !== "string" || !restarted.data.requestId
+          || typeof restarted.data.expiresAt !== "number") return { kind: "unavailable" };
+        return { kind: "new", requestId: restarted.data.requestId, expiresAt: restarted.data.expiresAt };
+      }
+      if (account.error || !account.data.user || normalizeSignupEmail(account.data.user.email) !== normalizeSignupEmail(email)) {
+        return { kind: "unavailable" };
+      }
+    } catch {
+      return { kind: "unavailable" };
+    }
+  }
   return {
     kind: data.kind as EmailFirstState["kind"],
     userId: typeof data.userId === "string" ? data.userId : undefined,

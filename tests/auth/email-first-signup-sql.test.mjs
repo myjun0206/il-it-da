@@ -11,6 +11,7 @@ const migration = readFileSync("supabase/migrations/039_owner_staff_email_first_
 const authDeleteCleanupDraft = readFileSync("docs/sql/040_auth_delete_signup_state_cleanup.draft.sql", "utf8");
 const deletedStatePreview = readFileSync("docs/sql/preview-deleted-owner-staff-signup-state.readonly.sql", "utf8");
 const deletedStateCleanupDraft = readFileSync("docs/sql/cleanup-deleted-owner-staff-signup-state.draft.sql", "utf8");
+const restartDeletedDraft = readFileSync("docs/sql/restart-deleted-email-signup.draft.sql", "utf8");
 const setup = `
 create role anon; create role authenticated; create role service_role bypassrls; create schema auth;
 create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,last_sign_in_at timestamptz,raw_app_meta_data jsonb,raw_user_meta_data jsonb,encrypted_password text);
@@ -19,6 +20,68 @@ create table public.profiles(id uuid,user_id uuid);
 create table public.store_memberships(user_id uuid);`;
 const userId = "11111111-1111-4111-8111-111111111111";
 const otherId = "22222222-2222-4222-8222-222222222222";
+
+test("deleted-account restart archives completion and reserves only one new signup without touching Auth", async () => {
+  const db = new PGlite();
+  const email = "deleted-restart@example.invalid";
+  try {
+    await db.exec(setup);
+    await db.exec(migration);
+    await db.exec(restartDeletedDraft);
+    await db.query(`insert into public.owner_staff_email_signup_flows
+      (email,role,requested_at,available_at,expires_at,request_id,sent_at,verified_user_id,verified_at,completed_user_id,completed_at)
+      values($1,'owner',now()-interval '1 day',now()-interval '1 day',now()-interval '1 day',$2,
+        now()-interval '1 day',$3,now()-interval '1 day',$3,now()-interval '1 day')`, [email, otherId, userId]);
+    const restart = async () => (await db.query("select public.restart_deleted_owner_staff_email_signup($1,'owner',$2::uuid) result", [email,userId])).rows[0].result;
+    const results = await Promise.all([restart(),restart()]);
+    assert.deepEqual(results.map(result => result.kind).sort(), ["new","unavailable"]);
+    const fresh = results.find(result => result.kind === "new");
+    assert.notEqual(fresh.requestId, otherId);
+    const row = (await db.query("select * from public.owner_staff_email_signup_flows where email=$1", [email])).rows[0];
+    assert.equal(row.completed_at, null);
+    assert.equal(row.verified_at, null);
+    assert.equal(row.sent_at, null);
+    const archived = (await db.query("select snapshot from public.owner_staff_email_signup_flow_archive")).rows;
+    assert.equal(archived.length,1);
+    assert.equal(archived[0].snapshot.request_id,otherId);
+    assert.equal(archived[0].snapshot.completed_user_id,userId);
+    assert.equal((await db.query("select count(*)::int count from auth.users")).rows[0].count,0);
+    assert.equal((await db.query("select public.prepare_owner_staff_email_first_signup($1,'owner','start') result",[email])).rows[0].result.kind,"rate_limited");
+    assert.equal((await db.query("select public.prepare_owner_staff_email_first_signup($1,'owner','sent',null,$2::uuid) result",[email,otherId])).rows[0].result.kind,"unavailable");
+    for (const role of ["anon","authenticated"]) {
+      await db.exec(`set role ${role}`);
+      await assert.rejects(restart, error => error.code === "42501");
+      await assert.rejects(()=>db.query("select * from public.owner_staff_email_signup_flow_archive"),error=>error.code==="42501");
+      await db.exec("reset role");
+    }
+  } finally { await db.close(); }
+});
+
+test("restart protects existing Auth identities, residual linked profiles and fresh completions", async () => {
+  for (const protectedState of ["same-email-account","renamed-original-account","linked-profile","same-email-profile","linked-membership","fresh-completion"]) {
+    const db=new PGlite();const email="protected-restart@example.invalid";
+    try {
+      await db.exec(setup);await db.exec(migration);await db.exec(restartDeletedDraft);
+      await db.query(`insert into public.owner_staff_email_signup_flows
+        (email,role,requested_at,available_at,expires_at,request_id,completed_user_id,completed_at)
+        values($1,'owner',now()-interval '1 day',now()-interval '1 day',now()-interval '1 day',$2,$3,
+          case when $4 then now() else now()-interval '1 day' end)`,[email,otherId,userId,protectedState==="fresh-completion"]);
+      if(protectedState==="same-email-account"||protectedState==="renamed-original-account")await db.query(
+        "insert into auth.users(id,email) values($1,$2)",[protectedState==="same-email-account"?otherId:userId,protectedState==="same-email-account"?email:"renamed@example.invalid"]);
+      if(protectedState==="linked-profile")await db.query("insert into public.profiles values($1,$1)",[userId]);
+      if(protectedState==="same-email-profile") {
+        await db.exec("alter table public.profiles add column email text");
+        await db.query("insert into public.profiles(id,user_id,email) values($1,$1,$2)",[otherId,email]);
+      }
+      if(protectedState==="linked-membership")await db.query("insert into public.store_memberships values($1)",[userId]);
+      const before=(await db.query("select to_jsonb(f) value from public.owner_staff_email_signup_flows f")).rows;
+      const result=(await db.query("select public.restart_deleted_owner_staff_email_signup($1,'owner',$2::uuid) result",[email,userId])).rows[0].result;
+      assert.notEqual(result.kind,"new");
+      assert.deepEqual((await db.query("select to_jsonb(f) value from public.owner_staff_email_signup_flows f")).rows,before);
+      assert.equal((await db.query("select count(*)::int count from public.owner_staff_email_signup_flow_archive")).rows[0].count,0);
+    }finally{await db.close();}
+  }
+});
 
 test("039 reauthenticates abandoned email-first signup without a profile, membership or previous-request reuse", async () => {
   const db = new PGlite();
@@ -407,5 +470,23 @@ test("Auth deletion clears only that user's 038/039 signup state and allows a ne
     assert.equal(functionDetails.security_definer, true);
     assert.equal(functionDetails.anon_can_execute, false);
     assert.equal(functionDetails.authenticated_can_execute, false);
+  } finally { await db.close(); }
+});
+
+test("failed restart reservation rolls back the archived snapshot and flow transition together", async () => {
+  const db = new PGlite();
+  try {
+    await db.exec(setup); await db.exec(migration); await db.exec(restartDeletedDraft);
+    await db.query(`insert into public.owner_staff_email_signup_flows
+      (email,role,requested_at,available_at,expires_at,request_id,completed_user_id,completed_at)
+      values('rollback@example.invalid','owner',now()-interval '1 day',now()-interval '1 day',
+        now()-interval '1 day',$1,$2,now()-interval '1 day')`, [otherId, userId]);
+    const before = (await db.query("select to_jsonb(f) value from public.owner_staff_email_signup_flows f")).rows;
+    await db.exec(`create or replace function public.prepare_owner_staff_email_first_signup(
+      p_email text,p_role text,p_action text,p_user_id uuid default null,p_request_id uuid default null
+    ) returns jsonb language sql as $$ select '{"kind":"unavailable"}'::jsonb $$;`);
+    await assert.rejects(() => db.query("select public.restart_deleted_owner_staff_email_signup('rollback@example.invalid','owner',$1::uuid)", [userId]), error => error.code === "55000");
+    assert.deepEqual((await db.query("select to_jsonb(f) value from public.owner_staff_email_signup_flows f")).rows, before);
+    assert.equal((await db.query("select count(*)::int count from public.owner_staff_email_signup_flow_archive")).rows[0].count, 0);
   } finally { await db.close(); }
 });

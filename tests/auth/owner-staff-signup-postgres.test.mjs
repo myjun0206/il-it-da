@@ -63,6 +63,64 @@ const literal = (value) => value === null ? "NULL" : `'${String(value).replaceAl
 const call = (email, role = "owner", action = "start") =>
   `select public.prepare_owner_staff_signup(${literal(email)}, ${literal(role)}, ${literal(action)})`;
 
+test("actual PostgreSQL: deleted-email restart serializes independent requests", { timeout: 120_000 }, async () => {
+  for (const name of ["initdb", "pg_ctl", "psql", "postgres"]) assert.ok(existsSync(executable(name)), `Missing local ${name}`);
+  const root = mkdtempSync(path.join(tmpdir(), "ilitda-restart-postgres-"));
+  const cluster = path.join(root, "cluster");
+  const port = await availablePort();
+  let started = false;
+  const args = ["-X", "-w", "-qAt", "-v", "ON_ERROR_STOP=1", "-h", "127.0.0.1", "-p", String(port), "-U", "restart_test_admin", "-d", "postgres"];
+  const query = async statement => successful(await execute("psql", args, statement));
+  try {
+    successful(await execute("initdb", ["-D", cluster, "-U", "restart_test_admin", "-A", "trust", "--encoding=UTF8", "--no-locale"]));
+    successful(await execute("pg_ctl", ["-D", cluster, "-l", path.join(root, "postgres.log"), "-o", `-h 127.0.0.1 -p ${port}`, "-w", "start"]));
+    started = true;
+    await query(`create role anon; create role authenticated; create role service_role bypassrls; create schema auth;
+      create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,last_sign_in_at timestamptz,raw_app_meta_data jsonb,raw_user_meta_data jsonb,encrypted_password text);
+      create table auth.identities(user_id uuid,provider text);
+      create table public.profiles(id uuid,user_id uuid);
+      create table public.store_memberships(user_id uuid);`);
+    await query(readFileSync(path.join(repoRoot, "supabase/migrations/039_owner_staff_email_first_signup.sql"), "utf8"));
+    await query(readFileSync(path.join(repoRoot, "docs/sql/restart-deleted-email-signup.draft.sql"), "utf8"));
+    await query(`insert into public.owner_staff_email_signup_flows(email,role,requested_at,available_at,expires_at,request_id,completed_user_id,completed_at)
+      values('restart@example.invalid','owner',now()-interval '1 day',now()-interval '1 day',now()-interval '1 day',
+        '11111111-1111-4111-8111-111111111111','22222222-2222-4222-8222-222222222222',now()-interval '1 day');`);
+    const statement = "select public.restart_deleted_owner_staff_email_signup('restart@example.invalid','owner','22222222-2222-4222-8222-222222222222');";
+    const results = await Promise.all([query(statement), query(statement)]);
+    assert.deepEqual(results.map(value => JSON.parse(value).kind).sort(), ["new", "unavailable"]);
+    assert.equal(await query("select count(*) from public.owner_staff_email_signup_flow_archive;"), "1");
+    assert.equal(await query("select count(*) from auth.users;"), "0");
+    const fresh = JSON.parse(results.find(value => JSON.parse(value).kind === "new"));
+    assert.notEqual(fresh.requestId, "11111111-1111-4111-8111-111111111111");
+    assert.equal(JSON.parse(await query("select public.prepare_owner_staff_email_first_signup('restart@example.invalid','owner','start');")).kind, "rate_limited");
+    await query(`insert into auth.users(id,email) values('33333333-3333-4333-8333-333333333333','protected@example.invalid');
+      insert into public.owner_staff_email_signup_flows(email,role,requested_at,available_at,expires_at,request_id,completed_user_id,completed_at)
+      values('protected@example.invalid','owner',now()-interval '1 day',now()-interval '1 day',now()-interval '1 day',
+        '44444444-4444-4444-8444-444444444444','55555555-5555-4555-8555-555555555555',now()-interval '1 day');`);
+    const snapshot = "select jsonb_agg(to_jsonb(f) order by email) from public.owner_staff_email_signup_flows f;";
+    const protectedBefore = await query(snapshot);
+    assert.equal(JSON.parse(await query("select public.restart_deleted_owner_staff_email_signup('protected@example.invalid','owner','55555555-5555-4555-8555-555555555555');")).kind, "exists");
+    assert.equal(await query(snapshot), protectedBefore);
+    assert.equal(await query("select count(*) from auth.users;"), "1");
+    assert.equal(await query("select count(*) from public.owner_staff_email_signup_flow_archive;"), "1");
+    await query(`insert into public.owner_staff_email_signup_flows(email,role,requested_at,available_at,expires_at,request_id,completed_user_id,completed_at)
+      values('rollback@example.invalid','owner',now()-interval '1 day',now()-interval '1 day',now()-interval '1 day',
+        '66666666-6666-4666-8666-666666666666','77777777-7777-4777-8777-777777777777',now()-interval '1 day');
+      create or replace function public.prepare_owner_staff_email_first_signup(
+        p_email text,p_role text,p_action text,p_user_id uuid default null,p_request_id uuid default null
+      ) returns jsonb language sql as $$ select '{"kind":"unavailable"}'::jsonb $$;`);
+    const rollbackBefore = await query(snapshot);
+    const failed = await execute("psql", args, "select public.restart_deleted_owner_staff_email_signup('rollback@example.invalid','owner','77777777-7777-4777-8777-777777777777');");
+    assert.notEqual(failed.code, 0);
+    assert.ok(failed.stderr.includes("RESTART_SIGNUP_RESERVATION_FAILED"));
+    assert.equal(await query(snapshot), rollbackBefore);
+    assert.equal(await query("select count(*) from public.owner_staff_email_signup_flow_archive;"), "1");
+  } finally {
+    if (started) successful(await execute("pg_ctl", ["-D", cluster, "-m", "fast", "-w", "stop"]));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 const schemaFixture = `
 create schema auth;
 create table auth.users (
