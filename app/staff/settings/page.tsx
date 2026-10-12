@@ -589,7 +589,7 @@ export default function StaffSettingsPage() {
                 avatarUrl={avatarPreview || avatarUrl}
                 size="xl"
               />
-              
+
               {/* 사진 변경 입력 */}
               <input
                 ref={fileInputRef}

@@ -99,7 +99,7 @@ export default function ProfileMenu({
                 {roleLabel}
               </span>
             </div>
-            
+
             {/* HQ/Owner용 소속 정보 */}
             {context && (
               <div className="mt-4 rounded-lg bg-[var(--color-bg-default)] px-3 py-2">

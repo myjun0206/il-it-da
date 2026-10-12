@@ -354,7 +354,7 @@ test("owner sidebar keeps menu, active state, settings/logout and mobile navigat
       const asideBox = await aside.boundingBox();
       assert.ok(asideBox && asideBox.x >= 0 && asideBox.width >= 200 && asideBox.width <= 270);
       const labels = await aside.locator("nav a").allInnerTexts();
-      assert.deepEqual(labels.map((label) => label.trim()), ["홈", "공통 매뉴얼 관리", "지점 매뉴얼 관리", "직원 관리", "보류 질문", "운영 매장", "공지사항"]);
+      assert.deepEqual(labels.map((label) => label.trim()), ["홈", "공통 매뉴얼 관리", "지점 매뉴얼", "직원 관리", "보류 질문", "운영 매장", "공지사항"]);
       assert.equal(await aside.getByRole("link", { name: "홈", exact: true }).getAttribute("aria-current"), "page");
       await aside.getByRole("link", { name: "설정", exact: true }).waitFor();
       const logout = aside.getByRole("button", { name: "로그아웃" });

@@ -63,7 +63,7 @@ export default function HqSettingsPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [isSavingPassword, setIsSavingPassword] = useState(false);
   const [passwordFeedback, setPasswordFeedback] = useState<Feedback>(null);
-  
+
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [avatarFeedback, setAvatarFeedback] = useState<Feedback>(null);

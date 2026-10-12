@@ -326,7 +326,7 @@ export default function NoticesPage() {
     return (
       <div className="min-h-screen bg-[var(--color-bg-default)] flex">
         <OwnerSidebar activeMenu="notice" onLogout={handleLogout} />
-        <div className="flex-1 ml-0 lg:ml-[240px] flex flex-col">
+        <div className="min-w-0 flex-1 ml-0 lg:ml-[240px] flex flex-col">
           <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
           <main className="flex-1 overflow-y-auto p-6 lg:p-8">
             <div className="text-center">로딩 중...</div>
@@ -340,7 +340,7 @@ export default function NoticesPage() {
     <div className="min-h-screen bg-[var(--color-bg-default)] flex">
       <OwnerSidebar activeMenu="notice" onLogout={handleLogout} />
 
-      <div className="flex-1 ml-0 lg:ml-[240px] flex flex-col">
+      <div className="min-w-0 flex-1 ml-0 lg:ml-[240px] flex flex-col">
         <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
 
         {/* Main Content */}

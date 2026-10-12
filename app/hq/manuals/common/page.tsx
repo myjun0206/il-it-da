@@ -218,7 +218,7 @@ export default function ManualDashboardPage() {
         // Handle category filter (e.g., "category:고객응대")
         if (normalizedSearch.startsWith("category:")) {
           const filterCategory = normalizedSearch.substring(9); // Remove "category:" prefix
-          return category.category.toLowerCase().includes(filterCategory) || 
+          return category.category.toLowerCase().includes(filterCategory) ||
                  getDisplayCategoryName(category.category).toLowerCase().includes(filterCategory);
         }
         // Handle text search across category and group content
