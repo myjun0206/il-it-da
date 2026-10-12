@@ -1,3 +1,5 @@
+import type { RecipeProviderUsage } from "@/lib/rag/private-recipe-fact-diagnostics";
+
 const OPENAI_EMBEDDING_URL = "https://api.openai.com/v1/embeddings";
 const EMBEDDING_MODEL = "text-embedding-3-small";
 const EXPECTED_EMBEDDING_DIMENSION = 1536;
@@ -133,7 +135,7 @@ function parseAndSortOpenAiEmbeddings(payload: unknown, expectedCount: number): 
   return sortedEmbeddings as number[][];
 }
 
-export async function createEmbeddings(inputs: string[]): Promise<number[][]> {
+export async function createEmbeddings(inputs: string[], onUsage?: (usage: RecipeProviderUsage) => void): Promise<number[][]> {
   if (typeof window !== "undefined") {
     throw new Error("OpenAI embeddings are only available on the server.");
   }
@@ -162,6 +164,7 @@ export async function createEmbeddings(inputs: string[]): Promise<number[][]> {
     });
 
     if (!response.ok) {
+      try { onUsage?.({ service: "embedding", httpStatus: response.status, inputTokens: null, outputTokens: null }); } catch {}
       const guidance = response.status === 401 ? "Check OPENAI_API_KEY." : response.status === 429 ? "Check OpenAI quota and rate limits." : "Check OpenAI service availability.";
       throw Object.assign(new Error(`OpenAI Embeddings API request failed with status ${response.status}. ${guidance}`), {
         diagnosticService: "embedding", diagnosticHttpStatus: response.status,
@@ -169,6 +172,10 @@ export async function createEmbeddings(inputs: string[]): Promise<number[][]> {
     }
 
     const payload: unknown = await response.json();
+    const usage = (payload as { usage?: { prompt_tokens?: number; total_tokens?: number } } | null)?.usage;
+    const inputTokens = usage?.prompt_tokens ?? usage?.total_tokens;
+    try { onUsage?.({ service: "embedding", httpStatus: response.status,
+      inputTokens: typeof inputTokens === "number" && Number.isSafeInteger(inputTokens) && inputTokens >= 0 ? inputTokens : null, outputTokens: 0 }); } catch {}
     return parseAndSortOpenAiEmbeddings(payload, normalizedInputs.length);
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
@@ -183,8 +190,8 @@ export async function createEmbeddings(inputs: string[]): Promise<number[][]> {
   }
 }
 
-export async function createEmbedding(input: string): Promise<number[]> {
-  const embeddings = await createEmbeddings([input]);
+export async function createEmbedding(input: string, onUsage?: (usage: RecipeProviderUsage) => void): Promise<number[]> {
+  const embeddings = await createEmbeddings([input], onUsage);
   const single = embeddings[0];
   if (!single) {
     throw new Error("Failed to generate embedding for single input.");

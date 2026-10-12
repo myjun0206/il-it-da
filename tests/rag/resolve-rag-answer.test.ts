@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -11,8 +13,10 @@ import { requestedSupportKinds, sameDeclaredSourceTarget, StructuredAnswerParseE
 import { boundedQuestionContext, buildQuestionInterpretationRequest, parseQuestionInterpretation, createQuestionInterpreter, shouldInterpretQuestion } from "../../lib/rag/question-interpretation.ts";
 import { createEmbedding } from "../../lib/rag/openai-embeddings.ts";
 import { chunkManualText } from "../../lib/rag/chunk-manual.ts";
+import { PRIVATE_RECIPE_FACT_PATH, PRIVATE_RECIPE_EXECUTION_PATH, recordPrivateRecipeFactDiagnostic, recordPrivateRecipeExecutionEvent } from "../../lib/rag/private-recipe-fact-diagnostics.ts";
 
 import { resolveRagAnswer } from "../../lib/rag/resolve-rag-answer.ts";
+import { verifyRecipeFacts, extractVerifiedRecipeSourceFacts, renderVerifiedRecipeSourceFacts, type RecipeFactDiagnostic } from "../../lib/rag/recipe-fact-verification.ts";
 import { finalizeRagQueryResponse } from "../../lib/rag/finalize-rag-query-response.ts";
 import { validateQueryRequest } from "../../lib/rag/validate-query-request.ts";
 import { extractSearchKeywords, formatSearchEmbeddingInput } from "../../lib/rag/search-query.ts";
@@ -31,6 +35,58 @@ const INPUT = {
   noManualAnswer: NO_MANUAL_ANSWER,
   cautionNotice: CAUTION_NOTICE,
 };
+
+test("published minimum numeric diagnostics reject personal/full-response fields and require development-only ignored storage", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "ilitda-public-fact-privacy-"));
+  const traceId = "11111111-1111-4111-8111-111111111111";
+  const diagnostic: RecipeFactDiagnostic = { version: 1, menu: "바닐라라떼", temperature: "HOT", ingredient: "스팀 온도", requested: true,
+    expected: { quantity: "60~65", unit: "℃", approximate: false, lower: 60, upper: 65 },
+    extracted: { quantity: "약 60~65", unit: "℃", approximate: true, lower: 60, upper: 65 }, rule: "APPROXIMATION_MISMATCH", numericFragment: "약 60~65℃" };
+  try {
+    execFileSync("git", ["init", "--quiet", directory], { stdio: "ignore" });
+    writeFileSync(path.join(directory, ".gitignore"), "local-data/\n");
+    assert.equal(recordPrivateRecipeFactDiagnostic(traceId, diagnostic, { development: false, directory }), false);
+    const extra = { ...diagnostic, answer: "FULL_AI_SENTINEL", email: "private@example.test", secret: "SECRET_SENTINEL" };
+    assert.equal(recordPrivateRecipeFactDiagnostic(traceId, extra, { development: true, directory }), true);
+    const text = readFileSync(path.join(directory, PRIVATE_RECIPE_FACT_PATH), "utf8");
+    for (const sentinel of ["FULL_AI_SENTINEL", "private@example.test", "SECRET_SENTINEL"]) assert.equal(text.includes(sentinel), false);
+    assert.equal(recordPrivateRecipeFactDiagnostic(traceId, { ...diagnostic, numericFragment: "private@example.test" }, { development: true, directory }), false);
+    assert.equal(readFileSync(path.join(directory, PRIVATE_RECIPE_FACT_PATH), "utf8"), text);
+    rmSync(path.join(directory, ".gitignore"));
+    assert.equal(recordPrivateRecipeFactDiagnostic(traceId, diagnostic, { development: true, directory }), false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("published execution diagnostics preserve span hashes and usage without raw source, AI or personal labels", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "ilitda-public-usage-privacy-"));
+  const traceId = "11111111-1111-4111-8111-111111111111";
+  try {
+    execFileSync("git", ["init", "--quiet", directory], { stdio: "ignore" });
+    writeFileSync(path.join(directory, ".gitignore"), "local-data/\n");
+    const facts = [{ menu: "PERSONAL_MENU_SENTINEL", temperature: "HOT", serving: "16oz", ingredient: "PERSONAL_INGREDIENT_SENTINEL", quantity: "60~65", unit: "℃",
+      lower: 60, upper: 65, approximate: false, originalText: "RAW_SOURCE_SENTINEL", source: { manualId: "22222222-2222-4222-8222-222222222222",
+        chunkId: "33333333-3333-4333-8333-333333333333", title: "PERSONAL_TITLE_SENTINEL", category: "SECRET_SENTINEL", scope: "hq", sectionStart: 0,
+        factStart: 10, factEnd: 30, citationQuote: "RAW_QUOTE_SENTINEL" } }];
+    assert.ok(recordPrivateRecipeExecutionEvent(traceId, { stage: "source_rendering", facts, renderedAnswer: "RAW_RENDER_SENTINEL" }, { development: true, directory }));
+    assert.ok(recordPrivateRecipeExecutionEvent(traceId, { stage: "provider_usage", service: "generation", httpStatus: 200, inputTokens: 100, outputTokens: 50 }, { development: true, directory }));
+    assert.ok(recordPrivateRecipeExecutionEvent(traceId, { stage: "provider_usage", service: "embedding", httpStatus: 200, inputTokens: null, outputTokens: 0 }, { development: true, directory }));
+    assert.ok(recordPrivateRecipeExecutionEvent(traceId, { stage: "final_output", answer: "RAW_AI_SENTINEL", status: "cautious", similarity: .5 }, { development: true, directory }));
+    const text = readFileSync(path.join(directory, PRIVATE_RECIPE_EXECUTION_PATH), "utf8");
+    for (const sentinel of ["PERSONAL_MENU_SENTINEL", "PERSONAL_INGREDIENT_SENTINEL", "PERSONAL_TITLE_SENTINEL", "SECRET_SENTINEL", "RAW_SOURCE_SENTINEL", "RAW_QUOTE_SENTINEL", "RAW_RENDER_SENTINEL", "RAW_AI_SENTINEL"]) assert.equal(text.includes(sentinel), false);
+    const records = text.trim().split("\n").map(row => JSON.parse(row));
+    assert.ok(records.every(record => record.traceId === traceId));
+    assert.equal(records[0].facts[0].source.factStart, 10);
+    assert.equal(records[1].estimatedUsd, .00075);
+    assert.equal(records[2].usageVerified, false);
+    assert.equal(records[2].estimatedUsd, null);
+    assert.equal(recordPrivateRecipeExecutionEvent(traceId, { stage: "provider_usage", service: "generation", httpStatus: 200, inputTokens: -1, outputTokens: 0 }, { development: true, directory }), null);
+    assert.equal(readFileSync(path.join(directory, PRIVATE_RECIPE_EXECUTION_PATH), "utf8"), text);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 function chunk(id: string, overrides: Partial<ManualChunkMatch> = {}): ManualChunkMatch {
   const raw = overrides.raw_similarity_score ?? 0.75;
@@ -67,6 +123,258 @@ function deps(options: {
     },
   };
 }
+
+describe("recipe overblocking development cases", () => {
+  const steamQuote = "● HOT 바닐라라떼\n기본 기준: 16oz / 바닐라 시럽 20ml / 우유 220ml / 스팀 온도 60~65℃";
+  const steam = chunk("steam-development", { content: steamQuote });
+  const iceQuote = "● ICE 아메리카노\n기본 기준: 20oz / 차가운 물 250ml / 얼음 약 70%";
+  const ice = chunk("ice-development", { content: `${iceQuote}\n1. 컵에 얼음을 약 70%까지 넣는다.` });
+  test("equivalent Celsius range spellings do not change the requested temperature fact", () => {
+    for (const spelling of ["60~65℃", "60–65도", "섭씨 60도에서 65도"]) {
+      const result = verifyRecipeFacts("HOT 바닐라라떼의 스팀 온도는 몇 ℃인가요?", `HOT 바닐라라떼의 스팀 온도는 ${spelling}입니다.`, [steam], [{ chunkId: steam.chunk_id, quote: steamQuote }]);
+      assert.equal(result?.support.outcome, "full", spelling);
+      assert.deepEqual(result?.support.verified.map(fact => [fact.ingredient, fact.quantity, fact.unit]), [["스팀 온도", "60~65", "℃"]]);
+    }
+  });
+  test("approximation is a separate meaning and failures expose only bounded fact comparisons", () => {
+    const cases = [
+      { spelling: "약 60~65℃", rule: "APPROXIMATION_MISMATCH", quantity: "약 60~65", unit: "℃" },
+      { spelling: "70~80℃", rule: "VALUE_OR_RANGE_MISMATCH", quantity: "70~80", unit: "℃" },
+      { spelling: "60~65g", rule: "UNIT_MISMATCH", quantity: "60~65", unit: "g" },
+      { spelling: "65~60℃", rule: "VALUE_OR_RANGE_MISMATCH", quantity: "65~60", unit: "℃" },
+      { spelling: "60.0~65.0℃", rule: "VALUE_OR_RANGE_MISMATCH", quantity: "60.0~65.0", unit: "℃" },
+    ];
+    for (const scenario of cases) {
+      const diagnostics: RecipeFactDiagnostic[] = [];
+      const result = verifyRecipeFacts("HOT 바닐라라떼의 스팀 온도는 몇 ℃인가요?",
+        `HOT 바닐라라떼의 스팀 온도는 ${scenario.spelling}입니다. ignored-full-answer@example.test`, [steam], [{ chunkId: steam.chunk_id, quote: steamQuote }], diagnostic => diagnostics.push(diagnostic));
+      assert.equal(result?.contradiction, true);
+      assert.equal(diagnostics.length, 1);
+      assert.equal(diagnostics[0].ingredient, "스팀 온도");
+      assert.equal(diagnostics[0].rule, scenario.rule);
+      assert.deepEqual(diagnostics[0].expected, { quantity: "60~65", unit: "℃", approximate: false, lower: 60, upper: 65 });
+      assert.equal(diagnostics[0].extracted?.quantity, scenario.quantity);
+      assert.equal(diagnostics[0].extracted?.unit, scenario.unit);
+      assert.equal(JSON.stringify(diagnostics).includes("@example"), false);
+    }
+    const approximateQuote = steamQuote.replace("스팀 온도 60~65℃", "스팀 온도 약 60~65℃");
+    const approximateSource = { ...steam, content: approximateQuote };
+    assert.equal(verifyRecipeFacts("HOT 바닐라라떼의 스팀 온도는 몇 ℃인가요?", "HOT 바닐라라떼 스팀 온도 약 60~65℃입니다.", [approximateSource], [{ chunkId: steam.chunk_id, quote: approximateQuote }])?.support.outcome, "full");
+    assert.equal(verifyRecipeFacts("HOT 바닐라라떼의 스팀 온도는 몇 ℃인가요?", "HOT 바닐라라떼 스팀 온도 60~65℃입니다.", [approximateSource], [{ chunkId: steam.chunk_id, quote: approximateQuote }])?.contradiction, true);
+    for (const target of ["ICE 바닐라라떼", "HOT 카페라떼"]) assert.notEqual(verifyRecipeFacts("HOT 바닐라라떼의 스팀 온도는 몇 ℃인가요?", `${target} 스팀 온도 60~65℃입니다.`, [steam], [{ chunkId: steam.chunk_id, quote: steamQuote }])?.support.outcome, "full");
+  });
+  test("private recipe diagnostic callback failure cannot change a correct or contradictory result", () => {
+    for (const spelling of ["60~65℃", "약 60~65℃"]) {
+      const question = "HOT 바닐라라떼의 스팀 온도는 몇 ℃인가요?";
+      const answer = `HOT 바닐라라떼 스팀 온도 ${spelling}입니다.`;
+      const citations = [{ chunkId: steam.chunk_id, quote: steamQuote }];
+      const baseline = verifyRecipeFacts(question, answer, [steam], citations);
+      const failure = verifyRecipeFacts(question, answer, [steam], citations, () => { throw new Error("diagnostic failure"); });
+      assert.deepEqual(failure, baseline);
+    }
+  });
+  test("steam-only request does not demand ingredients appearing in the menu name", () => {
+    const result = verifyRecipeFacts("HOT 바닐라라떼의 스팀 온도는 몇 ℃인가요?", "HOT 바닐라라떼의 스팀 온도는 60~65℃입니다.", [steam], [{ chunkId: steam.chunk_id, quote: steamQuote }]);
+    assert.equal(result?.support.outcome, "full");
+    assert.deepEqual(result?.support.verified.map(fact => fact.ingredient), ["스팀 온도"]);
+  });
+  test("cup-relative approximate ratio remains linked to its source basis", () => {
+    const result = verifyRecipeFacts("ICE 아메리카노는 차가운 물과 얼음을 얼마나 넣나요?", "ICE 아메리카노에는 차가운 물 250ml를 넣고 얼음은 컵의 약 70%까지 채워요.", [ice], [{ chunkId: ice.chunk_id, quote: iceQuote }]);
+    assert.equal(result?.support.outcome, "full");
+    assert.ok(result?.support.verified.some(fact => fact.ingredient === "얼음" && fact.quantity === "약 70" && fact.unit === "%"));
+    assert.ok(result?.support.verified.some(fact => fact.ingredient === "차가운 물" && fact.quantity === "250" && fact.unit === "ml"));
+    assert.equal(result?.support.verified.find(fact => fact.ingredient === "얼음")?.basis, "컵");
+  });
+  test("ratio, basis, approximation and units must match; missing water stays partial", () => {
+    const question = "ICE 아메리카노는 차가운 물과 얼음을 얼마나 넣나요?";
+    const answer = "ICE 아메리카노에는 차가운 물 250ml를 넣고 얼음은 컵의 약 70%까지 채워요.";
+    const citations = [{ chunkId: ice.chunk_id, quote: iceQuote }];
+    for (const wrong of [answer.replace("70%", "80%"), answer.replace("컵의", "그릇의"), answer.replace("약 70%", "70%"), answer.replace("70%", "70ml"), answer.replace("ICE", "HOT"), answer.replace("아메리카노", "바닐라라떼")]) {
+      assert.notEqual(verifyRecipeFacts(question, wrong, [ice], citations)?.support.outcome, "full");
+    }
+    const missing = verifyRecipeFacts(question, "ICE 아메리카노에는 얼음을 컵의 약 70%까지 넣어요.", [ice], citations);
+    assert.equal(missing?.support.outcome, "partial");
+    assert.ok(missing?.support.missing.includes("차가운 물"));
+    const unavailable = { ...ice, content: iceQuote };
+    assert.equal(verifyRecipeFacts(question, answer, [unavailable], citations)?.support.outcome, "unknown");
+    const ambiguous = { ...ice, content: `${ice.content}\n2. 그릇에 얼음을 약 70%까지 넣는다.` };
+    assert.equal(verifyRecipeFacts(question, answer, [ambiguous], citations)?.support.outcome, "unknown");
+  });
+  test("ratio linking is not hard-coded to ice, cups or 70 percent", () => {
+    const quote = "● ICE 테스트음료\n기본 기준: 20oz / 소스 그릇의 약 35%";
+    const source = chunk("generic-ratio", { content: quote });
+    const result = verifyRecipeFacts("ICE 테스트음료 소스는 얼마나 넣나요?", "ICE 테스트음료의 소스는 그릇의 약 35%입니다.", [source], [{ chunkId: source.chunk_id, quote }]);
+    assert.equal(result?.support.outcome, "full");
+    assert.equal(result?.support.verified[0].basis, "그릇");
+  });
+  test("explicit steam and milk compound requests each require their own facts", () => {
+    const citations = [{ chunkId: steam.chunk_id, quote: steamQuote }];
+    const question = "HOT 바닐라라떼 우유량과 스팀 온도는 얼마인가요?";
+    const complete = verifyRecipeFacts(question, "HOT 바닐라라떼 우유 220ml, 스팀 온도 60~65℃입니다.", [steam], citations);
+    assert.equal(complete?.support.outcome, "full");
+    const partial = verifyRecipeFacts(question, "HOT 바닐라라떼 스팀 온도 60~65℃입니다.", [steam], citations);
+    assert.equal(partial?.support.outcome, "partial");
+    assert.ok(partial?.support.missing.includes("우유"));
+    for (const wrong of ["HOT 바닐라라떼 스팀 온도 70~80℃입니다.", "HOT 바닐라라떼 스팀 온도 60~65g입니다."]) {
+      assert.equal(verifyRecipeFacts("HOT 바닐라라떼의 스팀 온도는 몇 ℃인가요?", wrong, [steam], citations)?.contradiction, true);
+    }
+  });
+  test("ambiguous generic ingredient requirements are not expanded into full", () => {
+    const quote = "● HOT 테스트라떼\n기본 기준: 16oz / 바닐라 시럽 20ml / 카라멜 시럽 10ml";
+    const source = chunk("ambiguous-syrup", { content: quote });
+    const result = verifyRecipeFacts("HOT 테스트라떼 시럽 정량은?", "HOT 테스트라떼 바닐라 시럽 20ml와 카라멜 시럽 10ml입니다.", [source], [{ chunkId: source.chunk_id, quote }]);
+    assert.equal(result?.support.outcome, "unknown");
+  });
+});
+
+test("source-based recipe rendering replaces approximation-only AI wording with independently cited facts", async () => {
+  const quote = "● HOT 테스트음료\n기본 기준: 16oz / 우유 220ml / 스팀 온도 60~65℃";
+  const source = chunk("render-source", { content: quote, diagnostic_scope: "hq", raw_similarity_score: .41, keyword_boost: .2 });
+  const outcome = await resolveRagAnswer({ ...INPUT, question: "HOT 테스트음료의 스팀 온도는 몇 ℃인가요?", requireCoverage: true, requireSupportAssessment: true, requireEvidenceScope: true }, {
+    search: async () => [source], generate: async () => JSON.stringify({ answerable: true, answer: "HOT 테스트음료 스팀 온도 약 60~65℃입니다. AI 설명은 보존하지 마세요.",
+      coverage: "direct", usedChunkIds: [source.chunk_id], supportAssessment: { requestedTarget: "HOT 테스트음료", requirements: [{ kind: "conditions", support: "direct", evidence: [
+        { chunkId: source.chunk_id, quote, role: "conditions", target: "HOT 테스트음료", targetRelation: "same" },
+      ] }] } }),
+  });
+  assert.equal(outcome.kind, "resolved");
+  if (outcome.kind !== "resolved") throw new Error("Expected independently grounded facts");
+  assert.equal(outcome.response.status, "cautious");
+  assert.ok(outcome.response.answer.includes("스팀 온도 60~65℃"));
+  assert.equal(outcome.response.answer.includes("약 60~65℃"), false);
+  assert.equal(outcome.response.answer.includes("AI 설명"), false);
+  assert.equal(outcome.response.answer.includes("우유 220ml"), false);
+});
+
+test("source fact objects preserve scope, raw spans, ranges and approximate ratios without selecting unrelated facts", () => {
+  const quote = "● ICE 테스트음료\n기본 기준: 20oz / 차가운  물 250ml / 얼음 약 70%";
+  const source = chunk("source-spans", { content: `${quote}\n컵에 얼음을 약 70%까지 넣는다.`, diagnostic_scope: "hq", diagnostic_scope_id: "same-hq" });
+  const result = extractVerifiedRecipeSourceFacts("ICE 테스트음료 차가운 물과 얼음은 얼마나 넣나요?", [source], [{ chunkId: source.chunk_id, quote }]);
+  assert.equal(result?.support.outcome, "full");
+  assert.equal(result?.sourceFacts?.length, 2);
+  for (const fact of result?.sourceFacts ?? []) {
+    assert.equal(fact.menu, "테스트음료"); assert.equal(fact.temperature, "ICE"); assert.equal(fact.serving, "20oz");
+    assert.equal(fact.source.manualId, source.manual_id); assert.equal(fact.source.chunkId, source.chunk_id);
+    assert.equal(source.content.slice(fact.source.factStart, fact.source.factEnd), fact.originalText);
+    assert.equal(fact.source.citationQuote, quote);
+  }
+  assert.equal(result?.sourceFacts?.[1].approximate, true);
+  assert.equal(result?.sourceFacts?.[1].basis, "컵");
+  assert.equal(result?.sourceFacts?.[1].lower, 70);
+  const rendered = renderVerifiedRecipeSourceFacts(result!.sourceFacts!);
+  assert.ok(rendered.includes("차가운  물 250ml"));
+  assert.ok(rendered.includes("얼음 약 70% (컵 기준)"));
+});
+
+test("source rendering gate does not repair bad values, citations, identities or incomplete compound answers", async () => {
+  const quote = "● HOT 테스트음료\n기본 기준: 16oz / 우유 220ml / 스팀 온도 60~65℃";
+  const source = chunk("render-negative", { content: quote });
+  const run = async (answer: string, citedQuote = quote, content = quote, question = "HOT 테스트음료의 스팀 온도는 몇 ℃인가요?") => resolveRagAnswer({ ...INPUT, question, requireCoverage: true, requireSupportAssessment: true, requireEvidenceScope: true }, {
+    search: async () => [{ ...source, content }], generate: async () => JSON.stringify({ answerable: true, answer, coverage: "direct", usedChunkIds: [source.chunk_id],
+      supportAssessment: { requestedTarget: "HOT 테스트음료", requirements: requestedSupportKinds(question).map(kind => ({ kind, support: "direct", evidence: [
+        { chunkId: source.chunk_id, quote: citedQuote, role: kind, target: "HOT 테스트음료", targetRelation: "same" },
+      ] })) } }),
+  });
+  for (const answer of ["HOT 테스트음료 스팀 온도 70~80℃입니다.", "HOT 테스트음료 스팀 온도 60~65g입니다.", "ICE 테스트음료 스팀 온도 약 60~65℃입니다.",
+    "HOT 다른음료 스팀 온도 약 60~65℃입니다.", "HOT 테스트음료 스팀 온도 약 60~65℃, 우유 999ml입니다."]) {
+    const outcome = await run(answer);
+    assert.ok(outcome.kind === "system_error" || outcome.kind === "resolved" && outcome.response.status === "insufficient", answer);
+  }
+  assert.equal((await run("HOT 테스트음료 스팀 온도 약 60~65℃입니다.", "없는 원문 인용")).kind, "system_error");
+  const wrongServing = extractVerifiedRecipeSourceFacts("HOT 테스트음료 24oz 스팀 온도는 몇 ℃인가요?", [source], [{ chunkId: source.chunk_id, quote }]);
+  assert.equal(wrongServing?.support.outcome, "unknown");
+  assert.equal(wrongServing?.sourceFacts, undefined);
+  const matchingServing = extractVerifiedRecipeSourceFacts("HOT 테스트음료 16oz 스팀 온도는 몇 ℃인가요?", [source], [{ chunkId: source.chunk_id, quote }]);
+  assert.equal(matchingServing?.support.outcome, "full");
+  const partial = await run("HOT 테스트음료 스팀 온도 약 60~65℃입니다.", quote, quote, "HOT 테스트음료 우유량과 스팀 온도는 얼마인가요?");
+  assert.ok(partial.kind === "system_error" || partial.kind === "resolved" && partial.response.status === "insufficient");
+  const conflict = await run("HOT 테스트음료 스팀 온도 약 60~65℃입니다.", quote, `${quote}\n● HOT 테스트음료\n기본 기준: 16oz / 스팀 온도 70~80℃`);
+  assert.equal(conflict.kind, "resolved"); if (conflict.kind === "resolved") assert.equal(conflict.response.status, "insufficient");
+  const unsupported = extractVerifiedRecipeSourceFacts("HOT 테스트음료 온도는 얼마인가요?", [{ ...source, content: "HOT 테스트음료: 적당히 따뜻하게 한다." }], [{ chunkId: source.chunk_id, quote: "HOT 테스트음료: 적당히 따뜻하게 한다." }]);
+  assert.equal(unsupported, null);
+});
+
+describe("bounded recipe fact validation", () => {
+  const question = "HOT 바닐라라떼 바닐라 시럽과 우유는 각각 얼마나 들어가요?";
+  const quote = "● HOT 바닐라라떼\n기본 기준: 16oz / 바닐라 시럽 20ml / 우유 220ml";
+  const recipe = chunk("recipe-facts", { manual_id: "recipe-manual", diagnostic_scope: "hq", content: quote });
+  const correct = "HOT 바닐라라떼에는 바닐라 시럽 20ml와 우유 220ml를 넣어요.";
+  async function run(answer: string, content = quote, request = question) {
+    return resolveRagAnswer({ ...INPUT, question: request, requireCoverage: true, requireSupportAssessment: true, requireEvidenceScope: true }, {
+      search: async () => [{ ...recipe, content }],
+      generate: async () => JSON.stringify({ answerable: true, answer, coverage: "direct", usedChunkIds: [recipe.chunk_id],
+        supportAssessment: { requestedTarget: "HOT 바닐라라떼", requirements: [{ kind: "facts", support: "direct", evidence: [
+          { chunkId: recipe.chunk_id, quote, role: "facts", target: "HOT 바닐라라떼", targetRelation: "same" },
+        ] }] } }),
+    });
+  }
+  for (const [name, answer] of [["quantity", correct.replace("220ml", "999ml")], ["unit", correct.replace("220ml", "220g")], ["temperature", correct.replace("HOT", "ICE")]]) {
+    test(`rejects generated ${name} contradicting the approved recipe quote`, async () => {
+      assert.deepEqual(await run(answer), { kind: "system_error", code: "GENERATION_UNPARSABLE" });
+    });
+  }
+  test("missing compound ingredient is partial support rather than full", async () => {
+    const outcome = await run("HOT 바닐라라떼에는 바닐라 시럽 20ml를 넣어요.");
+    assert.equal(outcome.kind, "resolved");
+    if (outcome.kind !== "resolved") throw new Error("Expected normal partial support");
+    assert.equal(outcome.response.status, "insufficient");
+    assert.equal(outcome.response.evidenceSupport?.outcome, "partial");
+  });
+  test("same-scope contradictory recipe quantities are normal conflict insufficiency", async () => {
+    const outcome = await run(correct, `${quote}\n● HOT 바닐라라떼\n기본 기준: 16oz / 바닐라 시럽 20ml / 우유 999ml`);
+    assert.equal(outcome.kind, "resolved");
+    if (outcome.kind !== "resolved") throw new Error("Expected normal conflicting evidence");
+    assert.equal(outcome.response.status, "insufficient");
+    assert.equal(outcome.response.evidenceSupport?.outcome, "conflict");
+  });
+  test("different temperature sections keep the correct supported answer", async () => {
+    const outcome = await run(correct, `${quote}\n● ICE 바닐라라떼\n기본 기준: 20oz / 바닐라 시럽 25ml / 우유 240ml`);
+    assert.equal(outcome.kind, "resolved");
+    if (outcome.kind !== "resolved") throw new Error("Expected full support");
+    assert.equal(outcome.response.evidenceSupport?.outcome, "full");
+  });
+  test("separate stores, menus and servings are not same-scope conflicts", () => {
+    const local = { ...recipe, diagnostic_scope: "store" as const, diagnostic_scope_id: "store-one" };
+    const other = { ...recipe, chunk_id: "other-store", diagnostic_scope: "store" as const, diagnostic_scope_id: "store-two", content: quote.replace("220ml", "999ml") };
+    const citations = [{ chunkId: local.chunk_id, quote }];
+    assert.equal(verifyRecipeFacts(question, correct, [local, other], citations)?.support.outcome, "full");
+    assert.equal(verifyRecipeFacts(question, correct, [local, { ...other, diagnostic_scope_id: "store-one" }], citations)?.support.outcome, "conflict");
+    assert.equal(verifyRecipeFacts(question, correct, [local, { ...other, diagnostic_scope_id: "store-one", content: other.content.replace("16oz", "20oz") }], citations)?.support.outcome, "full");
+    assert.equal(verifyRecipeFacts(question, correct, [local, { ...other, diagnostic_scope_id: "store-one", content: other.content.replaceAll("바닐라라떼", "카페라떼") }], citations)?.support.outcome, "full");
+  });
+  test("uncertain structure and unit conversion cannot become full", () => {
+    assert.equal(verifyRecipeFacts(question, correct.replace("220ml", "0.22L"), [recipe], [{ chunkId: recipe.chunk_id, quote }])?.support.outcome, "partial");
+    const unstructured = { ...recipe, content: "바닐라라떼에는 우유를 적당히 넣는다." };
+    assert.equal(verifyRecipeFacts(question, correct, [unstructured], [{ chunkId: recipe.chunk_id, quote: unstructured.content }]), null);
+    assert.equal(verifyRecipeFacts(question, correct, [recipe], [{ chunkId: recipe.chunk_id, quote: "우유 220ml" }])?.support.outcome, "unknown");
+    assert.equal(verifyRecipeFacts(`${question} 그리고 보관 방법도 알려줘`, correct, [recipe], [{ chunkId: recipe.chunk_id, quote }])?.support.outcome, "unknown");
+    assert.equal(verifyRecipeFacts(question, correct.replace("20ml", "약 20ml"), [recipe], [{ chunkId: recipe.chunk_id, quote }])?.contradiction, true);
+  });
+  test("a named ingredient absent from the cited section remains missing", () => {
+    const result = verifyRecipeFacts("HOT 바닐라라떼 설탕과 우유 정량은?", correct, [recipe], [{ chunkId: recipe.chunk_id, quote }]);
+    assert.equal(result?.support.outcome, "partial");
+    assert.ok(result?.support.missing.includes("설탕"));
+  });
+  test("negated quantities cannot become full just because digits match", () => {
+    const result = verifyRecipeFacts(question, `${correct} 이 양을 넣지 마세요.`, [recipe], [{ chunkId: recipe.chunk_id, quote }]);
+    assert.equal(result?.support.outcome, "unknown");
+  });
+});
+
+test("flavored latte relation keeps explicit HOT and ICE identity", () => {
+  assert.equal(sameDeclaredSourceTarget("HOT 바닐라라떼", "ICE 바닐라라떼", "● ICE 바닐라라떼\n우유 220ml"), false);
+  assert.equal(sameDeclaredSourceTarget("따뜻한 바닐라라떼", "HOT 바닐라라떼", "● HOT 바닐라라떼\n우유 220ml"), true);
+  assert.equal(sameDeclaredSourceTarget("아이스 바닐라라떼", "HOT 바닐라라떼", "● HOT 바닐라라떼\n우유 220ml"), false);
+  assert.equal(sameDeclaredSourceTarget("HOT 바닐라라떼", "HOT 카페라떼", "● HOT 카페라떼\n우유 240ml"), false);
+});
+
+test("temperature clarification preserves the requested vanilla latte menu", () => {
+  const recipe = chunk("vanilla-temperature", { title: "음료 제조 및 레시피 관리", content: "4-4. 바닐라라떼 제조\n● HOT 바닐라라떼\n우유 220ml\n● ICE 바닐라라떼\n우유 220ml" });
+  const clarification = buildMenuClarification("바닐라라떼 우유 몇 ml 넣어요?", [recipe]);
+  assert.ok(clarification?.answerable);
+  assert.equal(clarification.answer, "ICE와 HOT 중 어떤 온도 기준의 바닐라라떼를 말씀하시나요?");
+  assert.equal(buildMenuClarification("HOT 바닐라라떼 우유 몇 ml 넣어요?", [recipe]), null);
+  assert.equal(buildMenuClarification("ICE 바닐라라떼 우유 몇 ml 넣어요?", [recipe]), null);
+});
 
 describe("bounded sentence quote whitespace", () => {
   const question = "검증표식 E2E-R1의 확인 문자열 알려줘";
@@ -2195,11 +2503,11 @@ describe("actual query API POST handler with mocked external boundaries", () => 
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
   const require = createRequire(import.meta.url);
 
-  function api(options: { results: ManualChunkMatch[]; effectiveStoreId?: string; authorization?: string; scopeResolved?: boolean; generation?: string; searchError?: boolean; tracing?: boolean; previousQuestion?: string; contextDenied?: boolean; contextError?: boolean; embeddingStatus?: number; answerStatus?: number; finishReason?: string; rawGeneration?: boolean; development?: boolean; privateWriteError?: boolean; questionLogError?: boolean; interpretation?: { target: string; contextTarget: string | null; constraints: string[]; requirements: string[]; clarification: boolean }; interpretationError?: boolean }) {
+  function api(options: { results: ManualChunkMatch[]; effectiveStoreId?: string; authorization?: string; scopeResolved?: boolean; generation?: string; searchError?: boolean; tracing?: boolean; previousQuestion?: string; contextDenied?: boolean; contextError?: boolean; embeddingStatus?: number; answerStatus?: number; finishReason?: string; rawGeneration?: boolean; development?: boolean; privateWriteError?: boolean; questionLogError?: boolean; interpretation?: { target: string; contextTarget: string | null; constraints: string[]; requirements: string[]; clarification: boolean }; interpretationError?: boolean }, executionDirectory?: string) {
     const storeId = options.effectiveStoreId ?? "11111111-1111-4111-8111-111111111111";
     const events = {
       searchCalls: [] as { question: string; storeId: string; franchiseId: string }[],
-      modelCalls: [] as { model: string; messages: { content: string }[] }[],
+      modelCalls: [] as { model: string; max_tokens: number; messages: { content: string }[] }[],
       interpretationCalls: [] as { messages: { content: string }[] }[],
       logs: [] as { question: string; answer: string; status: string; storeId: string | null }[],
       followUps: [] as { storeId: string; escalate: boolean }[],
@@ -2211,6 +2519,7 @@ describe("actual query API POST handler with mocked external boundaries", () => 
       privateTargetWrites: [] as { filePath: string; content: string }[],
       privateDecisionWrites: [] as { filePath: string; content: string; mode: number }[],
       privateCaptureLogs: [] as string[],
+      recipeFacts: [] as { traceId: string; diagnostic: RecipeFactDiagnostic }[],
     };
     const contextClient = {
       from(table: string) {
@@ -2254,6 +2563,7 @@ describe("actual query API POST handler with mocked external boundaries", () => 
       } },
       "node:path": path,
       "@/lib/rag/answer-prompt": { buildGroundedAnswerMessages },
+      "@/lib/rag/search-query": require("../../lib/rag/search-query.ts"),
       "@/lib/rag/question-interpretation": require("../../lib/rag/question-interpretation.ts"),
       "@/lib/rag/trace-identifiers": require("../../lib/rag/trace-identifiers.ts"),
       "@/lib/rag/manual-menu-intent": { canUseFamilyPackHistory, priorFamilyPackVariant },
@@ -2264,13 +2574,22 @@ describe("actual query API POST handler with mocked external boundaries", () => 
       },
       "@/lib/rag/finalize-rag-query-response": { finalizeRagQueryResponse },
       "@/lib/rag/resolve-rag-answer": { resolveRagAnswer },
+      "@/lib/rag/private-recipe-fact-diagnostics": { recordPrivateRecipeFactDiagnostic: (traceId: string, diagnostic: RecipeFactDiagnostic) => {
+        events.recipeFacts.push({ traceId, diagnostic });
+        if (options.privateWriteError) throw new Error("synthetic-recipe-diagnostic-write-failure");
+        return true;
+      }, recordPrivateRecipeExecutionEvent: (traceId: string, event: Parameters<typeof import("../../lib/rag/private-recipe-fact-diagnostics.ts").recordPrivateRecipeExecutionEvent>[1], config: { development: boolean }) => {
+        if (options.privateWriteError) throw new Error("synthetic-execution-write-failure");
+        if (executionDirectory) return require("../../lib/rag/private-recipe-fact-diagnostics.ts").recordPrivateRecipeExecutionEvent(traceId, event, { ...config, directory: executionDirectory });
+        return { traceId, stage: event.stage };
+      } },
       "@/lib/rag/structured-answer": require("../../lib/rag/structured-answer.ts"),
       "@/lib/rag/validate-query-request": { validateQueryRequest },
       "@/lib/rag/save-question-log": { saveQuestionLog: async (input: typeof events.logs[number]) => { events.logs.push(input); return options.questionLogError
         ? { saved: false, code: "QUESTION_LOG_SAVE_FAILED" } : { saved: true, questionLogId: "33333333-3333-4333-8333-333333333333" }; } },
       "@/lib/notifications/notify-repeated-question": { createQuestionLogFollowUp: (input: { storeId: string; escalate: boolean }) => { events.followUps.push({ storeId: input.storeId, escalate: input.escalate }); return async () => { events.completedFollowUps++; }; } },
       "@/lib/supabase/admin": { createAdminClient: () => contextClient },
-      "@/lib/rag/search-manual-chunks": { searchManualChunks: async (question: string, requestedStore: string, requestedFranchise: string) => { events.searchCalls.push({ question, storeId: requestedStore, franchiseId: requestedFranchise }); if (options.embeddingStatus) throw Object.assign(new Error("MOCK_EMBEDDING_HTTP_FAILURE"), { diagnosticService: "embedding", diagnosticHttpStatus: options.embeddingStatus }); if (options.searchError) throw new Error("SEARCH_FIXTURE_FAILURE"); return options.results; } },
+      "@/lib/rag/search-manual-chunks": { searchManualChunks: async (question: string, requestedStore: string, requestedFranchise: string, _count: number, onUsage?: (event: unknown) => void) => { events.searchCalls.push({ question, storeId: requestedStore, franchiseId: requestedFranchise }); if (options.embeddingStatus) throw Object.assign(new Error("MOCK_EMBEDDING_HTTP_FAILURE"), { diagnosticService: "embedding", diagnosticHttpStatus: options.embeddingStatus }); if (options.searchError) throw new Error("SEARCH_FIXTURE_FAILURE"); onUsage?.({ service: "embedding", httpStatus: 200, inputTokens: 62, outputTokens: 0 }); return options.results; } },
     };
     const routeModule = { exports: {} as { POST: (request: Request) => Promise<Response> } };
     new Script(compiled, { filename: "actual-rag-query-route.cjs" }).runInNewContext({
@@ -2287,8 +2606,9 @@ describe("actual query API POST handler with mocked external boundaries", () => 
         if (label.startsWith("[RAG_VALIDATION] ")) events.validationLogs.push(label);
         if (label.startsWith("[RAG_PRIVATE_DECISION] ")) events.privateCaptureLogs.push(label);
       }, error: () => {} },
-      fetch: async (url: string, init: RequestInit) => {
+      fetch: async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
         assert.equal(url, "https://api.openai.com/v1/chat/completions");
+        assert.ok(init);
         const requestBody = JSON.parse(init.body as string);
         if (requestBody.response_format?.json_schema?.name === "rag_question_interpretation") {
           events.interpretationCalls.push(requestBody);
@@ -2330,7 +2650,7 @@ describe("actual query API POST handler with mocked external boundaries", () => 
             generation = JSON.stringify(parsed);
           }
         } catch { generation = options.generation!; }
-        return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: generation }, finish_reason: options.finishReason ?? "stop" }] }) };
+        return { ok: true, status: 200, json: async () => ({ usage: { prompt_tokens: 80, completion_tokens: 20 }, choices: [{ message: { content: generation }, finish_reason: options.finishReason ?? "stop" }] }) };
       },
     });
     return {
@@ -2515,11 +2835,15 @@ describe("actual query API POST handler with mocked external boundaries", () => 
     const trace: { phase?: string; conversationTag?: string | null; requestOrigin: string; effectiveStoreId: string; storeSource: string }[] = [];
     const forwardedUrls: string[] = [];
     const errors: string[] = [];
+    const insertedMessages: Record<string, unknown>[] = [];
     const fakeAdmin = {
-      from() {
+      from(table: string) {
         const query = {
           error: null,
-          select: () => query, eq: () => query, insert: () => query, update: () => query,
+          select: () => query, eq: () => query, insert: (rows: Record<string, unknown> | Record<string, unknown>[]) => {
+            if (table === "conversation_messages" && Array.isArray(rows)) insertedMessages.push(...rows);
+            return query;
+          }, update: () => query,
           maybeSingle: async () => ({ data: { id: "conversation", store_id: savedStoreId ?? storeId }, error: null }),
           single: async () => ({ data: { id: "44444444-4444-4444-8444-444444444444" }, error: createError ?? null }),
         };
@@ -2530,6 +2854,7 @@ describe("actual query API POST handler with mocked external boundaries", () => 
       "next/server": require("next/server.js"),
       "@/app/api/rag/query/route": { POST: async (request: Request) => { forwardedUrls.push(request.url); return rag.postRequest(request); } },
       "@/lib/rag/trace-identifiers": { conversationTraceTag },
+      "@/lib/rag/recipe-fact-verification": require("../../lib/rag/recipe-fact-verification.ts"),
       "@/lib/staff/conversations": { ...require("../../lib/staff/conversations.ts"), buildConversationTitle: () => "fixture", isMissingConversationTable: () => false },
       "@/lib/supabase/admin": { createAdminClient: () => fakeAdmin },
       "@/lib/supabase/server": { createClient: async () => ({ auth: { getUser: async () => ({ data: { user: { id: "fixture-staff" } }, error: null }) } }) },
@@ -2541,7 +2866,7 @@ describe("actual query API POST handler with mocked external boundaries", () => 
       process: { env: { NODE_ENV: "development", RAG_TRACE: "1" } },
       console: { info: (_label: string, event: typeof trace[number]) => trace.push(event), error: (...args: unknown[]) => errors.push(JSON.stringify(args)) },
     });
-    return { trace, forwardedUrls, errors, post: (question: string, requestedStoreId: string, conversationId?: string) => chatModule.exports.POST(new Request("http://localhost:3001/api/staff/chat", {
+    return { trace, forwardedUrls, errors, insertedMessages, post: (question: string, requestedStoreId: string, conversationId?: string) => chatModule.exports.POST(new Request("http://localhost:3001/api/staff/chat", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question, storeId: requestedStoreId, conversationId }),
     })) };
   }
@@ -2815,6 +3140,48 @@ describe("actual query API POST handler with mocked external boundaries", () => 
     }
   });
 
+  test("structured evidence generation has a bounded budget beyond the short visible answer", async () => {
+    const content = "물품은 가상 창고 선반에 보관한다.";
+    const handler = api({ results: [chunk("budget", { content })], rawGeneration: true,
+      generation: JSON.stringify({ answerable: true, answer: content, coverage: "direct", usedChunkIds: ["budget"],
+        supportAssessment: { requestedTarget: "물품", requirements: [{ kind: "location", support: "direct", evidence: [
+          { chunkId: "budget", quote: content, role: "location", target: "물품", targetRelation: "same" },
+        ] }] } }) });
+    assert.equal((await handler.post("물품은 어디에 두나요?")).status, 200);
+    assert.equal(handler.events.modelCalls.length, 1);
+    assert.equal(handler.events.modelCalls[0].max_tokens, 2000);
+  });
+
+  test("valid structured output over 500 tokens fits the 2000 budget while length completion remains rejected", async () => {
+    const answer = "물품은 가상 창고 선반에 보관해요.";
+    const content = "물품은 가상 창고 선반에 보관한다. " + "가상 표식과 가상 상자는 테스트에서만 사용하는 물품이다. ".repeat(30);
+    const generation = JSON.stringify({ answerable: true, answer, coverage: "direct", usedChunkIds: ["long-structure"],
+      supportAssessment: { requestedTarget: "물품", requirements: [{ kind: "location", support: "direct", evidence: [
+        { chunkId: "long-structure", quote: content, role: "location", target: "물품", targetRelation: "same" },
+      ] }] } });
+    const tokens = require("js-tiktoken").encodingForModel("gpt-4o").encode(generation).length;
+    assert.ok(tokens > 500 && tokens <= 2000, `synthetic JSON output tokens: ${tokens}`);
+    assert.ok(content.length <= 1200);
+    for (const finishReason of ["stop", "length"]) {
+      const handler = api({ results: [chunk("long-structure", { content })], rawGeneration: true, tracing: true, generation, finishReason });
+      const response = await handler.post("물품은 어디에 두나요?");
+      const body = await response.json();
+      assert.equal(handler.events.modelCalls[0].max_tokens, 2000);
+      assert.equal(handler.events.modelCalls.length, 1);
+      if (finishReason === "stop") {
+        assert.equal(response.status, 200);
+        assert.equal(body.answer, answer);
+        assert.equal(handler.events.logs.length, 1);
+      } else {
+        assert.equal(response.status, 500);
+        assert.equal(body.code, "GENERATION_UNPARSABLE");
+        assert.equal(handler.events.logs.length, 0);
+        assert.equal(handler.events.followUps.length, 0);
+        assert.equal(handler.events.trace.find(event => event.validationKind === "response_truncated")?.failureLayer, "model_completion");
+      }
+    }
+  });
+
   test("raw model schema omissions, bad scope and truncation return safe 500 codes with no persistence or automatic retry", async () => {
     const content = "물품은 창고에 둔다.";
     const good = { answerable: true, answer: content, coverage: "direct", usedChunkIds: ["scope"], supportAssessment: {
@@ -3024,6 +3391,106 @@ describe("actual query API POST handler with mocked external boundaries", () => 
     assert.equal(handler.events.trace.find((event) => event.stage === "structured_validation")?.coverage, "direct");
     assert.equal(handler.events.trace.find((event) => event.stage === "final")?.supportCoverage, "policy_only");
     assert.equal(JSON.stringify(handler.events.trace).includes(content), false);
+  });
+
+  test("actual server route collects minimal source spans, rendering and both provider usages on one trace without browser guarding", async () => {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const directory = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "ilitda-api-telemetry-"));
+    try {
+      require("node:child_process").execFileSync("git", ["init", "--quiet", directory], { stdio: "ignore" });
+      fs.writeFileSync(path.join(directory, ".gitignore"), "local-data/\n");
+      const quote = "● HOT 테스트음료\n기본 기준: 16oz / 스팀 온도 60~65℃";
+      const source = chunk("33333333-3333-4333-8333-333333333333", { manual_id: "22222222-2222-4222-8222-222222222222", content: quote,
+        raw_similarity_score: .41, keyword_boost: .2 });
+      const handler = api({ development: true, results: [source], generation: JSON.stringify({ answerable: true, answer: "HOT 테스트음료 스팀 온도 약 60~65℃입니다. AI_PROSE_SENTINEL",
+        coverage: "direct", usedChunkIds: [source.chunk_id], supportAssessment: { requestedTarget: "HOT 테스트음료", requirements: [{ kind: "conditions", support: "direct", evidence: [
+          { chunkId: source.chunk_id, quote, role: "conditions", target: "HOT 테스트음료", targetRelation: "same" },
+        ] }] } }) }, directory);
+      const response = await handler.post("HOT 테스트음료 스팀 온도는 몇 ℃인가요?");
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      const text = fs.readFileSync(path.join(directory, "local-data/rag-recipe-execution-diagnostics.jsonl"), "utf8");
+      const records = text.trim().split("\n").map(row => JSON.parse(row));
+      assert.equal(records.length, 4);
+      assert.ok(records.every(record => record.traceId === response.headers.get("X-RAG-Trace-ID")));
+      assert.deepEqual(records.filter(record => record.stage === "provider_usage").map(record => record.service), ["embedding", "generation"]);
+      assert.ok(records.filter(record => record.stage === "provider_usage").every(record => record.usageVerified));
+      const rendering = records.find(record => record.stage === "source_rendering");
+      assert.equal(rendering.facts[0].source.chunkId, source.chunk_id);
+      assert.equal(rendering.facts[0].approximate, false);
+      const crypto = require("node:crypto") as typeof import("node:crypto");
+      assert.equal(rendering.renderedAnswerHash, crypto.createHash("sha256").update(body.answer.split("\n\n※")[0]).digest("hex"));
+      assert.equal(records.find(record => record.stage === "final_output").answerHash, crypto.createHash("sha256").update(body.answer).digest("hex"));
+      assert.equal(text.includes("AI_PROSE_SENTINEL"), false);
+      assert.equal(text.includes(quote), false);
+      assert.equal(body.evidenceSupport.outcome, "full");
+      assert.equal(require("../../lib/rag/recipe-fact-verification.ts").recipeSupportStorageEnabled(), false);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("development two-case preparation: staff route accepts exact requested steam and cup-relative ratio with storage off", async () => {
+    const cases = [
+      { question: "ICE 아메리카노는 차가운 물과 얼음을 얼마나 넣나요?", target: "ICE 아메리카노",
+        quote: "● ICE 아메리카노\n기본 기준: 20oz / 차가운 물 250ml / 얼음 약 70%",
+        answer: "ICE 아메리카노에는 차가운 물 250ml를 넣고 얼음은 컵의 약 70%까지 채워요.", expectedStatus: "cautious", expectedOutcome: "full" },
+      { question: "HOT 바닐라라떼의 스팀 온도는 몇 ℃인가요?", target: "HOT 바닐라라떼",
+        quote: "● HOT 바닐라라떼\n기본 기준: 16oz / 바닐라 시럽 20ml / 우유 220ml / 스팀 온도 60~65℃",
+        answer: "HOT 바닐라라떼의 스팀 온도는 60~65℃입니다.", expectedStatus: "cautious", expectedOutcome: "full" },
+    ];
+    for (const scenario of cases) {
+      const source = chunk("11111111-2222-4333-8444-555555555555", { manual_id: "66666666-2222-4333-8444-555555555555",
+        title: "음료 제조 및 레시피 관리", category: "음료제조", content: scenario.quote + (scenario.target === "ICE 아메리카노" ? "\n1. 컵에 얼음을 약 70%까지 넣는다." : ""), raw_similarity_score: .41, keyword_boost: .2 });
+      const handler = api({ results: [source], tracing: true, rawGeneration: true,
+        generation: JSON.stringify({ answerable: true, coverage: "direct", answer: scenario.answer, usedChunkIds: [source.chunk_id],
+          supportAssessment: { requestedTarget: scenario.target, requirements: requestedSupportKinds(scenario.question).map(kind => ({ kind, support: "direct", evidence: [
+            { chunkId: source.chunk_id, quote: scenario.quote, role: kind, target: scenario.target, targetRelation: "same" },
+          ] })) } }) });
+      const chat = staffChat(handler);
+      const response = await chat.post(scenario.question, storeId);
+      const body = await response.json();
+      assert.equal(response.status, 200);
+      assert.equal(body.status, scenario.expectedStatus);
+      assert.ok(body.answer.includes(scenario.quote.split("\n")[1].split(" / ").at(-1)!));
+      assert.ok(handler.events.trace.some(event => event.stage === "recipe_source_rendering"));
+      assert.equal(body.evidenceSupport, undefined);
+      assert.equal(handler.events.interpretationCalls.length, 0);
+      assert.equal(handler.events.searchCalls.length, 1);
+      assert.equal(handler.events.modelCalls.length, 1);
+      const fact = handler.events.trace.find(event => event.stage === "recipe_fact_validation");
+      assert.equal(fact?.outcome, scenario.expectedOutcome);
+      assert.equal(fact?.reason, "RECIPE_BOUNDED_FACTS_VERIFIED");
+      assert.equal(fact?.traceId, response.headers.get("X-RAG-Trace-ID"));
+      assert.equal(handler.events.followUps[0].escalate, false);
+      assert.equal(chat.insertedMessages.length, 2);
+      assert.equal(chat.insertedMessages.some(row => "evidence_support" in row), false);
+    }
+  });
+
+  test("recipe private file failure preserves API status and same-trace fact rules", async () => {
+    const quote = "● HOT 바닐라라떼\n기본 기준: 16oz / 우유 220ml / 스팀 온도 60~65℃";
+    const source = chunk("22222222-2222-4222-8222-222222222222", { content: quote, raw_similarity_score: .41, keyword_boost: .2 });
+    for (const spelling of ["60~65℃", "약 60~65℃"]) {
+      for (const privateWriteError of [false, true]) {
+        const handler = api({ results: [source], tracing: true, privateWriteError, rawGeneration: true,
+          generation: JSON.stringify({ answerable: true, answer: `HOT 바닐라라떼 스팀 온도 ${spelling}입니다.`, coverage: "direct", usedChunkIds: [source.chunk_id],
+            supportAssessment: { requestedTarget: "HOT 바닐라라떼", requirements: [{ kind: "conditions", support: "direct", evidence: [
+              { chunkId: source.chunk_id, quote, role: "conditions", target: "HOT 바닐라라떼", targetRelation: "same" },
+            ] }] } }) });
+        const response = await handler.post("HOT 바닐라라떼의 스팀 온도는 몇 ℃인가요?");
+        assert.equal(response.status, 200);
+        const body = await response.json();
+        assert.ok(body.answer.includes("스팀 온도 60~65℃"));
+        assert.equal(body.answer.includes("약 60~65℃"), false);
+        assert.equal(handler.events.recipeFacts.length, 1);
+        assert.equal(handler.events.recipeFacts[0].traceId, response.headers.get("X-RAG-Trace-ID"));
+        assert.equal(handler.events.recipeFacts[0].diagnostic.rule, spelling.startsWith("약") ? "APPROXIMATION_MISMATCH" : "MATCH");
+      }
+    }
+    const disabled = api({ results: [source], rawGeneration: true, generation: JSON.stringify({ answerable: false, answer: "", coverage: "policy_only", usedChunkIds: [], supportAssessment: null }) });
+    await disabled.post("HOT 바닐라라떼의 스팀 온도는 몇 ℃인가요?");
+    assert.equal(disabled.events.recipeFacts.length, 0);
   });
 
   test("actual staff/chat preserves ambiguous menu clarification and RAG diagnostic stages", async () => {

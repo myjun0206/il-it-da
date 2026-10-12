@@ -1,3 +1,5 @@
+import type { RecipeEvidenceSupport } from "@/lib/rag/recipe-fact-verification";
+
 export type RagStatus = "answered" | "cautious" | "insufficient";
 
 export type RagSource = {
@@ -20,6 +22,7 @@ export type RagSearchMatch = {
 };
 
 export type RagQuerySuccessResponse = {
+  evidenceSupport?: RecipeEvidenceSupport | null;
   responseKind?: "answer" | "clarification";
   answer: string;
   similarity: number | null;
@@ -40,6 +43,7 @@ export type RagQueryErrorResponse = {
 export type RagQueryResponse = RagQuerySuccessResponse | RagQueryErrorResponse;
 
 export type ManualChunkMatch = {
+  diagnostic_scope_id?: string;
   diagnostic_scope?: "hq" | "store" | "unknown";
   chunk_id: string;
   manual_id: string;

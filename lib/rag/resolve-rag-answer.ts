@@ -24,6 +24,7 @@ import {
   sameDeclaredSourceTarget,
   type SupportKind,
 } from "@/lib/rag/structured-answer";
+import { verifyRecipeFacts, extractVerifiedRecipeSourceFacts, verifyRecipeModelForSourceRendering, renderVerifiedRecipeSourceFacts, type RecipeFactDiagnostic, type VerifiedRecipeSourceFact } from "@/lib/rag/recipe-fact-verification";
 import type {
   ManualChunkMatch,
   RagQuerySuccessResponse,
@@ -51,6 +52,8 @@ export type RagPrivateDecisionReview = {
 };
 
 export type RagAnswerDeps = {
+  onPrivateRecipeFactDiagnostic?: (diagnostic: RecipeFactDiagnostic) => void;
+  onPrivateRecipeSourceFacts?: (facts: readonly VerifiedRecipeSourceFact[], renderedAnswer: string) => void;
   search: (question: string) => Promise<ManualChunkMatch[]>;
   interpret?: (question: string, messages: readonly { role: "user" | "assistant"; content: string }[]) => Promise<QuestionInterpretation>;
   onDiagnostic?: (event: { stage: string; [key: string]: unknown }) => void;
@@ -442,6 +445,33 @@ export async function resolveRagAnswer(
     trace({ stage: "support_validation", validation: "accepted", supportCoverage, requestedCount: requested.length, directCount: direct.length });
     reviewDecision("accepted", undefined, direct.map(item => item.kind), stateConditionCovered);
   }
+  const recipeCitations = structured.supportAssessment?.requirements.flatMap(item => item.evidence) ?? [];
+  let recipe = structured.coverage === "clarification" ? null : verifyRecipeFacts(input.question, stateConditionCovered ? supportedAnswer : structured.answer,
+    candidateSelection.matches, recipeCitations, deps.onPrivateRecipeFactDiagnostic);
+  if (recipe && !deterministic && structured.coverage === "direct" && supportCoverage === "direct" && !scopeNotice) {
+    const source = extractVerifiedRecipeSourceFacts(input.question, candidateSelection.matches, recipeCitations);
+    const modelGate = verifyRecipeModelForSourceRendering(input.question, structured.answer, candidateSelection.matches, recipeCitations);
+    if (source?.support.outcome === "full" && source.sourceFacts?.length && modelGate?.support.outcome === "full" && !modelGate.contradiction) {
+      supportedAnswer = renderVerifiedRecipeSourceFacts(source.sourceFacts);
+      recipe = source;
+      try { deps.onPrivateRecipeSourceFacts?.(source.sourceFacts, supportedAnswer); } catch {}
+      trace({ stage: "recipe_source_rendering", reason: "VERIFIED_SOURCE_FACTS_RENDERED", providedCount: source.sourceFacts.length });
+    }
+  }
+  if (recipe) trace({ stage: "recipe_fact_validation", outcome: recipe.support.outcome, reason: recipe.support.reason });
+  if (recipe?.contradiction) {
+    trace({ stage: "final", status: "system_error", reason: "GENERATION_UNPARSABLE", failureLayer: "recipe_facts" });
+    return { kind: "system_error", code: "GENERATION_UNPARSABLE" };
+  }
+  if (recipe && ["partial", "insufficient", "conflict", "unknown"].includes(recipe.support.outcome)) {
+    const verifiedText = recipe.support.verified.map(fact => `${fact.ingredient} ${fact.quantity}${fact.unit}`).join(", ");
+    const answer = recipe.support.outcome === "unknown" ? "제공된 레시피 근거에서 요청한 메뉴·온도·수량 범위를 명확히 검증하지 못했습니다. 매장 관리자에게 확인해 주세요."
+      : recipe.support.outcome === "conflict" ? "같은 레시피 적용 범위의 근거가 서로 충돌합니다. 매장 관리자에게 확인해 주세요."
+      : `${verifiedText ? `확인된 내용: ${verifiedText}.\n` : ""}추가 확인 필요: ${recipe.support.missing.join(", ")}. 매장 관리자에게 확인해 주세요.`;
+    trace({ stage: "final", status: "insufficient", reason: recipe.support.reason, usedChunkIds: validChunkIds, evidenceScore: usedEvidenceScore });
+    return addShortageScope({ kind: "resolved", escalate: true, response: { answer, status: "insufficient", similarity: usedEvidenceScore,
+      source: sources[0], sources, matches, evidenceSupport: recipe.support } });
+  }
   const assessedCoverage = stateConditionCovered && supportCoverage === "direct" ? "direct" : structured.coverage;
   if (assessedCoverage === "policy_only" || supportCoverage === "policy_only"
     || input.requireEvidenceScope && (supportCoverage === "partial" || assessedCoverage === "partial")) {
@@ -450,6 +480,7 @@ export async function resolveRagAnswer(
     return addShortageScope({ kind: "resolved", escalate: true, response: {
       answer: supportedAnswer + scopeNotice, similarity: usedEvidenceScore, source: sources[0], sources,
       status: "insufficient", matches,
+      ...(recipe ? { evidenceSupport: { ...recipe.support, outcome: "unknown" as const, reason: "RECIPE_PRIOR_SCOPE_NOT_FULL" } } : {}),
     } });
   }
   const status = usedEvidenceScore >= input.thresholds.answered ? "answered" : "cautious";
@@ -463,6 +494,7 @@ export async function resolveRagAnswer(
     escalate: false,
     response: {
       ...(structured.coverage === "clarification" ? { responseKind: "clarification" as const } : {}),
+      ...(recipe ? { evidenceSupport: recipe.support } : {}),
       answer,
       similarity: usedEvidenceScore,
       source: sources[0],

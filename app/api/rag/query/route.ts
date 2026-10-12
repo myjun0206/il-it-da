@@ -9,6 +9,7 @@ import {
 } from "@/lib/rag/authorize-rag-store-access";
 import { finalizeRagQueryResponse } from "@/lib/rag/finalize-rag-query-response";
 import { resolveRagAnswer, type RagPrivateDecisionReview } from "@/lib/rag/resolve-rag-answer";
+import { recordPrivateRecipeFactDiagnostic, recordPrivateRecipeExecutionEvent } from "@/lib/rag/private-recipe-fact-diagnostics";
 import { createQuestionInterpreter, loadQuestionContext, shouldInterpretQuestion, type QuestionInterpretation } from "@/lib/rag/question-interpretation";
 import { StructuredAnswerParseError, buildGroundedAnswerResponseFormat, requestedSupportKinds } from "@/lib/rag/structured-answer";
 import { saveQuestionLog } from "@/lib/rag/save-question-log";
@@ -29,7 +30,7 @@ export const runtime = "nodejs";
 const ANSWERED_THRESHOLD = 0.60;
 const CAUTIOUS_THRESHOLD = 0.40;
 const GPT_TIMEOUT_MS = 30_000;
-const GPT_MAX_OUTPUT_TOKENS = 500; // 현장 직원용 간결한 답변에 맞춘 보수적 상한
+const GPT_MAX_OUTPUT_TOKENS = 2000;
 const NO_MANUAL_ANSWER =
   "해당 질문에 관한 매뉴얼 내용을 찾지 못했습니다. 매장 관리자에게 문의해 주세요.";
 const CAUTION_NOTICE =
@@ -37,6 +38,7 @@ const CAUTION_NOTICE =
 
 type OpenAiChatResponse = { //답변글
   choices?: Array<{ message?: { content?: string | null }; finish_reason?: string | null }>;
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
 };
 
 function getSafeErrorDetails(error: unknown): { name: string } {
@@ -108,6 +110,10 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
   const traceEnabled = process.env.NODE_ENV === "development" && process.env.RAG_TRACE === "1";
   const conversationTag = conversationTraceTag((body as { conversationId?: unknown }).conversationId);
   const development = process.env.NODE_ENV === "development";
+  if (request.headers.has("X-RAG-Retest") || request.headers.has("X-RAG-E2E")
+    || Object.prototype.hasOwnProperty.call(body, "e2eExecution")) {
+    return NextResponse.json({ error: "Private verification is unavailable on the application route.", code: "RAG_QUERY_FAILED" }, { status: 409 });
+  }
   let privateDecision: RagPrivateDecisionReview | undefined;
   const trace = createRagDiagnosticTrace({ enabled: development, conversationId: (body as { conversationId?: unknown }).conversationId,
     storeId, emit: (event) => {
@@ -136,6 +142,14 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
       }
     } });
   const diagnosticHeaders = development ? { "X-RAG-Trace-ID": trace.traceId } : undefined;
+  const collectExecution = (event: Parameters<typeof recordPrivateRecipeExecutionEvent>[1]) => {
+    try {
+      const record = recordPrivateRecipeExecutionEvent(trace.traceId, event, { development });
+      return record;
+    } catch {
+      return null;
+    }
+  };
   trace({ stage: "request", traceVersion: "follow-up-trace-v1", conversationPresent: Boolean(conversationTag) });
 
   try {
@@ -185,7 +199,8 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
             searchInputLength: userQuestion.length, confirmedTargetIncluded: Boolean(familyPackVariant && userQuestion.includes(`${familyPackVariant} 패밀리팩`)),
             includesBFamilyPack: /B\s*패밀리\s*팩/u.test(userQuestion), franchiseId: franchiseScope.franchiseId });
           try {
-            const matches = await searchManualChunks(userQuestion, storeId, franchiseScope.franchiseId);
+            const matches = await searchManualChunks(userQuestion, storeId, franchiseScope.franchiseId, 5,
+              usage => { collectExecution({ stage: "provider_usage", ...usage }); });
             return development && matches.length ? await annotateCandidateScopes(matches, storeId, franchiseScope.franchiseId,
               async ids => await createAdminClient().from("manuals").select("id, status, scope_type, store_id, franchise_id").in("id", ids)) : matches;
           }
@@ -199,7 +214,8 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
         },
         generate: async (rawQuestion, chunks, variant, interpretation) => {
           try {
-            return await createGroundedAnswer(rawQuestion, chunks, variant, trace, interpretation);
+            return await createGroundedAnswer(rawQuestion, chunks, variant, trace, interpretation,
+              usage => { collectExecution({ stage: "provider_usage", ...usage }); });
           } catch (error) {
             console.error("RAG generation failed:", getSafeErrorDetails(error));
             throw error;
@@ -207,6 +223,12 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
         },
         onDiagnostic: development ? trace : undefined,
         onPrivateDecisionReview: development ? review => { privateDecision = review; } : undefined,
+        onPrivateRecipeFactDiagnostic: development ? diagnostic => {
+          recordPrivateRecipeFactDiagnostic(trace.traceId, diagnostic, { development });
+        } : undefined,
+        onPrivateRecipeSourceFacts: development ? (facts, renderedAnswer) => {
+          collectExecution({ stage: "source_rendering", facts, renderedAnswer });
+        } : undefined,
         onPrivateTargetRelationFailure: (diagnostic) => {
           if (!development) return;
           try {
@@ -224,6 +246,7 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
       return NextResponse.json({ error: "Unable to answer the question.", code: outcome.code }, { status: 500, headers: diagnosticHeaders });
     }
 
+    collectExecution({ stage: "final_output", answer: outcome.response.answer, status: outcome.response.status, similarity: outcome.response.similarity });
     console.info("RAG answer decision", {
       questionLength: question.length,
       status: outcome.response.status,
@@ -262,25 +285,25 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
 }
 
 async function createGroundedAnswer(question: string, chunks: ManualChunkMatch[], familyPackVariant?: string,
-  trace?: (event: { stage: string; [key: string]: unknown }) => void, interpretation?: QuestionInterpretation): Promise<string> { // OpenAI Chat Completions API로 매뉴얼 근거 답변 생성
+  trace?: (event: { stage: string; [key: string]: unknown }) => void, interpretation?: QuestionInterpretation,
+  onUsage?: (usage: import("@/lib/rag/private-recipe-fact-diagnostics").RecipeProviderUsage) => void): Promise<string> { // OpenAI Chat Completions API로 매뉴얼 근거 답변 생성
   const apiKey = getOpenAiApiKey();
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), GPT_TIMEOUT_MS);
 
   try {
+    const requestBody = {
+      model: "gpt-4o", temperature: 0.2, max_tokens: GPT_MAX_OUTPUT_TOKENS,
+      response_format: buildGroundedAnswerResponseFormat(question, interpretation?.requirements),
+      messages: buildGroundedAnswerMessages(question, chunks, familyPackVariant, interpretation?.requirements, interpretation),
+    };
     const response = await fetch("https://api.openai.com/v1/chat/completions", { // gpt-4o 모델에 system/user 프롬프트 전달
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        model: "gpt-4o",
-        temperature: 0.2,
-        max_tokens: GPT_MAX_OUTPUT_TOKENS,
-        response_format: buildGroundedAnswerResponseFormat(question, interpretation?.requirements),
-        messages: buildGroundedAnswerMessages(question, chunks, familyPackVariant, interpretation?.requirements, interpretation),
-      }),
+      body: JSON.stringify(requestBody),
       signal: controller.signal,
     });
 
@@ -292,6 +315,9 @@ async function createGroundedAnswer(question: string, chunks: ManualChunkMatch[]
     }
 
     const payload = (await response.json()) as OpenAiChatResponse;
+    try { onUsage?.({ service: "generation", httpStatus: response.status,
+      inputTokens: typeof payload.usage?.prompt_tokens === "number" && Number.isSafeInteger(payload.usage.prompt_tokens) && payload.usage.prompt_tokens >= 0 ? payload.usage.prompt_tokens : null,
+      outputTokens: typeof payload.usage?.completion_tokens === "number" && Number.isSafeInteger(payload.usage.completion_tokens) && payload.usage.completion_tokens >= 0 ? payload.usage.completion_tokens : null }); } catch {}
     const finish = payload.choices?.[0]?.finish_reason;
     const finishReason = ["stop", "length", "content_filter", "tool_calls", "function_call"].includes(finish ?? "") ? finish : "unknown";
     trace?.({ stage: "model_completion", finishReason });

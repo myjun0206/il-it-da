@@ -16,8 +16,10 @@ import {
 } from "@/lib/staff/selected-store";
 import { formatStoreDisplayName } from "@/lib/stores/search-stores";
 import { createClient } from "@/lib/supabase/client";
+import { parseRecipeEvidenceSupport, type RecipeEvidenceSupport } from "@/lib/rag/recipe-fact-verification";
 
 type Message = {
+  evidenceSupport?: RecipeEvidenceSupport | null;
   from: "ai" | "me";
   text: string;
   responseKind?: "answer" | "clarification";
@@ -98,6 +100,7 @@ function toChatMessages(rows: ConversationMessageDto[]): Message[] {
     const message: Message = { from: row.role === "user" ? "me" : "ai", text: row.content, time: formatMessageTime(row.createdAt) };
     if (row.role === "assistant") {
       if (row.responseKind === "answer" || row.responseKind === "clarification") message.responseKind = row.responseKind;
+      message.evidenceSupport = parseRecipeEvidenceSupport(row.evidenceSupport);
       if (isRagStatus(row.status)) message.status = row.status;
       if (row.sourceTitle || row.sourceCategory) {
         message.source = { title: row.sourceTitle ?? undefined, category: row.sourceCategory ?? undefined };
@@ -364,6 +367,7 @@ export default function StaffPage() {
       const message: Message = { from: "ai", text: answer, time: formatMessageTime(new Date()) };
       if (payload.responseKind === "answer" || payload.responseKind === "clarification") message.responseKind = payload.responseKind;
       if (isRagStatus(payload.status)) message.status = payload.status;
+      message.evidenceSupport = parseRecipeEvidenceSupport(payload.evidenceSupport);
 
       const source = normalizeSource(payload.source);
       if (source) message.source = source;
@@ -503,9 +507,9 @@ export default function StaffPage() {
                 const prevMessage = index > 0 ? messages[index - 1] : null;
                 const isConsecutiveAI = prevMessage?.from === "ai" && message.from === "ai";
                 return (
-                  <MessageBubble 
-                    key={`${message.time}-${index}`} 
-                    message={message} 
+                  <MessageBubble
+                    key={`${message.time}-${index}`}
+                    message={message}
                     showIcon={!isConsecutiveAI}
                   />
                 );
@@ -600,7 +604,8 @@ export default function StaffPage() {
   );
 }
 
-function MessageBubble({ message, showIcon = true }: { message: Message; showIcon?: boolean }) {
+function MessageBubble({ message, showIcon = true, allowFullSupportBadge = false }: { message: Message; showIcon?: boolean; allowFullSupportBadge?: boolean }) {
+  const support = message.from === "ai" && message.responseKind !== "clarification" ? parseRecipeEvidenceSupport(message.evidenceSupport) : null;
   const badge = message.from !== "ai" ? null : message.responseKind === "clarification"
     ? statusBadgeConfig.clarification : message.status ? statusBadgeConfig[message.status] : null;
   const StatusIcon = badge?.icon;
@@ -629,7 +634,7 @@ function MessageBubble({ message, showIcon = true }: { message: Message; showIco
             <div className="flex gap-4 items-start">
               {/* Left Accent Line */}
               <div className="w-0.5 bg-[var(--color-primary)] flex-shrink-0" />
-              
+
               {/* AI Answer Content */}
               <div className="flex-1 flex flex-col">
                 {/* Status Badge - Small label */}
@@ -641,6 +646,20 @@ function MessageBubble({ message, showIcon = true }: { message: Message; showIco
                 )}
 
                 {/* Message Text - Multiple paragraphs with proper spacing */}
+                {support?.outcome === "full" && allowFullSupportBadge && (
+                  <div className="mb-3 text-xs text-[var(--color-text-secondary)]">
+                    <span className="font-semibold">매뉴얼 근거 확인</span>
+                    <p>질문 범위를 지원하는 매뉴얼 근거를 확인했습니다. 정답을 보장하지 않습니다.</p>
+                  </div>
+                )}
+                {support && ["partial", "insufficient", "conflict"].includes(support.outcome) && (
+                  <div className="mb-3 text-xs text-[var(--color-text-secondary)]">
+                    <p className="font-semibold">추가 확인 필요</p>
+                    {support.verified.length > 0 && <p>확인된 내용: {support.verified.map(fact => `${fact.ingredient} ${fact.quantity}${fact.unit}`).join(", ")}</p>}
+                    {support.missing.length > 0 && <p>부족한 범위: {support.missing.join(", ")}</p>}
+                    {support.outcome === "conflict" && <p>같은 적용 범위의 매뉴얼 근거가 충돌합니다.</p>}
+                  </div>
+                )}
                 <div className="text-base leading-relaxed text-[var(--color-text-primary)] space-y-3">
                   {message.text.split('\n\n').map((paragraph, idx) => (
                     <div key={idx} className="whitespace-pre-wrap break-words">
@@ -705,7 +724,7 @@ function TypingIndicator() {
         <div role="status" aria-label="AI가 답변을 작성 중" className="flex gap-4 items-start">
           {/* Accent line placeholder for alignment */}
           <div className="w-0.5 bg-transparent flex-shrink-0" />
-          
+
           {/* Loading content - SAME STRUCTURE as MessageBubble text wrapper */}
           <div className="flex-1 flex flex-col">
             {/* Match MessageBubble's text wrapper structure exactly */}

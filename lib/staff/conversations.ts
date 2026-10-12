@@ -1,5 +1,6 @@
 // 직원 AI 대화 기록 공통 유틸 (server 전용 API에서 사용)
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { parseRecipeEvidenceSupport, recipeSupportStorageEnabled, type RecipeEvidenceSupport } from "@/lib/rag/recipe-fact-verification";
 
 export const CONVERSATION_TITLE_MAX_LENGTH = 36;
 
@@ -20,6 +21,7 @@ export function isMissingConversationTable(error: { code?: string } | null | und
 }
 
 export interface ConversationMessageDto {
+  evidenceSupport?: RecipeEvidenceSupport | null;
   responseKind?: "answer" | "clarification" | null;
   id: string;
   role: "user" | "assistant";
@@ -180,7 +182,8 @@ export async function getStaffConversationDetail(
   }
   if (!membership) return notFound;
 
-  const messageColumns = "id, role, content, status, source_title, source_category, similarity, created_at";
+  const messageColumns = "id, role, content, status, source_title, source_category, similarity, created_at"
+    + (recipeSupportStorageEnabled() ? ", evidence_support" : "");
   const readMessages = (columns: string) => adminClient.from("conversation_messages").select(columns)
     .eq("conversation_id", conversation.id).order("created_at", { ascending: true });
   const [messageResult, { data: store }] = await Promise.all([
@@ -202,6 +205,7 @@ export async function getStaffConversationDetail(
   }
 
   type MessageRow = {
+    evidence_support?: unknown;
     response_kind?: "answer" | "clarification" | null;
     id: string;
     role: ConversationMessageDto["role"];
@@ -224,6 +228,7 @@ export async function getStaffConversationDetail(
       canContinue: true,
     },
     messages: ((messages ?? []) as unknown as MessageRow[]).map((row) => ({
+      ...(recipeSupportStorageEnabled() ? { evidenceSupport: row.role === "assistant" ? parseRecipeEvidenceSupport(row.evidence_support) : null } : {}),
       responseKind: row.role === "assistant" && (row.response_kind === "answer" || row.response_kind === "clarification") ? row.response_kind : null,
       id: row.id,
       role: row.role,

@@ -5,6 +5,7 @@ import { buildConversationTitle, isMissingConversationTable, isMissingResponseKi
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { conversationTraceTag } from "@/lib/rag/trace-identifiers";
+import { parseRecipeEvidenceSupport, recipeSupportStorageEnabled, type RecipeEvidenceSupport } from "@/lib/rag/recipe-fact-verification";
 
 export const runtime = "nodejs";
 
@@ -18,6 +19,15 @@ type ChatBody = { question?: unknown; storeId?: unknown; conversationId?: unknow
  *   membership을 서버에서 다시 검증하고, 해당 매장/프랜차이즈 범위의 매뉴얼만 검색한다.
  */
 export async function POST(request: Request): Promise<NextResponse> {
+  const executionBody = await request.clone().json().catch(() => null);
+  if (request.headers.has("X-RAG-E2E") || request.headers.has("X-RAG-Retest")
+    || executionBody && Object.prototype.hasOwnProperty.call(executionBody, "e2eExecution")) {
+    return NextResponse.json({ error: "Private verification is unavailable on the application route.", code: "E2E_EXECUTION_STOPPED" }, { status: 409 });
+  }
+  return handleChat(request);
+}
+
+async function handleChat(request: Request): Promise<NextResponse> {
   let body: ChatBody;
   try {
     body = (await request.json()) as ChatBody;
@@ -72,6 +82,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     }),
   );
   const ragBody = (await ragResponse.json()) as {
+    evidenceSupport?: RecipeEvidenceSupport | null;
     responseKind?: "answer" | "clarification";
     answer?: string;
     status?: "answered" | "cautious" | "insufficient";
@@ -97,6 +108,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   // 대화 저장 (실패해도 답변은 돌려준다)
   let saveError: string | null = null;
+  const evidenceSupport = recipeSupportStorageEnabled() ? parseRecipeEvidenceSupport(ragBody.evidenceSupport) : null;
   let isNewConversation = false;
   try {
     const now = new Date().toISOString();
@@ -124,13 +136,14 @@ export async function POST(request: Request): Promise<NextResponse> {
         source_title: ragBody.source?.title ?? null,
         source_category: ragBody.source?.category ?? null,
         similarity: typeof ragBody.similarity === "number" ? ragBody.similarity : null,
+        ...(recipeSupportStorageEnabled() ? { evidence_support: evidenceSupport } : {}),
         created_at: new Date(Date.now() + 1).toISOString(),
       },
     ];
     let { error: messageError } = await adminClient.from("conversation_messages").insert(messageRows);
     if (isMissingResponseKindColumn(messageError)) {
       const legacyRows = messageRows.map(row => {
-        const legacy = { ...row };
+        const legacy: Record<string, unknown> = { ...row };
         delete legacy.response_kind;
         return legacy;
       });
@@ -171,6 +184,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
   return NextResponse.json({
     responseKind: ["answer", "clarification"].includes(ragBody.responseKind ?? "") ? ragBody.responseKind : undefined,
+    ...(recipeSupportStorageEnabled() && !saveError ? { evidenceSupport } : {}),
     answer: ragBody.answer,
     status: ragBody.status,
     source: ragBody.source ?? null,

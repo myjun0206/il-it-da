@@ -12,7 +12,7 @@ export async function annotateCandidateScopes(matches: ManualChunkMatch[], store
     const manual = rows.find(row => row.id === match.manual_id && row.status === "approved" && row.franchise_id === franchiseId);
     const scope = manual?.scope_type === "hq" && manual.store_id === null ? "hq"
       : manual?.scope_type === "store" && manual.store_id === storeId ? "store" : "unknown";
-    return { ...match, diagnostic_scope: scope };
+    return { ...match, diagnostic_scope: scope, diagnostic_scope_id: scope === "hq" ? franchiseId : scope === "store" ? storeId : undefined };
   });
 }
 
@@ -50,9 +50,19 @@ const TRACE_VALUES = new Set([
   "duplicate_requirement", "unresolved_target", "ambiguous_current_intent", "service_http_error", "service_transport_error", "model_refusal",
   "condition_delivery",
   "prompt_delivery", "hq", "store",
+  "recipe_fact_validation", "full", "conflict", "recipe_facts",
+  "RECIPE_REQUEST_STRUCTURE_UNVERIFIED", "RECIPE_CITATION_TEMPERATURE_MISMATCH", "RECIPE_CITATION_SECTION_UNVERIFIED",
+  "RECIPE_SERVING_OR_SCOPE_UNVERIFIED", "RECIPE_SCOPE_COMPARISON_UNVERIFIED", "RECIPE_SOURCE_CONFLICT",
+  "RECIPE_REQUEST_INGREDIENTS_UNVERIFIED", "RECIPE_CITED_FACT_UNVERIFIED", "RECIPE_ANSWER_TEMPERATURE_MISMATCH",
+  "RECIPE_ANSWER_MENU_MISMATCH", "RECIPE_ANSWER_AMOUNT_OR_UNIT_MISMATCH", "RECIPE_ANSWER_IDENTITY_UNVERIFIED",
+  "RECIPE_COMPOUND_OR_OPTION_UNVERIFIED", "RECIPE_EXTRA_AMOUNT_UNVERIFIED", "RECIPE_REQUIRED_FACT_MISSING", "RECIPE_BOUNDED_FACTS_VERIFIED",
+  "RECIPE_ANSWER_SEMANTICS_UNVERIFIED", "RECIPE_PRIOR_SCOPE_NOT_FULL",
+  "RECIPE_RATIO_BASIS_UNVERIFIED",
+  "RECIPE_REQUIRED_SOURCE_FACT_MISSING", "recipe_source_rendering", "VERIFIED_SOURCE_FACTS_RENDERED",
 ]);
 const TRACE_SCALARS = new Set([
   "stage", "reason", "status", "validation", "coverage", "answerable", "mode", "service", "httpStatus", "applied",
+  "outcome",
   "conversationPresent", "previousUserQuestionFound", "previousQuestionLength", "variantFound", "variantIsB", "augmented",
   "originalLength", "searchInputLength", "confirmedTargetIncluded", "includesBFamilyPack", "candidateCount", "beforeCount",
   "afterCount", "requestedMenuCount", "requestedPackVariantCount", "providedCount", "topEvidenceScore", "evidenceScore",

@@ -13,6 +13,20 @@ const PEAK_TIME_CONTENT = "12시부터 14시까지와 16시부터 18시까지 �
 const OPEN_TIME_CONTENT = "평일은 오전 7시 30분, 주말은 오전 8시 30분까지 출근합니다.";
 
 describe("RAG answer prompt", () => {
+  test("numeric qualifiers and ranges remain verbatim while friendly style affects only surrounding wording", () => {
+    for (const prompt of [ANSWER_SYSTEM_PROMPT, GROUNDED_ANSWER_SYSTEM_PROMPT]) {
+      assert.ok(prompt.includes("수량·단위·온도 범위·비율·근사 여부"));
+      assert.ok(prompt.includes("승인 인용 그대로 유지"));
+      assert.ok(prompt.includes("하한·상한"));
+      assert.ok(prompt.includes("없는 '약·대략·정도'"));
+      assert.ok(prompt.includes("인용에 있는 근사 표현도 삭제하지 마라"));
+      assert.ok(prompt.includes("주변 설명과 문장 끝에만"));
+      assert.equal(prompt.includes("60~65"), false);
+    }
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("answer의 수치 사실과 evidence.quote"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("다른 규격의 수치나 근사 표현"));
+  });
+
   test("friendly answer instructions leave strict fields, verbatim quotes and separate source rendering intact", () => {
     assert.ok(ANSWER_SYSTEM_PROMPT.includes("해요체"));
     assert.ok(ANSWER_SYSTEM_PROMPT.includes("첫 문장에 질문의 핵심 답"));
@@ -72,6 +86,9 @@ describe("RAG answer prompt", () => {
     assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("supportAssessment=null"));
     assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("누락·중복·추가하지 마라"));
     assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("요청 kind를 위치나 정책으로 바꾸지 말고"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("동일한 chunkId/quote를 반복하지 마라"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("필수 metadata를 생략하거나 요청 항목을 합쳐서 줄이지 마라"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("answer에는 평가 JSON이나 인용문을 다시 나열하지 마라"));
     for (const question of ["유제품은 어떻게 보관해야 하나요?", "유제품 보관법"]) {
       assert.ok(buildGroundedAnswerMessages(question, [])[0].content.endsWith("서버 지정 요구 항목: method."));
     }

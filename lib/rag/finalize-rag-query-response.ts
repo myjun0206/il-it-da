@@ -38,6 +38,7 @@ export function toQuestionLogInput(
     status: response.status,
     sourceManualId: response.source?.manualId ?? null,
     storeId,
+    ...(response.evidenceSupport ? { evidenceSupport: response.evidenceSupport } : {}),
   };
 }
 

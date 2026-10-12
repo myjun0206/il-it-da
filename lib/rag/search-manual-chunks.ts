@@ -7,6 +7,7 @@ import {
   formatSearchEmbeddingInput,
 } from "@/lib/rag/search-query";
 import type { ManualChunkMatch } from "@/lib/rag/types";
+import type { RecipeProviderUsage } from "@/lib/rag/private-recipe-fact-diagnostics";
 
 
 function validateAndNormalizeQuestion(question: unknown): string {
@@ -94,13 +95,14 @@ export async function searchManualChunks(
   storeId: string,
   franchiseId: string,
   matchCount = 5,
+  onUsage?: (usage: RecipeProviderUsage) => void,
 ): Promise<ManualChunkMatch[]> {
   const normalizedQuestion = validateAndNormalizeQuestion(question);
   const validatedMatchCount = validateMatchCount(matchCount);
   const formattedQuery = formatSearchEmbeddingInput(normalizedQuestion);
   const queryKeywords = extractSearchKeywords(normalizedQuestion);
 
-  const embedding = await createEmbedding(formattedQuery);
+  const embedding = await createEmbedding(formattedQuery, onUsage);
   const supabase = createAdminClient();
 
   // HQ 공통 매뉴얼(scope_type='hq', store_id is null, 같은 franchise) + 자기 store 전용 매뉴얼만 반환하는 scoped RPC(018 migration).

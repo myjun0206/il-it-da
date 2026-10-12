@@ -1,6 +1,6 @@
 export type LatteTemperature = "ICE" | "HOT";
 export type LatteTarget = { name: string; temperature: LatteTemperature | null };
-const LATTE_LABEL = /[가-힣A-Za-z]+(?:[ \t]+카페)?[ \t]*라떼/gu;
+const LATTE_LABEL = /(?:(?:ICED?|HOT|아이스|차가운|따뜻한|따듯한|뜨거운|핫)[ \t]+)?[가-힣A-Za-z]+(?:[ \t]+카페)?[ \t]*라떼/giu;
 
 const PREFIXES: readonly [string, LatteTemperature | null][] = [
   ["iced", "ICE"], ["ice", "ICE"], ["아이스", "ICE"], ["차가운", "ICE"],

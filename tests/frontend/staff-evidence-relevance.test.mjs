@@ -8,13 +8,17 @@ import { test } from "node:test";
 import ts from "typescript";
 
 const require = createRequire(import.meta.url);
+const root = fileURLToPath(new URL("../../", import.meta.url));
+const localModules = new Map();
+const fixtureEnvironment = {};
 const source = readFileSync(new URL("../../app/staff/page.tsx", import.meta.url), "utf8");
 const compiled = ts.transpileModule(`${source}\nexport { MessageBubble, normalizeSource, toChatMessages };`, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },
 }).outputText;
 const pageModule = { exports: {} };
 new Script(compiled).runInNewContext({ module: pageModule, exports: pageModule.exports,
-  require: (name) => ["react", "react/jsx-runtime", "lucide-react"].includes(name) ? require(name) : {},
+  require: (name) => name === "@/lib/rag/recipe-fact-verification" ? loadLocalTs("lib/rag/recipe-fact-verification.ts")
+    : ["react", "react/jsx-runtime", "lucide-react"].includes(name) ? require(name) : {},
 });
 const { createElement } = require("react");
 const { renderToStaticMarkup } = require("react-dom/server");
@@ -36,6 +40,18 @@ test("explicit clarification uses a question-confirmation badge without reclassi
   const submitted = await submitWithFakeResponse({ answer: "확인 질문", status: "insufficient", responseKind: "clarification",
     conversationId: "conversation-fixture", historyAvailable: true });
   assert.equal(submitted.messages.at(-1).responseKind, "clarification");
+});
+
+test("support badges are never inferred from status, source, score or answer wording without validated metadata", () => {
+  for (const status of ["answered", "cautious", "insufficient"]) {
+    for (const similarity of [0.1, 0.55, 0.99]) {
+      const html = renderEvidenceMessage({ status, similarity, text: "검증된 답변처럼 보이는 문장" });
+      assert.equal(html.includes("매뉴얼 근거 확인"), false);
+      assert.equal(html.includes("추가 확인 필요"), false);
+      assert.ok(html.includes("정답 확률이나 답변의 완전성을 뜻하지 않습니다"));
+      if (status === "cautious") assert.ok(html.includes("확인 권장"));
+    }
+  }
 });
 
 async function submitWithFakeResponse(payload, conversationId = "conversation-fixture", options = {}) {
@@ -61,12 +77,11 @@ async function submitWithFakeResponse(payload, conversationId = "conversation-fi
     setMessages: update => { messages = update(messages); }, formatMessageTime: () => "",
     isRecord: value => value !== null && typeof value === "object",
     isRagStatus: value => ["answered", "cautious", "insufficient"].includes(value), normalizeSource: pageModule.exports.normalizeSource,
+    parseRecipeEvidenceSupport: loadLocalTs("lib/rag/recipe-fact-verification.ts").parseRecipeEvidenceSupport,
   });
   return { messages, warnings };
 }
 
-const root = fileURLToPath(new URL("../../", import.meta.url));
-const localModules = new Map();
 function loadLocalTs(relative) {
   const filename = path.resolve(root, relative);
   if (localModules.has(filename)) return localModules.get(filename).exports;
@@ -80,7 +95,7 @@ function loadLocalTs(relative) {
       if (name.startsWith("@/")) return loadLocalTs(`${name.slice(2)}.ts`);
       if (name.startsWith(".")) return loadLocalTs(path.relative(root, path.resolve(path.dirname(filename), name.endsWith(".ts") ? name : `${name}.ts`)));
       return require(name);
-    }, console, AbortSignal, Response, URLSearchParams,
+    }, console, AbortSignal, Response, URLSearchParams, process: { env: fixtureEnvironment },
   });
   return loaded.exports;
 }
@@ -100,6 +115,13 @@ function createStaffFixtureHandler(options = {}) {
     fixture.sources = [{ id: "expiry-fixture", quote: "유통기한이 지난 식재료는 사용하지 않는다.", raw: .25968326912132, boost: .2,
       target: "식재료", role: "permission", relation: "covers_requested" }];
     fixture.requestedTarget = "우유";
+  }
+  if (options.recipeSourceRendering) {
+    fixture.question = "HOT 테스트음료의 스팀 온도는 몇 ℃인가요?";
+    fixture.requestedTarget = "HOT 테스트음료";
+    fixture.coverage = "direct";
+    fixture.sources = [{ id: "recipe-rendered-ui", quote: "● HOT 테스트음료\n기본 기준: 16oz / 우유 220ml / 스팀 온도 60~65℃",
+      raw: .41, boost: .2, target: "HOT 테스트음료", role: "conditions", relation: "same" }];
   }
   const state = { logs: [], conversations: [], messages: [], notifications: [], order: [], ragCalls: 0, searchCalls: [], interpretations: 0, generations: 0, updates: 0, responseStatus: null, messageInsertAttempts: 0 };
   const tables = {
@@ -144,6 +166,10 @@ function createStaffFixtureHandler(options = {}) {
       search: async query => { state.searchCalls.push(query); return matches; },
       generate: async () => {
         state.generations++;
+        if (options.recipeSourceRendering) return JSON.stringify({ answerable: true, answer: "HOT 테스트음료 스팀 온도 약 60~65℃입니다. 이 AI 설명은 수치와 함께 보존하지 마세요.",
+          coverage: "direct", usedChunkIds: [fixture.sources[0].id], supportAssessment: { requestedTarget: fixture.requestedTarget, requirements: [
+            { kind: "conditions", support: "direct", evidence: [{ chunkId: fixture.sources[0].id, quote: fixture.sources[0].quote, role: "conditions", target: fixture.requestedTarget, targetRelation: "same" }] },
+          ] } });
         if (options.statePermission) return JSON.stringify({ answerable: true, answer: "7일 사용 가능", coverage: "partial", usedChunkIds: [fixture.sources[0].id],
           supportAssessment: { requestedTarget: "우유", requirements: [
             { kind: "permission", support: "direct", evidence: [{ chunkId: fixture.sources[0].id, quote: fixture.sources[0].quote, role: "permission", target: "식재료", targetRelation: "covers_requested" }] },
@@ -169,7 +195,7 @@ function createStaffFixtureHandler(options = {}) {
         source_manual_id: input.sourceManualId, resolution_status: "open", created_at: "2026-10-11T00:00:00Z" });
       return { saved: true, questionLogId: logId };
     });
-    return new Response(JSON.stringify(response), { headers: { "Content-Type": "application/json", "X-RAG-Trace-ID": "11111111-1111-4111-8111-111111111111" } });
+    return new Response(JSON.stringify({ ...response, ...(options.evidenceSupport ? { evidenceSupport: options.evidenceSupport } : {}) }), { headers: { "Content-Type": "application/json", "X-RAG-Trace-ID": "11111111-1111-4111-8111-111111111111" } });
   };
   const admin = { from(table) {
     let payload;
@@ -211,14 +237,67 @@ function createStaffFixtureHandler(options = {}) {
     "@/lib/supabase/admin": { createAdminClient: () => admin },
     "@/lib/supabase/server": { createClient: async () => ({ auth: { getUser: async () => ({ data: { user: options.unauthenticated ? null : { id: "user-fixture" } }, error: null }) } }) },
     "@/lib/rag/trace-identifiers": loadLocalTs("lib/rag/trace-identifiers.ts"),
+    "@/lib/rag/recipe-fact-verification": loadLocalTs("lib/rag/recipe-fact-verification.ts"),
   };
   const routeSource = readFileSync(new URL("../../app/api/staff/chat/route.ts", import.meta.url), "utf8");
   const code = ts.transpileModule(routeSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
   new Script(code).runInNewContext({ module: route, exports: route.exports, require: name => { assert.ok(Object.hasOwn(dependencies, name)); return dependencies[name]; },
-    Request, URL, process: { env: { NODE_ENV: "development" } }, console: { info: () => {}, error: () => {} },
+    Request, URL, process: { env: { NODE_ENV: "development", ...fixtureEnvironment } }, console: { info: () => {}, error: () => {} },
   });
   return { fixture, state, post: route.exports.POST };
 }
+
+test("private execution headers and body markers cannot enter ordinary staff generation", async () => {
+  for (const mode of ["body", "header", "retest"]) {
+    const handler = createStaffFixtureHandler({ recipeSourceRendering: true });
+    const response = await handler.post(new Request("http://localhost/api/staff/chat", { method: "POST", headers: { "Content-Type": "application/json",
+      ...(mode === "header" ? { "X-RAG-E2E": "synthetic-private" } : {}), ...(mode === "retest" ? { "X-RAG-Retest": "synthetic-private" } : {}) },
+      body: JSON.stringify({ question: handler.fixture.question, storeId: "store-fixture", ...(mode === "body" ? { e2eExecution: { label: "synthetic-private" } } : {}) }) }));
+    assert.equal(response.status, 409);
+    assert.equal(handler.state.ragCalls, 0);
+    assert.equal(handler.state.generations, 0);
+    assert.equal(handler.state.logs.length, 0);
+    assert.equal(handler.state.messages.length, 0);
+  }
+});
+
+test("source-rendered recipe facts preserve exact text and source through response, log, storage and reloaded UI with metadata off", async () => {
+  const handler = createStaffFixtureHandler({ recipeSourceRendering: true });
+  const response = await handler.post(new Request("http://localhost/api/staff/chat", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question: handler.fixture.question, storeId: "store-fixture" }) }));
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.status, "cautious");
+  assert.ok(body.answer.includes("HOT 테스트음료 (16oz)"));
+  assert.ok(body.answer.includes("스팀 온도 60~65℃"));
+  for (const unwanted of ["약 60~65℃", "AI 설명", "우유 220ml"]) assert.equal(body.answer.includes(unwanted), false);
+  assert.equal((body.answer.match(/60~65℃/gu) ?? []).length, 1);
+  assert.equal(body.evidenceSupport, undefined);
+  assert.equal(handler.state.logs[0].answer, body.answer);
+  assert.equal(handler.state.messages[1].content, body.answer);
+  assert.equal(handler.state.logs[0].evidence_support, undefined);
+  assert.equal(handler.state.messages[1].evidence_support, undefined);
+  assert.equal(handler.state.logs[0].source_manual_id, body.source.manualId);
+  assert.equal(handler.state.messages[1].source_title, body.source.title);
+  const rows = handler.state.messages.map((row, index) => ({ ...row, id: `source-message-${index}` }));
+  const fixture = conversationReadFixture(rows);
+  const { getStaffConversationDetail } = loadLocalTs("lib/staff/conversations.ts");
+  const detail = await getStaffConversationDetail(fixture.client, "user-fixture", "owned-conversation");
+  assert.equal(detail.ok, true);
+  const restored = pageModule.exports.toChatMessages(detail.messages)[1];
+  const immediate = (await submitWithFakeResponse(body)).messages.at(-1);
+  assert.equal(restored.text, immediate.text);
+  assert.deepEqual(restored.source, immediate.source);
+  assert.equal(restored.status, immediate.status);
+  assert.equal(restored.similarity, immediate.similarity);
+  for (const message of [immediate, restored]) {
+    const html = renderToStaticMarkup(createElement(pageModule.exports.MessageBubble, { message }));
+    assert.ok(html.includes("스팀 온도 60~65℃"));
+    assert.ok(html.includes("확인 권장"));
+    assert.ok(html.includes("정답 확률이나 답변의 완전성을 뜻하지 않습니다"));
+    assert.equal(html.includes("매뉴얼 근거 확인"), false);
+  }
+});
 
 test("synthetic dairy fixture travels through staff API to the live UI and reloaded history without a common error", async () => {
   const handler = createStaffFixtureHandler();
@@ -539,6 +618,53 @@ function conversationReadFixture(rows, options = {}) {
   } };
   return { client, messageSelects };
 }
+
+test("recipe metadata opt-in preserves response, stored row, DTO and UI while full badge remains off", async () => {
+  const support = { version: 1, outcome: "partial", verified: [{ ingredient: "우유", quantity: "220", unit: "ml" }], missing: ["바닐라 시럽"], reason: "RECIPE_REQUIRED_FACT_MISSING" };
+  try {
+    fixtureEnvironment.RAG_RECIPE_SUPPORT_STORAGE = "1";
+    const handler = createStaffFixtureHandler({ evidenceSupport: support });
+    const response = await handler.post(new Request("http://localhost/api/staff/chat", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: handler.fixture.question, storeId: "store-fixture" }) }));
+    const body = await response.json();
+    assert.deepEqual(JSON.parse(JSON.stringify(body.evidenceSupport)), support);
+    assert.equal(handler.state.messages[0].evidence_support, undefined);
+    assert.deepEqual(JSON.parse(JSON.stringify(handler.state.messages[1].evidence_support)), support);
+    const rows = handler.state.messages.map((row, index) => ({ ...row, id: `message-${index}` }));
+    const fixture = conversationReadFixture(rows);
+    const { getStaffConversationDetail } = loadLocalTs("lib/staff/conversations.ts");
+    const result = await getStaffConversationDetail(fixture.client, "user-fixture", "owned-conversation");
+    assert.equal(result.ok, true);
+    assert.ok(fixture.messageSelects[0].includes("evidence_support"));
+    const restored = pageModule.exports.toChatMessages(result.messages)[1];
+    const immediate = await submitWithFakeResponse(body);
+    const render = message => renderToStaticMarkup(createElement(pageModule.exports.MessageBubble, { message }));
+    for (const message of [restored, immediate.messages.at(-1)]) {
+      const html = render(message);
+      assert.ok(html.includes("추가 확인 필요"));
+      assert.ok(html.includes("확인된 내용: 우유 220ml"));
+      assert.ok(html.includes("부족한 범위: 바닐라 시럽"));
+      assert.equal(html.includes("매뉴얼 근거 확인"), false);
+    }
+    const full = { version: 1, outcome: "full", verified: [{ ingredient: "우유", quantity: "220", unit: "ml" }], missing: [], reason: "RECIPE_BOUNDED_FACTS_VERIFIED" };
+    const message = { from: "ai", text: "정확한 답변. 확인 권장 안내 유지.", time: "", status: "cautious", similarity: .55,
+      source: { title: "매뉴얼" }, evidenceSupport: full };
+    assert.equal(render(message).includes("매뉴얼 근거 확인"), false);
+    const opted = renderToStaticMarkup(createElement(pageModule.exports.MessageBubble, { message, allowFullSupportBadge: true }));
+    assert.ok(opted.includes("매뉴얼 근거 확인"));
+    assert.ok(opted.includes("정답을 보장하지 않습니다"));
+    assert.ok(opted.includes("확인 권장"));
+    assert.ok(opted.includes("정답 확률이나 답변의 완전성을 뜻하지 않습니다"));
+    assert.equal(render({ ...message, evidenceSupport: { ...full, missing: ["우유"] } }).includes("매뉴얼 근거 확인"), false);
+    assert.equal(render({ ...message, responseKind: "clarification" }).includes("매뉴얼 근거 확인"), false);
+  } finally {
+    delete fixtureEnvironment.RAG_RECIPE_SUPPORT_STORAGE;
+  }
+  const handler = createStaffFixtureHandler({ evidenceSupport: support });
+  const response = await handler.post(new Request("http://localhost/api/staff/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: handler.fixture.question, storeId: "store-fixture" }) }));
+  assert.equal((await response.json()).evidenceSupport, undefined);
+  assert.equal(handler.state.messages[1].evidence_support, undefined);
+});
 
 test("response kind survives actual conversation DTO and UI; NULL and old DB rows keep legacy badges", async () => {
   const { getStaffConversationDetail, isMissingResponseKindColumn } = loadLocalTs("lib/staff/conversations.ts");

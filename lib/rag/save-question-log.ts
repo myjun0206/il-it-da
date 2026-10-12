@@ -1,6 +1,8 @@
 import type { RagStatus } from "./types";
+import { parseRecipeEvidenceSupport, recipeSupportStorageEnabled, type RecipeEvidenceSupport } from "@/lib/rag/recipe-fact-verification";
 
 export type SaveQuestionLogInput = {
+  evidenceSupport?: RecipeEvidenceSupport | null;
   question: string;
   answer: string;
   similarityScore: number | null;
@@ -11,6 +13,7 @@ export type SaveQuestionLogInput = {
 };
 
 export type QuestionLogPayload = {
+  evidence_support?: RecipeEvidenceSupport | null;
   question: string;
   answer: string;
   similarity_score: number | null;
@@ -94,6 +97,7 @@ function buildQuestionLogPayload(input: SaveQuestionLogInput): QuestionLogPayloa
     status: candidate.status,
     source_manual_id: normalizeSourceManualId(candidate.sourceManualId),
     store_id: normalizeStoreId(candidate.storeId),
+    ...(recipeSupportStorageEnabled() ? { evidence_support: parseRecipeEvidenceSupport(candidate.evidenceSupport) } : {}),
   };
 }
 
