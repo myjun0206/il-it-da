@@ -89,23 +89,22 @@ export async function GET(): Promise<NextResponse<HqStoresResponse>> {
     }
 
     const memberships = membershipResult.data ?? [];
-    const ownerUserIds = [
-      ...new Set(memberships.filter((membership) => membership.role === "owner").map((membership) => membership.user_id)),
-    ];
+    const ownerUserIds = [...new Set(memberships.map((membership) => membership.user_id))];
 
     const namesByUserId = new Map<string, string>();
     if (ownerUserIds.length > 0) {
       const { data: profiles, error: profileError } = await adminClient
         .from("profiles")
-        .select("id, full_name")
-        .in("id", ownerUserIds);
+        .select("user_id, full_name")
+        .in("user_id", ownerUserIds)
+        .is("brand_id", null);
 
       if (profileError) {
         return NextResponse.json({ error: "점주 정보를 불러오지 못했습니다." }, { status: 500 });
       }
 
       for (const profile of profiles ?? []) {
-        if (profile.full_name) namesByUserId.set(profile.id, profile.full_name);
+        namesByUserId.set(profile.user_id, profile.full_name || "이름 미등록");
       }
     }
 
@@ -125,7 +124,7 @@ export async function GET(): Promise<NextResponse<HqStoresResponse>> {
 
     for (const membership of memberships) {
       const summary = summaries.get(membership.store_id);
-      if (!summary) continue;
+      if (!summary || !namesByUserId.has(membership.user_id)) continue;
 
       if (membership.role === "owner") {
         summary.ownerNames.push(namesByUserId.get(membership.user_id) ?? "이름 미등록");

@@ -222,7 +222,8 @@ describe("알림 링크와 화면 연결", () => {
     assert.match(detailSource, /detail\.question\.question/);
     assert.match(detailSource, /detail\.question\.originReason === "frequent_question"/);
     assert.match(detailSource, /handleStatusChange\("resolved"\)/);
-    assert.match(detailSource, /보류 질문으로 돌아가기/);
+    assert.match(detailSource, /aria-label="뒤로 가기"/);
+    assert.match(detailSource, /<ArrowLeft/);
     assert.match(detailSource, /buildBossQuestionsUrl\(detail\.store\.storeId\)/);
     assert.doesNotMatch(detailSource, /목록으로/);
     assert.doesNotMatch(listPageSource, /resolutionStatus/);

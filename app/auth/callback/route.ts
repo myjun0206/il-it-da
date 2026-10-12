@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { upsertSignupProfile, submitStoreMembershipRequest } from "@/lib/signup/store-membership-service";
 import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
+import { hasRequiredSignupTerms, validateOwnerStaffSignupProfile } from "@/lib/auth/owner-staff-signup";
 import type { User } from "@supabase/supabase-js";
 import type { UserRole } from "@/lib/types/user";
 
@@ -81,6 +82,9 @@ function parsePendingStores(raw: unknown): PendingStoreEntry[] {
 async function autoSubmitPendingStoreMemberships(user: User): Promise<boolean> {
   const role = user.user_metadata?.role;
   if (role !== "owner" && role !== "staff") return false;
+  if (user.identities?.some((identity) => identity.provider !== "email")) return false;
+  if (Object.keys(validateOwnerStaffSignupProfile({ name: user.user_metadata?.name, phone: user.user_metadata?.phone })).length ||
+      !hasRequiredSignupTerms(user.user_metadata?.signupTerms, role)) return false;
 
   const pendingStores = parsePendingStores(user.user_metadata?.pendingStores);
   if (pendingStores.length === 0) return false;
@@ -129,13 +133,16 @@ export async function GET(request: Request): Promise<NextResponse> {
   const tokenHash = requestUrl.searchParams.get("token_hash");
   const verificationType = requestUrl.searchParams.get("type");
 
-  if (!code && !tokenHash) {
-    return NextResponse.redirect(loginErrorUrl(requestUrl.origin, "missing_code"));
-  }
-
   const cookieStore = await cookies();
   const pendingPolicy = code ? verifySessionPolicy(cookieStore.get(OAUTH_POLICY_COOKIE)?.value, "oauth") : null;
   cookieStore.set(OAUTH_POLICY_COOKIE, "", { ...sessionPolicyCookieOptions(false), maxAge: 0 });
+  if (requestUrl.searchParams.has("error")) {
+    return NextResponse.redirect(loginErrorUrl(requestUrl.origin,
+      requestUrl.searchParams.get("error") === "access_denied" ? "cancelled" : "provider_failed"));
+  }
+  if (!code && !tokenHash) {
+    return NextResponse.redirect(loginErrorUrl(requestUrl.origin, "missing_code"));
+  }
   const supabase = await createClient({ rememberMe: pendingPolicy?.rememberMe ?? false });
   let authError;
   if (code) {
@@ -152,16 +159,21 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   if (authError) {
+    logSafeAuthError("AUTH_CALLBACK_EXCHANGE_FAILED", authError);
     return NextResponse.redirect(loginErrorUrl(requestUrl.origin, "exchange_failed"));
   }
 
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError || !userData.user) {
+    return NextResponse.redirect(loginErrorUrl(requestUrl.origin, "user_failed"));
+  }
+  const isSocialUser = userData.user.identities?.some((identity) => identity.provider !== "email");
   const requestedNext = requestUrl.searchParams.get("next");
-  if (requestedNext) {
+  if (requestedNext && !isSocialUser) {
     const safeNext = getSafeAuthNextPath(requestedNext);
 
     if (safeNext === "/signup/approval" || safeNext === "/signup/approval-status") {
-      const { data: userData } = await supabase.auth.getUser();
-      if (userData.user && (await autoSubmitPendingStoreMemberships(userData.user))) {
+      if (await autoSubmitPendingStoreMemberships(userData.user)) {
         return NextResponse.redirect(new URL("/signup/approval-status", requestUrl.origin));
       }
     }
@@ -169,18 +181,14 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.redirect(new URL(safeNext, requestUrl.origin));
   }
 
-  const { data: userData, error: userError } = await supabase.auth.getUser();
-  if (userError || !userData.user) {
-    return NextResponse.redirect(loginErrorUrl(requestUrl.origin, "user_failed"));
-  }
-
-  const { data: profile, error: profileError } = await supabase
+  const { data: profile, error: profileError } = await createAdminClient()
     .from("profiles")
     .select("role, approval_status")
     .eq("id", userData.user.id)
     .maybeSingle<{ role: string; approval_status: string | null }>();
 
   if (profileError) {
+    logSafeAuthError("AUTH_CALLBACK_PROFILE_FAILED", profileError);
     return NextResponse.redirect(loginErrorUrl(requestUrl.origin, "profile_failed"));
   }
 

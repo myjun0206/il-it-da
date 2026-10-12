@@ -1,12 +1,20 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { canCreateNotice, canReadNotice } from "@/lib/notices/notice-authorization";
+import { searchNoticeRows } from "@/lib/notices/search-notices";
+import { getNoticeSortOrder, sortNoticeRows } from "@/lib/notices/sort-notices";
+import { paginateNoticeRows, parseNoticePagination } from "@/lib/notices/pagination";
 import { validateOwnerNoticeCreateRequest } from "@/lib/notices/validate-owner-notice-create-request";
 import {
   validateNoticeContentUpdateRequest,
   validateNoticeDeleteRequest,
 } from "@/lib/notices/validate-notice-mutation";
-import { withNoticeReadStats } from "@/lib/notices/with-read-status";
+import {
+  filterNoticeRowsByRead,
+  parseNoticeReadFilter,
+  withNoticeReadStatus,
+  withNoticeViewCounts,
+} from "@/lib/notices/with-read-status";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -166,6 +174,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<NoticesRes
         { status: 400 }
       );
     }
+    const { page, limit } = parseNoticePagination(request.nextUrl.searchParams);
+    const sortOrder = getNoticeSortOrder(request.nextUrl.searchParams.get("sort"));
+    const readFilter = parseNoticeReadFilter(request.nextUrl.searchParams.get("read"));
+    const sourceFilter = request.nextUrl.searchParams.get("source");
+    const categoryFilter = request.nextUrl.searchParams.get("category");
 
     // 3. Validate owner has approved membership to this store
     const adminClient = createAdminClient();
@@ -206,7 +219,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<NoticesRes
       .maybeSingle<{ franchise_id: string | null }>();
 
     if (!store?.franchise_id) {
-      return NextResponse.json({ success: true, data: { notices: [], summary: { total: 0, important: 0 } } });
+      const emptyPage = paginateNoticeRows([], page, limit);
+      return NextResponse.json({
+        success: true,
+        data: { notices: [], summary: { total: 0, important: 0 }, pagination: emptyPage.pagination },
+      });
     }
     if (ownerMembership.franchise_id && ownerMembership.franchise_id !== store.franchise_id) {
       return NextResponse.json({ success: false, error: "매장 브랜드 정보를 확인할 수 없습니다." }, { status: 403 });
@@ -239,7 +256,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<NoticesRes
     if (noticeError || ownStaffNoticeError) {
       // migration 021(notices 테이블)이 아직 적용되지 않은 환경에서는 공지가 없는 것으로 본다.
       if (isMissingTableError(noticeError) || isMissingTableError(ownStaffNoticeError)) {
-        return NextResponse.json({ success: true, data: { notices: [], summary: { total: 0, important: 0 } } });
+        const emptyPage = paginateNoticeRows([], page, limit);
+        return NextResponse.json({
+          success: true,
+          data: { notices: [], summary: { total: 0, important: 0 }, pagination: emptyPage.pagination },
+        });
       }
       throw noticeError ?? ownStaffNoticeError;
     }
@@ -259,13 +280,33 @@ export async function GET(request: NextRequest): Promise<NextResponse<NoticesRes
       })),
       ...(ownStaffNoticeRows ?? []),
     ];
+    const filteredRows = readableRows.filter((row) => {
+      const isMine = row.author_id === user.id
+        && row.target_type === "store"
+        && row.target_store_id === storeId
+        && row.audience === "staff";
+      const sourceMatches = sourceFilter === "hq"
+        ? !isMine
+        : sourceFilter === "mine"
+          ? isMine
+          : true;
+      const categoryMatches = !categoryFilter
+        || categoryFilter === "전체"
+        || categoryFilter === "기타";
+      return sourceMatches && categoryMatches;
+    });
+    const searchedRows = await searchNoticeRows(
+      adminClient,
+      filteredRows,
+      request.nextUrl.searchParams.get("search"),
+    );
 
     let readRecords: Array<{ notice_id: string; user_id: string }> = [];
-    if (readableRows.length > 0) {
+    if (searchedRows.length > 0) {
       const { data: readRows, error: readError } = await adminClient
         .from("notice_reads")
         .select("notice_id,user_id")
-        .in("notice_id", readableRows.map((row) => row.id));
+        .in("notice_id", searchedRows.map((row) => row.id));
 
       if (readError) {
         console.error("Error fetching OWNER notice read status:", readError);
@@ -275,7 +316,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<NoticesRes
     }
 
     // notices 테이블에는 분류/중요 표시 컬럼이 없어 "기타"·일반 공지로 표시한다.
-    const noticeItems = readableRows.map((row) => ({
+    const noticeItems = searchedRows.map((row) => ({
       id: row.id,
       title: row.title,
       content: row.content,
@@ -289,16 +330,24 @@ export async function GET(request: NextRequest): Promise<NextResponse<NoticesRes
         && row.target_store_id === storeId
         && row.audience === "staff",
     }));
-      const notices: NoticeItem[] = withNoticeReadStats(noticeItems, readRecords, user.id);
+    const readNoticeIds = readRecords
+      .filter((record) => record.user_id === user.id)
+      .map((record) => record.notice_id);
+    const noticesWithReadStatus = withNoticeReadStatus(noticeItems, readNoticeIds);
+    const readFilteredNotices = filterNoticeRowsByRead(noticesWithReadStatus, readFilter);
+    const noticesWithViewCounts = withNoticeViewCounts(readFilteredNotices, readRecords);
+    const sortedNotices: NoticeItem[] = sortNoticeRows(noticesWithViewCounts, sortOrder);
+    const { items: notices, pagination } = paginateNoticeRows(sortedNotices, page, limit);
 
     return NextResponse.json({
       success: true,
       data: {
         notices,
         summary: {
-          total: notices.length,
+          total: pagination.totalCount,
           important: 0,
         },
+        pagination,
       },
     });
   } catch (error) {

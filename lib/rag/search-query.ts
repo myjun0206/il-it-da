@@ -4,6 +4,7 @@ const INTENT_EXPANSIONS: ReadonlyArray<readonly [RegExp, readonly string[]]> = [
   [/보관(?:되어)?/u, ["보관 위치", "재고", "재고/발주"]],
   [/머신|커피\s*머신/u, ["장비", "장비관리"]],
   [/제빙기|비품/u, ["장비", "장비관리"]],
+  [/손\s*위생|손(?:을)?\s*씻/u, ["위생", "개인위생", "손 씻기"]],
 ];
 const DOMAIN_KEYWORDS = [
   "평일",
@@ -42,6 +43,9 @@ const STOPWORDS = new Set([
   "질문",
   "답해줘",
   "답해주세요",
+  "상황",
+  "경우",
+  "사항",
 ]);
 const TRAILING_PARTICLES = /(에서는|에는|에서|으로|로|은|는|이|가|을|를|에|의|도)$/u;
 const MAX_KEYWORD_COUNT = 16;
@@ -92,14 +96,11 @@ export function extractSearchKeywords(question: string): string[] {
   const tokens = normalizedQuestion
     .toLocaleLowerCase("ko-KR")
     .split(/[^\p{L}\p{N}]+/u)
-    .map((token) => ({ original: token, normalized: removeTrailingParticles(token).trim() }))
-    .filter(({ original, normalized }) => (
-      normalized.length >= 2 &&
-      !STOPWORDS.has(original) &&
-      !STOPWORDS.has(normalized) &&
-      !isStoreName(normalized)
-    ))
-    .map(({ normalized }) => normalized);
+    .flatMap((original) => {
+      const normalized = removeTrailingParticles(original).trim();
+      if (STOPWORDS.has(original) || STOPWORDS.has(normalized) || isStoreName(original) || isStoreName(normalized)) return [];
+      return [...new Set([normalized, original])].filter((keyword) => keyword.length >= 2);
+    });
   const domainKeywords = DOMAIN_KEYWORDS.filter((keyword) => normalizedQuestion.includes(keyword));
   const intentKeywords = getIntentExpansions(normalizedQuestion);
 

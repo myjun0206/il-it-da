@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
 import { buildSignupProfileRow } from "@/lib/auth/signup-profile";
+import { createResearchConsent, RESEARCH_CONSENT_KEY } from "@/lib/auth/signup-research-consent";
 
 type SignupRole = "hq" | "owner" | "boss" | "staff";
 
@@ -26,6 +27,7 @@ export type SignupRequestBody = {
   selectedBrandId?: unknown;
   selectedStoreIds?: unknown;
   selectedStores?: unknown;
+  researchConsent?: unknown;
 };
 
 export type SignupResponseBody = {
@@ -231,6 +233,7 @@ export async function runSignup(body: SignupRequestBody, deps: SignupDeps): Prom
         phone: getString(body.phone),
         role,
         companyEmail: getString(body.companyEmail),
+        [RESEARCH_CONSENT_KEY]: createResearchConsent(body.researchConsent),
       },
     });
 

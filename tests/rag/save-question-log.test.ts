@@ -34,6 +34,28 @@ function asInput(value: unknown): SaveQuestionLogInput {
 }
 
 describe("saveQuestionLog", () => {
+  test("recipe metadata is validated and written only with explicit local storage opt-in", async () => {
+    const originalFlag = process.env.RAG_RECIPE_SUPPORT_STORAGE;
+    const support = { version: 1 as const, outcome: "full" as const, verified: [{ ingredient: "우유", quantity: "220", unit: "ml" }], missing: [], reason: "RECIPE_BOUNDED_FACTS_VERIFIED" };
+    try {
+      delete process.env.RAG_RECIPE_SUPPORT_STORAGE;
+      const legacy = createWriter();
+      await saveQuestionLog({ ...BASE_INPUT, evidenceSupport: support }, legacy.writer);
+      assert.equal(Object.hasOwn(legacy.payloads[0], "evidence_support"), false);
+      process.env.RAG_RECIPE_SUPPORT_STORAGE = "1";
+      const enabled = createWriter();
+      await saveQuestionLog({ ...BASE_INPUT, evidenceSupport: support }, enabled.writer);
+      assert.deepEqual(enabled.payloads[0].evidence_support, support);
+      assert.equal(enabled.payloads[0].status, BASE_INPUT.status);
+      const invalid = createWriter();
+      await saveQuestionLog({ ...BASE_INPUT, evidenceSupport: { ...support, missing: ["우유"] } }, invalid.writer);
+      assert.equal(invalid.payloads[0].evidence_support, null);
+    } finally {
+      if (originalFlag === undefined) delete process.env.RAG_RECIPE_SUPPORT_STORAGE;
+      else process.env.RAG_RECIPE_SUPPORT_STORAGE = originalFlag;
+    }
+  });
+
   test("converts an answered input to the exact snake_case payload", async () => {
     const { payloads, writer } = createWriter();
 

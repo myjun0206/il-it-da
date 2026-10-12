@@ -13,6 +13,62 @@ const PEAK_TIME_CONTENT = "12시부터 14시까지와 16시부터 18시까지 �
 const OPEN_TIME_CONTENT = "평일은 오전 7시 30분, 주말은 오전 8시 30분까지 출근합니다.";
 
 describe("RAG answer prompt", () => {
+  test("numeric qualifiers and ranges remain verbatim while friendly style affects only surrounding wording", () => {
+    for (const prompt of [ANSWER_SYSTEM_PROMPT, GROUNDED_ANSWER_SYSTEM_PROMPT]) {
+      assert.ok(prompt.includes("수량·단위·온도 범위·비율·근사 여부"));
+      assert.ok(prompt.includes("승인 인용 그대로 유지"));
+      assert.ok(prompt.includes("하한·상한"));
+      assert.ok(prompt.includes("없는 '약·대략·정도'"));
+      assert.ok(prompt.includes("인용에 있는 근사 표현도 삭제하지 마라"));
+      assert.ok(prompt.includes("주변 설명과 문장 끝에만"));
+      assert.equal(prompt.includes("60~65"), false);
+    }
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("answer의 수치 사실과 evidence.quote"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("다른 규격의 수치나 근사 표현"));
+  });
+
+  test("friendly answer instructions leave strict fields, verbatim quotes and separate source rendering intact", () => {
+    assert.ok(ANSWER_SYSTEM_PROMPT.includes("해요체"));
+    assert.ok(ANSWER_SYSTEM_PROMPT.includes("첫 문장에 질문의 핵심 답"));
+    assert.ok(ANSWER_SYSTEM_PROMPT.includes("실행 순서대로"));
+    assert.ok(ANSWER_SYSTEM_PROMPT.includes("요청 항목을 구분"));
+    assert.ok(ANSWER_SYSTEM_PROMPT.includes("조건·수량·금지 사항은 그대로 보존"));
+    assert.ok(ANSWER_SYSTEM_PROMPT.includes("별도 표시"));
+    assert.equal(ANSWER_SYSTEM_PROMPT.includes("주제 1. [주제 제목]"), false);
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("answer에만 적용"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("evidence.quote는 원문을 그대로 복사"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("JSON 필드·enum·usedChunkIds"));
+  });
+
+  test("requires separate procedural, permission and partial support with source-bounded absence wording", () => {
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("supportAssessment"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("coverage=partial"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("최대 200자"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("최대 1200자"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("same은 두 target이 같은 entity인지 나타낸다"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("메뉴 entity가 정확히 하나씩 추출되고 canonical 메뉴명과 명시 온도가 호환되면 같은 entity다"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("인용한 chunkId"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("현재 제공된 근거에서 구체 보관 기준을 확인하지 못했습니다"));
+    const chunks = [{ chunk_id: "policy", title: "장비 정책", content: "임의로 분해하지 않는다." }];
+    assert.ok(buildGroundedAnswerMessages("분해해도 되나요?", chunks)[0].content.endsWith("서버 지정 요구 항목: permission."));
+    assert.ok(buildGroundedAnswerMessages("부품을 분해하는 구체 순서는?", chunks)[0].content.endsWith("서버 지정 요구 항목: procedure."));
+    assert.ok(buildGroundedAnswerMessages("손 위생은 언제, 어떻게 하나요?", chunks)[0].content.endsWith("서버 지정 요구 항목: method, timing."));
+  });
+
+  test("equipment policy metadata separates entity identity from work scope and generic compliance", () => {
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("장비명과 작업 범위를 별도로 판단"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("오픈·마감 같은 운영 제목은 장비 entity가 아니다"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("등록된 기준을 따른다는 문구는 구체 procedure가 아니다"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("관계와 role을 answer의 부족 설명으로 대신하지 마라"));
+  });
+
+  test("separates the requested entity from a measurement attribute and keeps same lexical", () => {
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("requestedTarget과 evidence.target은 정보를 묻거나 담는 대상 품목·메뉴 자체만 가리키며, 수량·단위·속성은 포함하지 마라"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("requestedTarget은 질문에서 대상 entity 이름 구절만 원문 그대로 복사하라"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("same은 답변이 요청을 직접 지원한다는 표시가 아니다"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("메뉴명 아래 재료·수량 행은 인용한 메뉴명에 적용되는 근거다"));
+  });
+
   test("preserves disassembly prohibitions, unknown variants and missing pump volume", () => {
     assert.match(ANSWER_SYSTEM_PROMPT, /일반 청소와 내부 부품 분해는 다른 작업/);
     assert.match(ANSWER_SYSTEM_PROMPT, /청소할 부위를 되물어라/);
@@ -23,6 +79,19 @@ describe("RAG answer prompt", () => {
     assert.match(ANSWER_SYSTEM_PROMPT, /'라떼'만으로 카페라떼를 확정하지 말고/);
     assert.match(ANSWER_SYSTEM_PROMPT, /펌프당 용량이 없으면 환산 값을 확정하지 말고/);
     assert.match(GROUNDED_ANSWER_SYSTEM_PROMPT, /관련 근거 자체가 없으면/);
+  });
+
+  test("generation instructions use the API schema and preserve request kinds when evidence is narrower", () => {
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("API에 제공된 JSON Schema"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("supportAssessment=null"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("누락·중복·추가하지 마라"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("요청 kind를 위치나 정책으로 바꾸지 말고"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("동일한 chunkId/quote를 반복하지 마라"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("필수 metadata를 생략하거나 요청 항목을 합쳐서 줄이지 마라"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("answer에는 평가 JSON이나 인용문을 다시 나열하지 마라"));
+    for (const question of ["유제품은 어떻게 보관해야 하나요?", "유제품 보관법"]) {
+      assert.ok(buildGroundedAnswerMessages(question, [])[0].content.endsWith("서버 지정 요구 항목: method."));
+    }
   });
 
   test("colloquial questions reach generation unchanged, including numbers and negations", () => {

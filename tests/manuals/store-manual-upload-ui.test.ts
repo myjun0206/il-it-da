@@ -14,16 +14,18 @@ function readSource(relativePath: string): string {
 
 describe("app/boss/store-manuals/page.tsx (integrated store manual analysis)", () => {
   const source = readSource("app/boss/store-manuals/page.tsx");
+  const reviewModal = readSource("components/manuals/ManualUploadReviewModal.tsx");
 
   test("integrates the shared category classification editor into the analysis screen", () => {
-    assert.match(source, /from "@\/components\/manuals\/ManualPreviewEditor"/);
-    assert.match(source, /<ManualPreviewEditor/);
+    assert.match(source, /<ManualUploadReviewModal/);
+    assert.match(reviewModal, /from "@\/components\/manuals\/ManualPreviewEditor"/);
+    assert.match(reviewModal, /<ManualPreviewEditor/);
   });
 
   test("shows the analysis category and item counts before save", () => {
-    assert.match(source, /preview\.totalDetailManualCount/);
-    assert.match(source, /preview\.topCategoryCount/);
-    assert.match(source, /매뉴얼 등록 미리보기/);
+    assert.match(reviewModal, /preview\.totalDetailManualCount/);
+    assert.match(reviewModal, /preview\.topCategoryCount/);
+    assert.match(reviewModal, /AI 분석 결과 미리보기/);
   });
 
   test("uses only the store-scoped analysis and confirmation endpoints", () => {
@@ -39,12 +41,9 @@ describe("app/boss/store-manuals/page.tsx (integrated store manual analysis)", (
   });
 
   test("the save button is disabled while saving (prevents duplicate-click double submits)", () => {
-    const buttonBlock = source.slice(
-      source.indexOf("onClick={handleSaveAnalysis}") - 200,
-      source.indexOf("onClick={handleSaveAnalysis}") + 50,
-    );
-    assert.match(buttonBlock, /disabled=\{isSavingAnalysis\}/);
-    assert.match(buttonBlock, /isLoading=\{isSavingAnalysis\}/);
+    assert.match(source, /isSaving=\{isSavingAnalysis\}/);
+    assert.match(reviewModal, /disabled=\{isSaving\}/);
+    assert.match(reviewModal, /isLoading=\{isSaving\}/);
   });
 
   test("handleSave has an in-flight guard (isSubmittingRef) in addition to the isSaving disabled state", () => {
@@ -63,7 +62,9 @@ describe("app/boss/store-manuals/page.tsx (integrated store manual analysis)", (
   });
 
   test("the analysis picker is the only owner upload entry point", () => {
-    assert.match(source, /<Button variant="outline" onClick=\{openAnalyzeFilePicker\}/);
+    assert.match(source, /setShowUploadPanel\(true\)/);
+    assert.match(source, /<ManualFileDropzone/);
+    assert.match(source, /handleAnalyzeFileSelected/);
     assert.match(source, /매뉴얼 등록/);
     assert.equal(source.includes("미리보기로 올리기"), false);
   });

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useLayoutEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, BookOpen, FileText, Search } from "lucide-react";
+import { ArrowLeft, BookOpen, FileText, Search, ChevronRight } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
@@ -24,6 +24,7 @@ type ManualCategory = {
 };
 
 type ManualView = "categories" | "titles" | "items";
+type FilterType = "all" | "category" | "manual";
 
 const UUID_LIKE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const INTERNAL_ID_LIKE_PATTERN = /^[A-Za-z0-9_-]{16,}$/;
@@ -118,6 +119,7 @@ export default function OwnerManualsPage() {
   const [error, setError] = useState("");
   const [view, setView] = useState<ManualView>("categories");
   const [searchQuery, setSearchQuery] = useState("");
+  const [filterType, setFilterType] = useState<FilterType>("all");
   const [titleSearchQuery, setTitleSearchQuery] = useState("");
   const [itemSearchQuery, setItemSearchQuery] = useState("");
   const [selectedCategoryName, setSelectedCategoryName] = useState<string | null>(null);
@@ -205,6 +207,19 @@ export default function OwnerManualsPage() {
         }
 
         setManuals(data.manuals);
+
+        // URL 파라미터에서 manualId가 있으면 해당 매뉴얼을 자동으로 열기
+        const targetId = new URLSearchParams(window.location.search).get("manualId");
+        if (targetId && data.manuals) {
+          const target = data.manuals.find(
+            (manual) => manual.id === targetId && manual.store_id === null && manual.status === "approved"
+          );
+          if (target && !data.manuals.some((manual) => manual.parent_manual_id === target.id)) {
+            setSelectedCategoryName(target.category?.trim() || "미분류");
+            setSelectedTitleId(target.parent_manual_id || target.id);
+            setView("items");
+          }
+        }
       } catch (e) {
         const errorMsg = e instanceof Error ? e.message : "매뉴얼 목록을 불러오지 못했습니다.";
         setError(errorMsg);
@@ -248,6 +263,18 @@ export default function OwnerManualsPage() {
       })
     : categories;
 
+  // 필터에 따라 항목 구분
+  const categoryItems = visibleCategories;
+  const manualItems = visibleCategories.flatMap((category) =>
+    category.groups.map((group) => ({ group, category: category.category })),
+  );
+
+  // 필터에 따라 표시할 항목 결정
+  const filteredItems = {
+    categories: filterType === "all" || filterType === "category" ? categoryItems : [],
+    manuals: filterType === "all" || filterType === "manual" ? manualItems : [],
+  };
+
   const normalizedTitleSearch = titleSearchQuery.trim().toLowerCase();
   const visibleTitleGroups = selectedCategory
     ? normalizedTitleSearch
@@ -277,14 +304,16 @@ export default function OwnerManualsPage() {
         <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
 
         <main className="p-6 lg:p-8 max-w-7xl mx-auto">
-          <div className="mb-6">
-            <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
-              공통 매뉴얼 관리
-            </h1>
-            <p className="text-base text-[var(--color-text-secondary)]">
-              본사에서 배포한 카테고리 → 타이틀 → 세부 매뉴얼 순서로 확인할 수 있습니다. (조회 전용)
-            </p>
-          </div>
+          {view === "categories" && (
+            <div className="mb-6">
+              <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
+                공통 매뉴얼 관리
+              </h1>
+              <p className="text-base text-[var(--color-text-secondary)]">
+                본사에서 배포한 카테고리 → 타이틀 → 세부 매뉴얼 순서로 확인할 수 있습니다. (조회 전용)
+              </p>
+            </div>
+          )}
 
           {error && !isLoadingManuals && (
             <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-5" role="alert">
@@ -300,14 +329,58 @@ export default function OwnerManualsPage() {
             <section aria-label="카테고리">
               <SearchField value={searchQuery} onChange={setSearchQuery} label="카테고리 검색" />
 
+              {/* Filter Buttons */}
+              <div className="mb-6 flex flex-wrap gap-2" role="group" aria-label="검색 필터">
+                <button
+                  type="button"
+                  onClick={() => setFilterType("all")}
+                  aria-pressed={filterType === "all"}
+                  className={`min-h-9 rounded-full border px-3.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${
+                    filterType === "all"
+                      ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/40 text-[var(--color-primary)]"
+                      : "border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]/50 hover:text-[var(--color-text-primary)]"
+                  }`}
+                >
+                  전체
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterType("category")}
+                  aria-pressed={filterType === "category"}
+                  className={`min-h-9 rounded-full border px-3.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${
+                    filterType === "category"
+                      ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/40 text-[var(--color-primary)]"
+                      : "border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]/50 hover:text-[var(--color-text-primary)]"
+                  }`}
+                >
+                  카테고리
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterType("manual")}
+                  aria-pressed={filterType === "manual"}
+                  className={`min-h-9 rounded-full border px-3.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${
+                    filterType === "manual"
+                      ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/40 text-[var(--color-primary)]"
+                      : "border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]/50 hover:text-[var(--color-text-primary)]"
+                  }`}
+                >
+                  매뉴얼
+                </button>
+              </div>
+
+              {/* Result Count */}
               {!error && (
-                <p className="mb-3 text-sm text-[var(--color-text-secondary)]">
-                  카테고리 <span className="font-bold text-[var(--color-text-primary)]">{categories.length}</span>개 · 타이틀{" "}
-                  <span className="font-bold text-[var(--color-text-primary)]">{groups.length}</span>개
+                <p className="mb-6 text-sm text-[var(--color-text-secondary)]">
+                  검색 결과{" "}
+                  <span className="font-bold text-[var(--color-text-primary)]">
+                    {filteredItems.categories.length + filteredItems.manuals.length}
+                  </span>
+                  개
                 </p>
               )}
 
-              {visibleCategories.length === 0 ? (
+              {filteredItems.categories.length === 0 && filteredItems.manuals.length === 0 ? (
                 <div className={stateBoxClass}>
                   <BookOpen size={28} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" aria-hidden="true" />
                   <p className="text-base font-semibold text-[var(--color-text-primary)]">
@@ -319,7 +392,8 @@ export default function OwnerManualsPage() {
                 </div>
               ) : (
                 <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {visibleCategories.map((category) => (
+                  {/* Category Items */}
+                  {filteredItems.categories.map((category) => (
                     <li key={category.category} className="min-w-0">
                       <button
                         type="button"
@@ -329,14 +403,54 @@ export default function OwnerManualsPage() {
                           setTitleSearchQuery("");
                           setView("titles");
                         }}
-                        className={cardButtonClass}
+                        className="min-h-[110px] w-full flex flex-col items-start justify-between rounded-lg border border-[var(--color-border)] bg-white px-5 py-4 text-left transition-all cursor-pointer hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/10 hover:shadow-md focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/30"
                       >
-                        <span className={badgeClass}>카테고리</span>
-                        <span className="w-full text-base font-semibold text-[var(--color-text-primary)] break-keep line-clamp-2">
-                          {getDisplayCategoryName(category.category)}
-                        </span>
-                        <span className="mt-auto pt-3 text-xs text-[var(--color-text-tertiary)]">
+                        <div className="w-full">
+                          <div className="flex items-start gap-3">
+                            <span className="w-full text-lg font-bold text-[var(--color-text-primary)] break-keep line-clamp-2">
+                              {getDisplayCategoryName(category.category)}
+                            </span>
+                            <ChevronRight
+                              size={20}
+                              className="shrink-0 text-[var(--color-primary)] mt-0.5"
+                              aria-hidden="true"
+                            />
+                          </div>
+                        </div>
+                        <span className="text-xs text-[var(--color-text-tertiary)]">
                           타이틀 {category.groups.length}개 · 세부 매뉴얼 {category.itemCount}개
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+
+                  {/* Manual Items */}
+                  {filteredItems.manuals.map(({ group, category: categoryName }) => (
+                    <li key={group.id} className="min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedCategoryName(categoryName);
+                          setSelectedTitleId(group.id);
+                          setItemSearchQuery("");
+                          setView("items");
+                        }}
+                        className="min-h-[110px] w-full flex flex-col items-start justify-between rounded-lg border border-[var(--color-border)] bg-white px-5 py-4 text-left transition-all cursor-pointer hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/10 hover:shadow-md focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/30"
+                      >
+                        <div className="w-full">
+                          <div className="flex items-start gap-3">
+                            <span className="w-full text-lg font-bold text-[var(--color-text-primary)] break-keep line-clamp-2">
+                              {group.title}
+                            </span>
+                            <ChevronRight
+                              size={20}
+                              className="shrink-0 text-[var(--color-primary)] mt-0.5"
+                              aria-hidden="true"
+                            />
+                          </div>
+                        </div>
+                        <span className="text-xs text-[var(--color-text-tertiary)]">
+                          세부 매뉴얼 {group.items.length}개
                         </span>
                       </button>
                     </li>
@@ -346,22 +460,32 @@ export default function OwnerManualsPage() {
             </section>
           ) : view === "titles" ? (
             <section aria-label="타이틀">
-              <button
-                type="button"
-                onClick={() => {
-                  setTitleSearchQuery("");
-                  setView("categories");
-                }}
-                className={backButtonClass}
-              >
-                <ArrowLeft size={16} aria-hidden="true" /> 카테고리 목록
-              </button>
-              {selectedCategory && (
-                <h2 className="mb-4 text-lg font-bold text-[var(--color-text-primary)] break-keep">
-                  {getDisplayCategoryName(selectedCategory.category)}
-                </h2>
-              )}
-              <SearchField value={titleSearchQuery} onChange={setTitleSearchQuery} label="타이틀 검색" />
+              {/* Header */}
+              <div className="mb-8 flex items-start gap-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTitleSearchQuery("");
+                    setView("categories");
+                  }}
+                  className="flex min-h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                  aria-label="돌아가기"
+                >
+                  <ArrowLeft size={20} aria-hidden="true" />
+                </button>
+                <div className="flex-1 min-w-0">
+                  {selectedCategory && (
+                    <>
+                      <h1 className="text-3xl font-bold text-[var(--color-text-primary)] mb-2 break-keep">
+                        {getDisplayCategoryName(selectedCategory.category)}
+                      </h1>
+                      <p className="text-base text-[var(--color-text-secondary)]">
+                        공통 업무 매뉴얼을 확인할 수 있습니다.
+                      </p>
+                    </>
+                  )}
+                </div>
+              </div>
 
               {!selectedCategory || visibleTitleGroups.length === 0 ? (
                 <div className={stateBoxClass}>
@@ -369,46 +493,59 @@ export default function OwnerManualsPage() {
                   <p className="text-base text-[var(--color-text-secondary)]">검색 결과가 없습니다.</p>
                 </div>
               ) : (
-                <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {visibleTitleGroups.map((group) => (
-                    <li key={group.id} className="min-w-0">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedTitleId(group.id);
-                          setItemSearchQuery("");
-                          setView("items");
-                        }}
-                        className={cardButtonClass}
-                      >
-                        <span className={badgeClass}>{getDisplayCategoryName(group.category)}</span>
-                        <span className="w-full text-base font-semibold text-[var(--color-text-primary)] break-keep line-clamp-2">{group.title}</span>
-                        <span className="mt-auto pt-3 text-xs text-[var(--color-text-tertiary)]">세부 매뉴얼 {group.items.length}개</span>
-                      </button>
-                    </li>
+                <div className="space-y-3">
+                  {visibleTitleGroups.map((group, index) => (
+                    <button
+                      key={group.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedTitleId(group.id);
+                        setItemSearchQuery("");
+                        setView("items");
+                      }}
+                      className="w-full rounded-xl border border-[var(--color-border)] bg-white p-4 lg:p-5 transition-colors hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] flex items-center justify-between gap-4 text-left"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <h3 className="text-xs font-medium text-[var(--color-text-secondary)] mb-1">타이틀 {index + 1}</h3>
+                        <p className="mb-2 text-base font-semibold text-[var(--color-text-primary)] break-keep">{group.title}</p>
+                        <p className="text-xs text-[var(--color-text-tertiary)]">
+                          세부 매뉴얼 {group.items.length}개
+                        </p>
+                      </div>
+                      <ChevronRight size={20} className="shrink-0 text-[var(--color-primary)]" aria-hidden="true" />
+                    </button>
                   ))}
-                </ul>
+                </div>
               )}
             </section>
           ) : (
             <section aria-label="세부 매뉴얼">
-              <button
-                type="button"
-                onClick={() => {
-                  setItemSearchQuery("");
-                  setView("titles");
-                }}
-                className={backButtonClass}
-              >
-                <ArrowLeft size={16} aria-hidden="true" /> 타이틀 목록
-              </button>
-              {selectedTitle && (
-                <div className="mb-4">
-                  <span className={badgeClass}>{getDisplayCategoryName(selectedTitle.category)}</span>
-                  <h2 className="text-lg font-bold text-[var(--color-text-primary)] break-keep">{selectedTitle.title}</h2>
+              {/* Header */}
+              <div className="mb-8 flex items-start gap-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setItemSearchQuery("");
+                    setView("titles");
+                  }}
+                  className="flex min-h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                  aria-label="돌아가기"
+                >
+                  <ArrowLeft size={20} aria-hidden="true" />
+                </button>
+                <div className="flex-1 min-w-0">
+                  {selectedTitle && (
+                    <>
+                      <h1 className="text-3xl font-bold text-[var(--color-text-primary)] mb-2 break-keep">
+                        {selectedTitle.title}
+                      </h1>
+                      <p className="text-base text-[var(--color-text-secondary)]">
+                        세부 매뉴얼을 확인할 수 있습니다.
+                      </p>
+                    </>
+                  )}
                 </div>
-              )}
-              <SearchField value={itemSearchQuery} onChange={setItemSearchQuery} label="세부 매뉴얼 검색" />
+              </div>
 
               {selectedTitle ? (
                 <div className="space-y-4">

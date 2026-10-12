@@ -2,12 +2,20 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, CalendarDays, FileText, Pencil, Store, UserRound, Users } from "lucide-react";
-import HQSidebar from "@/components/hq/HQSidebar";
-import HQHeader from "@/components/hq/HQHeader";
-import { createClient } from "@/lib/supabase/client";
-import { useParams, useRouter } from "next/navigation";
+import { ArrowLeft, CalendarDays, FileText, Users, UserRound } from "lucide-react";
+import { useParams } from "next/navigation";
 import type { HqStoreSummary } from "@/lib/types/store";
+
+type StoreMember = {
+  id: string;
+  userId: string;
+  role: "owner" | "staff";
+  status: string;
+  requestedAt: string;
+  approvedAt: string | null;
+  name: string;
+  email: string | null;
+};
 
 function formatDate(value: string | null): string {
   if (!value) return "-";
@@ -17,26 +25,16 @@ function formatDate(value: string | null): string {
 
 export default function HqStoreDetailPage() {
   const params = useParams<{ id: string }>();
-  const router = useRouter();
-  const [userName, setUserName] = useState("본사 관리자");
-  const [franchiseName, setFranchiseName] = useState("메가MGC커피");
   const [store, setStore] = useState<HqStoreSummary | null>(null);
+  const [staffMembers, setStaffMembers] = useState<StoreMember[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMembers, setIsLoadingMembers] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [membersError, setMembersError] = useState("");
 
   useEffect(() => {
     const loadStore = async () => {
       try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-        const user = data.session?.user;
-        if (user?.user_metadata?.name) {
-          setUserName(user.user_metadata.name);
-          const firstName = user.user_metadata.name.split(" ")[0];
-          if (firstName) setFranchiseName(firstName);
-        }
-
-        // /api/hq/stores는 서버에서 현재 HQ의 franchise 지점만 돌려주므로 다른 브랜드 ID로는 조회되지 않는다.
         const storesResponse = await fetch("/api/hq/stores");
         const storesData = (await storesResponse.json()) as { stores?: HqStoreSummary[]; error?: string };
 
@@ -60,26 +58,36 @@ export default function HqStoreDetailPage() {
     void loadStore();
   }, [params.id]);
 
-  const handleLogout = async () => {
-    try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
-    } finally {
-      router.push("/");
-    }
-  };
+  useEffect(() => {
+    if (!store?.id) return;
+
+    const loadMembers = async () => {
+      setIsLoadingMembers(true);
+      setMembersError("");
+      try {
+        const response = await fetch(`/api/hq/stores/${store.id}/members`);
+        const data = (await response.json()) as { members?: StoreMember[]; error?: string };
+
+        if (!response.ok) {
+          throw new Error(data.error || "직원 목록을 불러오지 못했습니다.");
+        }
+
+        setStaffMembers(data.members ?? []);
+      } catch (error) {
+        console.error("Failed to load members:", error);
+        setMembersError(error instanceof Error ? error.message : "직원 목록을 불러오지 못했습니다.");
+      } finally {
+        setIsLoadingMembers(false);
+      }
+    };
+
+    void loadMembers();
+  }, [store?.id]);
+
+
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-default)]">
-      <HQSidebar
-        userName={userName}
-        franchiseName={franchiseName}
-        onLogout={handleLogout}
-        activeMenu="store-status"
-      />
-      <div className="lg:ml-[240px]">
-        <HQHeader userName={userName} franchiseName={franchiseName} onLogout={handleLogout} />
-        <main className="mx-auto max-w-5xl p-6 lg:p-8">
+    <main className="p-6 lg:p-8 max-w-7xl mx-auto">
           <Link
             href="/hq/stores"
             className="mb-6 inline-flex items-center gap-2 text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
@@ -88,58 +96,124 @@ export default function HqStoreDetailPage() {
           </Link>
 
           {isLoading ? (
-            <div className="rounded-xl border-2 border-[var(--color-border)] bg-white p-12 text-center text-sm text-[var(--color-text-secondary)]">
+            <div className="rounded-lg border border-[var(--color-border)] bg-white p-8 text-center text-sm text-[var(--color-text-secondary)] shadow-sm">
               지점 정보를 불러오는 중...
             </div>
           ) : errorMessage ? (
-            <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">{errorMessage}</div>
+            <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-sm text-red-700 shadow-sm">{errorMessage}</div>
           ) : store ? (
             <>
-              <div className="mb-8 flex flex-col gap-4 rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-bg-surface)] p-6 shadow-md sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-[var(--color-primary-light)] text-[var(--color-primary)]">
-                    <Store size={23} />
-                  </div>
-                  <div>
-                    <p className="mb-1 text-sm text-[var(--color-text-secondary)]">지점 상세 관리</p>
-                    <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">{store.name}</h1>
-                  </div>
-                </div>
-                <Link
-                  href={`/hq/manuals/stores?storeId=${encodeURIComponent(store.id)}`}
-                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-[var(--color-primary)] px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90"
-                >
-                  <Pencil size={16} /> 매뉴얼 관리
-                </Link>
+              {/* 상단 페이지 헤더 */}
+              <div className="mb-8">
+                <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">{store.name}</h1>
               </div>
 
-              <dl className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                {[
-                  {
-                    label: "점주",
-                    value: store.ownerNames.length > 0 ? store.ownerNames.join(", ") : "미지정",
-                    icon: UserRound,
-                  },
-                  { label: "등록된 직원", value: `${store.staffCount}명`, icon: Users },
-                  { label: "지점 전용 매뉴얼", value: `${store.manualCount}개`, icon: FileText },
-                  { label: "등록일", value: formatDate(store.createdAt), icon: CalendarDays },
-                ].map((item) => (
-                  <div
-                    key={item.label}
-                    className="rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-bg-surface)] p-6 shadow-md"
-                  >
-                    <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--color-primary-light)] text-[var(--color-primary)]">
-                      <item.icon size={19} aria-hidden="true" />
-                    </div>
-                    <dt className="text-sm text-[var(--color-text-secondary)]">{item.label}</dt>
-                    <dd className="mt-1 text-2xl font-bold text-[var(--color-text-primary)]">{item.value}</dd>
+              {/* 중간 통계 카드 - 2열 */}
+              <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2">
+                {/* 등록된 직원 */}
+                <div className="rounded-lg border border-[var(--color-border)] bg-white p-6 shadow-sm">
+                  <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--color-primary-light)] text-[var(--color-primary)]">
+                    <Users size={20} aria-hidden="true" />
                   </div>
-                ))}
-              </dl>
+                  <p className="text-sm text-[var(--color-text-secondary)] mb-2">등록된 직원</p>
+                  <p className="text-3xl font-bold text-[var(--color-text-primary)]">{store.staffCount}<span className="text-lg font-medium">명</span></p>
+                </div>
+
+                {/* 지점 매뉴얼 */}
+                <div className="rounded-lg border border-[var(--color-border)] bg-white p-6 shadow-sm">
+                  <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--color-primary-light)] text-[var(--color-primary)]">
+                    <FileText size={20} aria-hidden="true" />
+                  </div>
+                  <p className="text-sm text-[var(--color-text-secondary)] mb-2">지점 매뉴얼</p>
+                  <p className="text-3xl font-bold text-[var(--color-text-primary)]">{store.manualCount}<span className="text-lg font-medium">개</span></p>
+                </div>
+              </div>
+
+              {/* 지점 기본 정보 카드 */}
+              <div className="mb-8 rounded-lg border border-[var(--color-border)] bg-white p-6 shadow-sm">
+                <h2 className="mb-6 text-lg font-semibold text-[var(--color-text-primary)]">지점 기본 정보</h2>
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                  {/* 지점명 */}
+                  <div>
+                    <p className="text-sm text-[var(--color-text-secondary)] mb-1">지점명</p>
+                    <p className="text-base font-medium text-[var(--color-text-primary)]">{store.name}</p>
+                  </div>
+
+                  {/* 점주 */}
+                  <div>
+                    <p className="text-sm text-[var(--color-text-secondary)] mb-1">점주</p>
+                    <p className="text-base font-medium text-[var(--color-text-primary)]">
+                      {store.ownerNames.length > 0 ? store.ownerNames.join(", ") : "미지정"}
+                    </p>
+                  </div>
+
+                  {/* 등록일 */}
+                  <div>
+                    <p className="text-sm text-[var(--color-text-secondary)] mb-1">등록일</p>
+                    <p className="text-base font-medium text-[var(--color-text-primary)]">{formatDate(store.createdAt)}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* 소속 직원 섹션 */}
+              <div className="rounded-lg border border-[var(--color-border)] bg-white shadow-sm">
+                <div className="border-b border-[var(--color-border)] p-6">
+                  <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">
+                    소속 직원 {isLoadingMembers ? "" : `(${staffMembers.length}명)`}
+                  </h2>
+                </div>
+
+                {isLoadingMembers ? (
+                  <div className="p-6 text-center text-sm text-[var(--color-text-secondary)]">
+                    직원 정보를 불러오는 중...
+                  </div>
+                ) : membersError ? (
+                  <div className="p-6 text-sm text-red-700">{membersError}</div>
+                ) : staffMembers.length === 0 ? (
+                  <div className="p-6 text-center">
+                    <p className="text-sm text-[var(--color-text-secondary)]">등록된 직원이 없습니다.</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-3 p-6">
+                    {staffMembers.map((member) => (
+                      <div
+                        key={member.id}
+                        className="min-h-[96px] flex items-center gap-4 rounded-lg border border-[var(--color-border)] bg-white p-5 hover:bg-[var(--color-bg-default)] transition-colors"
+                      >
+                        {/* 왼쪽 프로필 아이콘 */}
+                        <div className="flex-shrink-0 w-14 h-14 rounded-full bg-[var(--color-primary-light)]/30 flex items-center justify-center">
+                          <UserRound size={28} className="text-[var(--color-primary)]" aria-hidden="true" />
+                        </div>
+
+                        {/* 중앙 직원 정보 */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-3 mb-2">
+                            <p className="text-base font-semibold text-[var(--color-text-primary)] truncate">
+                              {member.name}
+                            </p>
+                            <span
+                              className={`text-xs font-medium px-2.5 py-1 rounded-full flex-shrink-0 whitespace-nowrap ${
+                                member.role === "owner"
+                                  ? "bg-[var(--color-primary-light)]/20 text-[var(--color-primary)]"
+                                  : "bg-[var(--color-border)]/50 text-[var(--color-text-secondary)]"
+                              }`}
+                            >
+                              {member.role === "owner" ? "점주" : "직원"}
+                            </span>
+                          </div>
+                          {member.email && (
+                            <p className="text-sm text-[var(--color-text-secondary)] truncate">
+                              {member.email}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </>
           ) : null}
         </main>
-      </div>
-    </div>
-  );
+      );
 }

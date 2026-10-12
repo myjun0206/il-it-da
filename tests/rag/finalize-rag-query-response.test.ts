@@ -7,6 +7,7 @@ import {
 } from "../../lib/rag/finalize-rag-query-response.ts";
 import type { SaveQuestionLogInput } from "../../lib/rag/save-question-log.ts";
 import type { RagQueryResponse } from "../../lib/rag/types.ts";
+import { buildRepeatedQuestionReport, type QuestionLogRow } from "../../lib/owner/repeated-questions.ts";
 
 const QUESTION = "test-question";
 const MANUAL_ID = "57181130-4449-4299-a864-25a2098147e4";
@@ -35,6 +36,45 @@ function captureSaver(result: { saved: boolean; code?: "INVALID_INPUT" | "QUESTI
 }
 
 describe("finalizeRagQueryResponse", () => {
+  test("clarification never enters any repeat category or invokes alert follow-up; legacy shortages remain unchanged", async () => {
+    const now = new Date("2026-10-10T10:00:00.000Z");
+    const rows: QuestionLogRow[] = [1, 2].map(index => ({ id: `legacy-${index}`, question: QUESTION, answer: "legacy answer",
+      status: "insufficient", store_id: STORE_ID, source_manual_id: null, created_at: now.toISOString() }));
+    let followUps = 0;
+    const saver: RagQueryFinalizationSaver = async input => {
+      rows.push({ id: `new-${rows.length}`, question: input.question, status: input.status, store_id: input.storeId,
+        source_manual_id: input.sourceManualId, created_at: now.toISOString() });
+      return { saved: true, questionLogId: "new-log" };
+    };
+    for (const status of ["insufficient", "cautious", "answered"] as const) {
+      const clarification = { ...response({ status }), responseKind: "clarification" as const };
+      const returned = await finalizeRagQueryResponse({ httpStatus: 200, question: QUESTION, storeId: STORE_ID, response: clarification,
+        afterQuestionLogSaved: async () => { followUps++; } }, saver);
+      assert.strictEqual(returned, clarification);
+    }
+    assert.equal(rows.length, 2);
+    assert.equal(followUps, 0);
+    assert.equal(buildRepeatedQuestionReport(rows, { storeId: STORE_ID, now }).groups.length, 0);
+    assert.deepEqual(rows.map(row => row.status), ["insufficient", "insufficient"]);
+    await finalizeRagQueryResponse({ httpStatus: 200, question: QUESTION, storeId: STORE_ID,
+      response: response({ status: "insufficient" }), afterQuestionLogSaved: async () => { followUps++; } }, saver);
+    const group = buildRepeatedQuestionReport(rows, { storeId: STORE_ID, now }).groups[0];
+    assert.equal(group.repeatCount, 3);
+    assert.equal(group.category, "manual_gap_candidate");
+    assert.equal(followUps, 1);
+  });
+
+  test("a concrete answer after clarification is the only newly counted result", async () => {
+    const capture = captureSaver();
+    await finalizeRagQueryResponse({ httpStatus: 200, question: QUESTION, storeId: STORE_ID,
+      response: { ...response({ status: "insufficient" }), responseKind: "clarification" as const } }, capture.saver);
+    await finalizeRagQueryResponse({ httpStatus: 200, question: "concrete question", storeId: STORE_ID,
+      response: response({ status: "answered" }) }, capture.saver);
+    assert.equal(capture.inputs.length, 1);
+    assert.equal(capture.inputs[0].question, "concrete question");
+    assert.equal(capture.inputs[0].status, "answered");
+  });
+
   test("saves a no-match 200 response exactly once with null similarity and source", async () => {
     const finalResponse = response({
       answer: "fallback-answer",
@@ -108,13 +148,15 @@ describe("finalizeRagQueryResponse", () => {
     });
   });
 
-  test("keeps the original response when the saver returns saved false", async () => {
+  test("keeps answer fields and adds only a safe warning when the saver returns saved false", async () => {
     const finalResponse = response();
+    const snapshot = structuredClone(finalResponse);
     const { saver } = captureSaver({ saved: false });
 
     const returned = await finalizeRagQueryResponse({ httpStatus: 200, question: QUESTION, storeId: STORE_ID, response: finalResponse }, saver);
 
-    assert.strictEqual(returned, finalResponse);
+    assert.deepEqual(returned, { ...finalResponse, questionLogSaveError: "QUESTION_LOG_SAVE_FAILED" });
+    assert.deepEqual(finalResponse, snapshot);
   });
 
   test("keeps the original response when the saver throws", async () => {
@@ -123,12 +165,14 @@ describe("finalizeRagQueryResponse", () => {
       throw new Error("database error detail");
     };
 
-    await assert.doesNotReject(() => finalizeRagQueryResponse({
+    const returned = await finalizeRagQueryResponse({
       httpStatus: 200,
       question: QUESTION,
       storeId: STORE_ID,
       response: finalResponse,
-    }, saver));
+    }, saver);
+    assert.deepEqual(returned, { ...finalResponse, questionLogSaveError: "QUESTION_LOG_SAVE_FAILED" });
+    assert.equal(JSON.stringify(returned).includes("database error detail"), false);
   });
 
   test("awaits the saver before returning", async () => {

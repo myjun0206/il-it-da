@@ -39,7 +39,7 @@ type StoreState =
 const QUESTION_LIMIT = 20;
 
 const actionButtonClass =
-  "inline-flex min-h-[36px] items-center justify-center rounded-lg px-3 text-xs font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex min-h-[42px] items-center justify-center rounded-lg px-4 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-50";
 
 const RESOLUTION_FILTER_TABS: Array<{ id: QuestionResolutionFilter; label: string }> = [
   { id: "active", label: "확인 필요" },
@@ -293,11 +293,6 @@ export default function BossQuestionsView({
               <p className="text-base text-[var(--color-text-secondary)]">
                 매뉴얼 근거가 부족한 질문과 최근 7일간 반복된 질문입니다. 최근 {QUESTION_LIMIT}건까지 표시합니다.
               </p>
-              {storeState.status === "ready" && (
-                <p className="mt-1 text-sm text-[var(--color-text-tertiary)]">
-                  현재 매장 · <span className="font-semibold text-[var(--color-text-secondary)]">{storeName}</span>
-                </p>
-              )}
             </div>
 
             {storeState.status === "resolving" && <Notice tone="info">매장 정보를 불러오는 중...</Notice>}
@@ -337,7 +332,7 @@ export default function BossQuestionsView({
                             setQuestionsState(null);
                           }
                         }}
-                        className={`min-h-[36px] rounded-full border px-3.5 text-sm font-medium whitespace-nowrap transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${
+                        className={`min-h-[40px] rounded-full border px-4 text-sm font-medium whitespace-nowrap transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${
                           isSelected
                             ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/40 text-[var(--color-primary)]"
                             : "border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]/50 hover:text-[var(--color-text-primary)]"
@@ -432,7 +427,7 @@ export default function BossQuestionsView({
 
                               {/* 상태 변경 액션 버튼들 */}
                               {question.resolutionStatus && (
-                                <div className="flex items-center gap-1.5 self-end sm:self-auto">
+                                <div className="flex items-center gap-2 self-end sm:self-auto">
                                   {question.resolutionStatus === "open" && (
                                     <button
                                       type="button"
@@ -482,18 +477,6 @@ export default function BossQuestionsView({
                             {hasError && (
                               <p role="alert" className="mt-2 text-xs text-red-600">
                                 {updateError.message}
-                              </p>
-                            )}
-
-                            {question.resolutionStatus === "resolved" && question.resolvedAt && (
-                              <p className="mt-2 text-xs text-[var(--color-text-tertiary)]">
-                                처리 완료: {formatDateTime(question.resolvedAt)}
-                              </p>
-                            )}
-
-                            {question.resolutionStatus !== "resolved" && question.resolutionUpdatedAt && (
-                              <p className="mt-2 text-xs text-[var(--color-text-tertiary)]">
-                                상태 변경: {formatDateTime(question.resolutionUpdatedAt)}
                               </p>
                             )}
 

@@ -84,7 +84,8 @@ async function syncProfileApprovalStatus(adminClient: ReturnType<typeof createAd
   const { error: profileUpdateError } = await adminClient
     .from("profiles")
     .update(buildMasterApprovalUpdate(memberships ?? []))
-    .eq("id", userId);
+    .eq("user_id", userId)
+    .is("brand_id", null);
 
   if (profileUpdateError) {
     throw profileUpdateError;
@@ -168,14 +169,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const profileUserIds = [...new Set([...scopedUserIds, ...ownerUserIds])];
   const { data: profiles, error: profileError } = await adminClient
     .from("profiles")
-    .select("id, full_name, email, approval_status")
-    .in("id", profileUserIds);
+    .select("user_id, full_name, email, approval_status")
+    .in("user_id", profileUserIds)
+    .is("brand_id", null);
   if (profileError) {
     return NextResponse.json({ success: false, error: "Failed to fetch approvals" }, { status: 500 });
   }
 
-  const namesByUserId = new Map((profiles ?? []).map((profile) => [profile.id, profile.full_name]));
-  const emailsByUserId = new Map((profiles ?? []).map((profile) => [profile.id, profile.email]));
+  const namesByUserId = new Map((profiles ?? []).map((profile) => [profile.user_id, profile.full_name]));
+  const emailsByUserId = new Map((profiles ?? []).map((profile) => [profile.user_id, profile.email]));
   const namesByStoreId = new Map((stores ?? []).map((store) => [store.id, store.store_name]));
 
   // 승인은 됐지만 후속 단계(브랜드 프로필 생성, 마스터 승인 상태 동기화)가 끝나지 않은
@@ -209,7 +211,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const membershipsByUser = groupMembershipStatusesByUser(allUserMemberships ?? []);
   const masterStatusByUserId = new Map(
-    (profiles ?? []).map((profile) => [profile.id, profile.approval_status ?? null]),
+    (profiles ?? []).map((profile) => [profile.user_id, profile.approval_status ?? null]),
   );
 
   const brandProfileKeys = new Set(

@@ -27,10 +27,13 @@ export default function BossNotificationsPage() {
   const [userName, setUserName] = useState("점주");
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
   const [filter, setFilter] = useState<FilterType>("all");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const pageSize = 20;
 
   useEffect(() => {
@@ -56,6 +59,7 @@ export default function BossNotificationsPage() {
 
   // Fetch notifications
   useEffect(() => {
+    const controller = new AbortController();
     const fetchNotifications = async () => {
       setIsLoading(true);
       setError("");
@@ -63,29 +67,33 @@ export default function BossNotificationsPage() {
       try {
         const response = await fetch(
           `/api/notifications?limit=${pageSize * page}&includeRead=${filter === "all"}`,
-          { credentials: "include" },
+          { credentials: "include", signal: controller.signal },
         );
         const data = (await response.json()) as {
           success: boolean;
-          data?: { notifications: Notification[]; unreadCount: number };
+          data?: { notifications: Notification[]; unreadCount: number; totalCount: number };
           error?: string;
         };
 
+        if (controller.signal.aborted) return;
         if (response.ok && data.success && data.data) {
           setNotifications(data.data.notifications);
           setUnreadCount(data.data.unreadCount);
+          setTotalCount(data.data.totalCount);
         } else {
           setError(data.error || "알림을 불러올 수 없습니다.");
         }
       } catch (e) {
+        if (controller.signal.aborted) return;
         console.error("Failed to fetch notifications:", e);
         setError("알림을 불러올 수 없습니다.");
       } finally {
-        setIsLoading(false);
+        if (!controller.signal.aborted) setIsLoading(false);
       }
     };
 
     fetchNotifications();
+    return () => controller.abort();
   }, [filter, page]);
 
   // Handle notification click
@@ -93,10 +101,11 @@ export default function BossNotificationsPage() {
     // Mark as read
     if (!notification.isRead) {
       try {
-        await fetch(`/api/notifications/${notification.id}/mark-read`, {
+        const response = await fetch(`/api/notifications/${notification.id}/mark-read`, {
           method: "PUT",
           credentials: "include",
         });
+        if (!response.ok) { setError("읽음 처리하지 못했습니다."); return; }
         setNotifications((prev) =>
           prev.map((n) => (n.id === notification.id ? { ...n, isRead: true } : n))
         );
@@ -115,11 +124,42 @@ export default function BossNotificationsPage() {
   // Handle mark all as read
   const handleMarkAllRead = async () => {
     try {
-      await fetch("/api/notifications/read-all", { method: "PUT", credentials: "include" });
+      const response = await fetch("/api/notifications/read-all", { method: "PUT", credentials: "include" });
+      if (!response.ok) { setError("읽음 처리하지 못했습니다."); return; }
       setUnreadCount(0);
       setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
     } catch (e) {
       console.error("Failed to mark all as read:", e);
+    }
+  };
+
+  // Handle delete all confirmation
+  const handleDeleteAll = () => {
+    setShowDeleteConfirm(true);
+  };
+
+  // Confirm delete all
+  const confirmDeleteAll = async () => {
+    setIsDeleting(true);
+    setShowDeleteConfirm(false);
+    try {
+      const response = await fetch("/api/notifications/delete-all", {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const data = (await response.json()) as { success: boolean };
+
+      if (response.ok && data.success) {
+        setNotifications([]);
+        setUnreadCount(0);
+        setTotalCount(0);
+      } else {
+        console.error("Failed to delete all notifications");
+      }
+    } catch (e) {
+      console.error("Failed to delete all notifications:", e);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -129,7 +169,7 @@ export default function BossNotificationsPage() {
       ? notifications.filter((n) => !n.isRead)
       : notifications;
 
-  const hasMore = filteredNotifications.length >= pageSize * page;
+  const hasMore = filteredNotifications.length < (filter === "all" ? totalCount : unreadCount);
 
   const filterButtonClass = (isActive: boolean) =>
     `min-h-[44px] px-4 rounded-lg text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${
@@ -180,14 +220,24 @@ export default function BossNotificationsPage() {
                 </button>
               </div>
 
-              <button
-                type="button"
-                onClick={handleMarkAllRead}
-                disabled={unreadCount === 0}
-                className="min-h-[44px] self-start rounded-lg px-4 text-sm font-medium text-[var(--color-primary)] transition-opacity hover:enabled:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-50 sm:self-auto"
-              >
-                모두 읽음
-              </button>
+              <div className="flex gap-2 self-start sm:self-auto">
+                <button
+                  type="button"
+                  onClick={handleMarkAllRead}
+                  disabled={unreadCount === 0}
+                  className="min-h-[44px] rounded-lg px-4 text-sm font-medium text-[var(--color-primary)] transition-opacity hover:enabled:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  모두 읽음
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteAll}
+                  disabled={notifications.length === 0}
+                  className="min-h-[44px] rounded-lg px-4 text-sm font-medium text-[var(--color-status-error)] transition-opacity hover:enabled:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-status-error)] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  모두 삭제
+                </button>
+              </div>
             </div>
 
             {isLoading ? (
@@ -271,6 +321,33 @@ export default function BossNotificationsPage() {
           </div>
         </main>
       </div>
+
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
+            <h2 className="text-lg font-bold text-[var(--color-text-primary)]">모든 알림을 삭제하시겠습니까?</h2>
+            <p className="mt-2 text-sm text-[var(--color-text-secondary)]">삭제한 알림은 복구할 수 없습니다.</p>
+            <div className="mt-6 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={isDeleting}
+                className="flex-1 min-h-[44px] rounded-lg border border-[var(--color-border)] bg-white text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-bg-surface)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteAll}
+                disabled={isDeleting}
+                className="flex-1 min-h-[44px] rounded-lg bg-[var(--color-status-error)] text-sm font-medium text-white transition-opacity hover:enabled:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isDeleting ? "삭제 중..." : "모두 삭제"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

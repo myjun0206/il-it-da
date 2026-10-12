@@ -116,16 +116,25 @@ describe("staff stores API results", () => {
 
 function storeSelectorScenario(stores = [{ id: "store-a", name: "Store A" }, { id: "store-b", name: "Store B" }], isStoresLoading = false) {
   const harness = createHookHarness([]);
-  const selections: string[] = [];
+  const activeSelections: string[] = [];
+  const defaultSelections: string[] = [];
   let finishSave: (() => void) | undefined;
+  const selectStore = (storeId: string) => {
+    activeSelections.push(storeId);
+    props.selectedStoreId = storeId;
+  };
   const props = {
     stores,
+    selectedStoreId: "store-a",
     defaultStoreId: "store-a",
     isStoresLoading,
+    selectStore,
+    onSelectStore: selectStore,
     onSetDefaultStore: async (storeId: string) => {
-      selections.push(storeId);
+      defaultSelections.push(storeId);
       await new Promise<void>((resolve) => { finishSave = resolve; });
       props.defaultStoreId = storeId;
+      props.selectedStoreId = storeId;
     },
   };
   const { default: Selector } = loadComponentModule<{ default: (selectorProps: typeof props) => ReactNode }>(
@@ -137,7 +146,8 @@ function storeSelectorScenario(stores = [{ id: "store-a", name: "Store A" }, { i
   const click = (button: ReturnType<typeof buttons>[number]) => {
     if (!button.props.disabled) (button.props.onClick as () => void)();
   };
-  return { props, selections, render, buttons, click, finishSave: async () => { finishSave?.(); await Promise.resolve(); await Promise.resolve(); } };
+  const buttonByLabel = (label: string) => buttons().find((button) => button.props["aria-label"] === label);
+  return { props, activeSelections, defaultSelections, render, buttons, buttonByLabel, click, finishSave: async () => { finishSave?.(); await Promise.resolve(); await Promise.resolve(); } };
 }
 
 function lifecycleHarness() {
@@ -295,29 +305,40 @@ describe("app/staff/page.tsx 근무 매장 선택 배선", () => {
     const selector = componentElements(harness.render(Header)).find((element) => element.type === Selector);
     assert.ok(selector);
     assert.equal(selector.props.stores, scenario.props.stores);
+    assert.equal(selector.props.selectedStoreId, "store-a");
     assert.equal(selector.props.defaultStoreId, "store-a");
     assert.equal(selector.props.isStoresLoading, false);
+    (selector.props.onSelectStore as (id: string) => void)("store-b");
+    assert.deepEqual(scenario.activeSelections, ["store-b"]);
+    assert.deepEqual(saved, [], "session store selection does not save persistent preferences");
     await (selector.props.onSetDefaultStore as (id: string) => Promise<void>)("store-b");
     assert.equal(JSON.stringify(saved), JSON.stringify([{ defaultStoreId: "store-b", order: ["store-a", "store-b"] }]));
   });
 
-  test("승인 매장을 표시하고 선택한 ID를 저장하며 저장 중 중복 선택을 차단한다", async () => {
+  test("현재 업무 매장 전환은 기본 매장을 바꾸지 않고 별도 기본 설정만 저장한다", async () => {
     const scenario = storeSelectorScenario();
-    assert.ok(renderToStaticMarkup(scenario.render()).includes("Store A"));
+    const initialMarkup = renderToStaticMarkup(scenario.render());
+    assert.match(initialMarkup, /현재 업무 매장/);
+    assert.ok(initialMarkup.includes("Store A"));
     scenario.click(scenario.buttons()[0]);
-    const options = scenario.buttons().slice(1);
-    assert.equal(options.length, 2);
-    assert.ok(renderToStaticMarkup(options[0]).includes("Store A"));
-    assert.ok(renderToStaticMarkup(options[1]).includes("Store B"));
-    scenario.click(options[1]);
-    assert.deepEqual(scenario.selections, ["store-b"]);
+    const activeOption = scenario.buttonByLabel("Store B 현재 업무 매장으로 전환");
+    assert.ok(activeOption);
+    scenario.click(activeOption);
+    assert.deepEqual(scenario.activeSelections, ["store-b"]);
+    assert.deepEqual(scenario.defaultSelections, []);
+    assert.equal(scenario.props.selectedStoreId, "store-b");
+    assert.equal(scenario.props.defaultStoreId, "store-a");
+    assert.match(renderToStaticMarkup(scenario.render()), /현재 업무 매장[\s\S]*Store B/);
+
+    scenario.click(scenario.buttons()[0]);
+    const setDefault = scenario.buttonByLabel("Store B 기본 매장으로 설정");
+    assert.ok(setDefault);
+    scenario.click(setDefault);
+    assert.deepEqual(scenario.defaultSelections, ["store-b"]);
     assert.ok(scenario.buttons().every((button) => button.props.disabled));
-    scenario.click(scenario.buttons()[1]);
-    assert.deepEqual(scenario.selections, ["store-b"]);
     await scenario.finishSave();
-    assert.equal(scenario.buttons().length, 1);
-    assert.ok(renderToStaticMarkup(scenario.render()).includes("Store B"));
-    assert.equal(scenario.buttons()[0].props.disabled, false);
+    assert.equal(scenario.props.defaultStoreId, "store-b");
+    assert.equal(scenario.buttons().every((button) => !button.props.disabled), true);
   });
 
   test("선택한 승인 매장 ID로 질문을 전송한다", async () => {
@@ -398,7 +419,7 @@ describe("app/staff/page.tsx 근무 매장 선택 배선", () => {
     assert.ok(renderToStaticMarkup(scenario.render()).includes("매장 불러오는 중..."));
     assert.equal(scenario.buttons()[0].props.disabled, true);
     scenario.click(scenario.buttons()[0]);
-    assert.deepEqual(scenario.selections, []);
+    assert.deepEqual(scenario.activeSelections, []);
     assert.equal(scenario.buttons().length, 1);
   });
 
@@ -409,7 +430,7 @@ describe("app/staff/page.tsx 근무 매장 선택 배선", () => {
     assert.ok(renderToStaticMarkup(scenario.render()).includes("매장 불러오는 중..."));
     assert.ok(scenario.buttons().every((button) => button.props.disabled));
     scenario.buttons().forEach(scenario.click);
-    assert.deepEqual(scenario.selections, []);
+    assert.deepEqual(scenario.activeSelections, []);
   });
 
   test("매장 조회 중 입력·전송·예시 질문을 차단한다", async () => {

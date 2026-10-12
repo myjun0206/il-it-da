@@ -46,6 +46,8 @@ function fakeClient(options: {
   notifications?: NotificationRow[];
   failAt?: FailurePoint;
   throwAt?: FailurePoint;
+  failInsertOwners?: Set<string>;
+  throwInsertOwners?: Set<string>;
 } = {}) {
   const logs = options.logs ?? [
     { id: LOG_ID, status: "insufficient", store_id: STORE_A },
@@ -146,6 +148,8 @@ function fakeClient(options: {
           return query;
         },
         insert(payload: NotificationRow) {
+          if (options.throwInsertOwners?.has(payload.recipient_user_id)) throw new Error("fetch failed");
+          if (options.failInsertOwners?.has(payload.recipient_user_id)) return Promise.resolve({ error: dbError });
           if (options.throwAt === "notifications_insert") throw new Error("fetch failed");
           if (options.failAt === "notifications_insert") {
             return Promise.resolve({ error: dbError });
@@ -172,6 +176,31 @@ function fakeClient(options: {
 
   return { client, notifications };
 }
+
+describe("recipient failure isolation and retry", () => {
+  for (const failure of ["error", "throw"] as const) {
+    test(`${failure}: one failed owner does not block others and retry skips successful recipients`, async () => {
+      const failedOwners = new Set([OWNER_A]);
+      const { client, notifications } = fakeClient({
+        ...(failure === "error" ? { failInsertOwners: failedOwners } : { throwInsertOwners: failedOwners }),
+        memberships: [
+          { user_id: OWNER_A, store_id: STORE_A, role: "owner", status: "approved" },
+          { user_id: OWNER_A2, store_id: STORE_A, role: "owner", status: "approved" },
+          { user_id: OWNER_B, store_id: STORE_B, role: "owner", status: "approved" },
+          { user_id: "pending-owner", store_id: STORE_A, role: "owner", status: "pending" },
+        ],
+      });
+      assert.equal((await escalateQuestionLogToStoreOwners(client, { questionLogId: LOG_ID, storeId: STORE_A })).status, "failed");
+      assert.deepEqual(notifications.map(row => row.recipient_user_id), [OWNER_A2]);
+      failedOwners.clear();
+      const retry = await escalateQuestionLogToStoreOwners(client, { questionLogId: LOG_ID, storeId: STORE_A });
+      assert.equal(retry.status, "notified");
+      assert.deepEqual(retry.status === "notified" ? retry.notifiedOwnerIds : [], [OWNER_A]);
+      assert.deepEqual(retry.status === "notified" ? retry.skippedOwnerIds : [], [OWNER_A2]);
+      assert.equal(notifications.length, 2);
+    });
+  }
+});
 
 describe("escalateQuestionLogToStoreOwners (실제 함수 실행)", () => {
   test("보류된 질문을 그 매장의 승인된 점주에게만 알린다", async () => {

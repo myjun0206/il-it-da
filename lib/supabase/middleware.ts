@@ -13,6 +13,8 @@ import {
 } from "@/lib/supabase/session-cookies";
 import { applySessionCookiePolicy, clearSessionPolicyCookies, readSessionPolicy, sessionPolicyCookieOptions } from "@/lib/supabase/session-policy";
 import { createDiagnosticRequestId, logDiagnosticError } from "@/lib/auth/diagnostic-error-log";
+import { presentationAccess, presentationOperation, readPresentationBody, readPresentationPolicy, reservePresentationOperation, validPresentationBody } from "@/lib/auth/presentation-policy";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 function copyCookies(source: NextResponse, target: NextResponse): void {
   for (const cookie of source.cookies.getAll()) {
@@ -45,15 +47,25 @@ function expireLegacySupabaseCookies(request: NextRequest, response: NextRespons
  */
 export async function updateSession(request: NextRequest): Promise<NextResponse> {
   const proxyRequestId = createDiagnosticRequestId();
+  const presentationPolicy = readPresentationPolicy(process.env);
+  const presentationResponse = (status: number) => {
+    const blocked = NextResponse.json({ error: "발표용 접근 또는 호출이 제한되었습니다.", code: "PRESENTATION_RESTRICTED" }, { status });
+    blocked.headers.set("Cache-Control", "no-store");
+    copyCookies(response, blocked);
+    return blocked;
+  };
   const hasSessionCookie = request.cookies.getAll().some(({ name }) => name === SUPABASE_SESSION_COOKIE_OPTIONS.name || name.startsWith(`${SUPABASE_SESSION_COOKIE_OPTIONS.name}.`));
   let refreshedCookieCount = 0;
   let response = createNextResponse(request, proxyRequestId);
+
+  const initialAccess = presentationAccess(presentationPolicy, request.nextUrl.pathname, request.method, null);
+  if (initialAccess === "forbidden" || initialAccess === "unavailable") return presentationResponse(initialAccess === "forbidden" ? 403 : 503);
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!supabaseUrl || !supabaseAnonKey) {
-    return response;
+    return presentationPolicy.enabled ? presentationResponse(503) : response;
   }
 
   const policy = readSessionPolicy(request.cookies.getAll());
@@ -80,6 +92,7 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
 
   if (!hasSessionCookie) {
     expireLegacySupabaseCookies(request, response);
+    if (initialAccess === "unauthenticated") return presentationResponse(401);
     return response;
   }
 
@@ -105,7 +118,7 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
 
   // getUser()를 호출해야 만료된 access token이 refresh token으로 갱신되고,
   // 갱신된 쿠키가 setAll을 통해 response에 반영된다.
-  const { error } = await supabase.auth.getUser();
+  const { data: userData, error } = await supabase.auth.getUser();
 
   if (error) {
     logDiagnosticError("SUPABASE_PROXY_SESSION", "auth.get_user", error, {
@@ -142,6 +155,30 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
     copyCookies(response, redirectResponse);
     expireLegacySupabaseCookies(request, redirectResponse);
     return redirectResponse;
+  }
+
+  const access = presentationAccess(presentationPolicy, request.nextUrl.pathname, request.method, error ? null : userData.user?.id ?? null);
+  if (access !== "allow") return presentationResponse(access === "unauthenticated" ? 401 : access === "forbidden" ? 403 : 503);
+
+  const operation = presentationOperation(request.nextUrl.pathname, request.method);
+  if (presentationPolicy.enabled && operation) {
+    let body: unknown;
+    try { body = await readPresentationBody(request); }
+    catch { return presentationResponse(400); }
+    if (!validPresentationBody(body, operation, presentationPolicy.storeId)) return presentationResponse(400);
+    const payload = body as Record<string, unknown>;
+    const manualId = operation === "manual" && request.method === "PATCH" ? request.nextUrl.pathname.split("/").at(-1) : null;
+    const quota = await reservePresentationOperation(async args => {
+      return await createAdminClient().rpc("reserve_presentation_operation", args);
+    }, {
+      p_store_id: presentationPolicy.storeId,
+      p_user_id: userData.user?.id,
+      p_operation: operation,
+      p_expires_at: new Date(presentationPolicy.expiresAt).toISOString(),
+      p_manual_id: manualId,
+      p_conversation_id: operation === "chat" ? payload.conversationId ?? null : null,
+    });
+    if (quota !== "allow") return presentationResponse(quota === "limited" ? 429 : 503);
   }
 
   expireLegacySupabaseCookies(request, response);

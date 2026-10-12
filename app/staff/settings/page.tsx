@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { AlertCircle, CheckCircle2, Check, Camera, Store } from "lucide-react";
 
 import ThemeSelector from "@/components/common/ThemeSelector";
+import ResearchConsentSetting from "@/components/auth/ResearchConsentSetting";
 import ProfileAvatar from "@/components/common/ProfileAvatar";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { AccountDeleteConfirmDialog } from "@/components/common/AccountDeleteConfirmDialog";
@@ -30,6 +31,8 @@ const primaryButtonClass =
   "flex h-11 w-32 shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary)] px-5 text-sm font-medium text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap";
 const dangerButtonClass =
   "flex h-11 w-32 shrink-0 items-center justify-center rounded-lg border-2 border-red-300 bg-white px-5 text-sm font-medium text-red-700 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 disabled:cursor-not-allowed disabled:opacity-60 transition-colors whitespace-nowrap";
+const successBorderButtonClass =
+  "flex h-11 w-32 shrink-0 items-center justify-center rounded-lg border-2 border-[var(--color-primary)] bg-white px-5 text-sm font-medium text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary)]/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap";
 const compactButtonClass =
   "text-sm font-medium text-[var(--color-text-primary)] hover:text-[var(--color-primary)] transition-colors underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] rounded px-1 py-1 disabled:cursor-not-allowed disabled:opacity-60";
 
@@ -649,21 +652,11 @@ export default function StaffSettingsPage() {
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={isUploadingAvatar}
-                  className="inline-flex h-10 items-center gap-2 px-3 text-sm font-medium text-[var(--color-text-primary)] hover:text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary-light)]/10 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex h-10 items-center gap-2 px-3 text-sm font-medium text-[var(--color-text-primary)] border-2 border-[var(--color-border)] bg-white transition-colors hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-bg-default)] rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60"
                   aria-label="프로필 사진 변경"
                 >
                   <Camera size={18} aria-hidden="true" className="flex-shrink-0" />
                   <span>사진 변경</span>
-                </button>
-              )}
-              {!avatarPreview && avatarUrl && (
-                <button
-                  type="button"
-                  onClick={handleDeleteAvatar}
-                  disabled={isUploadingAvatar}
-                  className="text-sm font-medium text-red-700 hover:text-red-600 transition-colors underline focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 rounded px-1 py-1 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  사진 삭제
                 </button>
               )}
             </div>
@@ -923,7 +916,7 @@ export default function StaffSettingsPage() {
                     <button
                       type="button"
                       onClick={handleConfirmPasswordSuccess}
-                      className="flex h-10 shrink-0 items-center justify-center rounded-lg border-2 border-[var(--color-primary)] bg-white px-4 text-sm font-medium text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary)]/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap"
+                      className={successBorderButtonClass}
                     >
                       확인
                     </button>
@@ -1058,6 +1051,7 @@ export default function StaffSettingsPage() {
             일잇다의 화면 테마를 선택합니다. 시스템 설정을 선택하면 기기의 라이트/다크 모드를 따릅니다.
           </p>
           <ThemeSelector />
+          <ResearchConsentSetting />
         </section>
 
         {/* === 매장 탈퇴 확인 대화상자 === */}

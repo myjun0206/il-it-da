@@ -2,8 +2,16 @@ import { NextResponse } from "next/server";
 
 import { requireServerRole } from "@/lib/auth/require-server-role";
 import { canReadNotice, type NoticeAudience, type NoticeMembership, type NoticeTargetType } from "@/lib/notices/notice-authorization";
+import { searchNoticeRows } from "@/lib/notices/search-notices";
+import { getNoticeSortOrder, sortNoticeRows } from "@/lib/notices/sort-notices";
+import { paginateNoticeRows, parseNoticePagination } from "@/lib/notices/pagination";
 import { fetchNoticesForStore } from "@/lib/notices/store-notices";
-import { withNoticeReadStats } from "@/lib/notices/with-read-status";
+import {
+  filterNoticeRowsByRead,
+  parseNoticeReadFilter,
+  withNoticeReadStatus,
+  withNoticeViewCounts,
+} from "@/lib/notices/with-read-status";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -25,6 +33,7 @@ export interface StaffNoticeItem {
 
 type NoticeRow = {
   id: string;
+  author_id: string | null;
   franchise_id: string;
   target_type: NoticeTargetType;
   target_store_id: string | null;
@@ -34,7 +43,7 @@ type NoticeRow = {
   created_at: string;
 };
 
-const NOTICE_ROW_COLUMNS = "id, franchise_id, target_type, target_store_id, audience, title, content, created_at";
+const NOTICE_ROW_COLUMNS = "id, author_id, franchise_id, target_type, target_store_id, audience, title, content, created_at";
 
 function isMissingTableError(error: { code?: string } | null): boolean {
   return error?.code === "42P01" || error?.code === "PGRST205";
@@ -61,7 +70,13 @@ export async function GET(request: Request): Promise<NextResponse> {
     }
 
     const userId = auth.userId;
-    const storeId = new URL(request.url).searchParams.get("storeId")?.trim() ?? "";
+    const url = new URL(request.url);
+    const storeId = url.searchParams.get("storeId")?.trim() ?? "";
+    const { page, limit } = parseNoticePagination(url.searchParams);
+    const sortOrder = getNoticeSortOrder(url.searchParams.get("sort"));
+    const readFilter = parseNoticeReadFilter(url.searchParams.get("read"));
+    const sourceFilter = url.searchParams.get("source");
+    const targetFilter = url.searchParams.get("target");
     if (!storeId) {
       return NextResponse.json({ error: "근무 매장을 선택해 주세요.", code: "STORE_REQUIRED" }, { status: 400 });
     }
@@ -91,7 +106,8 @@ export async function GET(request: Request): Promise<NextResponse> {
       return NextResponse.json({ error: "매장 정보를 불러오지 못했습니다." }, { status: 500 });
     }
     if (!store?.franchise_id) {
-      return NextResponse.json({ notices: [] });
+      const emptyPage = paginateNoticeRows([], page, limit);
+      return NextResponse.json({ notices: [], pagination: emptyPage.pagination });
     }
     if (membership.franchise_id && membership.franchise_id !== store.franchise_id) {
       return NextResponse.json({ error: "이 매장의 공지사항을 볼 권한이 없습니다.", code: "STORE_FORBIDDEN" }, { status: 403 });
@@ -124,14 +140,27 @@ export async function GET(request: Request): Promise<NextResponse> {
       return NextResponse.json({ error: "공지사항을 불러오지 못했습니다." }, { status: 500 });
     }
 
-    const noticesData = ((scopedRows ?? []) as NoticeRow[])
+    const readableRows = ((scopedRows ?? []) as NoticeRow[])
       .filter((row) => canReadNotice("staff", approvedMemberships, {
         franchiseId: row.franchise_id,
         targetType: row.target_type,
         targetStoreId: row.target_store_id,
         audience: row.audience,
-      }))
-      .slice(0, 1000);
+      }));
+    const filteredRows = readableRows.filter((row) => {
+      const sourceMatches = sourceFilter === "hq"
+        ? row.audience !== "staff"
+        : sourceFilter === "owner"
+          ? row.audience === "staff"
+          : true;
+      const targetMatches = targetFilter === "franchise"
+        ? row.target_type === "all" || row.target_type === "franchise"
+        : targetFilter === "store"
+          ? row.target_type === "store"
+          : true;
+      return sourceMatches && targetMatches;
+    });
+    const noticesData = await searchNoticeRows(adminClient, filteredRows, url.searchParams.get("search"));
 
     let readRecords: Array<{ notice_id: string; user_id: string }> = [];
     if (noticesData.length > 0) {
@@ -157,9 +186,17 @@ export async function GET(request: Request): Promise<NextResponse> {
       authorName: franchiseName,
       createdAt: row.created_at,
     }));
-    const notices: StaffNoticeItem[] = withNoticeReadStats(noticeItems, readRecords, userId);
+    const readNoticeIds = readRecords
+      .filter((record) => record.user_id === userId)
+      .map((record) => record.notice_id);
+    const noticesWithReadStatus = withNoticeReadStatus(noticeItems, readNoticeIds);
+    const readFilteredNotices = filterNoticeRowsByRead(noticesWithReadStatus, readFilter);
+    const noticesWithViewCounts = withNoticeViewCounts(readFilteredNotices, readRecords);
+    const sortedNotices: StaffNoticeItem[] = sortNoticeRows(noticesWithViewCounts, sortOrder);
+    const cappedNotices = sortedNotices.slice(0, 1000);
+    const { items: notices, pagination } = paginateNoticeRows(cappedNotices, page, limit);
 
-    return NextResponse.json({ notices });
+    return NextResponse.json({ notices, pagination });
   } catch (error) {
     console.error("GET /api/staff/notices error:", error);
     return NextResponse.json({ error: "공지사항을 불러오지 못했습니다." }, { status: 500 });

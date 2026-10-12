@@ -88,7 +88,7 @@ const PAGES = {
   "store-manuals": { file: "app/boss/store-manuals/page.tsx", heading: "지점 매뉴얼 관리" },
   questions: { file: "app/boss/questions/BossQuestionsView.tsx", heading: "확인이 필요한 직원 질문", props: { requestedStoreId: null, highlightQuestionId: null } },
   repeated: { file: "app/boss/questions/repeated/RepeatedQuestionView.tsx", heading: "반복 질문", props: { storeId: "store-a", alertId: "alert-1" }, hasBackLink: true },
-  "question-detail": { file: "app/boss/questions/[id]/BossQuestionDetailView.tsx", heading: /개봉한 우유/, props: { questionId: "q-1", requestedStoreId: "store-a" }, hasBackLink: true },
+  "question-detail": { file: "app/boss/questions/[id]/BossQuestionDetailView.tsx", heading: "직원 질문 처리", props: { questionId: "q-1", requestedStoreId: "store-a" }, hasBackLink: true },
   stores: { file: "app/boss/stores/page.tsx", heading: "운영 매장" },
   "stores-add": { file: "app/boss/stores/add/page.tsx", heading: /매장/, hasBackLink: true },
   notices: { file: "app/boss/notices/page.tsx", heading: "공지사항" },
@@ -101,6 +101,8 @@ const pageEntries = Object.fromEntries(Object.entries(PAGES).map(([name, page]) 
 const staffNotices = bundleModule(path.join(root, "app/staff/notices/page.tsx"));
 const staffHeader = bundleModule(path.join(root, "components/staff/StaffHeader.tsx"));
 const staffSidebar = bundleModule(path.join(root, "components/staff/StaffSidebar.tsx"));
+const hqNotices = bundleModule(path.join(root, "app/hq/communication/page.tsx"));
+const hqShell = bundleModule(path.join(root, "components/hq/HQShell.tsx"));
 const react = bundleModule(require.resolve("react"));
 const reactDom = bundleModule(require.resolve("react-dom/client"));
 const app = `
@@ -110,7 +112,9 @@ const app = `
   const props = ${JSON.stringify(Object.fromEntries(Object.entries(PAGES).map(([name, page]) => [name, page.props ?? {}])))};
   const name = window.fixture.page;
   let element;
-  if (name === 'staff-notices') {
+  if (name === 'hq-notices') {
+    element = h(require(${JSON.stringify(hqShell)}).default, null, h(require(${JSON.stringify(hqNotices)}).default));
+  } else if (name === 'staff-notices') {
     // 직원 기준 화면: StaffShell과 같은 구조(Sidebar + Header + main)
     element = h('div', { className: 'h-screen overflow-hidden bg-[var(--color-bg-default)]' },
       h(require(${JSON.stringify(staffSidebar)}).default, { activeMenu: 'notice', onLogout: () => {} }),
@@ -150,7 +154,7 @@ after(async () => {
   console.log(`Mock screenshots: ${screenshots}`);
 });
 
-function installFixture({ page, stores }) {
+function installFixture({ page, stores, noticeState = "ready" }) {
   const now = "2026-10-05T09:00:00Z";
   const question = { id: "q-1", question: "개봉한 우유는 언제까지 사용할 수 있나요?", status: "insufficient", createdAt: now, originReason: "frequent_question", repeatCount: 4, resolutionStatus: "open", resolutionRevision: 1, resolutionUpdatedAt: null, resolvedAt: null };
   const manual = (id, extra = {}) => ({ id, title: "오픈 체크리스트", category: "매장운영", content: "매장 오픈 전 확인 사항입니다.", store_id: "store-a", parent_manual_id: null, status: "approved", created_at: now, updated_at: now, ...extra });
@@ -167,6 +171,14 @@ function installFixture({ page, stores }) {
     const method = init.method || "GET";
     window.fixture.calls = [...(window.fixture.calls || []), { endpoint, method, body: init.body }];
     if (!endpoint.startsWith("/api/")) throw Error(`External fetch forbidden: ${endpoint}`);
+    if (endpoint === "/api/hq/stores") return json({ stores: staffStores });
+    if (endpoint.startsWith("/api/hq/notices") && method === "GET") {
+      if (noticeState === "loading") return new Promise(() => {});
+      if (noticeState === "error") return json({ error: "HQ fixture load failed" }, 503);
+      return json({ notices: noticeState === "empty" ? [] : [notice("hq-1", {
+        title: "HQ fixture notice", targetType: "all", audience: "all_members", viewCount: noticeState === "zero" ? 0 : 7,
+      })], pagination: { page: 1, limit: 9, totalCount: noticeState === "empty" ? 0 : 1, totalPages: noticeState === "empty" ? 0 : 1 } });
+    }
     if (endpoint === "/api/store-manuals/search-readiness/reindex" && method === "POST") {
       return window.fixture.reindexFails ? json({ error: "검색 준비를 다시 하지 못했어요." }, 500) : json({ reindexed: true });
     }
@@ -183,34 +195,41 @@ function installFixture({ page, stores }) {
     if (endpoint.startsWith("/api/store-manuals/search-readiness")) return json({ report: { summary: { readyCount: 2, needsReindexCount: 0, notSearchableCount: 0, totalDetailManualCount: 2 }, groups: [] } });
     if (endpoint.startsWith("/api/store-manuals")) return json({ manuals });
     if (endpoint.startsWith("/api/manuals")) return json({ manuals });
-    if (endpoint.startsWith("/api/boss/notices")) return json({ success: true, data: { notices: [notice("nt-1"), notice("nt-2", { isMine: true, isRead: true, title: "주말 근무 안내", category: "기타" })], summary: { total: 2, important: 0 } } });
+    if (endpoint.startsWith("/api/boss/notices")) return json({ success: true, data: { notices: [notice("nt-1"), notice("nt-2", { isMine: true, isRead: true, title: "주말 근무 안내", category: "기타" })], summary: { total: 2, important: 0 }, pagination: { page: 1, limit: 9, totalCount: 2, totalPages: 1 } } });
     if (endpoint.startsWith("/api/franchises")) return json({ franchises: [] });
     if (endpoint.startsWith("/api/signup/store-membership")) return json({ success: true, data: [{ storeId: "store-a", storeName: stores[0].storeName, status: "approved", role: "owner" }] });
     if (endpoint.includes("/context?")) return json({ context: { answer: "매뉴얼 근거가 부족합니다.", sourceState: "none", source: null } });
-    if (endpoint.startsWith("/api/boss/question-logs")) return json({ success: true, data: { questions: [question, { ...question, id: "q-2", question: "포장 용기는 어디에 있나요?", originReason: "insufficient_evidence", resolutionStatus: "in_progress" }], resolutionFeatureAvailable: true } });
+    if (endpoint.startsWith("/api/boss/question-logs")) return json({ success: true, data: { questions: [question, { ...question, id: "q-2", question: "포장 용기는 어디에 있나요?", originReason: "manual_gap", resolutionStatus: "in_progress" }], resolutionFeatureAvailable: true } });
     if (endpoint.startsWith("/api/boss/repeated-questions")) return json({ success: true, data: { alert: { storeId: "store-a", alertedAt: now, analysisLimited: false, representativeQuestion: question.question, repeatCount: 4, windowDays: 7, windowStart: now, windowEnd: now, categoryLabel: "위생·안전", statusCounts: { answered: 1, cautious: 1, insufficient: 2 } } } });
-    if (endpoint.startsWith("/api/staff/notices")) return json({ notices: [{ id: "s-1", isRead: false, viewCount: 1, sourceLabel: "본사 공지", targetType: "franchise", title: "버거 본사 공지사항입니다.", content: "운영 안내", authorName: "본사", createdAt: now }] });
+    if (endpoint.startsWith("/api/staff/notices")) return json({ notices: [{ id: "s-1", isRead: false, viewCount: 1, sourceLabel: "본사 공지", targetType: "franchise", title: "버거 본사 공지사항입니다.", content: "운영 안내", authorName: "본사", createdAt: now }], pagination: { page: 1, limit: 9, totalCount: 1, totalPages: 1 } });
     window.fixture.unexpected.push(endpoint);
     return json({ success: true, data: [], stores: [] });
   };
 }
 
-async function openPage(name, viewport, { dark = false, stores = STORES } = {}) {
+async function openPage(name, viewport, { dark = false, stores = STORES, noticeState = "ready" } = {}) {
   const page = await browser.newPage({ viewport });
   page.setDefaultTimeout(8000);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.route("**/*", (route) => route.request().url().startsWith(url) ? route.continue() : route.abort());
-  await page.addInitScript(installFixture, { page: name, stores });
+  await page.addInitScript(installFixture, { page: name, stores, noticeState });
   await page.goto(url);
-  const heading = name === "staff-notices" ? "공지사항" : PAGES[name].heading;
+  const heading = name === "staff-notices" || name === "hq-notices" ? "공지사항" : PAGES[name].heading;
   try {
-    await page.getByRole("heading", { level: 1, name: heading }).waitFor();
+    if (name === "store-manuals") {
+      await page.getByRole("searchbox", { name: "카테고리 검색" }).waitFor();
+      await page.getByRole("button", { name: /매뉴얼 등록/ }).waitFor();
+      await page.locator("main").getByText(/카테고리 \d+개/).waitFor();
+    } else {
+      await page.getByRole("heading", { level: 1, name: heading }).waitFor();
+      if (name === "question-detail") await page.getByText("개봉한 우유는 언제까지 사용할 수 있나요?", { exact: true }).waitFor();
+    }
   } catch (error) {
     await page.close();
     throw new Error(`${name} ${viewport.width}: ${errors.join("\n") || error.message}`);
   }
-  await page.waitForFunction(() => !/불러오는 중|확인하는 중/.test(document.querySelector("main")?.textContent ?? ""), null, { timeout: 8000 }).catch(() => {});
+  if (noticeState !== "loading") await page.waitForFunction(() => !/불러오는 중|확인하는 중/.test(document.querySelector("main")?.textContent ?? ""), null, { timeout: 8000 }).catch(() => {});
   if (dark) await page.evaluate(() => document.documentElement.classList.add("dark"));
   return { page, errors };
 }
@@ -235,6 +254,43 @@ async function layoutMetrics(page) {
   });
 }
 
+test("HQ shell preserves header actions, count detail and responsive loading/error/empty states", async () => {
+  for (const viewport of VIEWPORTS) {
+    for (const noticeState of ["ready", "zero"]) {
+      const { page, errors } = await openPage("hq-notices", viewport, { noticeState });
+      try {
+        const count = noticeState === "zero" ? 0 : 7;
+        await page.locator("main").getByText(`조회 ${count}`, { exact: false }).waitFor();
+        const header = page.locator("header");
+        await header.getByRole("button", { name: /알림/ }).click({ trial: true });
+        assert.ok(await header.getByRole("button").count() >= 2, "notification and profile controls render");
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `HQ ${viewport.width}: header overflow`);
+        await page.locator('main a[href="/hq/communication/new"]').click({ trial: true });
+        for (const control of await page.locator("header button, button[class*='lg:hidden']").all()) {
+          if (await control.isVisible() && await control.isEnabled()) await control.click({ trial: true });
+        }
+        await page.screenshot({ path: path.join(screenshots, `hq-header-${noticeState}-${viewport.width}.png`), fullPage: true });
+        await page.locator("main button").filter({ hasText: "HQ fixture notice" }).first().click();
+        await page.getByRole("dialog").getByText(`조회 ${count}`, { exact: false }).waitFor();
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `HQ ${viewport.width}: detail overflow`);
+        assert.equal(await page.evaluate(() => window.fixture.calls.some((call) => call.endpoint === "/api/hq/set-default-store" || /\/read$/.test(call.endpoint))), false);
+        assert.deepEqual(errors, []);
+        await page.screenshot({ path: path.join(screenshots, `hq-notices-${noticeState}-${viewport.width}.png`), fullPage: true });
+      } finally { await page.close(); }
+    }
+  }
+  for (const noticeState of ["loading", "error", "empty"]) {
+    const { page, errors } = await openPage("hq-notices", { width: 390, height: 844 }, { noticeState });
+    try {
+      if (noticeState === "loading") await page.getByText("불러오는 중...", { exact: false }).waitFor();
+      if (noticeState === "error") await page.getByRole("alert").getByText("HQ fixture load failed").waitFor();
+      if (noticeState === "empty") await page.getByText("등록된 공지사항이 없습니다.").waitFor();
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `HQ ${noticeState}: overflow`);
+      assert.deepEqual(errors, []);
+    } finally { await page.close(); }
+  }
+});
+
 test("every owner page renders inside the owner shell with the staff title, spacing and no horizontal overflow", async () => {
   for (const viewport of VIEWPORTS) {
     const reference = await openPage("staff-notices", viewport);
@@ -249,15 +305,33 @@ test("every owner page renders inside the owner shell with the staff title, spac
         assert.ok(owner.header && owner.aside, `${name} ${viewport.width}: owner Header and Sidebar must render`);
         assert.equal(owner.header.height, staff.header.height, `${name}: header height`);
         assert.equal(owner.overflow, false, `${name} ${viewport.width}: horizontal overflow ${owner.offenders.join(" | ")}`);
-        assert.ok(Math.abs(owner.h1.x - staff.h1.x) <= 1, `${name} ${viewport.width}: content start x ${owner.h1.x} vs staff ${staff.h1.x}`);
-        if (!PAGES[name].hasBackLink) {
-          assert.ok(Math.abs(owner.h1.y - staff.h1.y) <= 1, `${name} ${viewport.width}: title top ${owner.h1.y} vs staff ${staff.h1.y}`);
+        if (name === "store-manuals") {
+          assert.equal(owner.h1, null, "category overview starts with controls, not a detail title");
+          const search = await page.getByRole("searchbox", { name: "카테고리 검색" }).boundingBox();
+          const main = await page.locator("main").boundingBox();
+          assert.ok(Math.abs(search.x - staff.h1.x) <= 1, `${name}: controls align with shell content`);
+          assert.ok(search.y >= main.y && search.y - main.y <= 32, `${name}: controls begin without an empty title gap`);
+        } else {
+          if (name === "question-detail") {
+            const back = await page.getByRole("button", { name: "뒤로 가기", exact: true }).boundingBox();
+            assert.ok(Math.abs(back.x - staff.h1.x) <= 1, `${name}: back control aligns with shell content`);
+            if (viewport.width >= 640) {
+              assert.ok(owner.h1.x >= back.x + back.width, `${name}: title follows back control`);
+            } else {
+              assert.ok(Math.abs(owner.h1.x - back.x) <= 1 && owner.h1.y >= back.y + back.height, `${name}: mobile title follows stacked back control`);
+            }
+          } else {
+            assert.ok(Math.abs(owner.h1.x - staff.h1.x) <= 1, `${name} ${viewport.width}: content start x ${owner.h1.x} vs staff ${staff.h1.x}`);
+          }
+          if (!PAGES[name].hasBackLink) {
+            assert.ok(Math.abs(owner.h1.y - staff.h1.y) <= 1, `${name} ${viewport.width}: title top ${owner.h1.y} vs staff ${staff.h1.y}`);
+          }
+          if (name !== "question-detail") {
+            assert.equal(owner.h1Font, staff.h1Font, `${name}: title size`);
+            assert.equal(owner.h1Weight, staff.h1Weight, `${name}: title weight`);
+          }
+          if (name !== "question-detail" && name !== "stores-add") assert.equal(owner.descFont, staff.descFont, `${name}: description size`);
         }
-        if (name !== "question-detail") {
-          assert.equal(owner.h1Font, staff.h1Font, `${name}: title size`);
-          assert.equal(owner.h1Weight, staff.h1Weight, `${name}: title weight`);
-        }
-        if (name !== "question-detail" && name !== "stores-add") assert.equal(owner.descFont, staff.descFont, `${name}: description size`);
         assert.deepEqual(errors, [], `${name}: page errors`);
         await page.screenshot({ path: path.join(screenshots, `owner-${name}-${viewport.width}.png`), fullPage: true });
       } finally { await page.close(); }
@@ -265,7 +339,7 @@ test("every owner page renders inside the owner shell with the staff title, spac
   }
 });
 
-test("owner list controls use staff search, chip and card styles", async () => {
+test("owner list controls keep shared controls and each card's intended surface", async () => {
   const styleOf = (locator) => locator.evaluate((element) => {
     const style = getComputedStyle(element);
     return { radius: style.borderTopLeftRadius, borderWidth: style.borderTopWidth, height: element.getBoundingClientRect().height, shadow: style.boxShadow };
@@ -281,7 +355,7 @@ test("owner list controls use staff search, chip and card styles", async () => {
     try {
       const search = await styleOf(page.getByRole("searchbox", { name: searchLabel }));
       assert.deepEqual({ radius: search.radius, borderWidth: search.borderWidth }, { radius: staffSearch.radius, borderWidth: staffSearch.borderWidth }, `${name}: search style`);
-      assert.ok(Math.abs(search.height - staffSearch.height) <= 1, `${name}: search height`);
+      assert.ok(search.height >= 44 && search.height <= 48, `${name}: search remains a stable touch target`);
     } finally { await page.close(); }
   }
 
@@ -292,15 +366,33 @@ test("owner list controls use staff search, chip and card styles", async () => {
       assert.ok(await chip.getAttribute("aria-pressed"), `${name}: chip exposes pressed state`);
       const style = await styleOf(chip);
       assert.equal(style.radius, staffChip.radius, `${name}: chip radius`);
-      assert.ok(Math.abs(style.height - staffChip.height) <= 1, `${name}: chip height`);
+      if (name === "questions") {
+        assert.ok(style.height >= 40 && style.height <= 44, `${name}: compact filter chip height`);
+      } else {
+        assert.ok(Math.abs(style.height - staffChip.height) <= 1, `${name}: chip height`);
+      }
     } finally { await page.close(); }
   }
 
   for (const [name, text] of [["manuals", "세부 매뉴얼"], ["store-manuals", "세부 매뉴얼"], ["notices", "조회"]]) {
     const { page } = await openPage(name, { width: 1280, height: 900 });
     try {
-      const card = await styleOf(page.locator("main section button").filter({ hasText: text }).first());
-      assert.deepEqual({ radius: card.radius, borderWidth: card.borderWidth, shadow: card.shadow }, { radius: staffCard.radius, borderWidth: staffCard.borderWidth, shadow: staffCard.shadow }, `${name}: card style`);
+      const cards = name === "notices" ? page.locator("main article") : page.locator("main").getByRole("button");
+      const surface = cards.filter({ hasText: text }).first();
+      const card = await styleOf(surface);
+      assert.equal(card.borderWidth, staffCard.borderWidth, `${name}: card border`);
+      assert.equal(card.radius, name === "store-manuals" ? "12px" : staffCard.radius, `${name}: declared card radius`);
+      if (name === "notices") {
+        assert.equal(card.shadow, staffCard.shadow, "notice frames retain shadow-sm");
+      } else {
+        assert.equal(card.shadow, "none", `${name}: manual cards are unraised at rest`);
+        if (name === "manuals") {
+          assert.match(await surface.getAttribute("class"), /(?:^|\s)hover:shadow-md(?:\s|$)/);
+          await surface.hover();
+          await surface.evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)));
+          assert.notEqual((await styleOf(surface)).shadow, "none", "common manual hover elevation remains available");
+        }
+      }
     } finally { await page.close(); }
   }
 });
@@ -331,11 +423,13 @@ test("owner functions keep working: store switch, approval actions, question chi
   const manuals = await openPage("manuals", { width: 390, height: 844 });
   try {
     await manuals.page.locator("main section button").filter({ hasText: "매장운영" }).first().click();
-    await manuals.page.getByRole("button", { name: "카테고리 목록" }).waitFor();
+    await manuals.page.getByRole("heading", { level: 1, name: "매장운영", exact: true }).waitFor();
+    await manuals.page.getByRole("button", { name: "돌아가기", exact: true }).waitFor();
     await manuals.page.locator("main section button").filter({ hasText: "오픈 체크리스트" }).click();
     await manuals.page.getByText("전원을 켭니다.").waitFor();
-    await manuals.page.getByRole("button", { name: "타이틀 목록" }).click();
-    await manuals.page.getByRole("button", { name: "카테고리 목록" }).click();
+    await manuals.page.getByRole("button", { name: "돌아가기", exact: true }).click();
+    await manuals.page.getByRole("heading", { level: 1, name: "매장운영", exact: true }).waitFor();
+    await manuals.page.getByRole("button", { name: "돌아가기", exact: true }).click();
     await manuals.page.getByRole("searchbox", { name: "카테고리 검색" }).waitFor();
   } finally { await manuals.page.close(); }
 
@@ -363,21 +457,22 @@ test("store manual management drops the readiness panel, store card and HQ bar w
       await page.getByRole("button", { name: /현재 운영 매장/ }).waitFor();
       await page.getByRole("link", { name: "공통 매뉴얼 관리" }).first().waitFor({ state: "attached" });
 
-      // 제목·설명 바로 아래 검색창과 관리 버튼, 그 다음 개수·카드가 이어진다.
-      const description = await main.locator("h1 + p").boundingBox();
+      // 카테고리 개요는 검색·관리 버튼 다음 개수·카드가 이어진다.
+      assert.equal(await main.locator("h1").count(), 0, "detail title is absent from the category overview");
+      const mainBox = await main.boundingBox();
       const search = await page.getByRole("searchbox", { name: "카테고리 검색" }).boundingBox();
       const register = await page.getByRole("button", { name: /매뉴얼 등록/ }).boundingBox();
       const count = await main.getByText(/카테고리 \d+개/).boundingBox();
-      const firstCard = await main.locator("section button").filter({ hasText: "세부 매뉴얼" }).first().boundingBox();
-      assert.ok(search.y - (description.y + description.height) <= 40, `${viewport.width}: no gap left by removed blocks (${search.y - (description.y + description.height)}px)`);
+      const firstCard = await main.getByRole("button").filter({ hasText: "세부 매뉴얼" }).first().boundingBox();
+      assert.ok(search.y >= mainBox.y && search.y - mainBox.y <= 32, `${viewport.width}: no gap left by removed title blocks`);
       assert.ok(register.y >= search.y - 1 && count.y > search.y && firstCard.y > count.y, `${viewport.width}: search → actions → count → cards order`);
       await page.getByRole("button", { name: /카테고리 추가/ }).waitFor();
 
       const mainBottom = await main.evaluate((element) => element.getBoundingClientRect().bottom);
-      const lastCard = await main.locator("section button").filter({ hasText: "세부 매뉴얼" }).last();
+      const lastCard = await main.getByRole("button").filter({ hasText: "세부 매뉴얼" }).last();
       await lastCard.scrollIntoViewIfNeeded();
       const lastBox = await lastCard.boundingBox();
-      const hit = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest("button")?.textContent ?? "", { x: lastBox.x + lastBox.width / 2, y: lastBox.y + lastBox.height - 4 });
+      const hit = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('[role="button"], button')?.textContent ?? "", { x: lastBox.x + lastBox.width / 2, y: lastBox.y + lastBox.height - 4 });
       assert.ok(hit.includes("세부 매뉴얼"), `${viewport.width}: last card must not be covered`);
       assert.ok(mainBottom > 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${viewport.width}: horizontal overflow`);
@@ -389,9 +484,9 @@ test("store manual management drops the readiness panel, store card and HQ bar w
 
   const { page } = await openPage("store-manuals", { width: 390, height: 844 });
   try {
-    await page.locator("main section button").filter({ hasText: "매장운영" }).first().click();
-    await page.locator("main section button").filter({ hasText: "오픈 체크리스트" }).first().click();
-    await page.getByRole("button", { name: "수정", exact: true }).first().click();
+    await page.locator("main").getByRole("button").filter({ hasText: "매장운영" }).first().click();
+    await page.locator("main").getByRole("button").filter({ hasText: "오픈 체크리스트" }).first().click();
+    await page.getByRole("button", { name: "매뉴얼 수정", exact: true }).first().click();
     await page.getByLabel("매뉴얼 본문").fill("전원을 켜고 온도를 확인합니다.");
     await page.getByRole("button", { name: "저장", exact: true }).click();
     await page.getByText("검색 반영에 실패했습니다.", { exact: false }).waitFor();

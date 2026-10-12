@@ -33,7 +33,8 @@ async function syncProfileApprovalStatus(adminClient: ReturnType<typeof createAd
   const { error: profileUpdateError } = await adminClient
     .from("profiles")
     .update(buildMasterApprovalUpdate(memberships ?? []))
-    .eq("id", userId);
+    .eq("user_id", userId)
+    .is("brand_id", null);
 
   if (profileUpdateError) {
     throw profileUpdateError;
@@ -151,39 +152,75 @@ export async function PUT(
       }
     }
 
-    // 5. membership 상태 업데이트
-    const updateData: Record<string, unknown> = {
-      status: newStatus,
-      updated_at: new Date().toISOString(),
-    };
+    // Replays still run profile recovery, but only a real transition owns the decision notification.
+    let membershipTransitioned = membership.status !== newStatus;
+    if (membershipTransitioned) {
+      const now = new Date().toISOString();
+      const updateData: Record<string, unknown> = {
+        status: newStatus,
+        updated_at: now,
+      };
 
-    // approved/rejected에 따라 timestamp 설정
-    if (newStatus === "approved") {
-      updateData.approved_at = new Date().toISOString();
-      updateData.approved_by = user.id;
-      updateData.rejected_at = null;
-      updateData.rejected_by = null;
-    } else if (newStatus === "rejected") {
-      updateData.rejected_at = new Date().toISOString();
-      updateData.rejected_by = user.id;
-      updateData.approved_at = null;
-      updateData.approved_by = null;
-    }
+      if (newStatus === "approved") {
+        updateData.approved_at = now;
+        updateData.approved_by = user.id;
+        updateData.rejected_at = null;
+        updateData.rejected_by = null;
+      } else {
+        updateData.rejected_at = now;
+        updateData.rejected_by = user.id;
+        updateData.approved_at = null;
+        updateData.approved_by = null;
+      }
 
-    const { error: updateError } = await adminClient
-      .from("store_memberships")
-      .update(updateData)
-      .eq("id", membershipId)
-      .eq("store_id", membership.store_id)
-      .eq("role", "staff")
-      .eq("status", membership.status);
+      const { data: updatedMembership, error: updateError } = await adminClient
+        .from("store_memberships")
+        .update(updateData)
+        .eq("id", membershipId)
+        .eq("store_id", membership.store_id)
+        .eq("role", "staff")
+        .eq("status", membership.status)
+        .select("id")
+        .maybeSingle<{ id: string }>();
 
-    if (updateError) {
-      console.error("[PUT /api/boss/employees/[id]] Update error:", updateError);
-      return NextResponse.json(
-        { success: false, error: "상태 변경 중 오류가 발생했습니다." },
-        { status: 500 }
-      );
+      if (updateError) {
+        console.error("[PUT /api/boss/employees/[id]] Update error:", updateError);
+        return NextResponse.json(
+          { success: false, error: "상태 변경 중 오류가 발생했습니다." },
+          { status: 500 }
+        );
+      }
+
+      if (updatedMembership) {
+        membershipTransitioned = true;
+      } else {
+        const { data: latestMembership, error: latestMembershipError } = await adminClient
+          .from("store_memberships")
+          .select("status")
+          .eq("id", membershipId)
+          .maybeSingle<{ status: string }>();
+
+        if (latestMembershipError) {
+          console.error("[PUT /api/boss/employees/[id]] Membership recheck error:", latestMembershipError);
+          return NextResponse.json(
+            { success: false, error: "상태 변경 결과를 확인하지 못했습니다." },
+            { status: 500 }
+          );
+        }
+        if (!latestMembership) {
+          return NextResponse.json(
+            { success: false, error: "직원을 찾을 수 없습니다." },
+            { status: 404 }
+          );
+        }
+        if (latestMembership.status !== newStatus) {
+          return NextResponse.json(
+            { success: false, error: "이미 다른 처리 결과가 반영되었습니다." },
+            { status: 409 }
+          );
+        }
+        membershipTransitioned = false;
+      }
     }
 
     try {
@@ -215,27 +252,28 @@ export async function PUT(
       );
     }
 
-    // Generate notification for staff approval decision (async)
-    // 알림 문구에는 매장 UUID 대신 실제 매장명을 쓴다. (조회 실패 시 일반 문구)
-    const { data: store } = await adminClient
-      .from("stores")
-      .select("store_name")
-      .eq("id", membership.store_id)
-      .maybeSingle<{ store_name: string | null }>();
-    const storeLabel = store?.store_name?.trim() || "매장";
-    const title = newStatus === "approved" ? "근무 매장 승인이 완료되었습니다." : "근무 매장 신청이 거절되었습니다.";
-    const message = newStatus === "approved"
-      ? `${storeLabel}에서 근무 신청을 승인했습니다.`
-      : `${storeLabel}에서 근무 신청을 거절했습니다.`;
+    if (membershipTransitioned) {
+      // 알림 문구에는 매장 UUID 대신 실제 매장명을 쓴다. (조회 실패 시 일반 문구)
+      const { data: store } = await adminClient
+        .from("stores")
+        .select("store_name")
+        .eq("id", membership.store_id)
+        .maybeSingle<{ store_name: string | null }>();
+      const storeLabel = store?.store_name?.trim() || "매장";
+      const title = newStatus === "approved" ? "근무 매장 승인이 완료되었습니다." : "근무 매장 신청이 거절되었습니다.";
+      const message = newStatus === "approved"
+        ? `${storeLabel}에서 근무 신청을 승인했습니다.`
+        : `${storeLabel}에서 근무 신청을 거절했습니다.`;
 
-    createNotification({
-      recipientUserId: membership.user_id,
-      type: "staff_approval_decision",
-      title,
-      message,
-      targetUrl: newStatus === "approved" ? "/staff" : undefined,
-      relatedId: membershipId,
-    }).catch((e) => console.error("Failed to create staff approval notification:", e));
+      createNotification({
+        recipientUserId: membership.user_id,
+        type: "staff_approval_decision",
+        title,
+        message,
+        targetUrl: newStatus === "approved" ? "/staff" : undefined,
+        relatedId: membershipId,
+      }).catch((e) => console.error("Failed to create staff approval notification:", e));
+    }
 
     return NextResponse.json({
       success: true,

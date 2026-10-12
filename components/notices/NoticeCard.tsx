@@ -12,6 +12,8 @@ interface NoticeCardProps {
   isRead: boolean | null;
   onOpen: () => void;
   actions?: ReactNode;
+  showContent?: boolean;
+  showSourceLabel?: boolean;
 }
 
 export function NoticeCard({
@@ -23,6 +25,8 @@ export function NoticeCard({
   isRead,
   onOpen,
   actions,
+  showContent = true,
+  showSourceLabel = true,
 }: NoticeCardProps) {
   return (
     <article className="rounded-lg border border-[var(--color-border)] bg-white p-5 shadow-sm transition-colors hover:border-[var(--color-primary)]/50 sm:p-6">
@@ -32,14 +36,16 @@ export function NoticeCard({
           <span className="block break-words text-base font-semibold text-[var(--color-text-primary)] sm:text-lg">
             {title}
           </span>
-          <span className="mt-2 block whitespace-pre-wrap break-words text-sm leading-6 text-[var(--color-text-secondary)] line-clamp-2">
-            {content}
-          </span>
+          {showContent && (
+            <span className="mt-2 block whitespace-pre-wrap break-words text-sm leading-6 text-[var(--color-text-secondary)] line-clamp-2">
+              {content}
+            </span>
+          )}
           <NoticeMeta
-            sourceLabel={sourceLabel}
+            sourceLabel={showSourceLabel ? sourceLabel : undefined}
             createdAt={createdAt}
             viewCount={viewCount}
-            className="mt-4"
+            className={showContent ? "mt-4" : "mt-2"}
           />
         </button>
         {actions && <div className="flex shrink-0 items-center gap-1">{actions}</div>}

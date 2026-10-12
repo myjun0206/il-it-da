@@ -86,14 +86,14 @@ export default function ProfileMenu({
           id="profile-menu"
           role="menu"
           aria-label="계정 메뉴"
-          className="absolute right-0 top-full z-50 mt-3 w-[300px] rounded-xl border border-[var(--color-border)] bg-white p-2 shadow-md"
+          className="absolute right-0 top-full z-50 mt-3 min-w-[380px] rounded-xl border border-[var(--color-border)] bg-white p-2 shadow-md"
         >
           <div className="px-3 pb-3 pt-2">
             {/* 사용자 정보 + 역할 배지 */}
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-base font-semibold text-[var(--color-text-primary)] break-all">{userName}</p>
-                {email && <p className="mt-0.5 text-sm text-[var(--color-text-secondary)] break-all">{email}</p>}
+                <p className="text-base font-semibold text-[var(--color-text-primary)]">{userName}</p>
+                {email && <p className="mt-0.5 text-sm text-[var(--color-text-secondary)] whitespace-nowrap">{email}</p>}
               </div>
               <span className="flex-shrink-0 inline-flex rounded-full bg-[var(--color-primary-light)]/40 px-2.5 py-0.5 text-xs font-semibold text-[var(--color-primary)]">
                 {roleLabel}

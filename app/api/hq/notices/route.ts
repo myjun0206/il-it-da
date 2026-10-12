@@ -3,6 +3,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireHqUser } from "@/lib/supabase/hq-auth";
 import { canCreateNotice, type NoticeAudience, type NoticeTargetType } from "@/lib/notices/notice-authorization";
+import { searchNoticeRows } from "@/lib/notices/search-notices";
+import { getNoticeSortOrder, sortNoticeRows } from "@/lib/notices/sort-notices";
+import { paginateNoticeRows, parseNoticePagination } from "@/lib/notices/pagination";
 import {
   validateNoticeContentUpdateRequest,
   validateNoticeDeleteRequest,
@@ -80,17 +83,22 @@ async function authorizeHqNoticeMutation(
   return { success: true, context: { adminClient, franchiseId: hqUser.franchiseId } };
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const hqUser = await requireHqUser();
     if (!hqUser) {
       return NextResponse.json({ error: "본사 관리자만 접근할 수 있습니다." }, { status: 403 });
     }
 
+    const { page, limit } = parseNoticePagination(request.nextUrl.searchParams);
     // franchise_id가 없는 레거시 HQ 계정은 다른 브랜드 공지가 섞이지 않도록 fail closed 한다.
     if (!hqUser.franchiseId) {
-      return NextResponse.json({ notices: [] });
+      const emptyPage = paginateNoticeRows([], page, limit);
+      return NextResponse.json({ notices: [], targetStores: [], pagination: emptyPage.pagination });
     }
+    const sortOrder = getNoticeSortOrder(request.nextUrl.searchParams.get("sort"));
+    const scopeFilter = request.nextUrl.searchParams.get("scope");
+    const targetStoreId = request.nextUrl.searchParams.get("targetStoreId");
 
     const adminClient = createAdminClient();
     const { data, error } = await adminClient
@@ -102,12 +110,17 @@ export async function GET(): Promise<NextResponse> {
 
     if (error) {
       if (isMissingTableError(error)) {
-        return NextResponse.json({ notices: [] });
+        const emptyPage = paginateNoticeRows([], page, limit);
+        return NextResponse.json({ notices: [], targetStores: [], pagination: emptyPage.pagination });
       }
       return NextResponse.json({ error: "공지사항을 불러오지 못했습니다." }, { status: 500 });
     }
 
-    const rows = (data ?? []) as NoticeRow[];
+    const rows = await searchNoticeRows(
+      adminClient,
+      (data ?? []) as NoticeRow[],
+      request.nextUrl.searchParams.get("search"),
+    );
     const storeIds = [...new Set(rows.map((row) => row.target_store_id).filter((id): id is string => Boolean(id)))];
     const storeNames = new Map<string, string>();
 
@@ -123,7 +136,21 @@ export async function GET(): Promise<NextResponse> {
       }
     }
 
-    const noticeItems = rows.map((row) => ({
+    const targetStores = storeIds
+      .map((id) => ({ id, name: storeNames.get(id) ?? "삭제된 지점" }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+    const filteredRows = rows.filter((row) => {
+      const scopeMatches = scopeFilter === "franchise"
+        ? row.target_type === "all" || row.target_type === "franchise"
+        : scopeFilter === "store"
+          ? row.target_type === "store"
+          : true;
+      const targetMatches = !targetStoreId
+        || (row.target_type === "store" && row.target_store_id === targetStoreId);
+      return scopeMatches && targetMatches;
+    });
+
+    const noticeItems = filteredRows.map((row) => ({
       id: row.id,
       targetType: row.target_type,
       targetStoreId: row.target_store_id,
@@ -148,9 +175,13 @@ export async function GET(): Promise<NextResponse> {
       readRecords = readRows ?? [];
     }
 
-    const notices: HqNoticeItem[] = withNoticeViewCounts(noticeItems, readRecords);
+    const sortedNotices: HqNoticeItem[] = sortNoticeRows(
+      withNoticeViewCounts(noticeItems, readRecords),
+      sortOrder,
+    );
+    const { items: notices, pagination } = paginateNoticeRows(sortedNotices, page, limit);
 
-    return NextResponse.json({ notices });
+    return NextResponse.json({ notices, targetStores, pagination });
   } catch (error) {
     console.error("GET /api/hq/notices error:", error);
     return NextResponse.json({ error: "서버 오류가 발생했습니다." }, { status: 500 });

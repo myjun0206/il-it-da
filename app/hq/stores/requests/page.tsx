@@ -2,12 +2,9 @@
 
 import React, { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { ArrowRight, ChevronRight, CircleCheck, Clock, MessageSquare, Search, X } from "lucide-react";
-import HQSidebar from "@/components/hq/HQSidebar";
-import HQHeader from "@/components/hq/HQHeader";
 import BackToHomeLink from "@/components/hq/BackToHomeLink";
-import { createClient } from "@/lib/supabase/client";
 
 type InquiryStatus = "open" | "resolved";
 type StatusFilter = "all" | InquiryStatus;
@@ -60,30 +57,12 @@ export default function HqStoreRequestsPage() {
 }
 
 function HqStoreRequestsContent() {
-  const router = useRouter();
   const isUnresolvedView = useSearchParams().get("view") === UNRESOLVED_VIEW;
-  const [userName, setUserName] = useState("본사 관리자");
-  const [franchiseName, setFranchiseName] = useState("메가MGC커피");
   // 문의·요청 테이블/API가 생기면 franchise 범위로 제한된 서버 API 응답으로 채운다.
   const [inquiries] = useState<StoreInquiry[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [selectedInquiry, setSelectedInquiry] = useState<StoreInquiry | null>(null);
-
-  useEffect(() => {
-    const loadUser = async () => {
-      const supabase = createClient();
-      const { data } = await supabase.auth.getSession();
-      const name = data.session?.user?.user_metadata?.name;
-      if (name) {
-        setUserName(name);
-        const firstName = name.split(" ")[0];
-        if (firstName) setFranchiseName(firstName);
-      }
-    };
-
-    void loadUser();
-  }, []);
 
   useEffect(() => {
     if (!selectedInquiry) return;
@@ -94,14 +73,7 @@ function HqStoreRequestsContent() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedInquiry]);
 
-  const handleLogout = async () => {
-    try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
-    } finally {
-      router.push("/");
-    }
-  };
+
 
   const statCards = [
     { label: "전체 문의", value: inquiries.length },
@@ -122,18 +94,8 @@ function HqStoreRequestsContent() {
   }, [inquiries, searchQuery, statusFilter, isUnresolvedView]);
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-default)]">
-      <HQSidebar
-        userName={userName}
-        franchiseName={franchiseName}
-        onLogout={handleLogout}
-        activeMenu={isUnresolvedView ? "home" : "store-request"}
-      />
-
-      <div className="lg:ml-[240px]">
-        <HQHeader userName={userName} franchiseName={franchiseName} onLogout={handleLogout} />
-
-        <main className="p-6 lg:p-8 max-w-7xl mx-auto">
+    <>
+      <main className="p-6 lg:p-8 max-w-7xl mx-auto">
           {isUnresolvedView ? (
             <>
               <BackToHomeLink />
@@ -312,7 +274,6 @@ function HqStoreRequestsContent() {
             </>
           )}
         </main>
-      </div>
 
       {/* Detail Modal */}
       {selectedInquiry && (
@@ -366,6 +327,6 @@ function HqStoreRequestsContent() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

@@ -107,8 +107,10 @@ test("followup is explicit, uses the existing editor and never reruns RAG or res
   assert.match(ui, /수정할 매장 매뉴얼을 선택하세요/);
   assert.match(ui, /직원 재질문 안내/);
   assert.match(ui, /이 버튼은 재질문을 실행하지 않습니다/);
-  assert.match(ui, /aria-expanded=\{showVerification\}/);
-  assert.match(ui, /aria-expanded=\{showContext\}/);
+  assert.match(ui, /aria-expanded=\{expandedAccordion === "verification"\}/);
+  assert.match(ui, /aria-expanded=\{expandedAccordion === "context"\}/);
+  assert.match(ui, /toggleAccordion\("verification"\)/);
+  assert.match(ui, /toggleAccordion\("context"\)/);
   assert.match(ui, /이 근거 매뉴얼 선택/);
   assert.match(ui, /selectedManual\.id/);
   assert.match(ui, /본사 확인이 필요/);

@@ -224,6 +224,7 @@ export interface QuestionLogFollowUpOptions {
   /** RAG 판정이 근거 부족(insufficient)이라 단건 보류 알림도 보내야 하는지. */
   escalate: boolean;
   getClient: () => SupabaseClient;
+  onDiagnostic?: (event: { stage: string; [key: string]: unknown }) => void;
 }
 
 /**
@@ -232,7 +233,10 @@ export interface QuestionLogFollowUpOptions {
  */
 export function createQuestionLogFollowUp(options: QuestionLogFollowUpOptions) {
   return async (logResult: SaveQuestionLogResult): Promise<void> => {
+    const trace = (event: { stage: string; [key: string]: unknown }) => { try { options.onDiagnostic?.(event); } catch {} };
     if (!logResult.saved || !logResult.questionLogId) {
+      trace({ stage: "escalation", status: "skipped", reason: "LOG_NOT_SAVED" });
+      trace({ stage: "repeated_alert", status: "skipped", reason: "LOG_NOT_SAVED" });
       return;
     }
     const questionLogId = logResult.questionLogId;
@@ -242,21 +246,39 @@ export function createQuestionLogFollowUp(options: QuestionLogFollowUpOptions) {
       client = options.getClient();
     } catch (e) {
       logSafeRepeatedAlertError("CLIENT_UNAVAILABLE", e);
+      trace({ stage: "escalation", status: "failed", reason: "CLIENT_UNAVAILABLE" });
+      trace({ stage: "repeated_alert", status: "failed", reason: "CLIENT_UNAVAILABLE" });
       return;
     }
 
     if (options.escalate) {
       try {
         const result = await escalateQuestionLogToStoreOwners(client, { questionLogId, storeId: options.storeId });
+        trace({ stage: "escalation", status: result.status, questionLogId,
+          notifiedCount: result.status === "notified" ? result.notifiedOwnerIds.length : result.status === "failed" ? null : 0,
+          skippedCount: result.status === "notified" ? result.skippedOwnerIds.length : result.status === "failed" ? null : 0 });
         if (result.status === "failed") {
           console.error("[RAG] QUESTION_ESCALATION_FAILED", { status: result.status });
         }
       } catch (e) {
         logSafeRepeatedAlertError("ESCALATION_THREW", e);
+        trace({ stage: "escalation", status: "failed", reason: "ESCALATION_THREW", questionLogId });
       }
+    } else {
+      trace({ stage: "escalation", status: "not_required", questionLogId });
     }
 
-    const repeated = await notifyRepeatedQuestion(client, { questionLogId, storeId: options.storeId });
+    let repeated: NotifyRepeatedQuestionResult;
+    try {
+      repeated = await notifyRepeatedQuestion(client, { questionLogId, storeId: options.storeId });
+    } catch {
+      trace({ stage: "repeated_alert", status: "failed", reason: "REPEATED_ALERT_THREW", questionLogId });
+      return;
+    }
+    trace({ stage: "repeated_alert", status: repeated.status, questionLogId,
+      notifiedCount: "notifiedOwnerIds" in repeated ? repeated.notifiedOwnerIds?.length ?? 0 : 0,
+      skippedCount: "skippedOwnerIds" in repeated ? repeated.skippedOwnerIds.length : 0,
+      failedCount: "failedOwnerIds" in repeated ? repeated.failedOwnerIds?.length ?? 0 : 0 });
     if (repeated.status === "failed") {
       console.error("[RAG] REPEATED_QUESTION_ALERT_FAILED", { code: repeated.code });
     }

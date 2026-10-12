@@ -11,6 +11,13 @@ interface ApiStore {
   lng: number;
 }
 
+const DATABASE_STORE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** Search results may use provider-generated IDs; only a UUID can be sent as stores.id. */
+export function getDatabaseStoreId(searchResultId: string): string | undefined {
+  return DATABASE_STORE_ID_PATTERN.test(searchResultId) ? searchResultId : undefined;
+}
+
 /**
  * 매장 검색 공통 호출. 회원가입 매장 검색(StoreSearchDropdown)과 직원 근무 매장 추가 화면이 함께 쓴다.
  * 실패하면 예외를 던지고, AbortSignal로 취소할 수 있다.

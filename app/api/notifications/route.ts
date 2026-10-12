@@ -22,6 +22,10 @@ interface NotificationsResponse {
   data?: {
     notifications: Notification[];
     unreadCount: number;
+    totalCount: number;
+    filteredCount: number;
+    returnedCount: number;
+    hasMore: boolean;
   };
   error?: string;
 }
@@ -40,7 +44,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<Notificati
     }
 
     // Get limit from query params (default 10)
-    const limit = parseInt(request.nextUrl.searchParams.get("limit") || "10");
+    const requestedLimit = Number(request.nextUrl.searchParams.get("limit") || "10");
+    if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 1000) {
+      return NextResponse.json({ success: false, error: "잘못된 조회 개수입니다." }, { status: 400 });
+    }
+    const limit = requestedLimit;
     const includeRead = request.nextUrl.searchParams.get("includeRead") === "true";
 
     // Query notifications
@@ -60,7 +68,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Notificati
     const { data: notifications, error: queryError } = await query;
 
     if (queryError) {
-      console.error("Failed to fetch notifications:", queryError);
+      console.error("Failed to fetch notifications: NOTIFICATION_QUERY_FAILED");
       return NextResponse.json(
         { success: false, error: "알림을 불러올 수 없습니다." },
         { status: 500 }
@@ -75,8 +83,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<Notificati
       .eq("is_read", false);
 
     if (countError) {
-      console.error("Failed to count unread notifications:", countError);
+      console.error("Failed to count unread notifications: NOTIFICATION_COUNT_FAILED");
+      return NextResponse.json({ success: false, error: "알림 개수를 확인할 수 없습니다." }, { status: 500 });
     }
+    const { count: totalCount, error: totalError } = await adminClient.from("notifications")
+      .select("id", { count: "exact", head: true }).eq("recipient_user_id", user.id);
+    if (totalError) return NextResponse.json({ success: false, error: "알림 개수를 확인할 수 없습니다." }, { status: 500 });
+    const filteredCount = includeRead ? totalCount ?? 0 : unreadCount ?? 0;
 
     // Transform camelCase response
     const transformedNotifications: Notification[] = (notifications || []).map((n) => ({
@@ -96,10 +109,14 @@ export async function GET(request: NextRequest): Promise<NextResponse<Notificati
       data: {
         notifications: transformedNotifications,
         unreadCount: unreadCount || 0,
+        totalCount: totalCount ?? 0,
+        filteredCount,
+        returnedCount: transformedNotifications.length,
+        hasMore: transformedNotifications.length < filteredCount,
       },
     });
   } catch (e) {
-    console.error("Error fetching notifications:", e);
+    console.error("Error fetching notifications: NOTIFICATION_READ_FAILED", { kind: e instanceof Error ? "Error" : "UnknownError" });
     return NextResponse.json(
       { success: false, error: "알림을 불러올 수 없습니다." },
       { status: 500 }

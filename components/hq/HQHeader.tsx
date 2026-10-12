@@ -8,11 +8,12 @@ import { createClient } from "@/lib/supabase/client";
 interface HQHeaderProps {
   userName: string;
   franchiseName: string;
-  /** 각 HQ 페이지가 사이드바에 넘기는 기존 로그아웃 핸들러를 그대로 재사용한다. */
-  onLogout: () => void;
 }
 
-export default function HQHeader({ userName, franchiseName, onLogout: _onLogout }: HQHeaderProps) {
+export default function HQHeader({
+  userName,
+  franchiseName,
+}: HQHeaderProps) {
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -63,17 +64,17 @@ export default function HQHeader({ userName, franchiseName, onLogout: _onLogout 
   }, []);
 
   return (
-    <header className="bg-white border-b border-[var(--color-border)] h-16">
-      <div className="flex items-center justify-end px-6 h-full">
-        {/* Right */}
-        <div className="flex items-center gap-6">
-          {/* Notification Center */}
+    <header className="sticky top-0 z-20 bg-white border-b border-[var(--color-border)] h-16 shrink-0">
+      <div className="flex min-w-0 items-center pl-16 pr-3 sm:gap-4 lg:px-6 h-full">
+        {/* 오른쪽 액션 영역 - 알림과 프로필 */}
+        <div className="ml-auto flex items-center gap-2 sm:gap-4">
+          {/* 알림 */}
           <NotificationCenter notificationPageUrl="/hq/notifications" />
 
-          {/* Profile */}
+          {/* 프로필 메뉴 (HQ용) */}
           <ProfileMenu
             userName={userName}
-            subtitle={`${franchiseName} · 본사 관리자`}
+            subtitle="본사 관리자"
             roleLabel="본사 관리자"
             avatarUrl={avatarUrl}
           />

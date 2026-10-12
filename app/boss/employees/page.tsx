@@ -299,15 +299,12 @@ export default function EmployeesPage() {
         <main className="flex-1 overflow-y-auto">
           <div className="p-6 lg:p-8 max-w-7xl mx-auto">
             {/* 페이지 제목 */}
-            <div className="mb-6">
+            <div className="mb-8">
               <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
                 직원 관리
               </h1>
               <p className="text-base text-[var(--color-text-secondary)]">
                 현재 매장에서 근무하는 직원을 확인하고 관리하세요.
-              </p>
-              <p className="mt-1 text-sm text-[var(--color-text-tertiary)]">
-                현재 매장 · <span className="font-semibold text-[var(--color-text-secondary)]">{storeName}</span>
               </p>
             </div>
 
@@ -319,55 +316,56 @@ export default function EmployeesPage() {
             )}
 
             {/* 요약 카드 */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-10">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-8">
               {/* 전체 직원 */}
-              <div className="rounded-xl border border-[var(--color-border)] bg-white p-5">
-                <p className="text-sm font-medium text-[var(--color-text-secondary)] mb-1">
+              <div className="rounded-xl border border-[var(--color-border)] bg-white p-4">
+                <p className="text-xs font-medium text-[var(--color-text-secondary)] mb-1">
                   전체 직원
                 </p>
-                <p className="text-2xl font-bold text-[var(--color-text-primary)]">
+                <p className="text-xl font-bold text-[var(--color-text-primary)]">
                   {employees.summary.total}
-                  <span className="ml-0.5 text-base font-medium text-[var(--color-text-secondary)]">명</span>
+                  <span className="ml-0.5 text-sm font-medium text-[var(--color-text-secondary)]">명</span>
                 </p>
               </div>
 
               {/* 승인 대기 */}
               <div
-                className={`rounded-xl border p-5 ${
+                className={`rounded-xl border p-4 ${
                   employees.summary.pending > 0
                     ? "border-[var(--color-primary)]/40 bg-[var(--color-primary-light)]/15"
                     : "border-[var(--color-border)] bg-white"
                 }`}
               >
-                <p className="text-sm font-medium text-[var(--color-text-secondary)] mb-1">
+                <p className="text-xs font-medium text-[var(--color-text-secondary)] mb-1">
                   승인 대기
                 </p>
                 <p
-                  className={`text-2xl font-bold ${
+                  className={`text-xl font-bold ${
                     employees.summary.pending > 0
                       ? "text-[var(--color-primary)]"
                       : "text-[var(--color-text-primary)]"
                   }`}
                 >
                   {employees.summary.pending}
-                  <span className="ml-0.5 text-base font-medium text-[var(--color-text-secondary)]">명</span>
+                  <span className="ml-0.5 text-sm font-medium text-[var(--color-text-secondary)]">명</span>
                 </p>
               </div>
 
-              {/* 근무 중 */}
-              <div className="rounded-xl border border-[var(--color-border)] bg-white p-5">
-                <p className="text-sm font-medium text-[var(--color-text-secondary)] mb-1">
-                  근무 중
+              {/* 소속 직원 */}
+              <div className="rounded-xl border border-[var(--color-border)] bg-white p-4">
+                <p className="text-xs font-medium text-[var(--color-text-secondary)] mb-1">
+                  소속 직원
                 </p>
-                <p className="text-2xl font-bold text-[var(--color-text-primary)]">
+                <p className="text-xl font-bold text-[var(--color-text-primary)]">
                   {employees.summary.approved}
-                  <span className="ml-0.5 text-base font-medium text-[var(--color-text-secondary)]">명</span>
+                  <span className="ml-0.5 text-sm font-medium text-[var(--color-text-secondary)]">명</span>
                 </p>
               </div>
             </div>
 
             {/* 승인 대기 직원 (홈의 "직원 가입 승인 요청"에서 #pending-staff로 바로 이동) */}
-            <section id="pending-staff" aria-labelledby="pending-staff-heading" className="mb-10 scroll-mt-20">
+            {employees.summary.pending > 0 && (
+            <section id="pending-staff" aria-labelledby="pending-staff-heading" className="mb-8" scroll-mt-20>
               <div className="flex items-center gap-2 mb-3">
                 <h2 id="pending-staff-heading" className="text-lg font-bold text-[var(--color-text-primary)]">
                   승인 대기 직원
@@ -380,12 +378,9 @@ export default function EmployeesPage() {
               </div>
 
               {employees.pending.length === 0 ? (
-                <div className={stateBoxClass}>
-                  <UserPlus size={28} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" aria-hidden="true" />
-                  <p className="text-base text-[var(--color-text-secondary)]">
-                    승인 대기 중인 직원이 없습니다.
-                  </p>
-                </div>
+                <p className="text-sm text-[var(--color-text-secondary)]">
+                  승인 대기 직원 0명
+                </p>
               ) : (
                 <ul className="space-y-3">
                   {employees.pending.map((staff) => (
@@ -428,12 +423,20 @@ export default function EmployeesPage() {
                 </ul>
               )}
             </section>
+            )}
 
             {/* 직원 목록 */}
             <section aria-labelledby="staff-list-heading">
-              <h2 id="staff-list-heading" className="text-lg font-bold text-[var(--color-text-primary)] mb-3">
-                직원 목록
-              </h2>
+              <div className="flex items-center gap-2 mb-4">
+                <h2 id="staff-list-heading" className="text-lg font-bold text-[var(--color-text-primary)]">
+                  직원 목록
+                </h2>
+                {employees.approved.length > 0 && (
+                  <span className="text-sm text-[var(--color-text-secondary)]">
+                    <span className="font-semibold text-[var(--color-text-primary)]">{employees.approved.length}</span>명
+                  </span>
+                )}
+              </div>
 
               <div className="mb-4 relative">
                 <Search
@@ -447,15 +450,9 @@ export default function EmployeesPage() {
                   aria-label="직원 검색"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="h-12 w-full rounded-lg border border-[var(--color-border)] bg-white pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
+                  className="h-11 w-full rounded-lg border border-[var(--color-border)] bg-white pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
                 />
               </div>
-
-              {employees.approved.length > 0 && (
-                <p className="mb-3 text-sm text-[var(--color-text-secondary)]">
-                  직원 <span className="font-bold text-[var(--color-text-primary)]">{filteredApproved.length}</span>명
-                </p>
-              )}
 
               {filteredApproved.length === 0 ? (
                 <div className={stateBoxClass}>
@@ -479,11 +476,13 @@ export default function EmployeesPage() {
                   )}
                 </div>
               ) : (
-                <ul className="space-y-3">
-                  {filteredApproved.map((staff) => (
+                <ul className="space-y-2 border border-[var(--color-border)] rounded-xl overflow-hidden bg-white">
+                  {filteredApproved.map((staff, index) => (
                     <li
                       key={staff.membershipId}
-                      className={`${rowCardClass} flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3`}
+                      className={`flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 px-5 py-4 ${
+                        index !== filteredApproved.length - 1 ? "border-b border-[var(--color-border)]" : ""
+                      }`}
                     >
                       <div className="flex-1 min-w-0">
                         <p className="text-base font-semibold text-[var(--color-text-primary)] truncate">
@@ -494,9 +493,9 @@ export default function EmployeesPage() {
                         </p>
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 text-sm">
                         {staff.needsBrandProfileRecovery ? (
-                          <div className="flex flex-col items-start gap-1 lg:items-end">
+                          <div className="flex flex-col items-start gap-1 sm:items-end">
                             <button
                               type="button"
                               disabled={processingId === staff.membershipId}
@@ -508,19 +507,20 @@ export default function EmployeesPage() {
                             <span className="text-xs text-amber-700">승인 후처리가 끝나지 않았어요.</span>
                           </div>
                         ) : (
-                          <div className="flex items-center gap-1">
-                            <div className="w-2 h-2 rounded-full bg-green-500" />
-                            <span className="text-[var(--color-text-secondary)]">근무 중</span>
-                          </div>
+                          <>
+                            <div className="flex items-center gap-1 whitespace-nowrap">
+                              <span className="text-[var(--color-text-secondary)]">소속 중</span>
+                            </div>
+                            <span className="text-xs text-[var(--color-text-tertiary)] whitespace-nowrap">
+                              {formatDate(staff.approvedAt || staff.requestedAt)}
+                            </span>
+                          </>
                         )}
-                        <span className="text-xs text-[var(--color-text-tertiary)]">
-                          {formatDate(staff.approvedAt || staff.requestedAt)}
-                        </span>
                         <button
                           type="button"
                           disabled={isRemoving || processingId === staff.membershipId}
                           onClick={() => setRemoveTarget(staff)}
-                          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-[var(--color-border)] bg-white px-3 text-sm font-medium text-red-700 transition-colors hover:border-red-300 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2 disabled:opacity-60"
+                          className="inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-[var(--color-border)] bg-white px-3 text-sm font-medium text-red-700 transition-colors hover:border-red-300 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2 disabled:opacity-60 whitespace-nowrap"
                         >
                           소속 해제
                         </button>

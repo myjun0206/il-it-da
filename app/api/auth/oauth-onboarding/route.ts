@@ -3,6 +3,11 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { UserRole } from "@/lib/types/user";
+import { createResearchConsent, RESEARCH_CONSENT_KEY } from "@/lib/auth/signup-research-consent";
+import { isSameOriginRequest } from "@/lib/auth/owner-staff-signup-server";
+import { hasRequiredSignupTerms, normalizeSignupName, normalizeSignupPhone, validateOwnerStaffSignupProfile } from "@/lib/auth/owner-staff-signup";
+import { requiredSignupConsent } from "@/lib/auth/signup-research-consent";
+import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
 
 export const runtime = "nodejs";
 
@@ -10,12 +15,16 @@ type OAuthOnboardingBody = {
   role?: unknown;
   name?: unknown;
   phone?: unknown;
+  researchConsent?: unknown;
+  terms?: unknown;
 };
 
 type OAuthOnboardingResponse = {
   userId?: string;
   role?: UserRole;
   error?: string;
+  code?: string;
+  fields?: Record<string, string>;
 };
 
 function getString(value: unknown): string | undefined {
@@ -52,10 +61,15 @@ function isOAuthUser(user: {
 export async function POST(
   request: Request,
 ): Promise<NextResponse<OAuthOnboardingResponse>> {
+  if (!isSameOriginRequest(request)) return NextResponse.json({ error: "요청 출처를 확인할 수 없습니다.", code: "OAUTH_INVALID_REQUEST" }, { status: 403 });
   let body: OAuthOnboardingBody;
 
   try {
-    body = (await request.json()) as OAuthOnboardingBody;
+    const parsed: unknown = await request.json();
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return NextResponse.json({ error: "가입 정보를 확인해주세요.", code: "OAUTH_INVALID_REQUEST" }, { status: 400 });
+    }
+    body = parsed;
   } catch {
     return NextResponse.json(
       { error: "Invalid JSON body." },
@@ -67,9 +81,9 @@ export async function POST(
   const name = getString(body.name);
   const phone = getString(body.phone);
 
-  if (!role || !name || !phone) {
+  if (!role) {
     return NextResponse.json(
-      { error: "role, name, and phone are required." },
+      { error: "가입 역할을 확인해주세요.", code: "OAUTH_INVALID_REQUEST" },
       { status: 400 },
     );
   }
@@ -111,10 +125,7 @@ export async function POST(
       .maybeSingle<{ role: UserRole }>();
 
   if (existingProfileError) {
-    console.error(
-      "[AUTH_OAUTH_ONBOARDING] Profile lookup failed:",
-      existingProfileError.message,
-    );
+    logSafeAuthError("OAUTH_ONBOARDING_PROFILE_LOOKUP_FAILED", existingProfileError);
 
     return NextResponse.json(
       { error: "프로필을 확인하지 못했습니다." },
@@ -122,14 +133,25 @@ export async function POST(
     );
   }
 
-  if (existingProfile) {
-    if (existingProfile.role !== role) {
+  if (existingProfile && existingProfile.role !== role) {
       return NextResponse.json(
         { error: "이미 다른 역할로 등록된 사용자입니다." },
         { status: 409 },
       );
-    }
-
+  }
+  if (!existingProfile) {
+    const fields = validateOwnerStaffSignupProfile({ name, phone });
+    if (!hasRequiredSignupTerms(body.terms, role)) fields.terms = "필수 약관에 동의해주세요.";
+    if (Object.keys(fields).length) return NextResponse.json({ error: "가입 정보를 확인해주세요.", code: "OAUTH_ONBOARDING_REQUIRED", fields }, { status: 400 });
+  }
+  if (!existingProfile || body.researchConsent !== undefined) {
+    const { error } = await sessionClient.auth.updateUser({ data: {
+      ...(body.researchConsent !== undefined ? { [RESEARCH_CONSENT_KEY]: createResearchConsent(body.researchConsent) } : {}),
+      ...(!existingProfile ? { signupTerms: requiredSignupConsent(body.terms) } : {}),
+    } });
+    if (error) return NextResponse.json({ error: "선택 동의를 저장하지 못했습니다." }, { status: 503 });
+  }
+  if (existingProfile) {
     return NextResponse.json({
       userId: user.id,
       role: existingProfile.role,
@@ -142,9 +164,9 @@ export async function POST(
       id: user.id,
       user_id: user.id,
       email: user.email?.trim().toLowerCase() || null,
-      full_name: name,
+      full_name: normalizeSignupName(name),
       role,
-      phone,
+      phone: normalizeSignupPhone(phone),
       company_email: null,
       brand_id: null,
       approval_status: "pending",
@@ -167,6 +189,7 @@ export async function POST(
         .maybeSingle<{ role: UserRole }>();
 
       if (concurrentProfile) {
+        if (concurrentProfile.role !== role) return NextResponse.json({ error: "이미 다른 역할로 등록된 사용자입니다.", code: "OAUTH_ROLE_MISMATCH" }, { status: 409 });
         return NextResponse.json({
           userId: user.id,
           role: concurrentProfile.role,
@@ -174,10 +197,7 @@ export async function POST(
       }
     }
 
-    console.error(
-      "[AUTH_OAUTH_ONBOARDING] Profile insert failed:",
-      insertError,
-    );
+    logSafeAuthError("OAUTH_ONBOARDING_PROFILE_INSERT_FAILED", insertError);
 
     return NextResponse.json(
       { error: "프로필을 생성하지 못했습니다." },

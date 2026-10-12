@@ -1,13 +1,11 @@
 "use client";
 
-import React, { useEffect, useLayoutEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
+import { useClientReady } from "@/lib/hq/use-client-ready";
 import { useRouter } from "next/navigation";
-import { AlertCircle, ArrowLeft, FileText, Pencil, Plus, RefreshCw, Search, Upload, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, FileText, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
-import { createClient } from "@/lib/supabase/client";
-import HQSidebar from "@/components/hq/HQSidebar";
-import HQHeader from "@/components/hq/HQHeader";
 import { ManualSearchReadinessPanel } from "@/components/manuals/ManualSearchReadinessPanel";
 import { manualSaveMessage } from "@/lib/manuals/manual-save-result";
 import type { ManualRecord } from "@/lib/types/manual";
@@ -30,6 +28,10 @@ type ManualView = "categories" | "titles" | "items";
 const CATEGORY_PLACEHOLDER_CONTENT = "__HQ_MANUAL_CATEGORY_PLACEHOLDER__";
 const UUID_LIKE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const INTERNAL_ID_LIKE_PATTERN = /^[A-Za-z0-9_-]{16,}$/;
+
+function createManualItemId(): string {
+  return `manual-item-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
+}
 
 function isCategoryPlaceholder(manual: ManualRecord): boolean {
   return !manual.parent_manual_id && manual.status === "draft" && manual.content === CATEGORY_PLACEHOLDER_CONTENT;
@@ -97,9 +99,7 @@ function groupByCategory(manuals: ManualRecord[], groups: ManualGroup[]): Manual
 
 export default function ManualDashboardPage() {
   const router = useRouter();
-  const [userName, setUserName] = useState("본사 관리자");
-  const [franchiseName, setFranchiseName] = useState("메가MGC커피");
-  const [isReady, setIsReady] = useState(false);
+  const isReady = useClientReady();
   const [manuals, setManuals] = useState<ManualRecord[]>([]);
   const [isLoadingManuals, setIsLoadingManuals] = useState(true);
   const [manualsLoadError, setManualsLoadError] = useState("");
@@ -122,8 +122,8 @@ export default function ManualDashboardPage() {
   const [isDeletingCategory, setIsDeletingCategory] = useState(false);
   const [showTitleModal, setShowTitleModal] = useState(false);
   const [titleName, setTitleName] = useState("");
-  const [titleItems, setTitleItems] = useState<{ id: string; content: string }[]>([
-    { id: crypto.randomUUID(), content: "" },
+  const [titleItems, setTitleItems] = useState<{ id: string; content: string }[]>(() => [
+    { id: createManualItemId(), content: "" },
   ]);
   const [titleError, setTitleError] = useState("");
   const [isCreatingTitle, setIsCreatingTitle] = useState(false);
@@ -159,49 +159,6 @@ export default function ManualDashboardPage() {
     setToastMessage(message);
     setTimeout(() => setToastMessage(""), 2500);
   };
-
-  useLayoutEffect(() => {
-    const checkAuth = async () => {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-
-        if (!data.session?.user || data.session.user.user_metadata?.role !== "hq") {
-          router.push("/");
-          return;
-        }
-      } catch (e) {
-        console.error("Auth check failed:", e);
-        router.push("/");
-      }
-    };
-
-    checkAuth();
-  }, [router]);
-
-  useEffect(() => {
-    const setUserInfo = async () => {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.auth.getSession();
-
-        if (!data.session?.user) return;
-
-        const name = data.session.user.user_metadata?.name;
-        if (name) {
-          setUserName(name);
-          if (name.includes(" ")) {
-            const [first] = name.split(" ");
-            if (first) setFranchiseName(first);
-          }
-        }
-      } finally {
-        setIsReady(true);
-      }
-    };
-
-    setUserInfo();
-  }, []);
 
   const fetchManualsData = async (): Promise<ManualRecord[]> => {
     const response = await fetch("/api/manuals?includeCategoryPlaceholders=1", {
@@ -248,17 +205,6 @@ export default function ManualDashboardPage() {
       .finally(() => setIsLoadingManuals(false));
   }, [manualsReloadKey]);
 
-  const handleLogout = async () => {
-    try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
-      router.push("/");
-    } catch (e) {
-      console.error("Logout failed:", e);
-      router.push("/");
-    }
-  };
-
   const groups = groupByParent(manuals);
   const categories = groupByCategory(manuals, groups);
   const totalItemCount = groups.reduce((count, group) => count + group.items.length, 0);
@@ -269,6 +215,13 @@ export default function ManualDashboardPage() {
   const normalizedSearch = searchQuery.trim().toLowerCase();
   const visibleCategories = normalizedSearch
     ? categories.filter((category) => {
+        // Handle category filter (e.g., "category:고객응대")
+        if (normalizedSearch.startsWith("category:")) {
+          const filterCategory = normalizedSearch.substring(9); // Remove "category:" prefix
+          return category.category.toLowerCase().includes(filterCategory) ||
+                 getDisplayCategoryName(category.category).toLowerCase().includes(filterCategory);
+        }
+        // Handle text search across category and group content
         const categoryText = getDisplayCategoryName(category.category).toLowerCase();
         const groupText = category.groups
           .flatMap((group) => [group.title, ...group.items.map((item) => item.content)])
@@ -312,12 +265,12 @@ export default function ManualDashboardPage() {
 
   const resetTitleForm = () => {
     setTitleName("");
-    setTitleItems([{ id: crypto.randomUUID(), content: "" }]);
+    setTitleItems([{ id: createManualItemId(), content: "" }]);
     setTitleError("");
   };
 
   const handleAddTitleItem = () => {
-    setTitleItems((prev) => [...prev, { id: crypto.randomUUID(), content: "" }]);
+    setTitleItems((prev) => [...prev, { id: createManualItemId(), content: "" }]);
   };
 
   const handleRemoveTitleItem = (id: string) => {
@@ -757,14 +710,24 @@ export default function ManualDashboardPage() {
     setView("titles");
   };
 
+  const goBackToMainCards = () => {
+    setSelectedCategoryName(null);
+    setSelectedTitleId(null);
+    setSelectedGroup(null);
+    setItemSearchQuery("");
+    cancelEditItem();
+    // searchQuery는 유지해서 필터 상태 유지
+    setView("categories");
+  };
+
   const selectedCategoryLabel = selectedCategory ? getDisplayCategoryName(selectedCategory.category) : "";
   const detailHeader =
     view === "items" && selectedTitle
       ? {
           title: selectedTitle.title,
           description: "세부 매뉴얼을 관리합니다.",
-          backLabel: "타이틀 목록으로 돌아가기",
-          onBack: goToTitles,
+          backLabel: "매뉴얼 카드 목록으로 돌아가기",
+          onBack: goBackToMainCards,
         }
       : view !== "categories" && selectedCategory
         ? {
@@ -776,18 +739,8 @@ export default function ManualDashboardPage() {
         : null;
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-default)]">
-      <HQSidebar
-        userName={userName}
-        franchiseName={franchiseName}
-        onLogout={handleLogout}
-        activeMenu="manual-common"
-      />
-
-      <div className="lg:ml-[240px]">
-        <HQHeader userName={userName} franchiseName={franchiseName} onLogout={handleLogout} />
-
-        <main className="p-6 lg:p-8 max-w-7xl mx-auto">
+    <>
+      <main className="p-6 lg:p-8 max-w-7xl mx-auto">
           {detailHeader ? (
             <>
               <div className="mb-8 flex items-start gap-3">
@@ -822,7 +775,7 @@ export default function ManualDashboardPage() {
             readinessUrl="/api/manuals/search-readiness"
             reindexUrl="/api/manuals/search-readiness/reindex"
           />
-          {saveNotice && <p role="status" className="mb-5 whitespace-pre-wrap break-words border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{saveNotice}</p>}
+          {saveNotice && <p role="status" className="mb-6 whitespace-pre-wrap break-words border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{saveNotice}</p>}
 
           {isLoadingManuals ? (
             <p className="text-sm text-[var(--color-text-secondary)]">불러오는 중...</p>
@@ -844,9 +797,9 @@ export default function ManualDashboardPage() {
             </div>
           ) : view === "categories" ? (
             <section>
-              {/* Toolbar: 왼쪽 검색 / 오른쪽 [위험] [보조] [주요] 액션. 좌우 끝이 아래 grid와 같은 기준선이다. */}
-              <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-                <div className="relative w-full md:w-[420px] md:flex-none">
+              {/* Toolbar: 검색 + 관리 버튼 한 줄 */}
+              <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center">
+                <div className="relative flex-1 min-w-0">
                   <Search
                     size={18}
                     aria-hidden="true"
@@ -856,12 +809,12 @@ export default function ManualDashboardPage() {
                     type="search"
                     value={searchQuery}
                     onChange={(event) => setSearchQuery(event.target.value)}
-                    placeholder="카테고리 검색"
-                    aria-label="카테고리 검색"
-                    className="h-11 w-full rounded-lg border-2 border-[var(--color-border)] bg-white pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/30"
+                    placeholder="매뉴얼 검색"
+                    aria-label="매뉴얼 검색"
+                    className="h-12 w-full rounded-lg border border-[var(--color-border)] bg-white pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20"
                   />
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
                   <button
                     type="button"
                     disabled={categories.length === 0}
@@ -869,54 +822,78 @@ export default function ManualDashboardPage() {
                       setDeleteAllError("");
                       setShowDeleteAllConfirm(true);
                     }}
-                    className="mr-2 inline-flex h-11 items-center justify-center whitespace-nowrap rounded-md border-2 border-red-200 bg-transparent px-4 text-base font-semibold text-red-700 transition-colors hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent sm:mr-4"
+                    className="inline-flex h-12 items-center justify-center whitespace-nowrap rounded-lg border border-red-200 bg-transparent px-4 text-sm font-semibold text-red-700 transition-colors hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
                   >
                     전체 삭제
                   </button>
-                  {/* origin/develop: 파일 업로드는 중복 방지되는 미리보기 흐름(/hq/manuals/onboarding)으로 이동한다. */}
-                  <Button variant="outline" className="min-h-[44px]" onClick={goToManualUpload}>
-                    <Upload size={16} className="mr-2" aria-hidden="true" /> 매뉴얼 파일 업로드
+                  <Button variant="outline" className="h-12 shrink-0" onClick={goToManualUpload}>
+                    <Plus size={16} className="mr-2" aria-hidden="true" /> 매뉴얼 추가
                   </Button>
-                  <Button variant="primary" className="min-h-[44px]" onClick={() => setShowCategoryModal(true)}>
+                  <Button variant="primary" className="h-12 shrink-0" onClick={() => setShowCategoryModal(true)}>
                     <Plus size={16} className="mr-2" aria-hidden="true" /> 카테고리 추가
                   </Button>
                 </div>
               </div>
+
+              {/* 카테고리 필터 칩 */}
+              {categories.length > 0 && (
+                <div className="mb-5 flex flex-wrap gap-2" role="group" aria-label="카테고리">
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery("")}
+                    className={`min-h-9 rounded-full border px-3.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${
+                      !searchQuery
+                        ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/40 text-[var(--color-primary)]"
+                        : "border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]/50 hover:text-[var(--color-text-primary)]"
+                    }`}
+                  >
+                    전체
+                  </button>
+                  {categories.map((category) => (
+                    <button
+                      key={category.category}
+                      type="button"
+                      onClick={() => {
+                        const categoryText = `category:${category.category}`;
+                        setSearchQuery(searchQuery === categoryText ? "" : categoryText);
+                      }}
+                      className={`min-h-9 rounded-full border px-3.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${
+                        searchQuery === `category:${category.category}`
+                          ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/40 text-[var(--color-primary)]"
+                          : "border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]/50 hover:text-[var(--color-text-primary)]"
+                      }`}
+                    >
+                      {getDisplayCategoryName(category.category)}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* 개수 정보 */}
+              {categories.length > 0 && (
+                <dl className="mb-6 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm text-[var(--color-text-secondary)]">
+                  {[
+                    { label: "카테고리", value: categories.length },
+                    { label: "타이틀", value: groups.length },
+                    { label: "세부 매뉴얼", value: totalItemCount },
+                  ].map((stat) => (
+                    <div key={stat.label} className="flex items-baseline gap-1">
+                      <dt>{stat.label}</dt>
+                      <dd className="text-base font-bold text-[var(--color-text-primary)]">{stat.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
 
               {categories.length === 0 ? (
                 <div className="bg-white border border-[var(--color-border)] rounded-xl p-12 text-center shadow-sm">
                   <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[var(--color-primary-light)]">
                     <FileText size={32} className="text-[var(--color-primary)]" aria-hidden="true" />
                   </div>
-                  <p className="mb-2 text-base text-[var(--color-text-secondary)]">등록된 공통 매뉴얼이 없습니다.</p>
-                  <p className="mb-6 text-sm text-[var(--color-text-tertiary)]">
-                    매뉴얼 파일을 업로드하거나 첫 카테고리를 추가해보세요.
-                  </p>
-                  <div className="flex flex-wrap justify-center gap-2">
-                    <Button variant="outline" className="min-h-[44px]" onClick={goToManualUpload}>
-                      <Upload size={16} className="mr-2" aria-hidden="true" /> 매뉴얼 파일 업로드
-                    </Button>
-                    <Button variant="primary" className="min-h-[44px]" onClick={() => setShowCategoryModal(true)}>
-                      <Plus size={16} className="mr-2" aria-hidden="true" /> 첫 카테고리 추가
-                    </Button>
-                  </div>
+                  <p className="text-base text-[var(--color-text-secondary)]">등록된 공통 매뉴얼이 없습니다.</p>
                 </div>
               ) : (
                 <>
-                  {/* Summary */}
-                  <dl className="mb-4 flex flex-wrap items-baseline gap-x-6 gap-y-1 text-sm text-[var(--color-text-secondary)]">
-                    {[
-                      { label: "카테고리", value: categories.length },
-                      { label: "타이틀", value: groups.length },
-                      { label: "세부 매뉴얼", value: totalItemCount },
-                    ].map((stat) => (
-                      <div key={stat.label} className="flex items-baseline gap-1.5">
-                        <dt>{stat.label}</dt>
-                        <dd className="text-base font-bold text-[var(--color-text-primary)]">{stat.value}개</dd>
-                      </div>
-                    ))}
-                  </dl>
-
                   {visibleCategories.length === 0 ? (
                     <div className="bg-white border border-[var(--color-border)] rounded-xl p-12 text-center shadow-sm">
                       <Search size={28} className="mx-auto mb-3 text-[var(--color-text-tertiary)]" aria-hidden="true" />
@@ -925,41 +902,42 @@ export default function ManualDashboardPage() {
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                      {visibleCategories.map((category, index) => {
-                        const categoryName = getDisplayCategoryName(category.category);
-                        return (
-                          <div key={category.category} className="relative">
+                      {visibleCategories.flatMap((category) =>
+                        category.groups.map((group) => (
+                          <div key={group.id} className="relative min-w-0">
                             <button
                               type="button"
                               onClick={() => {
-                                setSelectedCategoryName(category.category);
-                                setSelectedTitleId(null);
-                                setTitleSearchQuery("");
-                                setView("titles");
+                                setSelectedCategoryName(group.category);
+                                setSelectedTitleId(group.id);
+                                setItemSearchQuery("");
+                                cancelEditItem();
+                                setView("items");
                               }}
-                              className="block h-full w-full rounded-xl border border-[var(--color-border)] bg-white p-5 text-left shadow-sm transition-colors hover:border-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2"
+                              className="flex h-full w-full flex-col items-start rounded-xl border border-[var(--color-border)] bg-white p-5 text-left transition-colors hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                             >
-                              <span className="mb-4 flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--color-primary-light)] text-sm font-bold text-[var(--color-primary)]">
-                                {index + 1}
+                              <span className="mb-3 inline-flex max-w-full truncate rounded-full bg-[var(--color-primary-light)]/40 px-2.5 py-0.5 text-xs font-semibold text-[var(--color-primary)]">
+                                {getDisplayCategoryName(group.category)}
                               </span>
-                              <span className="mb-1 block pr-10 text-lg font-bold text-[var(--color-text-primary)]">
-                                {categoryName}
+                              <span className="w-full text-base font-semibold text-[var(--color-text-primary)] break-keep line-clamp-2">
+                                {group.title}
                               </span>
-                              <span className="block text-sm text-[var(--color-text-secondary)]">
-                                타이틀 {category.groups.length}개 · 세부 매뉴얼 {category.itemCount}개
-                              </span>
+                              <span className="mt-auto pt-3 text-xs text-[var(--color-text-tertiary)]">세부 매뉴얼 {group.items.length}개</span>
                             </button>
                             <button
                               type="button"
-                              onClick={() => openEditCategoryModal(category)}
-                              aria-label={`${categoryName} 카테고리 이름 수정`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openEditTitleModal(group);
+                              }}
+                              aria-label={`${group.title} 타이틀 수정`}
                               className="absolute right-3 top-3 inline-flex h-11 w-11 items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-default)] hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                             >
                               <Pencil size={16} aria-hidden="true" />
                             </button>
                           </div>
-                        );
-                      })}
+                        ))
+                      )}
                     </div>
                   )}
                 </>
@@ -968,8 +946,8 @@ export default function ManualDashboardPage() {
             </section>
           ) : view === "titles" ? (
             <section>
-              <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-                <div className="relative w-full md:w-[420px] md:flex-none">
+              <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center">
+                <div className="relative flex-1 min-w-0">
                   <Search
                     size={18}
                     aria-hidden="true"
@@ -986,7 +964,7 @@ export default function ManualDashboardPage() {
                 </div>
                 <Button
                   variant="primary"
-                  className="min-h-[44px]"
+                  className="min-h-[44px] shrink-0"
                   onClick={() => setShowTitleModal(true)}
                   disabled={!selectedCategory}
                 >
@@ -1046,8 +1024,8 @@ export default function ManualDashboardPage() {
             </section>
           ) : (
             <section>
-              <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-                <div className="relative w-full md:w-[420px] md:flex-none">
+              <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center">
+                <div className="relative flex-1 min-w-0">
                   <Search
                     size={18}
                     aria-hidden="true"
@@ -1062,6 +1040,9 @@ export default function ManualDashboardPage() {
                     className="h-11 w-full rounded-lg border-2 border-[var(--color-border)] bg-white pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/30"
                   />
                 </div>
+                <Button variant="primary" className="h-11 shrink-0" onClick={() => setShowItemModal(true)}>
+                  <Plus size={16} className="mr-2" aria-hidden="true" /> 매뉴얼 추가
+                </Button>
               </div>
 
               {selectedTitle ? (
@@ -1075,17 +1056,21 @@ export default function ManualDashboardPage() {
                             type="button"
                             onClick={() => startEditItem(item)}
                             disabled={editingItemId === item.id || deletingItemId === item.id || savingItemId === item.id}
-                            className="rounded-md border border-[var(--color-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+                            title="수정"
+                            aria-label={`매뉴얼 ${index + 1} 수정`}
+                            className="flex min-h-9 w-9 items-center justify-center rounded-lg border border-[var(--color-border)] bg-white text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary-light)]/30 disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                           >
-                            수정
+                            <Pencil size={16} aria-hidden="true" />
                           </button>
                           <button
                             type="button"
                             onClick={() => handleDeleteItem(item)}
                             disabled={deletingItemId === item.id || savingItemId === item.id}
-                            className="rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-bold text-[var(--color-status-error)] transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            title={deletingItemId === item.id ? "삭제 중" : "삭제"}
+                            aria-label={`매뉴얼 ${index + 1} 삭제`}
+                            className="flex min-h-9 w-9 items-center justify-center rounded-lg border border-[var(--color-border)] bg-white text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
                           >
-                            {deletingItemId === item.id ? "삭제 중" : "삭제"}
+                            <Trash2 size={16} aria-hidden="true" />
                           </button>
                         </div>
                       </div>
@@ -1129,13 +1114,6 @@ export default function ManualDashboardPage() {
                       검색 결과가 없습니다.
                     </div>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => setShowItemModal(true)}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-[var(--color-border)] bg-[var(--color-bg-surface)] py-4 text-sm font-bold text-[var(--color-text-secondary)] shadow-sm transition-colors hover:border-[var(--color-primary)] hover:bg-white hover:text-[var(--color-primary)]"
-                  >
-                    매뉴얼 추가하기 <Plus size={16} />
-                  </button>
                 </div>
               ) : (
                 <div className="rounded-xl border-2 border-dashed border-[var(--color-border)] bg-[var(--color-bg-surface)] p-12 text-center text-sm text-[var(--color-text-secondary)] shadow-sm">
@@ -1146,7 +1124,6 @@ export default function ManualDashboardPage() {
             </section>
           )}
         </main>
-      </div>
 
       {/* Delete All Manuals Confirm Modal */}
       {showDeleteAllConfirm && (
@@ -1156,30 +1133,31 @@ export default function ManualDashboardPage() {
             aria-modal="true"
             aria-labelledby="delete-all-title"
             aria-describedby="delete-all-description"
-            className="bg-white rounded-xl shadow-lg w-full max-w-sm p-6"
+            className="bg-white rounded-xl shadow-lg w-full max-w-[560px] p-8"
           >
-            <h2 id="delete-all-title" className="text-lg font-bold text-[var(--color-text-primary)] mb-2">
+            <h2 id="delete-all-title" className="text-2xl font-bold text-[var(--color-text-primary)] mb-6">
               공통 매뉴얼 전체 삭제
             </h2>
-            <p id="delete-all-description" className="text-sm text-[var(--color-text-secondary)] mb-6">
+            <p id="delete-all-description" className="text-base text-[var(--color-text-secondary)] mb-8">
               모든 공통 매뉴얼 데이터가 삭제됩니다.
               <br />
-              <strong className="font-semibold text-red-700">이 작업은 되돌릴 수 없습니다.</strong>
+              <strong className="block mt-3 text-red-700 font-bold">이 작업은 되돌릴 수 없습니다.</strong>
             </p>
 
             {deleteAllError && (
-              <p className="mb-4 text-sm text-[var(--color-status-error)]">{deleteAllError}</p>
+              <p className="mb-8 text-sm text-[var(--color-status-error)]">{deleteAllError}</p>
             )}
 
-            <div className="flex items-center justify-end gap-2">
+            <div className="flex items-center justify-end gap-3">
               <Button
                 variant="ghost"
                 onClick={() => setShowDeleteAllConfirm(false)}
                 disabled={isDeletingAll}
+                className="min-h-12 text-base"
               >
                 취소
               </Button>
-              <Button variant="danger" isLoading={isDeletingAll} onClick={handleDeleteAll}>
+              <Button variant="danger" isLoading={isDeletingAll} onClick={handleDeleteAll} className="min-h-12 text-base">
                 전체 삭제
               </Button>
             </div>
@@ -1425,7 +1403,7 @@ export default function ManualDashboardPage() {
           {toastMessage}
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -1479,7 +1457,7 @@ function ManualGroupModal({
   };
 
   const handleAddItem = () => {
-    setItems((prev) => [...prev, { id: `new-${crypto.randomUUID()}`, title: "", content: "", isNew: true }]);
+    setItems((prev) => [...prev, { id: `new-${createManualItemId()}`, title: "", content: "", isNew: true }]);
   };
 
   const handleSaveTopic = async () => {

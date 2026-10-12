@@ -229,11 +229,12 @@ describe("분석 결과 -> 확정 저장 key 연결", () => {
   });
 
   test("저장 중 버튼 비활성화와 접근성 안내가 유지된다", () => {
-    assert.match(hqPage, /disabled=\{isSaving\}/);
-    assert.match(hqPage, /isLoading=\{isSaving\}/);
-    assert.match(storePage, /disabled=\{isSavingAnalysis\}/);
-    assert.match(storePage, /isLoading=\{isSavingAnalysis\}/);
-    assert.match(storePage, /role="alert"/);
+    const reviewModal = readSource("components/manuals/ManualUploadReviewModal.tsx");
+    assert.match(hqPage, /isSaving=\{isSaving\}/);
+    assert.match(storePage, /isSaving=\{isSavingAnalysis\}/);
+    assert.match(reviewModal, /disabled=\{isSaving\}/);
+    assert.match(reviewModal, /isLoading=\{isSaving\}/);
+    assert.match(reviewModal, /role="alert"/);
   });
 
   test("서버가 돌려준 안내 문구를 그대로 보여주고 기술 용어를 쓰지 않는다", () => {
@@ -272,7 +273,8 @@ describe("기존 계약 회귀 없음", () => {
 
   test("미리보기 편집 UI는 HQ/점주가 계속 공유한다", () => {
     for (const relative of ["app/hq/manuals/onboarding/page.tsx", "app/boss/store-manuals/page.tsx"]) {
-      assert.match(readSource(relative), /<ManualPreviewEditor/);
+      assert.match(readSource(relative), /<ManualUploadReviewModal/);
     }
+    assert.match(readSource("components/manuals/ManualUploadReviewModal.tsx"), /<ManualPreviewEditor/);
   });
 });

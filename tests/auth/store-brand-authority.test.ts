@@ -58,6 +58,9 @@ function fakeClient(seed: { stores?: Row[]; memberships?: Row[]; profiles?: Row[
 
   function makeSelect(table: string) {
     const filters: Row = {};
+    const namePatterns: Record<string, RegExp> = {};
+    const matchesQuery = (row: Row) => matches(row, filters) && Object.entries(namePatterns)
+      .every(([column, pattern]) => typeof row[column] === "string" && pattern.test(row[column] as string));
     const builder = {
       eq(column: string, value: unknown) {
         filters[column] = value;
@@ -67,18 +70,31 @@ function fakeClient(seed: { stores?: Row[]; memberships?: Row[]; profiles?: Row[
         filters[column] = value;
         return builder;
       },
+      ilike(column: string, pattern: string) {
+        let expression = "^";
+        let escaped = false;
+        for (const character of pattern) {
+          if (!escaped && character === "\\") { escaped = true; continue; }
+          if (!escaped && character === "%") expression += ".*";
+          else if (!escaped && character === "_") expression += ".";
+          else expression += character.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          escaped = false;
+        }
+        namePatterns[column] = new RegExp(`${expression}$`, "iu");
+        return builder;
+      },
       maybeSingle: () =>
-        Promise.resolve({ data: tables[table].find((row) => matches(row, filters)) ?? null, error: null }),
+        Promise.resolve({ data: tables[table].find(matchesQuery) ?? null, error: null }),
       single: () => {
-        const found = tables[table].find((row) => matches(row, filters));
+        const found = tables[table].find(matchesQuery);
         return Promise.resolve(found ? { data: { ...found }, error: null } : { data: null, error: NOT_FOUND });
       },
       limit: (count: number) => {
-        const rows = tables[table].filter((row) => matches(row, filters)).slice(0, count);
+        const rows = tables[table].filter(matchesQuery).slice(0, count);
         return Promise.resolve({ data: rows.map((row) => ({ ...row })), error: null });
       },
       then: (resolve: (value: unknown) => unknown) =>
-        Promise.resolve({ data: tables[table].filter((row) => matches(row, filters)), error: null }).then(resolve),
+        Promise.resolve({ data: tables[table].filter(matchesQuery), error: null }).then(resolve),
     };
     return builder;
   }
@@ -131,6 +147,46 @@ function storeSeed() {
 const BASE_INPUT = { userName: "김신청", role: "owner" as const };
 
 describe("정상 가입·신청 경로", () => {
+  test("공백이 다른 이름도 DB의 기존 매장과 브랜드로 연결하고 매장을 새로 만들지 않는다", async () => {
+    const { client, tables, writes } = fakeClient({ stores: storeSeed() });
+    const result = await submitStoreMembershipRequest(client, {
+      ...BASE_INPUT, userId: NEW_USER, storeName: "브랜드A1호점",
+    });
+    assert.equal(result.success, true);
+    assert.equal(result.membershipStatus, "pending");
+    assert.equal(tables.store_memberships[0]?.store_id, BRANDED_STORE);
+    assert.equal(tables.store_memberships[0]?.franchise_id, BRAND_A);
+    assert.equal(writes.some((call) => call.table === "stores"), false);
+  });
+
+  test("정규화 이름 조회도 기존 매장과 다른 브랜드를 요청하면 쓰기 없이 거절한다", async () => {
+    const { client, tables, writes } = fakeClient({ stores: storeSeed() });
+    const result = await submitStoreMembershipRequest(client, {
+      ...BASE_INPUT, userId: NEW_USER, storeName: "브랜드A1호점", franchiseId: BRAND_B,
+    });
+    assert.equal(result.success, false);
+    assert.equal(result.status, 400);
+    assert.equal(tables.stores.length, storeSeed().length);
+    assert.deepEqual(tables.store_memberships, []);
+    assert.deepEqual(writes, []);
+  });
+
+  test("여러 브랜드의 동명 매장은 실제로 존재하는 선택 브랜드의 행만 신청한다", async () => {
+    const otherStoreId = "99999999-9999-4999-8999-999999999999";
+    const { client, tables, writes } = fakeClient({ stores: [
+      { id: BRANDED_STORE, store_name: "공용 지점", franchise_id: BRAND_A },
+      { id: otherStoreId, store_name: "공용 지점", franchise_id: BRAND_B },
+    ] });
+    const result = await submitStoreMembershipRequest(client, {
+      ...BASE_INPUT, userId: NEW_USER, storeName: "공용 지점", franchiseId: BRAND_B,
+    });
+    assert.equal(result.success, true);
+    assert.equal(result.membershipStatus, "pending");
+    assert.equal(tables.store_memberships[0]?.store_id, otherStoreId);
+    assert.equal(tables.store_memberships[0]?.franchise_id, BRAND_B);
+    assert.equal(writes.some((call) => call.table === "stores"), false);
+  });
+
   test("브랜드가 연결된 매장에 신규 점주가 신청하면 pending으로 접수된다", async () => {
     const { client, tables } = fakeClient({ stores: storeSeed() });
 

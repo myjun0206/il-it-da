@@ -6,6 +6,9 @@ import type * as XlsxModule from "xlsx";
 
 import { buildConfirmedManualsPayload, buildManualPreview } from "../../lib/manuals/build-manual-preview.ts";
 import { extractManualGroups } from "../../lib/manuals/extract-manual-groups.ts";
+import { extractCsvRows } from "../../lib/manuals/extract-manual-file-text.ts";
+import { validateManualEdit } from "../../lib/manuals/validate-manual-edit.ts";
+import { chunkManualText } from "../../lib/rag/chunk-manual.ts";
 import {
   STORE_MULTI_SHEET_ERROR,
   extractStoreManualGroups,
@@ -161,6 +164,59 @@ describe("지점 매뉴얼 추출 (파서 입력 정규화)", () => {
     const rows = [["주제", "내용"], ["오픈", "1. 불 켜기"]];
     assert.strictEqual(normalizeStoreManualRows(rows), rows);
   });
+});
+
+describe("CSV 파일 추출과 시험 본문 보존", () => {
+  const category = "__poc_escalation_20261011_R1";
+  const title = "__poc_marker_E2E_R1";
+  const quoteCell = (value: string) => `"${value.replaceAll('"', '""')}"`;
+
+  for (const version of ["V1", "V2"]) {
+    for (const newline of ["\n", "\r\n"]) {
+      test(`${version} ${newline === "\n" ? "LF" : "CRLF"} 본문을 추출·그룹·미리보기·확정 payload까지 보존한다`, async () => {
+        const content = `TEST ONLY. 검증표식 E2E-R1의 확인 문자열은${newline}POC-CHECK-R1-${version}이다. 운영 지침이 아닌 시험 자료다.`;
+        const csv = `\uFEFFcategory,title,content${newline}${category},${title},${quoteCell(content)}${newline}`;
+        const file = new File([csv], "escalation.csv", { type: "text/csv" });
+        const rows = await extractCsvRows(file);
+        assert.deepEqual(rows, [["category", "title", "content"], [category, title, content]]);
+        const groups = await extractStoreManualGroups(file, ".csv");
+        assert.deepEqual(groups, [{ category, topic: title, items: [content] }]);
+        const preview = buildManualPreview(groups, { storeId: "store-a" });
+        assert.equal(preview.totalDetailManualCount, 1);
+        assert.equal(preview.manuals.length, 1);
+        assert.equal(preview.manuals[0].content, content);
+        const labels = Object.fromEntries(preview.categories.map((item) => [item.tempId, item.label]));
+        const confirmed = parseConfirmedManualGroups(buildConfirmedManualsPayload(preview, labels, {}));
+        assert.deepEqual(confirmed, [{ category, topic: title, items: [content] }]);
+      });
+    }
+  }
+
+  test("V2 수정 입력과 단일 청크는 전체 본문·줄바꿈·확인값을 보존한다", () => {
+    const content = "TEST ONLY. 검증표식 E2E-R1의 확인 문자열은\nPOC-CHECK-R1-V2이다. 운영 지침이 아닌 시험 자료다.";
+    const validated = validateManualEdit({ content });
+    assert.equal(validated.valid, true);
+    if (!validated.valid) throw new Error("V2 edit input rejected");
+    assert.equal(validated.update.content, content);
+    assert.deepEqual(chunkManualText(validated.update.content), [content]);
+  });
+
+  test("단일행·쉼표·이스케이프 따옴표·빈 셀·공백 행·가변 열을 보존한다", async () => {
+    const csv = '\uFEFFcategory,title,content\r\n\r\n   \r\n안내,단일행,본문\r\n안내,"쉼표, 제목","문구 ""확인"", 유지"\r\n,빈 셀,\r\n,,\r\n가변 열\r\n';
+    assert.deepEqual(await extractCsvRows(new File([csv], "single.csv")), [
+      ["category", "title", "content"], ["안내", "단일행", "본문"],
+      ["안내", "쉼표, 제목", '문구 "확인", 유지'], ["", "빈 셀", ""], ["", "", ""], ["가변 열"],
+    ]);
+    const groups = await extractStoreManualGroups(new File(['category,title,content\n안내,단일행,"문구 ""확인"", 유지"'], "single.csv"), ".csv");
+    assert.deepEqual(groups, [{ category: "안내", topic: "단일행", items: ['문구 "확인", 유지'] }]);
+  });
+
+  for (const malformed of ['안내,제목,"닫히지 않은 본문\n확인값', '안내,제목,"본문"뒤문자', '안내,제목,본문"따옴표']) {
+    test(`잘못된 따옴표 입력을 명확한 미리보기 오류로 거부한다: ${JSON.stringify(malformed)}`, async () => {
+      const file = new File([`category,title,content\n${malformed}`], "invalid.csv");
+      await assert.rejects(extractStoreManualGroups(file, ".csv"), /CSV.*따옴표/);
+    });
+  }
 });
 
 describe("지점 매뉴얼 파일 → 미리보기 → 확정 payload → 저장 → 점주 목록", () => {

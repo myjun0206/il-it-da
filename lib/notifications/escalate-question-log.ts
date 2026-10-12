@@ -144,6 +144,7 @@ export async function escalateQuestionLogToStoreOwners(
 
   const notifiedOwnerIds: string[] = [];
   const skippedOwnerIds: string[] = [...alreadyNotified];
+  let notificationFailed = false;
 
   for (const ownerId of ownerIds) {
     if (alreadyNotified.has(ownerId)) {
@@ -174,12 +175,13 @@ export async function escalateQuestionLogToStoreOwners(
       }
 
       logSafeEscalationError("NOTIFICATION_INSERT_FAILED", error);
-      return { status: "failed" };
+      notificationFailed = true;
     } catch (e) {
       logSafeEscalationError("NOTIFICATION_INSERT_FAILED", e);
-      return { status: "failed" };
+      notificationFailed = true;
     }
   }
 
+  if (notificationFailed) return { status: "failed" };
   return { status: "notified", notifiedOwnerIds, skippedOwnerIds };
 }

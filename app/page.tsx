@@ -4,13 +4,16 @@ import React, { Suspense, useState, useLayoutEffect } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Check } from "lucide-react";
+import { siApple } from "simple-icons/icons";
 import { Button } from "@/components/common/Button";
 import { Input, PasswordInput } from "@/components/common/Input";
 import { createClient } from "@/lib/supabase/client";
 import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
+import { getOAuthErrorMessage } from "@/lib/auth/auth-callback";
 
 type OAuthProvider = "google" | "kakao" | "apple" | "custom:naver";
+const SHOW_NAVER_KAKAO_LOGIN_BUTTONS = false;
 
 export default function LoginPage() {
   return (
@@ -33,11 +36,12 @@ function LoginPageContent() {
 
   // Check if user is already logged in on mount
   useLayoutEffect(() => {
+    sessionStorage.removeItem("signupPassword");
     const checkSession = async () => {
       try {
         const oauthError = new URLSearchParams(window.location.search).get("oauthError");
         if (oauthError) {
-          setErrors({ email: "SNS 로그인을 완료하지 못했습니다. 다시 시도해주세요." });
+          setErrors({ email: getOAuthErrorMessage(oauthError) });
         }
 
         const supabase = createClient();
@@ -96,9 +100,26 @@ function LoginPageContent() {
           role?: string;
           approvalStatus?: "pending" | "approved" | "rejected";
         };
+        code?: string;
+        signup?: { role: "owner" | "staff"; email: string; name: string; phone: string };
         error?: string;
       } =
         await response.json();
+
+      if (result.code === "SIGNUP_INCOMPLETE" && result.signup) {
+        sessionStorage.removeItem("signupPassword");
+        sessionStorage.removeItem("signupOtpDraft");
+        // 이메일 인증까지 끝낸 점주·직원 가입을 매장 선택 단계부터 이어간다. (비밀번호는 저장하지 않음)
+        sessionStorage.setItem("signupRole", result.signup.role);
+        sessionStorage.setItem("signupProfile", JSON.stringify({
+          email: result.signup.email,
+          name: result.signup.name,
+          phone: result.signup.phone,
+          role: result.signup.role,
+        }));
+        router.push("/signup/profile");
+        return;
+      }
 
       if (!response.ok || !result.user) {
         setIsLoading(false);
@@ -147,7 +168,10 @@ function LoginPageContent() {
         body: JSON.stringify({ provider, rememberMe }),
       });
       const result = await response.json();
-      if (!response.ok || typeof result.url !== "string") throw new Error("OAuth login failed.");
+      if (!response.ok || typeof result.url !== "string") {
+        setErrors({ email: getOAuthErrorMessage(result.code) });
+        return;
+      }
       window.location.assign(result.url);
     } catch (error) {
       logSafeAuthError("LOGIN_OAUTH_FAILED", error);
@@ -160,10 +184,7 @@ function LoginPageContent() {
 
   return (
     <div 
-      className="min-h-screen flex flex-col"
-      style={{
-        background: "linear-gradient(135deg, #e3eee0 0%, #ffffff 50%, #f7f9f5 100%)"
-      }}
+      className="min-h-screen flex flex-col login-page-bg"
     >
       {/* Desktop Layout */}
       <div className="hidden lg:grid lg:grid-cols-[55%_45%] lg:min-h-screen">
@@ -343,13 +364,14 @@ function LoginPageContent() {
               </div>
 
               <div className="flex items-center justify-center gap-4">
+                {SHOW_NAVER_KAKAO_LOGIN_BUTTONS && (<>
                 <a
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
                     void handleOAuthLogin("custom:naver");
                   }}
-                  className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
+                  className="flex items-center justify-center rounded-full bg-white dark:bg-[var(--color-bg-surface)] border border-[var(--color-border-light)] dark:border-[var(--color-border)] hover:border-[var(--color-border)] dark:hover:bg-[var(--color-bg-default)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm oauth-button"
                   style={{ width: "52px", height: "52px" }}
                   aria-label="네이버로 로그인"
                 >
@@ -366,7 +388,7 @@ function LoginPageContent() {
                     e.preventDefault();
                     void handleOAuthLogin("kakao");
                   }}
-                  className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
+                  className="flex items-center justify-center rounded-full bg-white dark:bg-[var(--color-bg-surface)] border border-[var(--color-border-light)] dark:border-[var(--color-border)] hover:border-[var(--color-border)] dark:hover:bg-[var(--color-bg-default)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm oauth-button"
                   style={{ width: "52px", height: "52px" }}
                   aria-label="카카오로 로그인"
                 >
@@ -377,13 +399,14 @@ function LoginPageContent() {
                     className="block"
                   />
                 </a>
+                </>)}
                 <a
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
                     void handleOAuthLogin("google");
                   }}
-                  className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
+                  className="flex items-center justify-center rounded-full bg-white dark:bg-[var(--color-bg-surface)] border border-[var(--color-border-light)] dark:border-[var(--color-border)] hover:border-[var(--color-border)] dark:hover:bg-[var(--color-bg-default)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm oauth-button"
                   style={{ width: "52px", height: "52px" }}
                   aria-label="Google로 로그인"
                 >
@@ -419,15 +442,17 @@ function LoginPageContent() {
                     e.preventDefault();
                     void handleOAuthLogin("apple");
                   }}
-                  className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
+                  className="flex items-center justify-center rounded-full bg-white dark:bg-[var(--color-bg-surface)] border border-[var(--color-border-light)] dark:border-[var(--color-border)] hover:border-[var(--color-border)] dark:hover:bg-[var(--color-bg-default)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm oauth-button"
                   style={{ width: "52px", height: "52px" }}
                   aria-label="Apple로 로그인"
                 >
-                  <img
-                    src="/social/apple.svg"
-                    alt=""
-                    className="block w-full h-full object-contain"
-                  />
+                  <svg
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                    className="h-[22px] w-[22px] fill-current text-black dark:text-white"
+                  >
+                    <path d={siApple.path} />
+                  </svg>
                 </a>
               </div>
             </form>
@@ -563,13 +588,14 @@ function LoginPageContent() {
               </div>
 
               <div className="flex items-center justify-center gap-3">
+                {SHOW_NAVER_KAKAO_LOGIN_BUTTONS && (<>
                 <a
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
                     void handleOAuthLogin("custom:naver");
                   }}
-                  className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
+                  className="flex items-center justify-center rounded-full bg-white dark:bg-[var(--color-bg-surface)] border border-[var(--color-border-light)] dark:border-[var(--color-border)] hover:border-[var(--color-border)] dark:hover:bg-[var(--color-bg-default)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm oauth-button"
                   style={{ width: "52px", height: "52px" }}
                   aria-label="네이버로 로그인"
                 >
@@ -586,7 +612,7 @@ function LoginPageContent() {
                     e.preventDefault();
                     void handleOAuthLogin("kakao");
                   }}
-                  className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
+                  className="flex items-center justify-center rounded-full bg-white dark:bg-[var(--color-bg-surface)] border border-[var(--color-border-light)] dark:border-[var(--color-border)] hover:border-[var(--color-border)] dark:hover:bg-[var(--color-bg-default)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm oauth-button"
                   style={{ width: "52px", height: "52px" }}
                   aria-label="카카오로 로그인"
                 >
@@ -597,13 +623,14 @@ function LoginPageContent() {
                     className="block"
                   />
                 </a>
+                </>)}
                 <a
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
                     void handleOAuthLogin("google");
                   }}
-                  className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
+                  className="flex items-center justify-center rounded-full bg-white dark:bg-[var(--color-bg-surface)] border border-[var(--color-border-light)] dark:border-[var(--color-border)] hover:border-[var(--color-border)] dark:hover:bg-[var(--color-bg-default)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm oauth-button"
                   style={{ width: "52px", height: "52px" }}
                   aria-label="Google로 로그인"
                 >
@@ -639,15 +666,17 @@ function LoginPageContent() {
                     e.preventDefault();
                     void handleOAuthLogin("apple");
                   }}
-                  className="flex items-center justify-center rounded-full bg-white border border-[var(--color-border-light)] hover:border-[var(--color-border)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm"
+                  className="flex items-center justify-center rounded-full bg-white dark:bg-[var(--color-bg-surface)] border border-[var(--color-border-light)] dark:border-[var(--color-border)] hover:border-[var(--color-border)] dark:hover:bg-[var(--color-bg-default)] transition-all duration-180 hover:-translate-y-0.5 hover:shadow-sm oauth-button"
                   style={{ width: "52px", height: "52px" }}
                   aria-label="Apple로 로그인"
                 >
-                  <img
-                    src="/social/apple.svg"
-                    alt=""
-                    className="block w-full h-full object-contain"
-                  />
+                  <svg
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                    className="h-[22px] w-[22px] fill-current text-black dark:text-white"
+                  >
+                    <path d={siApple.path} />
+                  </svg>
                 </a>
               </div>
             </form>

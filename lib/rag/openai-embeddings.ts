@@ -1,3 +1,5 @@
+import type { RecipeProviderUsage } from "@/lib/rag/private-recipe-fact-diagnostics";
+
 const OPENAI_EMBEDDING_URL = "https://api.openai.com/v1/embeddings";
 const EMBEDDING_MODEL = "text-embedding-3-small";
 const EXPECTED_EMBEDDING_DIMENSION = 1536;
@@ -7,9 +9,11 @@ const MAX_INPUT_LENGTH = 8_000;
 const MAX_TOTAL_INPUT_LENGTH = 100_000;
 
 function getOpenAiApiKey(): string {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
-    throw new Error("Missing OPENAI_API_KEY environment variable.");
+    const message = "Missing OPENAI_API_KEY environment variable. Set it in .env.local at the project root (or in the process environment), then restart the server. For standalone Node scripts, load the environment before requesting embeddings.";
+    console.error(`[RAG configuration] ${message}`);
+    throw new Error(message);
   }
   return apiKey;
 }
@@ -131,7 +135,7 @@ function parseAndSortOpenAiEmbeddings(payload: unknown, expectedCount: number): 
   return sortedEmbeddings as number[][];
 }
 
-export async function createEmbeddings(inputs: string[]): Promise<number[][]> {
+export async function createEmbeddings(inputs: string[], onUsage?: (usage: RecipeProviderUsage) => void): Promise<number[][]> {
   if (typeof window !== "undefined") {
     throw new Error("OpenAI embeddings are only available on the server.");
   }
@@ -160,16 +164,25 @@ export async function createEmbeddings(inputs: string[]): Promise<number[][]> {
     });
 
     if (!response.ok) {
-      throw Object.assign(new Error(`OpenAI Embeddings API request failed with status ${response.status}.`), {
+      try { onUsage?.({ service: "embedding", httpStatus: response.status, inputTokens: null, outputTokens: null }); } catch {}
+      const guidance = response.status === 401 ? "Check OPENAI_API_KEY." : response.status === 429 ? "Check OpenAI quota and rate limits." : "Check OpenAI service availability.";
+      throw Object.assign(new Error(`OpenAI Embeddings API request failed with status ${response.status}. ${guidance}`), {
         diagnosticService: "embedding", diagnosticHttpStatus: response.status,
       });
     }
 
     const payload: unknown = await response.json();
+    const usage = (payload as { usage?: { prompt_tokens?: number; total_tokens?: number } } | null)?.usage;
+    const inputTokens = usage?.prompt_tokens ?? usage?.total_tokens;
+    try { onUsage?.({ service: "embedding", httpStatus: response.status,
+      inputTokens: typeof inputTokens === "number" && Number.isSafeInteger(inputTokens) && inputTokens >= 0 ? inputTokens : null, outputTokens: 0 }); } catch {}
     return parseAndSortOpenAiEmbeddings(payload, normalizedInputs.length);
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error(`OpenAI Embeddings API request timed out after ${TIMEOUT_MS / 1000} seconds.`);
+    }
+    if (error instanceof TypeError) {
+      throw new Error("OpenAI Embeddings request or response failed. Check network, DNS, proxy and TLS settings, then retry.");
     }
     throw error;
   } finally {
@@ -177,8 +190,8 @@ export async function createEmbeddings(inputs: string[]): Promise<number[][]> {
   }
 }
 
-export async function createEmbedding(input: string): Promise<number[]> {
-  const embeddings = await createEmbeddings([input]);
+export async function createEmbedding(input: string, onUsage?: (usage: RecipeProviderUsage) => void): Promise<number[]> {
+  const embeddings = await createEmbeddings([input], onUsage);
   const single = embeddings[0];
   if (!single) {
     throw new Error("Failed to generate embedding for single input.");

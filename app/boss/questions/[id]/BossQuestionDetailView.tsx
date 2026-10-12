@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, BookOpen, Check, CircleCheck, Repeat2, RotateCcw } from "lucide-react";
+import { ArrowLeft, Check, CircleCheck, Repeat2, RotateCcw } from "lucide-react";
 
 import OwnerHeader from "@/components/owner/OwnerHeader";
 import OwnerSidebar from "@/components/owner/OwnerSidebar";
@@ -201,62 +201,90 @@ export default function BossQuestionDetailView({
   const userName = detail.kind === "ready" ? detail.userName : "점주";
 
   return (
-    <div className="h-dvh overflow-hidden bg-(--color-bg-default) flex">
+    <div className="h-dvh overflow-hidden bg-[var(--color-bg-default)] flex">
       <OwnerSidebar activeMenu="questions" onLogout={handleLogout} />
       <div className="min-h-0 min-w-0 flex-1 ml-0 lg:ml-[240px] flex flex-col">
         {detail.kind === "loading" ? (
-          <div className="sticky top-0 z-20 bg-white border-b border-(--color-border) h-16 shrink-0" />
+          <div className="sticky top-0 z-20 bg-white border-b border-[var(--color-border)] h-16 shrink-0" />
         ) : (
           <OwnerHeader userName={userName} storeName={storeName} onLogout={handleLogout} />
         )}
 
         <main className="min-h-0 flex-1 overflow-y-auto">
-          <div className="p-6 lg:p-8 max-w-7xl mx-auto">
-           <div className="max-w-5xl">
-            <button
-              type="button"
-              onClick={() => router.push(detail.kind === "ready" ? buildBossQuestionsUrl(detail.store.storeId) : "/boss/questions")}
-              className="-ml-2 mb-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:text-(--color-primary) focus:outline-none focus-visible:ring-2 focus-visible:ring-(--color-primary)"
-            >
-              <ArrowLeft size={16} aria-hidden="true" /> 보류 질문으로 돌아가기
-            </button>
+          <div className="p-6 lg:p-8 w-full">
+           <div className="w-full">
+            {/* 상단: 뒤로가기 + 제목 + 상태 배지 */}
+            <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start">
+              <button
+                type="button"
+                onClick={() => router.push(detail.kind === "ready" ? buildBossQuestionsUrl(detail.store.storeId) : "/boss/questions")}
+                className="inline-flex min-h-[48px] min-w-[48px] items-center justify-center rounded-lg border-2 border-[var(--color-border)] bg-white text-[var(--color-text-primary)] transition-all hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary)]/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                aria-label="뒤로 가기"
+              >
+                <ArrowLeft size={20} aria-hidden="true" />
+              </button>
+              <div className="min-w-0 flex-1">
+                <h1 className="text-2xl font-bold leading-tight text-[var(--color-text-primary)]">직원 질문 처리</h1>
+                {detail.kind === "ready" && (
+                  <p className="mt-2 text-sm font-medium text-[var(--color-text-secondary)]">
+                    접수: {formatDateTime(detail.question.createdAt)}
+                  </p>
+                )}
+              </div>
+              {detail.kind === "ready" && detail.question.resolutionStatus && (
+                <div className="shrink-0 inline-flex items-center gap-2 rounded-lg border-2 border-[var(--color-border)] px-4 py-2 min-h-[48px]">
+                  {detail.question.resolutionStatus === "in_progress" && <Check size={18} className="text-amber-600" aria-hidden="true" />}
+                  {detail.question.resolutionStatus === "resolved" && <CircleCheck size={18} className="text-emerald-600" aria-hidden="true" />}
+                  <span className="text-sm font-semibold text-[var(--color-text-primary)]">
+                    {resolutionLabel(detail.question.resolutionStatus)}
+                  </span>
+                </div>
+              )}
+            </div>
 
-            {detail.kind === "loading" && <p role="status" className="rounded-xl border border-(--color-border) bg-white p-8 text-center text-base text-(--color-text-secondary)">질문을 불러오는 중...</p>}
-            {detail.kind === "forbidden" && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">이 매장의 질문을 볼 권한이 없습니다.</p>}
-            {detail.kind === "error" && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">질문 정보를 불러오지 못했습니다. 다시 시도해 주세요.</p>}
-            {detail.kind === "not-found" && <p role="status" className="rounded-xl border border-(--color-border) bg-white p-8 text-center text-base text-(--color-text-secondary)">질문을 찾을 수 없습니다.</p>}
+            {detail.kind === "loading" && <p role="status" className="rounded-xl border-2 border-[var(--color-border)] bg-white p-8 text-center text-base text-[var(--color-text-secondary)]">질문을 불러오는 중...</p>}
+            {detail.kind === "forbidden" && <p role="alert" className="rounded-xl border-2 border-red-200 bg-red-50 p-6 text-base text-red-700 font-medium">이 매장의 질문을 볼 권한이 없습니다.</p>}
+            {detail.kind === "error" && <p role="alert" className="rounded-xl border-2 border-red-200 bg-red-50 p-6 text-base text-red-700 font-medium">질문 정보를 불러오지 못했습니다. 다시 시도해 주세요.</p>}
+            {detail.kind === "not-found" && <p role="status" className="rounded-xl border-2 border-[var(--color-border)] bg-white p-8 text-center text-base text-[var(--color-text-secondary)]">질문을 찾을 수 없습니다.</p>}
 
             {detail.kind === "ready" && (
               <article className="space-y-6">
-                <header className="border-b border-(--color-border) pb-6">
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-(--color-text-secondary)">
-                    <span className="wrap-break-word font-semibold">{detail.store.storeName}</span>
-                    <time dateTime={detail.question.createdAt}>접수 {formatDateTime(detail.question.createdAt)}</time>
+                {/* 직원 질문 카드 */}
+                <div className="rounded-xl border-2 border-[var(--color-border)] bg-white p-6 lg:p-8">
+                  <div className="flex items-center gap-2 mb-3">
+                    <p className="text-sm font-bold text-[var(--color-text-secondary)] uppercase tracking-wide">직원 질문</p>
+                    {detail.question.originReason === "frequent_question" && (
+                      <span className="text-xs font-semibold text-sky-700 bg-sky-100 rounded-full px-2 py-0.5">반복</span>
+                    )}
+                    {detail.question.originReason !== "frequent_question" && (
+                      <span className="text-xs font-semibold text-orange-700 bg-orange-100 rounded-full px-2 py-0.5">미답변</span>
+                    )}
                   </div>
-                  <p className="mt-5 text-sm font-medium text-(--color-text-secondary)">직원 질문</p>
-                  <h1 className="mt-2 whitespace-pre-wrap wrap-break-word text-xl font-semibold leading-8 text-(--color-text-primary)">
+                  <h2 className="whitespace-pre-wrap wrap-break-word text-2xl font-bold leading-10 text-[var(--color-text-primary)] mb-5">
                     {detail.question.question}
-                  </h1>
-                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                  </h2>
+                  <div className="flex flex-wrap items-center gap-3 pt-4 border-t border-[var(--color-border)]">
                     {detail.question.originReason === "frequent_question" ? (
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-800">
-                        <Repeat2 size={14} aria-hidden="true" /> 반복 질문 ({detail.question.repeatCount}회)
-                      </span>
+                      <div className="inline-flex items-center gap-2 rounded-lg border-2 border-sky-200 bg-sky-50 px-4 py-2">
+                        <Repeat2 size={18} className="text-sky-700" aria-hidden="true" />
+                        <span className="text-sm font-semibold text-sky-900">반복 질문 ({detail.question.repeatCount}회)</span>
+                      </div>
                     ) : (
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-semibold text-orange-900">
-                        <BookOpen size={14} aria-hidden="true" /> 매뉴얼 근거 부족
-                      </span>
-                    )}
-                    {detail.question.resolutionStatus && (
-                      <span className="rounded-full border border-(--color-border) px-3 py-1.5 text-xs font-semibold text-(--color-text-primary)">
-                        {resolutionLabel(detail.question.resolutionStatus)}
-                      </span>
+                      <div className="inline-flex items-center gap-2 rounded-lg border-2 border-orange-200 bg-orange-50 px-4 py-2">
+                        <span className="text-sm font-semibold text-orange-900">매뉴얼 근거 부족</span>
+                      </div>
                     )}
                   </div>
+                </div>
 
-                </header>
-
-                <QuestionManualFollowup key={`${detail.store.storeId}:${detail.question.id}`} storeId={detail.store.storeId} storeName={detail.store.storeName} questionId={detail.question.id} question={detail.question.question} />
+                {/* 매뉴얼 및 조치 영역 */}
+                <QuestionManualFollowup
+                  key={`${detail.store.storeId}:${detail.question.id}`}
+                  storeId={detail.store.storeId}
+                  storeName={detail.store.storeName}
+                  questionId={detail.question.id}
+                  question={detail.question.question}
+                />
 
               </article>
             )}
@@ -264,55 +292,58 @@ export default function BossQuestionDetailView({
           </div>
         </main>
         {detail.kind === "ready" && (
-                <footer aria-label="질문 처리 상태 변경" className="shrink-0 border-t border-(--color-border) bg-(--color-bg-default) px-6 lg:px-8 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4">
-                <div className="mx-auto max-w-7xl">
-                <div className="max-w-5xl space-y-3">
-                {error && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</p>}
-                {notice && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{notice}</p>}
+          <footer aria-label="질문 처리 상태 변경" className="shrink-0 border-t-2 border-[var(--color-border)] bg-white px-6 lg:px-8 pb-[max(1rem,env(safe-area-inset-bottom))] pt-6">
+            <div className="w-full">
+              <div className="w-full space-y-4">
+                {error && <p role="alert" className="rounded-lg border-2 border-red-200 bg-red-50 p-4 text-base font-medium text-red-700">{error}</p>}
+                {notice && <p role="status" className="rounded-lg border-2 border-emerald-200 bg-emerald-50 p-4 text-base font-medium text-emerald-800">{notice}</p>}
                 {!detail.resolutionFeatureAvailable && (
-                  <p role="status" className="rounded-lg border border-(--color-border) bg-white p-4 text-sm text-(--color-text-secondary)">
+                  <p role="status" className="rounded-lg border-2 border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 text-base text-[var(--color-text-secondary)] font-medium">
                     질문 처리 상태 관리 기능이 아직 준비 중입니다. 현재는 질문 열람만 가능합니다.
                   </p>
                 )}
 
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-sm text-(--color-text-secondary)">직원 안내 또는 재질문 결과를 확인한 뒤 완료하세요.</p>
-                  <div className="flex flex-wrap items-center gap-2">
-                  {detail.question.resolutionStatus === "open" && (
-                    <button
-                      type="button"
-                      disabled={updating || !detail.resolutionFeatureAvailable}
-                      onClick={() => void handleStatusChange("in_progress")}
-                      className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg border-2 border-(--color-border) bg-white px-4 py-2.5 text-sm font-medium text-(--color-text-primary) hover:border-(--color-primary)/50 hover:bg-(--color-bg-default) focus-visible:outline-2 focus-visible:outline-(--color-primary) disabled:opacity-50 sm:flex-none"
-                    >
-                      <Check size={16} aria-hidden="true" /> 처리 시작
-                    </button>
-                  )}
-                  {(detail.question.resolutionStatus === "open" || detail.question.resolutionStatus === "in_progress") && (
-                    <button
-                      type="button"
-                      disabled={updating || !detail.resolutionFeatureAvailable}
-                      onClick={() => void handleStatusChange("resolved")}
-                      className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-(--color-primary) px-4 py-2.5 text-sm font-semibold text-white hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-primary) disabled:opacity-50 sm:flex-none"
-                    >
-                      <CircleCheck size={16} aria-hidden="true" /> {updating ? "처리 중..." : "처리 완료"}
-                    </button>
-                  )}
-                  {detail.question.resolutionStatus === "resolved" && (
-                    <button
-                      type="button"
-                      disabled={updating || !detail.resolutionFeatureAvailable}
-                      onClick={() => void handleStatusChange("in_progress")}
-                      className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg border-2 border-(--color-border) bg-white px-4 py-2.5 text-sm font-medium text-(--color-text-primary) hover:border-(--color-primary)/50 hover:bg-(--color-bg-default) focus-visible:outline-2 focus-visible:outline-(--color-primary) disabled:opacity-50 sm:flex-none"
-                    >
-                      <RotateCcw size={16} aria-hidden="true" /> 다시 처리하기
-                    </button>
-                  )}
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-base font-medium text-[var(--color-text-secondary)]">직원 안내 또는 재질문 결과를 확인한 뒤 완료하세요.</p>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:gap-2">
+                    {detail.question.resolutionStatus === "open" && (
+                      <button
+                        type="button"
+                        disabled={updating || !detail.resolutionFeatureAvailable}
+                        onClick={() => void handleStatusChange("in_progress")}
+                        className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-lg border-2 border-[var(--color-border)] bg-white px-5 py-3 text-base font-semibold text-[var(--color-text-primary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary)]/5 focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] disabled:opacity-50 transition-colors"
+                      >
+                        <Check size={18} aria-hidden="true" />
+                        처리 시작
+                      </button>
+                    )}
+                    {(detail.question.resolutionStatus === "open" || detail.question.resolutionStatus === "in_progress") && (
+                      <button
+                        type="button"
+                        disabled={updating || !detail.resolutionFeatureAvailable}
+                        onClick={() => void handleStatusChange("resolved")}
+                        className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-lg bg-[var(--color-primary)] px-5 py-3 text-base font-semibold text-white hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)] disabled:opacity-50 transition-opacity"
+                      >
+                        <CircleCheck size={18} aria-hidden="true" />
+                        {updating ? "처리 중..." : "처리 완료"}
+                      </button>
+                    )}
+                    {detail.question.resolutionStatus === "resolved" && (
+                      <button
+                        type="button"
+                        disabled={updating || !detail.resolutionFeatureAvailable}
+                        onClick={() => void handleStatusChange("in_progress")}
+                        className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-lg border-2 border-[var(--color-border)] bg-white px-5 py-3 text-base font-semibold text-[var(--color-text-primary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary)]/5 focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] disabled:opacity-50 transition-colors"
+                      >
+                        <RotateCcw size={18} aria-hidden="true" />
+                        다시 처리하기
+                      </button>
+                    )}
                   </div>
                 </div>
-                </div>
-                </div>
-                </footer>
+              </div>
+            </div>
+          </footer>
         )}
       </div>
     </div>

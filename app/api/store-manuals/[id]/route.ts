@@ -35,6 +35,9 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse<UpdateStoreManualResponse>> {
+  if (request.headers.has("X-MANUAL-E2E")) {
+    return NextResponse.json({ error: "Private verification is unavailable on the application route." }, { status: 409 });
+  }
   try {
     const serverClient = await createClient();
     const { data: userData, error: userError } = await serverClient.auth.getUser();
@@ -62,12 +65,18 @@ export async function PATCH(
     }
 
     const adminClient = createAdminClient();
-    const result = await saveStoreManualEdit(adminClient, {
+    const save = () => saveStoreManualEdit(adminClient, {
       ...body,
       userId: userData.user.id,
       storeId,
       manualId: id,
     }, indexManualById);
+    let result;
+    try {
+      result = await save();
+    } catch {
+      return NextResponse.json({ error: "수정 실행이 안전 조건에서 중단되었습니다." }, { status: 409 });
+    }
     return NextResponse.json(result.body, { status: result.status });
   } catch (e) {
     console.error("PATCH /api/store-manuals/[id] error:", e);
