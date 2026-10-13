@@ -261,7 +261,7 @@ export default function NotificationCenter({ className = "", notificationPageUrl
             ) : notifications.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-8 px-4 gap-4">
                 <p className="text-center text-[var(--color-text-secondary)] text-sm">
-                  새로운 알림이 없습니다.
+                  알림 없음
                 </p>
                 <Link
                   href={notificationPageUrl}

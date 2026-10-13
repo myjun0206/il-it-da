@@ -95,7 +95,7 @@ export default function StoreSelector({
         `}
       >
         <span className="flex min-w-0 max-w-[180px] flex-col items-start">
-          <span className="text-[10px] leading-4 text-[var(--color-text-secondary)]">현재 업무 매장</span>
+          <span className="text-[10px] leading-4 text-[var(--color-text-secondary)]"><span className="hidden sm:inline">현재 </span>업무 매장</span>
           <span className="max-w-full truncate text-xs font-medium leading-4 text-[var(--color-text-primary)]">
             {isStoresLoading ? "매장 불러오는 중..." : currentStore ? formatStoreDisplayName(currentStore.name) : "승인된 매장이 없습니다"}
           </span>
@@ -120,7 +120,7 @@ export default function StoreSelector({
           className="absolute right-0 top-full z-50 mt-2 w-[300px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-[var(--color-border)] bg-white shadow-md"
         >
           <div className="px-3 py-3 border-b border-[var(--color-border)]">
-            <p className="text-sm font-medium text-[var(--color-text-secondary)]">현재 업무 매장</p>
+            <p className="text-sm font-medium text-[var(--color-text-secondary)]"><span className="hidden sm:inline">현재 </span>업무 매장</p>
           </div>
 
           <div className="max-h-[320px] overflow-y-auto">
@@ -146,17 +146,17 @@ export default function StoreSelector({
                     />
                     </span>
                     <span className="min-w-0 flex-1 truncate break-keep">{formatStoreDisplayName(store.name)}</span>
-                    {isSelected && <span className="shrink-0 text-xs text-[var(--color-primary)]">현재</span>}
+                    {isSelected && <span className="hidden shrink-0 text-xs text-[var(--color-primary)] sm:inline">현재</span>}
                   </button>
                   {isDefault ? (
-                    <span className="shrink-0 px-2 text-xs text-[var(--color-text-secondary)]">기본 매장</span>
+                    <span className={`shrink-0 px-2 text-xs ${isSelected ? "rounded-md bg-emerald-600 py-1 text-white sm:rounded-none sm:bg-transparent sm:py-0 sm:text-[var(--color-text-secondary)]" : "text-[var(--color-text-secondary)]"}`}>기본 매장</span>
                   ) : (
                     <button
                       type="button"
                       onClick={() => void handleSetDefaultStore(store.id)}
                       disabled={isStoresLoading || isSettingDefault || !onSetDefaultStore}
                       aria-label={`${formatStoreDisplayName(store.name)} 기본 매장으로 설정`}
-                      className="min-h-11 shrink-0 rounded-lg px-2 text-xs font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-primary-light)]/10 hover:text-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+                      className={`min-h-11 shrink-0 rounded-lg px-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isSelected ? "bg-emerald-600 text-white hover:bg-emerald-700 sm:bg-transparent sm:text-[var(--color-text-secondary)] sm:hover:bg-[var(--color-primary-light)]/10 sm:hover:text-[var(--color-primary)]" : "text-[var(--color-text-secondary)] hover:bg-[var(--color-primary-light)]/10 hover:text-[var(--color-primary)]"}`}
                     >
                       기본 설정
                     </button>

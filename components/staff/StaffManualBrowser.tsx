@@ -381,7 +381,14 @@ export default function StaffManualBrowser({ scope }: { scope: Scope }) {
       <div className="max-w-7xl mx-auto">
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">{copy.title}</h1>
-          <p className="text-base text-[var(--color-text-secondary)]">{copy.description}</p>
+          <p className="text-base text-[var(--color-text-secondary)]">
+            {scope === "common" ? (
+              <>
+                <span className="block whitespace-normal break-keep sm:hidden">공통 업무 매뉴얼을 확인할 수 있습니다.</span>
+                <span className="hidden sm:inline">{copy.description}</span>
+              </>
+            ) : copy.description}
+          </p>
         </div>
 
         {isStoresLoading ? (

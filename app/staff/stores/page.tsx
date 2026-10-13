@@ -29,6 +29,7 @@ const EDIT_DRAFT_KEY = "staffStoreEditDraft";
 
 function readEditDraft(): EditDraft | null {
   if (typeof window === "undefined") return null;
+  if (!window.matchMedia("(min-width: 40rem)").matches) return null;
   try {
     const raw = sessionStorage.getItem(EDIT_DRAFT_KEY);
     if (!raw) return null;
@@ -121,6 +122,34 @@ export default function StaffStoresPage() {
     updateDraft(null);
   };
 
+  useEffect(() => {
+    const resetMobileEditing = () => {
+      if (window.matchMedia("(min-width: 40rem)").matches) return;
+      setDraft(null);
+      setSaveFailed(false);
+      setShowDiscardDialog(false);
+      setNotice(null);
+      writeEditDraft(null);
+    };
+    const handleStoreNavigation = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+      const anchor = (event.target as HTMLElement | null)?.closest?.<HTMLAnchorElement>("a[href]");
+      if (!anchor || anchor.hasAttribute("download") || (anchor.target && anchor.target !== "_self")) return;
+      const target = new URL(anchor.href, window.location.href);
+      if (target.origin !== window.location.origin || (target.pathname !== "/staff/stores" && target.pathname !== "/staff/stores/")) return;
+      resetMobileEditing();
+    };
+
+    resetMobileEditing();
+    document.addEventListener("click", handleStoreNavigation, true);
+    window.addEventListener("pageshow", resetMobileEditing);
+    return () => {
+      document.removeEventListener("click", handleStoreNavigation, true);
+      window.removeEventListener("pageshow", resetMobileEditing);
+      if (!window.matchMedia("(min-width: 40rem)").matches) writeEditDraft(null);
+    };
+  }, []);
+
   // 저장하지 않은 변경이 있을 때 페이지를 벗어나면 안내한다. (매장 추가 화면은 편집 내용을 유지한 채 다녀올 수 있어 제외)
   useEffect(() => {
     if (!isDirty) return;
@@ -132,7 +161,10 @@ export default function StaffStoresPage() {
       const anchor = (event.target as HTMLElement | null)?.closest?.("a[href]");
       const href = anchor?.getAttribute("href") ?? "";
       if (!anchor || !href.startsWith("/") || href.startsWith("/staff/stores")) return;
-      if (!window.confirm("저장하지 않은 변경 사항이 있습니다. 이 화면을 벗어날까요?\n(돌아오면 편집 중이던 내용을 이어서 저장할 수 있습니다.)")) {
+      const message = window.matchMedia("(min-width: 40rem)").matches
+        ? "저장하지 않은 변경 사항이 있습니다. 이 화면을 벗어날까요?\n(돌아오면 편집 중이던 내용을 이어서 저장할 수 있습니다.)"
+        : "저장하지 않은 변경 사항이 있습니다. 이 화면을 벗어날까요?\n(돌아오면 기본 근무 매장 화면이 열리며, 저장하지 않은 변경 사항은 사라집니다.)";
+      if (!window.confirm(message)) {
         event.preventDefault();
         event.stopPropagation();
       }
@@ -225,9 +257,14 @@ export default function StaffStoresPage() {
               근무 매장{isEditing && <span className="ml-2 text-base font-semibold text-[var(--color-primary)]">편집 중</span>}
             </h1>
             <p className="text-base text-[var(--color-text-secondary)]">
-              {isEditing
-                ? "드래그하여 매장 순서를 변경하세요. 첫 번째 매장이 기본 매장으로 설정됩니다."
-                : "근무 중인 매장과 새로운 근무 신청을 관리할 수 있습니다."}
+              {isEditing ? (
+                "드래그하여 매장 순서를 변경하세요. 첫 번째 매장이 기본 매장으로 설정됩니다."
+              ) : (
+                <>
+                  <span className="block whitespace-normal break-keep indent-0 sm:hidden">근무 매장과 근무 신청을 관리할 수 있습니다.</span>
+                  <span className="hidden sm:inline">근무 중인 매장과 새로운 근무 신청을 관리할 수 있습니다.</span>
+                </>
+              )}
             </p>
           </div>
           {isReady && (

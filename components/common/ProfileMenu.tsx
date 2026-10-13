@@ -56,6 +56,7 @@ export default function ProfileMenu({
   const [notificationToast, setNotificationToast] = useState("");
   const [navigationTarget, setNavigationTarget] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const isStaffMobileLayout = notificationPageUrl === "/staff/notifications";
 
   useEffect(() => {
     let isCancelled = false;
@@ -273,20 +274,20 @@ export default function ProfileMenu({
             role="dialog"
             aria-modal="true"
             aria-label="내 정보 및 알림"
-            className="grid h-[min(620px,calc(100dvh-1rem))] w-full max-w-lg grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] overflow-hidden rounded-xl border border-[var(--color-border)] bg-white shadow-xl"
+            className={`grid h-[min(620px,calc(100dvh-1rem))] w-full max-w-lg overflow-hidden rounded-xl border border-[var(--color-border)] bg-white shadow-xl ${isStaffMobileLayout ? "grid-cols-1 grid-rows-[auto_minmax(0,1fr)]" : "grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]"}`}
           >
-            <aside className="flex min-w-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-bg-default)] p-3">
-              <p className="mb-5 text-[10px] font-bold uppercase text-[var(--color-text-tertiary)]">My Information</p>
-              <div className="mb-5 flex flex-col items-start gap-2">
+            <aside className={`flex min-w-0 flex-col border-[var(--color-border)] bg-[var(--color-bg-default)] p-3 ${isStaffMobileLayout ? "max-h-[40dvh] items-center overflow-y-auto border-b text-center" : "border-r"}`}>
+              {!isStaffMobileLayout && <p className="mb-5 text-[10px] font-bold uppercase text-[var(--color-text-tertiary)]">My Information</p>}
+              <div className={`flex flex-col gap-2 ${isStaffMobileLayout ? "w-full items-center" : "mb-5 items-start"}`}>
                 <ProfileAvatar name={userName} avatarUrl={avatarUrl} size="md" />
-                <div className="min-w-0">
+                <div className={`min-w-0 ${isStaffMobileLayout ? "w-full" : ""}`}>
                   <p className="break-words text-sm font-semibold text-[var(--color-text-primary)]">{userName}</p>
-                  <p className="mt-1 text-xs font-medium text-[var(--color-primary)]">{roleLabel || subtitle}</p>
+                  {!isStaffMobileLayout && <p className="mt-1 text-xs font-medium text-[var(--color-primary)]">{roleLabel || subtitle}</p>}
                 </div>
               </div>
 
-              <div className="space-y-4 text-[11px]">
-                {phone && (
+              <div className={`space-y-4 text-[11px] ${isStaffMobileLayout ? "mt-1 w-full" : ""}`}>
+                {!isStaffMobileLayout && phone && (
                   <div className="min-w-0">
                     <p className="mb-1 flex items-center gap-1 text-[var(--color-text-tertiary)]"><Phone size={12} /> 연락처</p>
                     <p className="break-all font-medium text-[var(--color-text-primary)]">{phone}</p>
@@ -294,11 +295,11 @@ export default function ProfileMenu({
                 )}
                 {email && (
                   <div className="min-w-0">
-                    <p className="mb-1 flex items-center gap-1 text-[var(--color-text-tertiary)]"><Mail size={12} /> 이메일</p>
+                    {!isStaffMobileLayout && <p className="mb-1 flex items-center gap-1 text-[var(--color-text-tertiary)]"><Mail size={12} /> 이메일</p>}
                     <p className="break-all font-medium text-[var(--color-text-primary)]">{email}</p>
                   </div>
                 )}
-                {(mobileContext ?? context) && (
+                {!isStaffMobileLayout && (mobileContext ?? context) && (
                   <div className="min-w-0">
                     <p className="mb-1 flex items-center gap-1 text-[var(--color-text-tertiary)]"><Building2 size={12} /> {(mobileContext ?? context)?.label}</p>
                     <p className="break-words font-medium text-[var(--color-text-primary)]">{(mobileContext ?? context)?.value}</p>
@@ -308,15 +309,15 @@ export default function ProfileMenu({
             </aside>
 
             <div className="flex min-h-0 min-w-0 flex-col">
-              <header className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--color-border)] px-3 py-3">
-                <div className="flex min-w-0 items-center gap-1.5">
+              <header className={`flex shrink-0 items-center justify-between gap-2 border-b border-[var(--color-border)] px-3 py-3 ${isStaffMobileLayout ? "flex-wrap gap-y-2" : ""}`}>
+                <div className={`flex min-w-0 items-center gap-1.5 ${isStaffMobileLayout ? "flex-1" : ""}`}>
                   <Bell size={16} className="shrink-0 text-[var(--color-primary)]" aria-hidden="true" />
-                  <h2 className="truncate text-sm font-semibold text-[var(--color-text-primary)]">Notifications</h2>
-                  {unreadCount > 0 && <span className="rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{unreadCount > 99 ? "99+" : unreadCount}</span>}
+                  <h2 className={`font-semibold text-[var(--color-text-primary)] ${isStaffMobileLayout ? "min-w-0 break-words text-[19.6px] leading-snug" : "truncate text-sm"}`}>{!isNotificationsLoading && !notificationError && notifications.length === 0 ? "알림 없음" : "Notifications"}</h2>
+                  {unreadCount > 0 && <span className={`rounded-full bg-red-600 px-1.5 py-0.5 font-bold text-white ${isStaffMobileLayout ? "shrink-0 text-[14px] leading-snug" : "text-[10px]"}`}>{unreadCount > 99 ? "99+" : unreadCount}</span>}
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
                   {unreadCount > 0 && (
-                    <button type="button" onClick={handleMarkAllMobileNotificationsRead} className="text-[10px] font-medium text-[var(--color-primary)]">모두 읽음</button>
+                    <button type="button" onClick={handleMarkAllMobileNotificationsRead} className={`font-medium text-[var(--color-primary)] ${isStaffMobileLayout ? "whitespace-nowrap text-[14px] leading-relaxed" : "text-[10px]"}`}>모두 읽음</button>
                   )}
                   <button type="button" onClick={() => setIsMobileOpen(false)} aria-label="닫기" className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-default)]">
                     <X size={18} aria-hidden="true" />
@@ -324,32 +325,32 @@ export default function ProfileMenu({
                 </div>
               </header>
 
-              <div className="min-h-0 flex-1 overflow-y-auto p-2">
+              <div className={`min-h-0 flex-1 overflow-y-auto ${isStaffMobileLayout ? "overscroll-contain p-3" : "p-2"}`}>
                 {isNotificationsLoading ? (
-                  <p className="py-8 text-center text-xs text-[var(--color-text-secondary)]">불러오는 중...</p>
+                  <p className={`py-8 text-center text-[var(--color-text-secondary)] ${isStaffMobileLayout ? "break-words text-[16.8px] leading-relaxed" : "text-xs"}`}>불러오는 중...</p>
                 ) : notificationError ? (
-                  <p role="alert" className="py-8 text-center text-xs text-red-600">{notificationError}</p>
+                  <p role="alert" className={`py-8 text-center text-red-600 ${isStaffMobileLayout ? "break-words text-[16.8px] leading-relaxed" : "text-xs"}`}>{notificationError}</p>
                 ) : notifications.length === 0 ? (
-                  <p className="py-8 text-center text-xs text-[var(--color-text-secondary)]">새로운 알림이 없습니다.</p>
+                  <p className={`py-8 text-center text-[var(--color-text-secondary)] ${isStaffMobileLayout ? "break-words text-[16.8px] leading-relaxed" : "text-xs"}`}>알림 없음</p>
                 ) : (
-                  <div className="space-y-2">
+                  <div className={isStaffMobileLayout ? "space-y-3" : "space-y-2"}>
                     {notifications.map((notification) => (
                       <button
                         key={notification.id}
                         type="button"
                         onClick={() => void handleMobileNotificationClick(notification)}
-                        className={`w-full rounded-lg border border-[var(--color-border)] p-2 text-left ${notification.isRead ? "bg-white" : "bg-[var(--color-primary-light)]/10"}`}
+                        className={`w-full rounded-lg border border-[var(--color-border)] text-left ${isStaffMobileLayout ? "p-3" : "p-2"} ${notification.isRead ? "bg-white" : "bg-[var(--color-primary-light)]/10"}`}
                       >
-                        <p className="line-clamp-2 text-xs font-semibold text-[var(--color-text-primary)]">{notification.title}</p>
-                        <p className="mt-1 line-clamp-3 text-[11px] leading-4 text-[var(--color-text-secondary)]">{notification.message}</p>
-                        <p className="mt-1 text-[10px] text-[var(--color-text-tertiary)]">{formatNotificationTime(notification.createdAt)}</p>
+                        <p className={`font-semibold text-[var(--color-text-primary)] ${isStaffMobileLayout ? "break-words text-[16.8px] leading-relaxed" : "line-clamp-2 text-xs"}`}>{notification.title}</p>
+                        <p className={`text-[var(--color-text-secondary)] ${isStaffMobileLayout ? "mt-2 break-words text-[15.4px] leading-relaxed" : "mt-1 line-clamp-3 text-[11px] leading-4"}`}>{notification.message}</p>
+                        <p className={`text-[var(--color-text-tertiary)] ${isStaffMobileLayout ? "mt-2 break-words text-[14px] leading-relaxed" : "mt-1 text-[10px]"}`}>{formatNotificationTime(notification.createdAt)}</p>
                       </button>
                     ))}
                   </div>
                 )}
               </div>
 
-              <Link href={notificationPageUrl} onClick={() => setIsMobileOpen(false)} className="shrink-0 border-t border-[var(--color-border)] px-3 py-2.5 text-center text-xs font-semibold text-[var(--color-primary)]">알림 전체보기</Link>
+              <Link href={notificationPageUrl} onClick={() => setIsMobileOpen(false)} className={`shrink-0 border-t border-[var(--color-border)] px-3 py-2.5 text-center font-semibold text-[var(--color-primary)] ${isStaffMobileLayout ? "text-[16.8px] leading-relaxed" : "text-xs"}`}>알림 전체보기</Link>
             </div>
           </section>
         </div>
