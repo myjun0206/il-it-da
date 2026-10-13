@@ -14,15 +14,20 @@ export type IncompleteStoreSignupResult =
   | { status: "ERROR" };
 
 export async function deleteIncompleteStoreSignupAccount(
-  adminClient: SupabaseClient,
+  adminClient: SupabaseClient | null | undefined,
   userId: string,
   role: string | null | undefined,
 ): Promise<IncompleteStoreSignupResult> {
   if (role !== "owner" && role !== "staff") return { status: "NOT_APPLICABLE" };
+  if (!adminClient || typeof adminClient.from !== "function") return { status: "NOT_APPLICABLE" };
 
   const access = await getStoreMembershipAccess(adminClient, userId);
   if (access === "ERROR") return { status: "ERROR" };
   if (access !== "UNLINKED") return { status: "MEMBERSHIP", access };
+
+  if (!adminClient?.auth?.admin?.deleteUser || typeof adminClient.auth.admin.deleteUser !== "function") {
+    return { status: "NOT_APPLICABLE" };
+  }
 
   const { error } = await adminClient.auth.admin.deleteUser(userId);
   return error ? { status: "ERROR" } : { status: "DELETED" };
