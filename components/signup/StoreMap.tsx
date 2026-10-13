@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import type { Store } from "@/lib/types/store";
 
 interface StoreMapProps {
@@ -25,6 +26,7 @@ function markerIcon(isFocused: boolean) {
 declare global {
    
   interface Window {
+    navermap_authFailure?: () => void;
     naver?: {
       maps: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -38,12 +40,91 @@ declare global {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         Point: any;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        Size: any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         Event: any;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         MarkerClustering: any;
       };
     };
   }
+}
+
+type MapStatus = "loading" | "ready" | "missing-key" | "auth-error" | "load-error" | "init-error";
+
+const MAP_SCRIPT_ID = "ilitda-naver-maps-sdk";
+const MAP_AUTH_FAILURE_EVENT = "ilitda-naver-map-auth-failure";
+let mapSdkPromise: Promise<void> | null = null;
+let mapAuthFailed = false;
+let mapSdkFailed = false;
+let authFailureHandlerInstalled = false;
+
+function isNaverMapsReady(): boolean {
+  const maps = window.naver?.maps;
+  return Boolean(maps && [maps.Map, maps.Marker, maps.LatLng, maps.LatLngBounds, maps.Size].every((constructor) => typeof constructor === "function")
+    && typeof maps.Event?.addListener === "function");
+}
+
+function loadNaverMaps(clientId: string): Promise<void> {
+  if (mapSdkPromise) return mapSdkPromise;
+
+  if (!authFailureHandlerInstalled) {
+    const previousHandler = window.navermap_authFailure;
+    window.navermap_authFailure = () => {
+      mapAuthFailed = true;
+      mapSdkFailed = true;
+      mapSdkPromise = null;
+      document.getElementById(MAP_SCRIPT_ID)?.remove();
+      window.dispatchEvent(new Event(MAP_AUTH_FAILURE_EVENT));
+      previousHandler?.();
+    };
+    authFailureHandlerInstalled = true;
+  }
+
+  if (!mapAuthFailed && !mapSdkFailed && isNaverMapsReady()) return Promise.resolve();
+  mapAuthFailed = false;
+  mapSdkFailed = false;
+  mapSdkPromise = new Promise<void>((resolve, reject) => {
+    const existingScript = document.getElementById(MAP_SCRIPT_ID) as HTMLScriptElement | null;
+    const script = existingScript ?? document.createElement("script");
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      script.removeEventListener("load", onLoad);
+      script.removeEventListener("error", onError);
+      window.removeEventListener(MAP_AUTH_FAILURE_EVENT, onAuthFailure);
+    };
+    const fail = (message: string) => {
+      mapSdkFailed = true;
+      cleanup();
+      script.remove();
+      reject(new Error(message));
+    };
+    const onLoad = () => {
+      if (mapAuthFailed) return fail("NAVER_MAP_AUTH_FAILED");
+      if (!isNaverMapsReady()) {
+        return fail("NAVER_MAP_LOAD_FAILED");
+      }
+      cleanup();
+      resolve();
+    };
+    const onError = () => fail("NAVER_MAP_LOAD_FAILED");
+    const onAuthFailure = () => fail("NAVER_MAP_AUTH_FAILED");
+    const timeout = window.setTimeout(() => fail("NAVER_MAP_LOAD_TIMEOUT"), 15_000);
+
+    script.addEventListener("load", onLoad);
+    script.addEventListener("error", onError);
+    window.addEventListener(MAP_AUTH_FAILURE_EVENT, onAuthFailure);
+    if (!existingScript) {
+      const url = new URL("https://oapi.map.naver.com/openapi/v3/maps.js");
+      url.searchParams.set("ncpKeyId", clientId);
+      script.id = MAP_SCRIPT_ID;
+      script.src = url.toString();
+      script.async = true;
+      document.head.appendChild(script);
+    }
+  });
+  void mapSdkPromise.catch(() => { mapSdkPromise = null; });
+  return mapSdkPromise;
 }
 
 export default function StoreMap({
@@ -54,86 +135,128 @@ export default function StoreMap({
   focusedStoreId,
 }: StoreMapProps) {
   const usesFocus = focusedStoreId !== undefined;
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapRef = useRef<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const markersMapRef = useRef<Map<string, any>>(new Map());
-  const [hasNaverApi, setHasNaverApi] = useState(false);
+  const [mapStatus, setMapStatus] = useState<MapStatus>("loading");
+  const [retryToken, setRetryToken] = useState(0);
+  const [mapVersion, setMapVersion] = useState(0);
+  const hasNaverApi = mapStatus === "ready";
 
   // NAVER Maps API 로드
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    let active = true;
+    const clientId = process.env.NEXT_PUBLIC_NAVER_MAP_KEY_ID?.trim()
+      || process.env.NEXT_PUBLIC_NAVER_MAP_CLIENT_ID?.trim();
+    const onAuthFailure = () => { if (active) setMapStatus("auth-error"); };
+    window.addEventListener(MAP_AUTH_FAILURE_EVENT, onAuthFailure);
 
-    // API가 이미 로드됨
-    if (window.naver?.maps) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setHasNaverApi(true);
-      return;
-    }
-
-    const clientId = process.env.NEXT_PUBLIC_NAVER_MAP_CLIENT_ID;
-    if (!clientId) {
-      console.warn("[StoreMap] NEXT_PUBLIC_NAVER_MAP_CLIENT_ID not configured");
-      setHasNaverApi(false);
-      return;
-    }
-
-    // 스크립트 로드 (NAVER Maps v3 최신 방식: ncpKeyId 사용)
-    const script = document.createElement("script");
-    script.src = `https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=${clientId}`;
-    script.async = true;
-
-    script.onload = () => {
-      setHasNaverApi(true);
-    };
-
-    script.onerror = () => {
-      console.error("Failed to load NAVER Maps API");
-      setHasNaverApi(false);
-    };
-
-    document.head.appendChild(script);
+    void Promise.resolve().then(async () => {
+      if (!active) return;
+      if (!clientId) {
+        setMapStatus("missing-key");
+        console.warn("[StoreMap] NAVER Maps public key is missing from this build");
+        return;
+      }
+      setMapStatus("loading");
+      try {
+        await loadNaverMaps(clientId);
+        if (active) setMapStatus(mapAuthFailed ? "auth-error" : "ready");
+      } catch (error) {
+        if (active) setMapStatus(error instanceof Error && error.message === "NAVER_MAP_AUTH_FAILED" ? "auth-error" : "load-error");
+      }
+    });
 
     return () => {
-      // 스크립트 제거하지 않음 (재사용)
+      active = false;
+      window.removeEventListener(MAP_AUTH_FAILURE_EVENT, onAuthFailure);
     };
-  }, []);
+  }, [retryToken]);
 
   // 지도 초기화
   useEffect(() => {
-    if (!hasNaverApi || !containerRef.current) return;
-    if (!window.naver?.maps) return;
+    if (!hasNaverApi || !wrapperRef.current || !containerRef.current || !window.naver?.maps) return;
 
-    try {
-      // 센터 설정: 선택된 매장 > 첫 번째 매장 > 서울 시청 (기본)
-      const center = centerStore || stores[0] || { latitude: 37.5665, longitude: 126.9780 };
-      
-      const { maps } = window.naver;
-      const mapOptions = {
-        center: new maps.LatLng(center.latitude, center.longitude),
-        zoom: 15,
-        minZoom: 8,
-        maxZoom: 21,
-      };
+    const wrapper = wrapperRef.current;
+    const container = containerRef.current;
+    const { maps } = window.naver;
+    const markers = markersMapRef.current;
+    let disposed = false;
+    let frame = 0;
+    let delayedResize = 0;
+    let map: typeof mapRef.current = null;
+    let resizeObserver: ResizeObserver | undefined;
 
-      // 지도를 새로 만들 때 이전 지도에 붙어 있던 마커를 정리해야 새 지도에 다시 그려진다.
-      markersMapRef.current.forEach((marker) => marker.setMap(null));
-      markersMapRef.current.clear();
+    const updateMapSize = () => {
+      frame = 0;
+      if (disposed) return;
+      const width = wrapper.clientWidth;
+      const height = wrapper.clientHeight;
+      if (width <= 0 || height <= 0) return;
 
-      mapRef.current = new maps.Map(containerRef.current, mapOptions);
-    } catch (error) {
-      console.error("Failed to initialize NAVER Map:", error);
+      try {
+        if (!map) {
+          map = new maps.Map(container, {
+            center: new maps.LatLng(37.5665, 126.9780),
+            size: new maps.Size(width, height),
+            zoom: 15,
+            minZoom: 8,
+            maxZoom: 21,
+          });
+          mapRef.current = map;
+          setMapVersion((version) => version + 1);
+          delayedResize = window.setTimeout(scheduleResize, 150);
+        }
+        const center = map.getCenter();
+        map.setSize(new maps.Size(width, height));
+        maps.Event.trigger(map, "resize");
+        map.setCenter(center);
+      } catch (error) {
+        console.error("Failed to initialize NAVER Map:", error);
+        if (!disposed) setMapStatus("init-error");
+      }
+    };
+    const scheduleResize = () => {
+      if (disposed) return;
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(updateMapSize);
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") scheduleResize();
+    };
+
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(scheduleResize);
+      resizeObserver.observe(wrapper);
     }
-  }, [hasNaverApi, stores, centerStore]);
+    window.addEventListener("resize", scheduleResize);
+    window.addEventListener("orientationchange", scheduleResize);
+    window.addEventListener("pageshow", scheduleResize);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    scheduleResize();
 
-  // 마커 업데이트 및 동기화 (selectedStoreIds 변경 시)
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(frame);
+      window.clearTimeout(delayedResize);
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", scheduleResize);
+      window.removeEventListener("orientationchange", scheduleResize);
+      window.removeEventListener("pageshow", scheduleResize);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      markers.forEach((marker) => marker.setMap(null));
+      markers.clear();
+      map?.destroy?.();
+      if (mapRef.current === map) mapRef.current = null;
+    };
+  }, [hasNaverApi]);
+
   useEffect(() => {
     if (!mapRef.current || !window.naver?.maps) return;
-
     const { maps } = window.naver;
-
-    // 1. 선택 해제된 마커 제거
     const markersToDelete: string[] = [];
     markersMapRef.current.forEach((marker, storeId) => {
       if (!selectedStoreIds.includes(storeId)) {
@@ -141,16 +264,13 @@ export default function StoreMap({
         markersToDelete.push(storeId);
       }
     });
-    markersToDelete.forEach(storeId => markersMapRef.current.delete(storeId));
+    markersToDelete.forEach((storeId) => markersMapRef.current.delete(storeId));
 
-    // 2. 새로 선택된 매장의 마커 추가
     const bounds = new maps.LatLngBounds();
     let hasBounds = false;
-
     selectedStoreIds.forEach(storeId => {
-      // 이미 마커가 있으면 스킵
       if (markersMapRef.current.has(storeId)) {
-        const store = stores.find(s => s.id === storeId);
+        const store = stores.find((store) => store.id === storeId);
         if (store?.latitude && store?.longitude) {
           bounds.extend(new maps.LatLng(store.latitude, store.longitude));
           hasBounds = true;
@@ -158,7 +278,6 @@ export default function StoreMap({
         return;
       }
 
-      // 새 마커 생성
       const store = stores.find(s => s.id === storeId);
       if (!store || !store.latitude || !store.longitude) return;
 
@@ -197,13 +316,13 @@ export default function StoreMap({
       }
     } else if (selectedStoreIds.length === 0) {
       // 선택된 매장 없음: 기본 위치로
-      const defaultCenter = stores[0];
+      const defaultCenter = centerStore ?? stores[0];
       if (defaultCenter?.latitude && defaultCenter?.longitude) {
         mapRef.current.setCenter(new maps.LatLng(defaultCenter.latitude, defaultCenter.longitude));
         mapRef.current.setZoom(15);
       }
     }
-  }, [selectedStoreIds, stores, onStoreSelect, usesFocus]);
+  }, [hasNaverApi, mapVersion, selectedStoreIds, stores, centerStore, onStoreSelect, usesFocus]);
 
   // 강조 마커 동기화 (focusedStoreId를 넘긴 경우에만)
   useEffect(() => {
@@ -220,29 +339,35 @@ export default function StoreMap({
     if (focused?.latitude && focused?.longitude) {
       mapRef.current.panTo(new maps.LatLng(focused.latitude, focused.longitude));
     }
-  }, [usesFocus, focusedStoreId, stores, selectedStoreIds]);
-
-  // cleanup: 컴포넌트 언마운트 시 모든 마커 제거
-  useEffect(() => {
-    return () => {
-      markersMapRef.current.forEach(marker => marker.setMap(null));
-      markersMapRef.current.clear();
-    };
-  }, []);
+  }, [hasNaverApi, mapVersion, usesFocus, focusedStoreId, stores, centerStore, selectedStoreIds]);
 
   return (
     <div
-      ref={containerRef}
-      className="w-full h-full bg-white overflow-hidden relative"
+      ref={wrapperRef}
+      className="relative h-full min-h-[260px] w-full min-w-0 shrink-0 bg-white"
     >
+      <div ref={containerRef} className="absolute inset-0 h-full w-full" aria-label="매장 위치 지도" />
       {/* Fallback for no NAVER API */}
       {!hasNaverApi && (
-        <div className="w-full h-full bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center">
-          <div className="text-center text-[var(--color-text-secondary)]">
-            <p className="text-sm font-medium mb-2">지도를 사용할 수 없습니다</p>
-            <p className="text-xs text-[var(--color-text-tertiary)]">
-              검색을 통해 매장을 선택해주세요
+        <div className="absolute inset-0 flex items-center justify-center bg-[var(--color-bg-default)] p-4">
+          <div className="max-w-sm text-center text-[var(--color-text-secondary)]" role={mapStatus === "loading" ? "status" : "alert"}>
+            <p className="text-sm font-medium mb-2">
+              {mapStatus === "loading" ? "지도를 불러오는 중입니다" : mapStatus === "auth-error" ? "지도 인증에 실패했습니다" : "지도를 불러오지 못했습니다"}
             </p>
+            {mapStatus !== "loading" && (
+              <>
+                <p className="text-xs text-[var(--color-text-tertiary)]">매장 검색과 선택은 계속 이용할 수 있습니다.</p>
+                {mapStatus !== "missing-key" && (
+                  <button
+                    type="button"
+                    onClick={() => { setMapStatus("loading"); setRetryToken((value) => value + 1); }}
+                    className="mt-3 inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-(--color-border) bg-(--color-bg-surface) px-3 text-sm font-medium text-(--color-primary) hover:bg-(--color-primary-light)/20 focus-visible:outline-2 focus-visible:outline-(--color-primary)"
+                  >
+                    <RefreshCw size={16} aria-hidden="true" /> 다시 시도
+                  </button>
+                )}
+              </>
+            )}
           </div>
         </div>
       )}

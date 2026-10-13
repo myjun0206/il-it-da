@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { usePathname } from "next/navigation";
 import {
   House,
   BookOpen,
@@ -27,6 +28,13 @@ export default function OwnerSidebar({
   onLogout,
 }: OwnerSidebarProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const pathname = usePathname();
+
+  useEffect(() => {
+    setIsOpen(false);
+  }, [pathname]);
+
+  const closeMenu = () => setIsOpen(false);
 
   const menuItems = [
     { id: "home", label: "홈", icon: House, href: "/boss" },
@@ -44,7 +52,7 @@ export default function OwnerSidebar({
 
   return (
     <>
-      {/* Mobile Menu Button */}
+      {/* Mobile Menu Button - 상단바 내 좌측 수직 중앙(top-2.5) 배치 */}
       {!isOpen && (
         <button
           type="button"
@@ -52,7 +60,7 @@ export default function OwnerSidebar({
           aria-label="메뉴 열기"
           aria-expanded={isOpen}
           aria-controls="owner-sidebar"
-          className="fixed top-4 left-4 z-50 lg:hidden bg-white rounded-lg p-2 border border-(--color-border)"
+          className="fixed top-2.5 left-4 z-50 lg:hidden bg-white rounded-lg p-2 border border-(--color-border)"
         >
           <Menu size={24} />
         </button>
@@ -67,7 +75,7 @@ export default function OwnerSidebar({
       >
         {/* Logo Section - aligned with header */}
         <div className="flex shrink-0 items-center justify-between gap-3 px-6 h-16 border-b border-(--color-border)">
-          <Link href="/boss" aria-label="홈으로 이동" onClick={() => setIsOpen(false)} className="min-w-0">
+          <Link href="/boss" aria-label="홈으로 이동" onClick={closeMenu} className="min-w-0">
             <Image
               src="/logo/ilitda-wordmark.png"
               alt="일잉다"
@@ -78,7 +86,7 @@ export default function OwnerSidebar({
           </Link>
           <button
             type="button"
-            onClick={() => setIsOpen(false)}
+            onClick={closeMenu}
             aria-label="메뉴 닫기"
             aria-expanded={isOpen}
             aria-controls="owner-sidebar"
@@ -107,7 +115,7 @@ export default function OwnerSidebar({
                 href={item.href}
                 aria-current={isActive ? "page" : undefined}
                 className={buttonClass}
-                onClick={() => setIsOpen(false)}
+                onClick={closeMenu}
               >
                 <item.icon size={20} />
                 <span>{item.label}</span>
@@ -134,7 +142,7 @@ export default function OwnerSidebar({
                   href={item.href}
                   aria-current={isActive ? "page" : undefined}
                   className={itemClass}
-                  onClick={() => setIsOpen(false)}
+                  onClick={closeMenu}
                 >
                   <item.icon size={20} />
                   <span>{item.label}</span>
@@ -157,7 +165,10 @@ export default function OwnerSidebar({
           {onLogout && (
             <button
               type="button"
-              onClick={onLogout}
+              onClick={() => {
+                closeMenu();
+                onLogout();
+              }}
               className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-base font-medium text-(--color-text-secondary) hover:text-red-600 transition-colors"
             >
               <LogOut size={20} />
@@ -171,7 +182,7 @@ export default function OwnerSidebar({
       {isOpen && (
         <div
           className="fixed inset-0 bg-black/20 z-30 lg:hidden"
-          onClick={() => setIsOpen(false)}
+          onClick={closeMenu}
         />
       )}
     </>

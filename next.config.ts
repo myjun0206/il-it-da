@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig = (phase: string): NextConfig => ({
-  allowedDevOrigins: ["192.168.0.153:3000", "192.168.0.153", "172.30.1.38"],
+  allowedDevOrigins: ["192.168.0.153:3000", "192.168.0.153", "172.30.1.38", "172.31.24.41"],
   outputFileTracingExcludes: {
     "/*": ["./local-data/**/*", "./.next/dev/**/*"],
   },
