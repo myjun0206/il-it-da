@@ -137,6 +137,7 @@ export default function ManualDashboardPage() {
   const [itemError, setItemError] = useState("");
   const [isCreatingItem, setIsCreatingItem] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [editingItemTitle, setEditingItemTitle] = useState("");
   const [editingItemContent, setEditingItemContent] = useState("");
   const [savingItemId, setSavingItemId] = useState<string | null>(null);
   const [deletingItemId, setDeletingItemId] = useState<string | null>(null);
@@ -605,22 +606,25 @@ export default function ManualDashboardPage() {
 
   const startEditItem = (item: ManualRecord) => {
     setEditingItemId(item.id);
+    setEditingItemTitle(item.title);
     setEditingItemContent(item.content);
     setItemEditError("");
   };
 
   const cancelEditItem = () => {
     setEditingItemId(null);
+    setEditingItemTitle("");
     setEditingItemContent("");
     setItemEditError("");
   };
 
   const handleSaveItem = async (item: ManualRecord) => {
+    const title = editingItemTitle.trim();
     const content = editingItemContent.trim();
     setItemEditError("");
 
-    if (!content) {
-      setItemEditError("매뉴얼 내용을 입력해주세요.");
+    if (!title || !content) {
+      setItemEditError("세부 매뉴얼 제목과 내용을 입력해주세요.");
       return;
     }
 
@@ -630,7 +634,7 @@ export default function ManualDashboardPage() {
       const response = await fetch(`/api/manuals/${item.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ title, content }),
       });
       const data = (await response.json()) as { error?: string };
 
@@ -1106,6 +1110,11 @@ export default function ManualDashboardPage() {
 
                       {editingItemId === item.id ? (
                         <div className="space-y-3">
+                          <Input
+                            label="세부 매뉴얼 제목"
+                            value={editingItemTitle}
+                            onChange={(event) => setEditingItemTitle(event.target.value)}
+                          />
                           <textarea
                             value={editingItemContent}
                             onChange={(event) => setEditingItemContent(event.target.value)}

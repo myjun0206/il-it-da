@@ -111,6 +111,15 @@ test("shared HQ upload executes preview, leave cancellation and one idempotent s
   assert.equal(closed, 0);
 });
 
+test("HQ inline child editor exposes the existing title and PATCHes title/content on the same ID", () => {
+  const source = readSource("app/hq/manuals/common/page.tsx");
+  const inlineEditor = source.slice(source.indexOf("const startEditItem"), source.indexOf("const handleDeleteItem"));
+  assert.match(inlineEditor, /setEditingItemTitle\(item\.title\)/);
+  assert.match(source, /label="세부 매뉴얼 제목"/);
+  assert.match(inlineEditor, /body: JSON\.stringify\(\{ title, content \}\)/);
+  assert.match(source, /body: JSON\.stringify\(\{ title \}\)/);
+});
+
 function fakeBatchClient(seed: ManualUploadBatchRow[] = []) {
   const rows = seed.map((row) => ({ ...row }));
 
