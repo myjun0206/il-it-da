@@ -1,5 +1,6 @@
 // 직원 AI 대화 기록 공통 유틸 (server 전용 API에서 사용)
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { isClearlyOutOfScopeQuestion } from "@/lib/rag/search-query";
 import { parseRecipeEvidenceSupport, recipeSupportStorageEnabled, type RecipeEvidenceSupport } from "@/lib/rag/recipe-fact-verification";
 
 export const CONVERSATION_TITLE_MAX_LENGTH = 36;
@@ -22,7 +23,7 @@ export function isMissingConversationTable(error: { code?: string } | null | und
 
 export interface ConversationMessageDto {
   evidenceSupport?: RecipeEvidenceSupport | null;
-  responseKind?: "answer" | "clarification" | null;
+  responseKind?: "answer" | "clarification" | "out_of_scope" | null;
   id: string;
   role: "user" | "assistant";
   content: string;
@@ -227,9 +228,12 @@ export async function getStaffConversationDetail(
       updatedAt: conversation.updated_at,
       canContinue: true,
     },
-    messages: ((messages ?? []) as unknown as MessageRow[]).map((row) => ({
+    messages: ((messages ?? []) as unknown as MessageRow[]).map((row, index, rows) => ({
       ...(recipeSupportStorageEnabled() ? { evidenceSupport: row.role === "assistant" ? parseRecipeEvidenceSupport(row.evidence_support) : null } : {}),
-      responseKind: row.role === "assistant" && (row.response_kind === "answer" || row.response_kind === "clarification") ? row.response_kind : null,
+      responseKind: row.role === "assistant" && row.response_kind !== "clarification" && row.status === "insufficient"
+        && !row.source_title && !row.source_category && rows[index - 1]?.role === "user"
+        && isClearlyOutOfScopeQuestion(rows[index - 1].content) ? "out_of_scope"
+        : row.role === "assistant" && (row.response_kind === "answer" || row.response_kind === "clarification") ? row.response_kind : null,
       id: row.id,
       role: row.role,
       content: row.content,

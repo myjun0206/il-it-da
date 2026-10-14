@@ -33,6 +33,12 @@ function findSpan(source: string, quote: string, collapseWhitespace: boolean): s
 export function findVerifiedQuote(source: string, quote: string): string | undefined {
   const exact = findSpan(source, quote, false);
   if (exact !== undefined) return exact;
+  if (/\b(?:HOT|ICE)\b/u.test(quote) && /기본 기준\s*:/u.test(quote)) {
+    for (const pair of source.matchAll(/^[ \t]*(?:●[ \t]*)?(?:HOT|ICE)[ \t]+[^\r\n]+\r?\n[ \t]*기본 기준\s*:[^\r\n]+/gmu)) {
+      const verified = findSpan(pair[0], quote, true);
+      if (verified !== undefined) return verified;
+    }
+  }
   const structural = /^\s*(?:#{1,6}(?:\s|$)|[-*+•●](?:\s|$)|\d+(?:[.-]\d+)*[.)]\s|>|\||```|~~~|[-=]{3,}\s*$)|\|.*\||:\s*$/u;
   const continuesSentence = (line: string) => /\s/u.test(line.trim()) && /(?:은|는|이|가|을|를|에|의|와|과|로|에서|에게|부터|까지|하고|하며|면|및|,)$/u.test(line.trim());
   let segmentStart = -1;

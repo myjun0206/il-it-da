@@ -83,7 +83,7 @@ async function handleChat(request: Request): Promise<NextResponse> {
   );
   const ragBody = (await ragResponse.json()) as {
     evidenceSupport?: RecipeEvidenceSupport | null;
-    responseKind?: "answer" | "clarification";
+    responseKind?: "answer" | "clarification" | "out_of_scope";
     answer?: string;
     status?: "answered" | "cautious" | "insufficient";
     source?: { title?: string; category?: string } | null;
@@ -183,7 +183,7 @@ async function handleChat(request: Request): Promise<NextResponse> {
       storeId, historyAvailable, newConversation: isNewConversation, status: ragBody.status, traceId: diagnosticHeaders ? traceId : null });
   }
   return NextResponse.json({
-    responseKind: ["answer", "clarification"].includes(ragBody.responseKind ?? "") ? ragBody.responseKind : undefined,
+    responseKind: ["answer", "clarification", "out_of_scope"].includes(ragBody.responseKind ?? "") ? ragBody.responseKind : undefined,
     ...(recipeSupportStorageEnabled() && !saveError ? { evidenceSupport } : {}),
     answer: ragBody.answer,
     status: ragBody.status,

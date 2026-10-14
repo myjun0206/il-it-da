@@ -22,7 +22,7 @@ type Message = {
   evidenceSupport?: RecipeEvidenceSupport | null;
   from: "ai" | "me";
   text: string;
-  responseKind?: "answer" | "clarification";
+  responseKind?: "answer" | "clarification" | "out_of_scope";
   /** 비어 있으면 시간 표시 생략 (안내 메시지) */
   time: string;
   status?: RagStatus;
@@ -36,6 +36,7 @@ type ConversationDetail = {
 };
 
 const statusBadgeConfig = {
+  out_of_scope: { label: "업무 범위 안내", icon: Info, className: "border border-[var(--color-border)] bg-[var(--color-bg-light-mint)] text-[var(--color-text-primary)]" },
   clarification: { label: "질문 확인", icon: Info, className: "border border-[var(--color-border)] bg-[var(--color-bg-light-mint)] text-[var(--color-text-primary)]" },
   answered: { label: "매뉴얼 기반 답변", icon: CheckCircle2, className: "border border-[var(--color-badge-answered-border)] bg-[var(--color-badge-answered-bg)] text-[var(--color-badge-answered-text)]" },
   cautious: { label: "확인 권장", icon: AlertCircle, className: "border border-[var(--color-badge-cautious-border)] bg-[var(--color-badge-cautious-bg)] text-[var(--color-badge-cautious-text)]" },
@@ -99,7 +100,7 @@ function toChatMessages(rows: ConversationMessageDto[]): Message[] {
   return rows.map((row) => {
     const message: Message = { from: row.role === "user" ? "me" : "ai", text: row.content, time: formatMessageTime(row.createdAt) };
     if (row.role === "assistant") {
-      if (row.responseKind === "answer" || row.responseKind === "clarification") message.responseKind = row.responseKind;
+      if (row.responseKind === "answer" || row.responseKind === "clarification" || row.responseKind === "out_of_scope") message.responseKind = row.responseKind;
       message.evidenceSupport = parseRecipeEvidenceSupport(row.evidenceSupport);
       if (isRagStatus(row.status)) message.status = row.status;
       if (row.sourceTitle || row.sourceCategory) {
@@ -365,7 +366,7 @@ export default function StaffPage() {
       if (!response.ok || !answer) throw new Error(error);
 
       const message: Message = { from: "ai", text: answer, time: formatMessageTime(new Date()) };
-      if (payload.responseKind === "answer" || payload.responseKind === "clarification") message.responseKind = payload.responseKind;
+      if (payload.responseKind === "answer" || payload.responseKind === "clarification" || payload.responseKind === "out_of_scope") message.responseKind = payload.responseKind;
       if (isRagStatus(payload.status)) message.status = payload.status;
       message.evidenceSupport = parseRecipeEvidenceSupport(payload.evidenceSupport);
 
@@ -605,13 +606,11 @@ export default function StaffPage() {
 }
 
 function MessageBubble({ message, showIcon = true, allowFullSupportBadge = false }: { message: Message; showIcon?: boolean; allowFullSupportBadge?: boolean }) {
-  const support = message.from === "ai" && message.responseKind !== "clarification" ? parseRecipeEvidenceSupport(message.evidenceSupport) : null;
+  const support = message.from === "ai" && message.responseKind !== "clarification" && message.responseKind !== "out_of_scope" ? parseRecipeEvidenceSupport(message.evidenceSupport) : null;
   const badge = message.from !== "ai" ? null : message.responseKind === "clarification"
-    ? statusBadgeConfig.clarification : message.status ? statusBadgeConfig[message.status] : null;
+    ? statusBadgeConfig.clarification : message.responseKind === "out_of_scope" ? statusBadgeConfig.out_of_scope : message.status ? statusBadgeConfig[message.status] : null;
   const StatusIcon = badge?.icon;
   const hasSource = message.from === "ai" && (message.source?.title || message.source?.category);
-  const evidenceRelevance = typeof message.similarity === "number" && Number.isFinite(message.similarity)
-    ? Math.min(1, Math.max(0, message.similarity)).toFixed(2) : null;
 
   return (
     <div className={`flex items-end gap-3 ${message.from === "me" ? "justify-end" : "justify-start"}`}>
@@ -677,12 +676,6 @@ function MessageBubble({ message, showIcon = true, allowFullSupportBadge = false
                         {[message.source?.title, message.source?.category].filter(Boolean).join(" · ")}
                       </p>
                     </div>
-                    {evidenceRelevance !== null && (
-                      <div className="text-xs break-words">
-                        <p className="font-semibold text-[var(--color-message-user-text)]">인용 근거 관련도 {evidenceRelevance}</p>
-                        <p className="mt-1 text-[var(--color-text-tertiary)]">정답 확률이나 답변의 완전성을 뜻하지 않습니다</p>
-                      </div>
-                    )}
                   </div>
                 )}
 
