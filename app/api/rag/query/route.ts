@@ -15,7 +15,7 @@ import { StructuredAnswerParseError, buildGroundedAnswerResponseFormat, requeste
 import { saveQuestionLog } from "@/lib/rag/save-question-log";
 import { createQuestionLogFollowUp } from "@/lib/notifications/notify-repeated-question";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { searchManualChunks } from "@/lib/rag/search-manual-chunks";
+import { DEFAULT_SEARCH_CANDIDATE_COUNT, searchManualChunks } from "@/lib/rag/search-manual-chunks";
 import { validateQueryRequest } from "@/lib/rag/validate-query-request";
 import { canUseFamilyPackHistory, priorFamilyPackVariant } from "@/lib/rag/manual-menu-intent";
 import { createClient } from "@/lib/supabase/server";
@@ -199,7 +199,7 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
             searchInputLength: userQuestion.length, confirmedTargetIncluded: Boolean(familyPackVariant && userQuestion.includes(`${familyPackVariant} 패밀리팩`)),
             includesBFamilyPack: /B\s*패밀리\s*팩/u.test(userQuestion), franchiseId: franchiseScope.franchiseId });
           try {
-            const matches = await searchManualChunks(userQuestion, storeId, franchiseScope.franchiseId, 5,
+            const matches = await searchManualChunks(userQuestion, storeId, franchiseScope.franchiseId, DEFAULT_SEARCH_CANDIDATE_COUNT,
               usage => { collectExecution({ stage: "provider_usage", ...usage }); });
             return development && matches.length ? await annotateCandidateScopes(matches, storeId, franchiseScope.franchiseId,
               async ids => await createAdminClient().from("manuals").select("id, status, scope_type, store_id, franchise_id").in("id", ids)) : matches;
@@ -294,7 +294,7 @@ async function createGroundedAnswer(question: string, chunks: ManualChunkMatch[]
   try {
     const requestBody = {
       model: "gpt-4o", temperature: 0.2, max_tokens: GPT_MAX_OUTPUT_TOKENS,
-      response_format: buildGroundedAnswerResponseFormat(question, interpretation?.requirements),
+      response_format: buildGroundedAnswerResponseFormat(question, interpretation?.requirements, interpretation?.verifiedRecipeItem),
       messages: buildGroundedAnswerMessages(question, chunks, familyPackVariant, interpretation?.requirements, interpretation),
     };
     const response = await fetch("https://api.openai.com/v1/chat/completions", { // gpt-4o 모델에 system/user 프롬프트 전달

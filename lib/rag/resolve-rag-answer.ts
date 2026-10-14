@@ -7,9 +7,10 @@
  */
 import { applyEvidenceGate, scoreChunk, type EvidenceGateThresholds } from "@/lib/rag/evidence-gate";
 import { buildLocationReferenceAnswer } from "@/lib/rag/location-reference";
+import { buildClosingOrderProcedureAnswer } from "@/lib/rag/closing-order-procedure";
 import { findVerifiedQuote } from "@/lib/rag/verified-quote";
 import { isClearlyOutOfScopeQuestion } from "@/lib/rag/search-query";
-import { boundedQuestionContext, buildInterpretedSearchQuestion, parseQuestionInterpretation, shouldInterpretQuestion, type QuestionContext, type QuestionInterpretation } from "@/lib/rag/question-interpretation";
+import { boundedQuestionContext, buildInterpretedSearchQuestion, getLatteAmountFollowUpContext, isLatteAmountContextualFollowUp, parseQuestionInterpretation, shouldInterpretQuestion, type QuestionContext, type QuestionInterpretation } from "@/lib/rag/question-interpretation";
 import { buildMenuClarification, canUseFamilyPackHistory, isFamilyPackFollowUp, selectMenuCandidates } from "@/lib/rag/manual-menu-intent";
 import {
   StructuredAnswerParseError,
@@ -20,7 +21,9 @@ import {
   recognizedStateConditions,
   hasExplicitConditionQuestion,
   isLinkedStateUseProhibition,
+  isClosingOrderDecisionQuestion,
   normalizeTargetText,
+  questionContainsTargetSequence,
   needsExplicitTarget,
   sameDeclaredSourceTarget,
   type SupportKind,
@@ -121,7 +124,11 @@ export async function resolveRagAnswer(
       similarity: null, source: null, sources: [], status: "insufficient", matches: [],
     } };
   }
-  if (shouldInterpretQuestion(input.question) && !hasExplicitSupportIntent(input.question)) {
+  const recentContext = input.interpretationContext
+    ? boundedQuestionContext(input.interpretationContext.conversation, input.interpretationContext.userId, input.interpretationContext.storeId, input.question) : [];
+  const recipeAmountFollowUp = deps.interpret ? getLatteAmountFollowUpContext(input.question, recentContext) : null;
+  const hasRecipeAmountContext = Boolean(recipeAmountFollowUp);
+  if (shouldInterpretQuestion(input.question) && !hasExplicitSupportIntent(input.question) && !hasRecipeAmountContext) {
     trace({ stage: "final", status: "insufficient", reason: "FOLLOW_UP_INTENT_AMBIGUOUS" });
     return { kind: "resolved", escalate: false, response: {
       responseKind: "clarification",
@@ -132,15 +139,18 @@ export async function resolveRagAnswer(
     } };
   }
   let interpretation: QuestionInterpretation | undefined;
+  let contextualRecipeAmountFollowUp = false;
   const generalInterpretation = input.interpretationMode === "general";
   const deferredInterpretation = generalInterpretation && (requestedSupportKinds(input.question).length === 1
     && requestedSupportKinds(input.question)[0] === "location" || Boolean(buildMenuClarification(input.question, [])))
     && !shouldInterpretQuestion(input.question);
   const interpretQuestion = async () => {
     const context = input.interpretationContext;
-    const messages = context ? boundedQuestionContext(context.conversation, context.userId, context.storeId) : [];
+    const messages = context ? boundedQuestionContext(context.conversation, context.userId, context.storeId, input.question) : [];
     const result = await deps.interpret!(input.question, messages);
     interpretation = parseQuestionInterpretation(JSON.stringify(result), input.question, messages);
+    contextualRecipeAmountFollowUp = isLatteAmountContextualFollowUp(input.question, messages, interpretation.contextTarget);
+    if (contextualRecipeAmountFollowUp && recipeAmountFollowUp) interpretation.verifiedRecipeItem = recipeAmountFollowUp.item;
     trace({ stage: "interpretation_validation", service: "interpretation", validation: "accepted",
       expectedRequirementKinds: interpretation.requirements, conditionCount: interpretation.constraints.length,
       contextTargetPresent: Boolean(interpretation.contextTarget) });
@@ -163,6 +173,10 @@ export async function resolveRagAnswer(
   }
   const familyPackVariant = canUseFamilyPackHistory(input.question) && /^[A-Z0-9]+$/.test(input.familyPackVariant ?? "") ? input.familyPackVariant : undefined;
   let contextualQuestion = interpretation ? buildInterpretedSearchQuestion(input.question, interpretation) : input.question;
+  if (contextualRecipeAmountFollowUp && recipeAmountFollowUp) {
+    contextualQuestion += `\n현재 이어서 묻는 항목: ${recipeAmountFollowUp.item} 정량`;
+  }
+  const recipeQuestion = contextualRecipeAmountFollowUp ? contextualQuestion : input.question;
   const selectionQuestion = familyPackVariant ? `${contextualQuestion} ${familyPackVariant} 패밀리팩` : contextualQuestion;
   if (interpretation) trace({ stage: "condition_delivery", mode: "search", conditionCount: interpretation.constraints.length,
     contextTargetPresent: Boolean(interpretation.contextTarget), conditionsIncluded: interpretation.constraints.every(value => contextualQuestion.includes(value)),
@@ -193,6 +207,15 @@ export async function resolveRagAnswer(
       const body = `${match.manual_id}:${match.content}`;
       if (seenIds.has(match.chunk_id) || seenBodies.has(body)) return false;
       seenIds.add(match.chunk_id); seenBodies.add(body); return true;
+    });
+    const exactClosingOrderIds = isClosingOrderDecisionQuestion(input.question)
+      ? new Set(buildClosingOrderProcedureAnswer(input.question, searchResults)?.usedChunkIds ?? []) : new Set<string>();
+    searchResults = searchResults.sort((first, second) => {
+      const firstExactProcedure = exactClosingOrderIds.has(first.chunk_id);
+      const secondExactProcedure = exactClosingOrderIds.has(second.chunk_id);
+      if (firstExactProcedure !== secondExactProcedure) return firstExactProcedure ? -1 : 1;
+      const difference = scoreChunk(second).evidenceScore - scoreChunk(first).evidenceScore;
+      return Math.abs(difference) > 1e-6 ? difference : second.raw_similarity_score - first.raw_similarity_score;
     }).slice(0, 5);
   } catch {
     trace({ stage: "search", reason: "SEARCH_FAILED" });
@@ -248,13 +271,15 @@ export async function resolveRagAnswer(
   const providedChunks = gate.usableChunks.map((chunk) => chunk.match);
   let rawGeneration: string;
   let deterministic = false;
+  let deterministicSourceAnswer = false;
   let locationConflictAnswer: string | undefined;
 
   try {
     const clarification = buildMenuClarification(selectionQuestion, providedChunks);
     const locationAnswer = requestedSupportKinds(input.question).length === 1 && requestedSupportKinds(input.question)[0] === "location"
       ? buildLocationReferenceAnswer(input.question, providedChunks) : null;
-    if (!clarification && !locationAnswer && deps.interpret && deferredInterpretation) {
+    const closingOrderAnswer = buildClosingOrderProcedureAnswer(input.question, providedChunks);
+    if (!clarification && !locationAnswer && !closingOrderAnswer && deps.interpret && deferredInterpretation) {
       await interpretQuestion();
       if (interpretation?.clarification) return { kind: "resolved", escalate: false, response: {
         responseKind: "clarification",
@@ -264,18 +289,21 @@ export async function resolveRagAnswer(
       if (interpretation) contextualQuestion = buildInterpretedSearchQuestion(input.question, interpretation);
     }
     locationConflictAnswer = locationAnswer?.answerable === false ? locationAnswer.answer : undefined;
-    deterministic = Boolean(clarification);
-    if (!clarification && !locationAnswer) trace({ stage: "prompt_delivery", candidates: searchResults.map((match, index) => ({
+    deterministicSourceAnswer = Boolean(!clarification && (locationAnswer?.answerable || closingOrderAnswer));
+    deterministic = Boolean(clarification || locationAnswer || closingOrderAnswer);
+    if (!clarification && !locationAnswer && !closingOrderAnswer) trace({ stage: "prompt_delivery", candidates: searchResults.map((match, index) => ({
       manualId: match.manual_id, chunkId: match.chunk_id, rank: index + 1, scopeKind: match.diagnostic_scope ?? "unknown",
       rpcScore: match.similarity_score, evidenceScore: scoreChunk(match).evidenceScore,
       promptIncluded: providedChunks.some(provided => provided.chunk_id === match.chunk_id),
     })) });
-    if (interpretation && !clarification && !locationAnswer) trace({ stage: "condition_delivery", mode: "answer",
+    if (interpretation && !clarification && !locationAnswer && !closingOrderAnswer) trace({ stage: "condition_delivery", mode: "answer",
       conditionCount: interpretation.constraints.length, contextTargetPresent: Boolean(interpretation.contextTarget),
       conditionsIncluded: interpretation.constraints.every(value => contextualQuestion.includes(value)), expectedRequirementKinds: interpretation.requirements });
-    trace({ stage: "generation", mode: clarification ? clarification.answerable ? "menu_clarification" : "unresolved_menu_abstention" : locationAnswer ? "location_reference" : "model" });
+    trace({ stage: "generation", mode: clarification ? clarification.answerable ? "menu_clarification" : "unresolved_menu_abstention"
+      : locationAnswer ? "location_reference" : closingOrderAnswer ? "closing_order_procedure" : "model" });
     rawGeneration = clarification ? JSON.stringify({ ...clarification, coverage: "clarification" }) : locationAnswer
-      ? JSON.stringify(locationAnswer) : await deps.generate(contextualQuestion, providedChunks, familyPackVariant, interpretation);
+      ? JSON.stringify(locationAnswer) : closingOrderAnswer
+        ? JSON.stringify(closingOrderAnswer) : await deps.generate(contextualQuestion, providedChunks, familyPackVariant, interpretation);
   } catch (error) {
     if (error instanceof StructuredAnswerParseError) {
       const interpretationFailure = error.fieldPath.startsWith("interpretation.");
@@ -324,7 +352,8 @@ export async function resolveRagAnswer(
             role: entry.role, relation: entry.targetRelation, target: entry.target,
             quote: entry.quote.slice(0, 600), quoteLength: entry.quote.length, provided: Boolean(match), selected: structured.usedChunkIds.includes(entry.chunkId),
             quotePresent: Boolean(match && findVerifiedQuote(match.content, entry.quote) !== undefined),
-            sourceTargetPresent: Boolean(match && entry.target && normalizeTargetText(match.content).includes(normalizeTargetText(entry.target))),
+            sourceTargetPresent: Boolean(match && entry.target && (normalizeTargetText(match.content).includes(normalizeTargetText(entry.target))
+              || normalizeTargetText(match.title).includes(normalizeTargetText(entry.target)))),
             sameRelationValid: entry.targetRelation !== "same" || Boolean(target && entry.target && sameDeclaredSourceTarget(target, entry.target, entry.quote)),
             policyLinked: Boolean(match && target && entry.target && isLinkedStateUseProhibition(input.question, target, entry.target, entry.quote, match.content)),
             contextExcerpts: match ? match.content.split(/\r?\n/u).filter(line => /예외|제외|경우|다만|확실하지|사용.*(?:가능|허용)/u.test(line)).slice(0, 3).map(line => line.slice(0, 180)) : [],
@@ -363,7 +392,7 @@ export async function resolveRagAnswer(
   let scopeNotice = "";
   let supportedAnswer = structured.answer;
   let stateConditionCovered = false;
-  if (structured.supportAssessment && !deterministic) {
+  if (structured.supportAssessment && (!deterministic || deterministicSourceAnswer)) {
     const requirements = structured.supportAssessment.requirements;
     const requested = interpretation?.requirements ?? requestedSupportKinds(input.question);
     const target = structured.supportAssessment.requestedTarget;
@@ -378,7 +407,7 @@ export async function resolveRagAnswer(
     let failure: { fieldPath: string; validationKind: string; requestedTarget?: string; evidenceTarget?: string; targetRelation?: string } | undefined;
     if (!requested.every((kind) => requirements.filter((item) => item.kind === kind).length === 1) || requirements.length !== requested.length) {
       failure = { fieldPath: "supportAssessment.requirements", validationKind: "requirement_mismatch" };
-    } else if (input.requireEvidenceScope && !(target && normalizeTargetText(contextualQuestion).includes(normalizeTargetText(target)))) {
+    } else if (input.requireEvidenceScope && !(target && questionContainsTargetSequence(contextualQuestion, target))) {
       failure = { fieldPath: "supportAssessment.requestedTarget", validationKind: "question_target_mismatch" };
     }
     requirements.forEach((item, requirementIndex) => item.evidence.forEach((entry, evidenceIndex) => {
@@ -388,12 +417,26 @@ export async function resolveRagAnswer(
       const verifiedQuote = match ? findVerifiedQuote(match.content, entry.quote) : undefined;
       if (!match) failure = { fieldPath: `${field}.chunkId`, validationKind: "unprovided_evidence" };
       else if (verifiedQuote === undefined) failure = { fieldPath: `${field}.quote`, validationKind: "quote_mismatch" };
-      else if (entry.target && !normalizeTargetText(match.content).includes(normalizeTargetText(entry.target))) failure = { fieldPath: `${field}.target`, validationKind: "source_target_mismatch" };
+      else if (entry.target && !normalizeTargetText(match.content).includes(normalizeTargetText(entry.target))
+        && !normalizeTargetText(match.title).includes(normalizeTargetText(entry.target))) failure = { fieldPath: `${field}.target`, validationKind: "source_target_mismatch" };
       else if (entry.targetRelation === "same" && !(target && sameDeclaredSourceTarget(target, entry.target!, entry.quote))) failure = {
         fieldPath: `${field}.targetRelation`, validationKind: "target_relation_mismatch", requestedTarget: target!, evidenceTarget: entry.target!, targetRelation: entry.targetRelation,
       };
+      else if (item.kind === "location" && entry.role === "location") {
+        const citedLocation = verifiedQuote.split(/\r?\n/u).map(line => line.match(/^\s*[-*]?\s*([^:：\n]{1,200})[:：]\s*(\S.*)$/u))
+          .find(row => row && normalizeTargetText(row[1]) === normalizeTargetText(entry.target!))?.[2]?.trim();
+        if (citedLocation && !normalizeTargetText(structured.answer).includes(normalizeTargetText(citedLocation))) {
+          failure = { fieldPath: "answer", validationKind: "location_not_grounded" };
+        }
+      }
       if (!failure && verifiedQuote !== undefined) entry.quote = verifiedQuote;
     }));
+    if (!failure && isClosingOrderDecisionQuestion(input.question)
+      && /(?:무조건\s*)?(?:받아도|받으세요|받으면\s*(?:돼|됩니다)|접수해도\s*(?:돼|됩니다)|수락(?:해야|하면)\s*(?:돼|됩니다))/u.test(structured.answer)) {
+      const explicitDecisionEvidence = requirements.flatMap(item => item.evidence)
+        .some(entry => entry.role === "permission" && /(?:주문|접수).{0,30}(?:가능|불가|금지|받(?:아도\s*(?:된다|돼)|는다))|(?:받아도|접수해도)\s*(?:된다|돼|안\s*된다)/u.test(entry.quote));
+      if (!explicitDecisionEvidence) failure = { fieldPath: "answer", validationKind: "unsupported_acceptance_decision" };
+    }
     if (failure) {
       reviewDecision("rejected", failure);
       if (failure.validationKind === "target_relation_mismatch" && failure.requestedTarget && failure.evidenceTarget && failure.targetRelation) {
@@ -455,11 +498,11 @@ export async function resolveRagAnswer(
     reviewDecision("accepted", undefined, direct.map(item => item.kind), stateConditionCovered);
   }
   const recipeCitations = structured.supportAssessment?.requirements.flatMap(item => item.evidence) ?? [];
-  let recipe = structured.coverage === "clarification" ? null : verifyRecipeFacts(input.question, stateConditionCovered ? supportedAnswer : structured.answer,
+  let recipe = structured.coverage === "clarification" ? null : verifyRecipeFacts(recipeQuestion, stateConditionCovered ? supportedAnswer : structured.answer,
     candidateSelection.matches, recipeCitations, deps.onPrivateRecipeFactDiagnostic);
   if (recipe && !deterministic && structured.coverage === "direct" && supportCoverage === "direct" && !scopeNotice) {
-    const source = extractVerifiedRecipeSourceFacts(input.question, candidateSelection.matches, recipeCitations);
-    const modelGate = verifyRecipeModelForSourceRendering(input.question, structured.answer, candidateSelection.matches, recipeCitations);
+    const source = extractVerifiedRecipeSourceFacts(recipeQuestion, candidateSelection.matches, recipeCitations);
+    const modelGate = verifyRecipeModelForSourceRendering(recipeQuestion, structured.answer, candidateSelection.matches, recipeCitations);
     if (source?.support.outcome === "full" && source.sourceFacts?.length && modelGate?.support.outcome === "full" && !modelGate.contradiction) {
       supportedAnswer = renderVerifiedRecipeSourceFacts(source.sourceFacts);
       recipe = source;
@@ -502,7 +545,7 @@ export async function resolveRagAnswer(
   const strictSupportValidation = input.requireSupportAssessment && input.requireEvidenceScope && !deterministic;
   const verifiedFullSupport = strictSupportValidation && assessedCoverage === "direct" && supportCoverage === "direct"
     && !scopeNotice && verifiedTargetScope && (!recipe || recipe.support.outcome === "full");
-  const status = strictSupportValidation ? verifiedFullSupport ? "answered" : "cautious"
+  const status = deterministicSourceAnswer ? "answered" : strictSupportValidation ? verifiedFullSupport ? "answered" : "cautious"
     : usedEvidenceScore >= input.thresholds.answered ? "answered" : "cautious";
   const scopedAnswer = supportedAnswer + scopeNotice;
   const scopeCheck = strictSupportValidation && !verifiedTargetScope && structured.coverage !== "clarification"

@@ -6,6 +6,7 @@ import {
   extractSearchKeywords,
   formatSearchEmbeddingInput,
 } from "@/lib/rag/search-query";
+import { isClosingOrderDecisionQuestion } from "@/lib/rag/structured-answer";
 import type { ManualChunkMatch } from "@/lib/rag/types";
 import type { RecipeProviderUsage } from "@/lib/rag/private-recipe-fact-diagnostics";
 
@@ -90,11 +91,76 @@ function parseChunkMatches(data: unknown): ManualChunkMatch[] {
   return matches;
 }
 
+function parseEmbeddingVector(value: unknown): number[] | null {
+  let vector: unknown = value;
+  if (typeof vector === "string") {
+    try { vector = JSON.parse(vector); } catch { return null; }
+  }
+  if (!Array.isArray(vector) || vector.length !== 1536
+    || vector.some(item => typeof item !== "number" || !Number.isFinite(item))) return null;
+  return vector as number[];
+}
+
+function cosineSimilarity(left: readonly number[], right: readonly number[]): number | null {
+  if (!left.length || left.length !== right.length) return null;
+  let dot = 0, leftNorm = 0, rightNorm = 0;
+  for (let index = 0; index < left.length; index++) {
+    dot += left[index] * right[index];
+    leftNorm += left[index] ** 2;
+    rightNorm += right[index] ** 2;
+  }
+  if (!leftNorm || !rightNorm) return null;
+  const score = dot / Math.sqrt(leftNorm * rightNorm);
+  return Number.isFinite(score) ? Math.max(-1, Math.min(1, score)) : null;
+}
+
+async function searchClosingOrderLexicalMatches(
+  supabase: ReturnType<typeof createAdminClient>, storeId: string, franchiseId: string,
+  queryKeywords: readonly string[], queryEmbedding: readonly number[], excludedIds: ReadonlySet<string>,
+): Promise<ManualChunkMatch[]> {
+  const requiredTerms = ["마감시간 전 마지막 주문 여부", "POS에 표시된 주문 상태", "담당자에게 확인"];
+  if (!requiredTerms.every(term => queryKeywords.includes(term))) return [];
+
+  const [storeManuals, hqManuals] = await Promise.all([
+    supabase.from("manuals").select("id,title,category,store_id").eq("status", "approved")
+      .eq("scope_type", "store").eq("store_id", storeId).eq("category", "매장운영"),
+    supabase.from("manuals").select("id,title,category,store_id").eq("status", "approved")
+      .eq("scope_type", "hq").is("store_id", null).eq("franchise_id", franchiseId).eq("category", "매장운영"),
+  ]);
+  if (storeManuals.error || hqManuals.error) {
+    throw Object.assign(new Error("Store-scoped closing-order source lookup failed."), { diagnosticService: "search_rpc" });
+  }
+  const manuals = [...storeManuals.data ?? [], ...hqManuals.data ?? []];
+  if (!manuals.length) return [];
+  const chunks = await supabase.from("manual_chunks").select("id,manual_id,content,embedding")
+    .in("manual_id", manuals.map(manual => manual.id)).not("embedding", "is", null);
+  if (chunks.error) throw Object.assign(new Error("Store-scoped closing-order chunk lookup failed."), { diagnosticService: "search_rpc" });
+
+  const manualById = new Map(manuals.map(manual => [manual.id, manual]));
+  const candidates: ManualChunkMatch[] = [];
+  for (const chunk of chunks.data ?? []) {
+    const normalizedContent = chunk.content.normalize("NFC").replace(/\s+/gu, " ");
+    if (!requiredTerms.every(term => normalizedContent.includes(term)) || excludedIds.has(chunk.id)) continue;
+    const vector = parseEmbeddingVector(chunk.embedding);
+    const rawSimilarity = vector ? cosineSimilarity(queryEmbedding, vector) : null;
+    if (rawSimilarity === null) continue;
+    const manual = manualById.get(chunk.manual_id);
+    if (!manual) continue;
+    candidates.push({ chunk_id: chunk.id, manual_id: chunk.manual_id, title: manual.title,
+      category: manual.category, content: chunk.content, raw_similarity_score: rawSimilarity,
+      keyword_boost: .2, similarity_score: Math.min(1, rawSimilarity + .2),
+      diagnostic_scope: manual.store_id === storeId ? "store" : "hq", diagnostic_scope_id: manual.store_id ?? franchiseId });
+  }
+  return candidates;
+}
+
+export const DEFAULT_SEARCH_CANDIDATE_COUNT = 10;
+
 export async function searchManualChunks(
   question: string,
   storeId: string,
   franchiseId: string,
-  matchCount = 5,
+  matchCount = DEFAULT_SEARCH_CANDIDATE_COUNT,
   onUsage?: (usage: RecipeProviderUsage) => void,
 ): Promise<ManualChunkMatch[]> {
   const normalizedQuestion = validateAndNormalizeQuestion(question);
@@ -121,6 +187,14 @@ export async function searchManualChunks(
   }
 
   const matches = parseChunkMatches(data);
+  if (isClosingOrderDecisionQuestion(normalizedQuestion)) {
+    const excluded = new Set(matches.map(match => match.chunk_id));
+    const supplemental = await searchClosingOrderLexicalMatches(supabase, storeId, franchiseId,
+      queryKeywords, embedding, excluded);
+    matches.push(...supplemental);
+    matches.sort((left, right) => right.similarity_score - left.similarity_score
+      || right.raw_similarity_score - left.raw_similarity_score);
+  }
 
   const topMatch = matches[0];
 

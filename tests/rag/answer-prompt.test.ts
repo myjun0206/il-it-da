@@ -20,6 +20,7 @@ describe("RAG answer prompt", () => {
       assert.ok(prompt.includes("하한·상한"));
       assert.ok(prompt.includes("없는 '약·대략·정도'"));
       assert.ok(prompt.includes("인용에 있는 근사 표현도 삭제하지 마라"));
+      assert.ok(prompt.includes("'기본 기준' 행이 있으면 그 행의 정확값과 원문 구절을 우선 인용하라"));
       assert.ok(prompt.includes("주변 설명과 문장 끝에만"));
       assert.equal(prompt.includes("60~65"), false);
     }
