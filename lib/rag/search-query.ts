@@ -55,13 +55,15 @@ const BUNDLE_PATTERN = /세트|팩|묶음|콤보/u;
 const QUANTITY_INTENT_PATTERN = /구성|수량|몇\s*(?:개|잔|인분)|개씩|얼마나\s*(?:챙|담)/u;
 
 function getIntentExpansions(question: string): string[] {
+  const closingOrderQuestion = /마감.{0,24}(?:주문|받아|접수)|(?:주문|받아|접수).{0,24}마감/u.test(question);
   const intentExpansions = INTENT_EXPANSIONS
     .filter(([pattern]) => pattern.test(question))
     .flatMap(([, terms]) => terms);
   const domainExpansions = DOMAIN_EXPANSIONS
-    .filter(([keyword]) => question.includes(keyword))
+    .filter(([keyword]) => question.includes(keyword) && !(closingOrderQuestion && keyword === "마감"))
     .flatMap(([, terms]) => terms);
   const contextualExpansions: string[] = [];
+  if (closingOrderQuestion) contextualExpansions.push("마감시간 전 마지막 주문 여부", "POS에 표시된 주문 상태", "추가 주문이 가능한 시간", "담당자에게 확인");
   if (STOCK_SHORTAGE_PATTERN.test(question) && PROCUREMENT_REQUEST_PATTERN.test(question)) {
     contextualExpansions.push("재고", "재고 확인", "발주", "입고");
   }

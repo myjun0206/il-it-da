@@ -8,7 +8,7 @@ function latteNames(text: string): string[] {
 }
 
 function isLatteRecipeQuestion(question: string): boolean {
-  return question.includes("라떼") && /우유|스팀|온도|레시피|제조|얼마|몇|만들|넣|데우|데워/u.test(question)
+  return question.includes("라떼") && /우유|스팀|온도|레시피|제조|얼마|몇|만들|만드|넣|데우|데워/u.test(question)
     && !/재고|발주|부족|환불|결제|청소|세척|소독|할인|주문.{0,10}(?:넣|해|하)/u.test(question);
 }
 

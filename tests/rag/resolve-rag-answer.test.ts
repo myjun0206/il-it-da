@@ -9,8 +9,8 @@ import { createRequire } from "node:module";
 import { Script } from "node:vm";
 import ts from "typescript";
 import { conversationTraceTag, createRagDiagnosticTrace, annotateCandidateScopes } from "../../lib/rag/trace-identifiers.ts";
-import { requestedSupportKinds, sameDeclaredSourceTarget, StructuredAnswerParseError } from "../../lib/rag/structured-answer.ts";
-import { boundedQuestionContext, buildQuestionInterpretationRequest, parseQuestionInterpretation, createQuestionInterpreter, shouldInterpretQuestion } from "../../lib/rag/question-interpretation.ts";
+import { buildGroundedAnswerResponseFormat, requestedSupportKinds, isClosingOrderDecisionQuestion, questionContainsTargetSequence, sameDeclaredSourceTarget, StructuredAnswerParseError } from "../../lib/rag/structured-answer.ts";
+import { boundedQuestionContext, buildQuestionInterpretationRequest, getLatteAmountFollowUpContext, parseQuestionInterpretation, createQuestionInterpreter, shouldInterpretQuestion } from "../../lib/rag/question-interpretation.ts";
 import { createEmbedding } from "../../lib/rag/openai-embeddings.ts";
 import { chunkManualText } from "../../lib/rag/chunk-manual.ts";
 import { PRIVATE_RECIPE_FACT_PATH, PRIVATE_RECIPE_EXECUTION_PATH, recordPrivateRecipeFactDiagnostic, recordPrivateRecipeExecutionEvent } from "../../lib/rag/private-recipe-fact-diagnostics.ts";
@@ -18,6 +18,8 @@ import { PRIVATE_RECIPE_FACT_PATH, PRIVATE_RECIPE_EXECUTION_PATH, recordPrivateR
 import { resolveRagAnswer } from "../../lib/rag/resolve-rag-answer.ts";
 import { verifyRecipeFacts, extractVerifiedRecipeSourceFacts, renderVerifiedRecipeSourceFacts, type RecipeFactDiagnostic } from "../../lib/rag/recipe-fact-verification.ts";
 import { finalizeRagQueryResponse } from "../../lib/rag/finalize-rag-query-response.ts";
+import { buildLocationReferenceAnswer } from "../../lib/rag/location-reference.ts";
+import { buildClosingOrderProcedureAnswer } from "../../lib/rag/closing-order-procedure.ts";
 import { validateQueryRequest } from "../../lib/rag/validate-query-request.ts";
 import { extractSearchKeywords, formatSearchEmbeddingInput } from "../../lib/rag/search-query.ts";
 import { buildGroundedAnswerMessages } from "../../lib/rag/answer-prompt.ts";
@@ -125,6 +127,24 @@ function deps(options: {
 }
 
 describe("recipe overblocking development cases", () => {
+  test("milk quantity particles and word order remain ingredient-bound and fail closed", () => {
+    for (const quantity of [220, 185]) {
+      const quote = `● ICE 바닐라라떼\n기본 기준: 20oz / 바닐라 시럽 20ml / 우유 ${quantity}ml`;
+      const source = chunk("milk-word-order", { content: quote });
+      const question = "아이스 바닐라라떼에 넣는 우유 정량이 궁금해요.";
+      const check = (answer: string) => verifyRecipeFacts(question, answer, [source], [{ chunkId: source.chunk_id, quote }]);
+      for (const phrase of [`우유 ${quantity}ml`, `우유는 ${quantity}ml`, `우유의 정량은 ${quantity}ml`,
+        `우유 정량은 ${quantity}ml`, `우유의 양은 ${quantity}ml`, `${quantity}ml의 우유`, `${quantity}ml 우유`]) {
+        assert.equal(check(`아이스 바닐라라떼에 넣는 ${phrase}예요.`)?.support.outcome, "full", phrase);
+      }
+      for (const phrase of [`바닐라 시럽 ${quantity}ml`, `물 ${quantity}ml 우유`, `초코우유 ${quantity}ml`, `${quantity}ml의 우유가루`,
+        `우유 ${quantity}g`, `우유 ${quantity + 10}ml`, `우유 ${quantity}ml가 아닙니다.`,
+        `우유 ${quantity}ml는 필요 없어요.`, `우유 ${quantity}ml를 넣지 마세요.`,
+        `우유 ${quantity}ml 또는 우유 ${quantity + 10}ml`, `바닐라 시럽 ${quantity}ml, 우유는 준비하세요.`]) {
+        assert.notEqual(check(`아이스 바닐라라떼 ${phrase}`)?.support.outcome, "full", phrase);
+      }
+    }
+  });
   const steamQuote = "● HOT 바닐라라떼\n기본 기준: 16oz / 바닐라 시럽 20ml / 우유 220ml / 스팀 온도 60~65℃";
   const steam = chunk("steam-development", { content: steamQuote });
   const iceQuote = "● ICE 아메리카노\n기본 기준: 20oz / 차가운 물 250ml / 얼음 약 70%";
@@ -177,6 +197,53 @@ describe("recipe overblocking development cases", () => {
     const result = verifyRecipeFacts("HOT 바닐라라떼의 스팀 온도는 몇 ℃인가요?", "HOT 바닐라라떼의 스팀 온도는 60~65℃입니다.", [steam], [{ chunkId: steam.chunk_id, quote: steamQuote }]);
     assert.equal(result?.support.outcome, "full");
     assert.deepEqual(result?.support.verified.map(fact => fact.ingredient), ["스팀 온도"]);
+  });
+  test("colloquial 핫 cafe-latte temperature verifies from its unique HOT subsection quote", () => {
+    const question = "핫 카페라떼 우유는 몇 도로 스팀해?";
+    const quote = "우유를 약 60~65℃까지 스팀한다.";
+    const source = chunk("colloquial-hot-cafe-latte", { content: [
+      "● HOT 카페라떼", "기본 기준: 16oz / 에스프레소 2샷 / 우유 240ml / 스팀 온도 60~65℃", `4. ${quote}`,
+      "● ICE 카페라떼", "기본 기준: 16oz / 에스프레소 2샷 / 우유 240ml / 얼음 약 70%",
+    ].join("\n") });
+    const result = verifyRecipeFacts(question, "핫 카페라떼의 우유는 약 60~65℃로 스팀해요.", [source],
+      [{ chunkId: source.chunk_id, quote }]);
+    assert.equal(result?.support.outcome, "full");
+    assert.deepEqual(result?.support.verified.map(fact => [fact.ingredient, fact.quantity, fact.unit]), [["스팀 온도", "약 60~65", "℃"]]);
+  });
+  test("steam-temperature question uses an exact applicable basic-criteria citation, not an approximate procedure quote", () => {
+    const question = "핫 카페라떼 우유는 몇 도로 스팀해?";
+    const criteria = "기본 기준: 16oz / 에스프레소 2샷 / 우유 240ml / 스팀 온도 60~65℃";
+    const procedure = "4. 우유를 약 60~65℃까지 스팀한다.";
+    const source = chunk("hot-cafe-latte-temperature-criteria", { content: `● HOT 카페라떼\n${criteria}\n${procedure}` });
+    const exact = verifyRecipeFacts(question, "핫 카페라떼의 스팀 온도는 60~65℃예요.", [source],
+      [{ chunkId: source.chunk_id, quote: criteria }]);
+    assert.equal(exact?.support.outcome, "full");
+    const approximate = verifyRecipeFacts(question, "핫 카페라떼의 우유는 약 60~65℃로 스팀해요.", [source],
+      [{ chunkId: source.chunk_id, quote: criteria }]);
+    assert.equal(approximate?.support.reason, "RECIPE_ANSWER_AMOUNT_OR_UNIT_MISMATCH");
+    const procedureAnswer = verifyRecipeFacts(question, "핫 카페라떼의 우유는 약 60~65℃로 스팀해요.", [source],
+      [{ chunkId: source.chunk_id, quote: procedure }]);
+    assert.equal(procedureAnswer?.support.outcome, "full");
+  });
+  test("a verbatim steaming procedure range verifies temperature without an explicit temperature label", () => {
+    const question = "핫 카페라떼 우유는 몇 도로 스팀해?";
+    const quote = "우유를 약 60~65℃까지 스팀한다.";
+    const source = chunk("steam-temperature-procedure", { content: `● HOT 카페라떼\n기본 기준: 16oz / 에스프레소 2샷 / 우유 240ml / 스팀 온도 60~65℃\n4. ${quote}\n● ICE 카페라떼\n기본 기준: 16oz / 에스프레소 2샷 / 우유 240ml / 얼음 약 70%` });
+    const valid = verifyRecipeFacts(question, "핫 카페라떼의 우유는 약 60~65℃로 스팀해요.", [source], [{ chunkId: source.chunk_id, quote }]);
+    assert.equal(valid?.support.outcome, "full");
+    assert.deepEqual(valid?.support.verified.map(fact => [fact.ingredient, fact.quantity, fact.unit]), [["스팀 온도", "약 60~65", "℃"]]);
+    const wrongRange = verifyRecipeFacts(question, "핫 카페라떼의 우유는 70~80℃로 스팀해요.", [source], [{ chunkId: source.chunk_id, quote }]);
+    assert.equal(wrongRange?.contradiction, true);
+  });
+  test("a quote repeated across HOT and ICE subsections cannot identify a recipe section", () => {
+    const content = [
+      "● HOT 카페라떼", "기본 기준: 16oz / 에스프레소 2샷 / 우유 240ml / 스팀 온도 60~65℃", "우유를 데운다.",
+      "● ICE 카페라떼", "기본 기준: 16oz / 에스프레소 2샷 / 우유 240ml / 얼음 약 70%", "우유를 데운다.",
+    ].join("\n");
+    const source = chunk("ambiguous-repeated-recipe-quote", { content });
+    const result = verifyRecipeFacts("HOT 카페라떼 스팀 온도 몇 도?", "HOT 카페라떼 스팀 온도 60~65℃입니다.",
+      [source], [{ chunkId: source.chunk_id, quote: "우유를 데운다." }]);
+    assert.equal(result?.support.reason, "RECIPE_CITATION_TEMPERATURE_MISMATCH");
   });
   test("cup-relative approximate ratio remains linked to its source basis", () => {
     const result = verifyRecipeFacts("ICE 아메리카노는 차가운 물과 얼음을 얼마나 넣나요?", "ICE 아메리카노에는 차가운 물 250ml를 넣고 얼음은 컵의 약 70%까지 채워요.", [ice], [{ chunkId: ice.chunk_id, quote: iceQuote }]);
@@ -311,6 +378,47 @@ test("recipe flattened and unique criteria citations preserve values, size, basi
   if (ambiguous.kind === "resolved") assert.notEqual(ambiguous.response.status, "answered");
 });
 
+test("eight retrieval candidates are evidence-reranked before the five-chunk generation limit", async () => {
+  const quote = "● ICE 테스트음료\n기본 기준: 20oz / 차가운 물 250ml / 얼음 약 70%";
+  const relevant = chunk("rank-eight", { content: `${quote}\n컵에 얼음을 약 70%까지 넣는다.`, raw_similarity_score: .5, keyword_boost: .2 });
+  const candidates = [...Array.from({ length: 7 }, (_, index) => chunk(`general-${index}`, {
+    content: "매장 일반 안내를 확인한다.", raw_similarity_score: .41, keyword_boost: .2,
+  })), relevant];
+  let provided: ManualChunkMatch[] = [];
+  const result = expectResolved(await resolveRagAnswer({ ...INPUT, question: "ICE 테스트음료 20oz 차가운 물과 얼음 양?",
+    requireCoverage: true, requireSupportAssessment: true, requireEvidenceScope: true }, {
+    search: async () => candidates,
+    generate: async (_question, chunks) => {
+      provided = chunks;
+      return JSON.stringify({ answerable: true, answer: "ICE 테스트음료 20oz에는 차가운 물 250ml와 컵의 약 70% 얼음을 넣어요.",
+        coverage: "direct", usedChunkIds: [relevant.chunk_id], supportAssessment: { requestedTarget: "ICE 테스트음료", requirements: [{
+          kind: "facts", support: "direct", evidence: [{ chunkId: relevant.chunk_id, quote, role: "facts", target: "ICE 테스트음료", targetRelation: "same" }],
+        }] } });
+    },
+  }));
+  assert.equal(candidates.length, 8);
+  assert.ok(provided.length <= 5);
+  assert.equal(provided[0].chunk_id, relevant.chunk_id);
+  assert.equal(result.response.status, "answered");
+  assert.ok(result.response.answer.includes("차가운 물 250ml"));
+});
+
+test("generic latte making inflection clarifies the menu without model generation", async () => {
+  const question = "라떼 만드는 법 알려줘.";
+  const source = chunk("generic-latte-making", { content: "● HOT 카페라떼\n기본 기준: 16oz / 우유 240ml\n● ICE 바닐라라떼\n기본 기준: 20oz / 우유 220ml", raw_similarity_score: .7 });
+  assert.equal(buildMenuClarification(question, [source])?.answerable, true);
+  assert.equal(buildMenuClarification("우유 어디 보관하나여?", [source]), null);
+  const result = expectResolved(await resolveRagAnswer({ ...INPUT, question, requireCoverage: true,
+    requireSupportAssessment: true, requireEvidenceScope: true }, {
+    search: async () => [source],
+    generate: async () => { throw new Error("generic menu must clarify before generation"); },
+  }));
+  assert.equal(result.response.responseKind, "clarification");
+  assert.equal(result.escalate, false);
+  assert.match(result.response.answer, /어떤 라떼 메뉴/u);
+  assert.equal(/220|240|카페라떼|바닐라라떼/u.test(result.response.answer), false);
+});
+
 test("out-of-scope classification is explicit without provider/search or escalation and work questions stay in scope", async () => {
   let calls = 0;
   const outcome = expectResolved(await resolveRagAnswer({ ...INPUT, question: "오늘 날씨 어때?" }, {
@@ -443,6 +551,203 @@ test("flavored latte relation keeps explicit HOT and ICE identity", () => {
   assert.equal(sameDeclaredSourceTarget("따뜻한 바닐라라떼", "HOT 바닐라라떼", "● HOT 바닐라라떼\n우유 220ml"), true);
   assert.equal(sameDeclaredSourceTarget("아이스 바닐라라떼", "HOT 바닐라라떼", "● HOT 바닐라라떼\n우유 220ml"), false);
   assert.equal(sameDeclaredSourceTarget("HOT 바닐라라떼", "HOT 카페라떼", "● HOT 카페라떼\n우유 240ml"), false);
+});
+
+test("same-target validation accepts equivalent joined inventory items but not missing or different items", () => {
+  const quote = "컵 및 뚜껑: 창고 선반 2번";
+  assert.equal(sameDeclaredSourceTarget("컵이랑 뚜껑", "컵 및 뚜껑", quote), true);
+  assert.equal(sameDeclaredSourceTarget("뚜껑과 컵", "컵 및 뚜껑", quote), true);
+  assert.equal(sameDeclaredSourceTarget("컵이랑 빨대", "컵 및 뚜껑", quote), false);
+  assert.equal(sameDeclaredSourceTarget("컵", "컵 및 뚜껑", quote), false);
+  assert.equal(sameDeclaredSourceTarget("컵이랑 뚜껑", "컵 및 뚜껑", "컵 및 뚜껑: 창고 선반 3번"), true);
+  assert.equal(sameDeclaredSourceTarget("컵이랑 뚜껑", "컵 및 뚜껑", "재고: 창고 선반 2번"), true);
+});
+
+test("target question matching tolerates Korean particles but not changed order or omitted subjects", () => {
+  assert.equal(questionContainsTargetSequence("마감 직전에 주문이 들어왔는데 받아도 돼요?", "마감 직전 주문"), true);
+  assert.equal(questionContainsTargetSequence("배달 주문 누락되었을 때 대처법", "배달 주문 누락"), true);
+  assert.equal(questionContainsTargetSequence("아이스 바닐라라떼를 만드는 법", "아이스 바닐라라떼"), true);
+  assert.equal(questionContainsTargetSequence("평일 오픈이면 몇 시까지 출근해?", "오픈"), true);
+  assert.equal(questionContainsTargetSequence("컵이랑 뚜껑 어디 있어?", "컵 뚜껑"), true);
+  assert.equal(questionContainsTargetSequence("컵과 뚜껑은 어디 있어?", "뚜껑 컵"), false);
+  assert.equal(questionContainsTargetSequence("마감 직전에 주문이 들어왔는데 받아도 돼요?", "주문 마감 직전"), false);
+  assert.equal(questionContainsTargetSequence("마감 직전에 주문이 들어왔는데 받아도 돼요?", "배달 주문"), false);
+});
+
+test("multi-step manual children may use an exact declared title target while still requiring each verbatim quote", async () => {
+  const question = "배달 주문 누락되었을 때 대처법";
+  const target = "배달 주문 누락";
+  const steps = [
+    "1. 배달 주문 누락 연락을 받으면 주문번호와 누락된 메뉴·수량을 확인한다.",
+    "2. POS 주문 내역과 제조·포장 확인 내용을 대조한다.",
+    "3. 주문번호, 누락 품목·수량, 현재 배달 상태를 점주에게 보고한다.",
+    "4. 직원이 임의로 재배달·환불·보상을 약속하지 않는다. 점주가 결정한 처리 방법에 따라 안내한다.",
+    "5. 매장에서 사용하는 업무 기록에 확인 내용과 처리 결과를 남긴다.",
+  ];
+  const sources = steps.map((content, index) => chunk(`delivery-step-${index + 1}`, {
+    title: "[시연용] 배달 주문 누락 대응", category: "주문·결제", content, raw_similarity_score: .72 - index / 100,
+    keyword_boost: .2, diagnostic_scope: "store", diagnostic_scope_id: "soongsil-store",
+  }));
+  const assessment = JSON.stringify({ answerable: true, answer: `\n${steps.join("\n")}`, coverage: "direct",
+    usedChunkIds: sources.map(source => source.chunk_id), supportAssessment: { requestedTarget: target, requirements: [{ kind: "facts",
+      support: "direct", evidence: sources.map(source => ({ chunkId: source.chunk_id, quote: source.content,
+        role: "facts", target, targetRelation: "same" })) }] } });
+  const events: Record<string, unknown>[] = [];
+  const result = expectResolved(await resolveRagAnswer({ ...INPUT, question, requireCoverage: true,
+    requireSupportAssessment: true, requireEvidenceScope: true }, {
+    search: async () => sources, generate: async () => assessment, onDiagnostic: event => events.push(event),
+  }));
+  assert.equal(result.response.status, "answered");
+  for (const step of steps) assert.ok(result.response.answer.includes(step));
+  assert.equal(result.response.sources?.length, 5);
+  const review = events.find(event => event.stage === "support_validation");
+  assert.equal(review?.validation, "accepted");
+
+  const wrongTitle = chunk("wrong-title-target", { title: "주문 처리 안내", content: steps[1], raw_similarity_score: .72, keyword_boost: .2 });
+  const wrongTargetAssessment = JSON.stringify({ ...JSON.parse(assessment), usedChunkIds: [wrongTitle.chunk_id],
+    supportAssessment: { requestedTarget: target, requirements: [{ kind: "facts", support: "direct",
+      evidence: [{ chunkId: wrongTitle.chunk_id, quote: wrongTitle.content, role: "facts", target, targetRelation: "same" }] }] } });
+  const rejected = await resolveRagAnswer({ ...INPUT, question, requireCoverage: true,
+    requireSupportAssessment: true, requireEvidenceScope: true }, {
+    search: async () => [wrongTitle], generate: async () => wrongTargetAssessment,
+  });
+  assert.deepEqual(rejected, { kind: "system_error", code: "GENERATION_UNPARSABLE" });
+});
+
+test("near-closing acceptance question is resolved from POS guidance without asserting an unsupported decision", async () => {
+  const question = "마감 직전에 주문이 들어왔는데 받아도 돼요?";
+  const content = "- 마감시간 전 마지막 주문 여부는 POS에 표시된 주문 상태를 확인하고, 애매한 경우 담당자에게 확인한다.";
+  const source = chunk("closing-order-guidance", { title: "매장 운영 기준", content, raw_similarity_score: .7, keyword_boost: .25,
+    diagnostic_scope: "store", diagnostic_scope_id: "soongsil-store" });
+  assert.equal(isClosingOrderDecisionQuestion(question), true);
+  assert.deepEqual(requestedSupportKinds(question), ["procedure"]);
+  const events: Record<string, unknown>[] = [];
+  let generated = 0;
+  const correct = expectResolved(await resolveRagAnswer({ ...INPUT, question, requireCoverage: true,
+    requireSupportAssessment: true, requireEvidenceScope: true }, {
+    search: async () => [source], generate: async () => { generated++; throw Error("verified POS procedure must not need a model decision"); },
+    onDiagnostic: event => events.push(event),
+  }));
+  assert.equal(correct.response.status, "answered");
+  assert.equal(correct.response.answer, content.slice(2));
+  assert.equal(generated, 0);
+  assert.equal(correct.escalate, false);
+  assert.equal(events.findLast(event => event.stage === "final")?.reason, "SUPPORTED_ANSWER");
+
+  const modelSource = chunk("closing-decision-not-supported", { title: "주문 처리 안내",
+    content: "마감 직전 주문: POS에 표시된 주문 상태를 확인한다.", raw_similarity_score: .8 });
+  const unsupportedYes = JSON.stringify({ answerable: true, answer: "마감 직전 주문은 무조건 받아도 됩니다.",
+    coverage: "direct", usedChunkIds: [modelSource.chunk_id], supportAssessment: { requestedTarget: "마감 직전 주문",
+      requirements: [{ kind: "procedure", support: "direct", evidence: [{ chunkId: modelSource.chunk_id,
+        quote: modelSource.content, role: "procedure", target: "마감 직전 주문", targetRelation: "same" }] }] } });
+  const rejected = await resolveRagAnswer({ ...INPUT, question, requireCoverage: true,
+    requireSupportAssessment: true, requireEvidenceScope: true }, {
+    search: async () => [modelSource], generate: async () => unsupportedYes,
+  });
+  assert.deepEqual(rejected, { kind: "system_error", code: "GENERATION_UNPARSABLE" });
+});
+
+test("verified last-order POS procedure is rendered from its source without a model decision", async () => {
+  const question = "마감 직전에 주문이 들어왔는데 받아도 돼요?";
+  const content = "- 마감시간 전 마지막 주문 여부는 POS에 표시된 주문 상태를 확인하고, 애매한 경우 담당자에게 확인한다.";
+  const source = chunk("soongsil-last-order", { title: "매장 운영 기준", content, raw_similarity_score: .63,
+    keyword_boost: .2, diagnostic_scope: "store", diagnostic_scope_id: "soongsil-store" });
+  let generated = 0;
+  const events: Record<string, unknown>[] = [];
+  const result = expectResolved(await resolveRagAnswer({ ...INPUT, question,
+    requireCoverage: true, requireSupportAssessment: true, requireEvidenceScope: true }, {
+    search: async () => [source], generate: async () => { generated++; throw Error("verified procedure must not require model completion"); },
+    onDiagnostic: event => events.push(event),
+  }));
+  assert.equal(generated, 0);
+  assert.equal(result.response.status, "answered");
+  assert.equal(result.response.answer, content.slice(2));
+  assert.equal(result.response.source?.manualId, source.manual_id);
+  assert.equal(result.escalate, false);
+  assert.equal(events.find(event => event.stage === "generation")?.mode, "closing_order_procedure");
+
+  for (const invalid of [
+    chunk("missing-manager-step", { title: "매장 운영 기준", content: "- 마감시간 전 마지막 주문 여부는 POS 상태를 확인한다." }),
+    chunk("foreign-topic", { title: "매장 운영 기준", content: "- POS 주문 상태를 확인한다. 애매하면 담당자에게 확인한다." }),
+  ]) assert.equal(buildClosingOrderProcedureAnswer(question, [invalid]), null);
+});
+
+test("verified close-order source survives the top-five cutoff without changing the evidence threshold", async () => {
+  const question = "마감 직전에 주문이 들어왔는데 받아도 돼요?";
+  const content = "- 마감시간 전 마지막 주문 여부는 POS에 표시된 주문 상태를 확인하고, 애매한 경우 담당자에게 확인한다.";
+  const distractors = Array.from({ length: 10 }, (_, index) => chunk(`unrelated-close-${index}`, {
+    title: "마감 운영", content: `일반 마감 안내 ${index}`, raw_similarity_score: .8 - index / 100, keyword_boost: .2,
+  }));
+  const source = chunk("late-ranked-pos-source", { title: "매장 운영 기준", content, raw_similarity_score: .43,
+    keyword_boost: .2, diagnostic_scope: "store", diagnostic_scope_id: "soongsil-store" });
+  const events: Record<string, unknown>[] = [];
+  let generated = 0;
+  const result = expectResolved(await resolveRagAnswer({ ...INPUT, question,
+    requireCoverage: true, requireSupportAssessment: true, requireEvidenceScope: true }, {
+    search: async () => [...distractors, source],
+    generate: async () => { generated++; throw Error("verified POS source should render without model generation"); },
+    onDiagnostic: event => events.push(event),
+  }));
+  const candidates = events.find(event => event.stage === "search")?.candidates as { chunkId: string; rank: number }[];
+  assert.equal(generated, 0);
+  assert.equal(candidates.length, 5);
+  assert.equal(candidates[0].chunkId, source.chunk_id);
+  assert.equal(candidates[0].rank, 1);
+  assert.equal(result.response.status, "answered");
+  assert.equal(result.response.answer, content.slice(2));
+  assert.equal(result.response.similarity, .58);
+});
+
+test("joined inventory location requests resolve from exact source rows without model generation", async () => {
+  const location = chunk("cup-lid-location", { title: "재고 및 비품 보관 위치", content: "- 컵 및 뚜껑: 창고 선반 2번",
+    raw_similarity_score: .35, keyword_boost: .25 });
+  for (const question of ["컵이랑 뚜껑 재고 어디 있어?", "뚜껑과 컵은 어디에 있어요?"]) {
+    let generated = 0;
+    const events: Record<string, unknown>[] = [];
+    assert.ok(buildLocationReferenceAnswer(question, [location]), `registered location row should match: ${question}`);
+    const raw = await resolveRagAnswer({ ...INPUT, question,
+      requireCoverage: true, requireSupportAssessment: true, requireEvidenceScope: true }, {
+      search: async () => [location], generate: async () => { generated++; throw Error("registered item locations must not need model output"); },
+      onDiagnostic: event => events.push(event),
+    });
+    assert.equal(raw.kind, "resolved", JSON.stringify(events));
+    const result = expectResolved(raw);
+    assert.equal(generated, 0);
+    assert.equal(result.response.status, "answered");
+    assert.equal(result.response.answer, "컵 및 뚜껑의 보관 위치는 창고 선반 2번입니다.");
+    assert.equal(result.response.source?.manualId, location.manual_id);
+    assert.equal(events.find(event => event.stage === "generation")?.mode, "location_reference");
+  }
+  for (const question of ["컵 재고 어디 있어?", "컵이랑 빨대 재고 어디 있어?"]) {
+    assert.equal(buildLocationReferenceAnswer(question, [location]), null);
+  }
+  const conflicting = chunk("cup-lid-location-conflict", { title: "재고 및 비품 보관 위치", content: "- 컵 및 뚜껑: 창고 선반 3번" });
+  const conflict = buildLocationReferenceAnswer("컵이랑 뚜껑 재고 어디 있어?", [location, conflicting]);
+  assert.equal(conflict?.answerable, false);
+  assert.ok(conflict?.answer.includes("서로 다른 위치"));
+});
+
+test("model location answers require the exact cited location and a verbatim source quote", async () => {
+  const content = "컵 및 뚜껑: 창고 선반 2번";
+  const source = chunk("cup-lid-model", { title: "비품 정보", content, raw_similarity_score: .7, keyword_boost: .2 });
+  const question = "컵이랑 뚜껑은 어디 있어?";
+  const makeGeneration = (answer: string, quote: string) => JSON.stringify({ answerable: true, answer, coverage: "direct",
+    usedChunkIds: [source.chunk_id], supportAssessment: { requestedTarget: "컵이랑 뚜껑", requirements: [{ kind: "location",
+      support: "direct", evidence: [{ chunkId: source.chunk_id, quote, role: "location", target: "컵 및 뚜껑", targetRelation: "same" }] }] } });
+  const resolve = (answer: string, quote = content) => resolveRagAnswer({ ...INPUT, question,
+    requireCoverage: true, requireSupportAssessment: true, requireEvidenceScope: true }, {
+    search: async () => [source], generate: async () => makeGeneration(answer, quote),
+  });
+
+  const correct = expectResolved(await resolve("컵과 뚜껑은 창고 선반 2번에 있어요."));
+  assert.equal(correct.response.status, "answered");
+  assert.equal(correct.response.answer, "컵과 뚜껑은 창고 선반 2번에 있어요.");
+
+  const wrongPlace = await resolve("컵과 뚜껑은 창고 선반 3번에 있어요.");
+  assert.deepEqual(wrongPlace, { kind: "system_error", code: "GENERATION_UNPARSABLE" });
+
+  const unquotedPlace = await resolve("컵과 뚜껑은 창고 선반 3번에 있어요.", "컵 및 뚜껑: 창고 선반 3번");
+  assert.deepEqual(unquotedPlace, { kind: "system_error", code: "GENERATION_UNPARSABLE" });
 });
 
 test("temperature clarification preserves the requested vanilla latte menu", () => {
@@ -1198,6 +1503,114 @@ describe("근거가 충분한 질문", () => {
     assert.equal(outcome.escalate, false);
     assert.match(outcome.response.answer, /위치.*관리 방법/u);
     assert.equal(/\d+\s*(?:일|시간|℃)/u.test(outcome.response.answer), false);
+  });
+
+  test("a short latte ingredient follow-up carries only the latest explicit user menu and temperature", async () => {
+    const question = "그럼 우유는?";
+    const previousQuestion = "바닐라라떼 아이스 시럽 얼마 넣음?";
+    const previousAnswer = "ICE 바닐라라떼 (20oz) 매뉴얼 기준이에요.\n바닐라 시럽 20ml";
+    const messages = [{ role: "user" as const, content: previousQuestion }, { role: "assistant" as const, content: previousAnswer }];
+    const context = { userId: "staff", storeId: "soongsil-store", messages };
+    assert.equal(shouldInterpretQuestion(question), true);
+    assert.deepEqual(getLatteAmountFollowUpContext(question, messages), {
+      contextTarget: "바닐라라떼 아이스", menuName: "바닐라라떼", temperature: "ICE", item: "우유",
+    });
+    assert.equal(getLatteAmountFollowUpContext("우유 어디 보관하나여?", messages), null);
+    assert.equal(getLatteAmountFollowUpContext(question, [{ role: "user", content: "라떼 만드는 법 알려줘." }]), null);
+    assert.equal(getLatteAmountFollowUpContext(question, [{ role: "user", content: "바닐라라떼와 카페라떼 시럽 얼마?" }]), null);
+    const retryMessages = [...messages, { role: "user" as const, content: question },
+      { role: "assistant" as const, content: "확인할 질문: 그럼 우유는?" },
+      { role: "user" as const, content: question },
+      { role: "assistant" as const, content: "위치, 방법, 기간 중 어떤 점인지 알려주세요." }];
+    assert.equal(getLatteAmountFollowUpContext(question, retryMessages)?.contextTarget, "바닐라라떼 아이스");
+    assert.equal(getLatteAmountFollowUpContext(question, [...retryMessages, { role: "user", content: "우유 어디 보관하나여?" }]), null);
+    const replayContext = { ...context, messages: retryMessages };
+    assert.equal(getLatteAmountFollowUpContext(question, boundedQuestionContext(replayContext, "staff", "soongsil-store")), null);
+    assert.equal(boundedQuestionContext(replayContext, "staff", "soongsil-store", question).length, 6);
+    const request = buildQuestionInterpretationRequest(question, retryMessages);
+    const properties = request.response_format.json_schema.schema.properties;
+    assert.deepEqual(properties.target.enum, ["", "우유"]);
+    assert.deepEqual(properties.contextTarget.enum, ["바닐라라떼 아이스"]);
+    assert.deepEqual(properties.requirements.items.enum, ["facts"]);
+    assert.deepEqual(properties.clarification.enum, [false]);
+    assert.equal(properties.constraints.maxItems, 0);
+    assert.equal(buildQuestionInterpretationRequest("우유 어디 보관하나여?", messages)
+      .response_format.json_schema.schema.properties.contextTarget.enum, undefined);
+    assert.throws(() => parseQuestionInterpretation(JSON.stringify({ target: "ICE 바닐라라떼", requirements: ["facts"],
+      constraints: [], contextTarget: "아이스 바닐라라떼 ICE", clarification: false }), question, messages), StructuredAnswerParseError);
+
+    const quote = "기본 기준: 20oz / 에스프레소 2샷 / 바닐라 시럽 20ml / 우유 220ml / 얼음 약 70%";
+    const recipe = chunk("vanilla-latte-milk", { title: "음료 제조 및 레시피 관리", category: "음료제조",
+      content: `● ICE 바닐라라떼\n${quote}\n2. 바닐라 시럽 20ml를 준비한다.`, raw_similarity_score: .7,
+      keyword_boost: .2, diagnostic_scope: "hq", diagnostic_scope_id: "soongsil-brand" });
+    let generated = 0;
+    let searched = "";
+    const events: Record<string, unknown>[] = [];
+    const outcome = expectResolved(await resolveRagAnswer({ ...INPUT, question, requireCoverage: true,
+      requireSupportAssessment: true, requireEvidenceScope: true,
+      interpretationContext: { userId: "staff", storeId: "soongsil-store", conversation: replayContext },
+    }, {
+      interpret: async (current, recent) => {
+        assert.equal(current, question);
+        assert.ok(recent.some(message => message.role === "user" && message.content === previousQuestion));
+        return { target: "", contextTarget: "바닐라라떼 아이스", constraints: [], requirements: ["facts"], clarification: false };
+      },
+      search: async query => { searched = query; return [recipe]; },
+      generate: async (current, _chunks, _variant, interpretation) => {
+        generated++;
+        assert.ok(current.includes("확인된 이전 질문 대상: 바닐라라떼 아이스"));
+        assert.ok(current.includes("현재 이어서 묻는 항목: 우유 정량"));
+        assert.deepEqual(interpretation?.requirements, ["facts"]);
+        assert.equal(interpretation?.verifiedRecipeItem, "우유");
+        const format = buildGroundedAnswerResponseFormat(current, interpretation?.requirements, interpretation?.verifiedRecipeItem);
+        const assessment = format.json_schema.schema.properties.supportAssessment.anyOf[0];
+        assert.ok("properties" in assessment);
+        assert.deepEqual(assessment.properties.requestedTarget.enum, ["우유"]);
+        assert.deepEqual(assessment.properties.requirements.items.properties.evidence.items.properties.target.enum, ["우유"]);
+        return JSON.stringify({ answerable: true, answer: "ICE 바닐라라떼의 우유는 220ml예요.", coverage: "direct",
+          usedChunkIds: [recipe.chunk_id], supportAssessment: { requestedTarget: "우유", requirements: [{ kind: "facts", support: "direct",
+            evidence: [{ chunkId: recipe.chunk_id, quote, role: "facts", target: "우유", targetRelation: "same" }] }] } });
+      },
+      onDiagnostic: event => events.push(event),
+    }));
+    assert.equal(generated, 1);
+    assert.ok(searched.includes("바닐라라떼 아이스"));
+    assert.equal(outcome.response.status, "answered");
+    assert.ok(outcome.response.answer.includes("220ml"));
+    assert.equal(outcome.response.source?.manualId, recipe.manual_id);
+    assert.equal(events.find(event => event.stage === "interpretation_validation")?.validation, "accepted");
+  });
+
+  test("explicit storage location after a latte amount turn does not inherit recipe context", async () => {
+    const question = "우유 어디 보관하나여?";
+    const context = { userId: "staff", storeId: "soongsil-store", messages: [
+      { role: "user" as const, content: "바닐라라떼 아이스 시럽 얼마 넣음?" },
+      { role: "assistant" as const, content: "ICE 바닐라라떼 (20oz) 매뉴얼 기준이에요. 바닐라 시럽 20ml" },
+    ] };
+    const location = chunk("store-milk-location", { title: "재고 및 비품 보관 위치", category: "재고·발주",
+      content: "- 우유: 매장 냉장고 오른쪽 선반", raw_similarity_score: .7, keyword_boost: .2,
+      diagnostic_scope: "store", diagnostic_scope_id: "soongsil-store" });
+    let interpretationCalls = 0;
+    let searched = "";
+    const quote = "- 우유: 매장 냉장고 오른쪽 선반";
+    const outcome = expectResolved(await resolveRagAnswer({ ...INPUT, question, requireCoverage: true,
+      requireSupportAssessment: true, requireEvidenceScope: true,
+      interpretationContext: { userId: "staff", storeId: "soongsil-store", conversation: context },
+    }, {
+      interpret: async () => { interpretationCalls++; throw new Error("explicit location intent must not inherit recipe context"); },
+      search: async query => { searched = query; return [location]; },
+      generate: async (_query, chunks) => JSON.stringify({ answerable: true,
+        answer: "우유는 매장 냉장고 오른쪽 선반에 보관해요.", coverage: "direct", usedChunkIds: chunks.map(item => item.chunk_id),
+        supportAssessment: { requestedTarget: "우유", requirements: [{ kind: "location", support: "direct", evidence: [
+          { chunkId: location.chunk_id, quote, role: "location", target: "우유", targetRelation: "same" },
+        ] }] } }),
+    }));
+    assert.equal(interpretationCalls, 0);
+    assert.equal(searched, question);
+    assert.equal(outcome.response.status, "answered");
+    assert.ok(outcome.response.answer.includes("매장 냉장고 오른쪽 선반"));
+    assert.equal(outcome.response.source?.manualId, location.manual_id);
+    assert.equal(getLatteAmountFollowUpContext("라떼 만드는 법 알려줘.", context.messages), null);
   });
 
   test("post-opening period follow-up uses only bounded user-grounded context", () => {
@@ -2612,7 +3025,7 @@ describe("actual query API POST handler with mocked external boundaries", () => 
           select: () => query,
           eq: (field: string, value: string) => { filters[field] = value; return query; },
           order: (field: string, options: { ascending: boolean }) => { assert.equal(field, "created_at"); assert.equal(options.ascending, false); return query; },
-          limit: (count: number) => { assert.ok(count === 1 || count === 4); return query; },
+          limit: (count: number) => { assert.ok(count === 1 || count === 8); return query; },
           then: (resolve: (result: unknown) => unknown) => Promise.resolve(resolve({ data: options.previousQuestion
             ? [{ role: "user", content: options.previousQuestion }] : [], error: options.contextError ? { code: "FIXTURE_READ_FAILED" } : null })),
           maybeSingle: async () => {
@@ -2667,7 +3080,7 @@ describe("actual query API POST handler with mocked external boundaries", () => 
         ? { saved: false, code: "QUESTION_LOG_SAVE_FAILED" } : { saved: true, questionLogId: "33333333-3333-4333-8333-333333333333" }; } },
       "@/lib/notifications/notify-repeated-question": { createQuestionLogFollowUp: (input: { storeId: string; escalate: boolean }) => { events.followUps.push({ storeId: input.storeId, escalate: input.escalate }); return async () => { events.completedFollowUps++; }; } },
       "@/lib/supabase/admin": { createAdminClient: () => contextClient },
-      "@/lib/rag/search-manual-chunks": { searchManualChunks: async (question: string, requestedStore: string, requestedFranchise: string, _count: number, onUsage?: (event: unknown) => void) => { events.searchCalls.push({ question, storeId: requestedStore, franchiseId: requestedFranchise }); if (options.embeddingStatus) throw Object.assign(new Error("MOCK_EMBEDDING_HTTP_FAILURE"), { diagnosticService: "embedding", diagnosticHttpStatus: options.embeddingStatus }); if (options.searchError) throw new Error("SEARCH_FIXTURE_FAILURE"); onUsage?.({ service: "embedding", httpStatus: 200, inputTokens: 62, outputTokens: 0 }); return options.results; } },
+      "@/lib/rag/search-manual-chunks": { DEFAULT_SEARCH_CANDIDATE_COUNT: 10, searchManualChunks: async (question: string, requestedStore: string, requestedFranchise: string, count: number, onUsage?: (event: unknown) => void) => { assert.equal(count, 10); events.searchCalls.push({ question, storeId: requestedStore, franchiseId: requestedFranchise }); if (options.embeddingStatus) throw Object.assign(new Error("MOCK_EMBEDDING_HTTP_FAILURE"), { diagnosticService: "embedding", diagnosticHttpStatus: options.embeddingStatus }); if (options.searchError) throw new Error("SEARCH_FIXTURE_FAILURE"); onUsage?.({ service: "embedding", httpStatus: 200, inputTokens: 62, outputTokens: 0 }); return options.results; } },
     };
     const routeModule = { exports: {} as { POST: (request: Request) => Promise<Response> } };
     new Script(compiled, { filename: "actual-rag-query-route.cjs" }).runInNewContext({
@@ -2739,6 +3152,39 @@ describe("actual query API POST handler with mocked external boundaries", () => 
       })),
     };
   }
+
+  test("actual query API accepts the recorded joined location, rejects wrong places and unquoted place citations", async () => {
+    const question = "컵이랑 뚜껑 재고 어디 있어?";
+    const source = chunk("api-cup-lid", { title: "재고 및 비품 보관 위치", content: "- 컵 및 뚜껑: 창고 선반 2번",
+      raw_similarity_score: .44, keyword_boost: .25 });
+    const correct = api({ results: [source], generation: JSON.stringify({ answerable: true,
+      answer: "컵과 뚜껑은 창고 선반 2번에 보관되어 있어요.", coverage: "direct", usedChunkIds: [source.chunk_id],
+      supportAssessment: { requestedTarget: "컵이랑 뚜껑", requirements: [{ kind: "location", support: "direct",
+        evidence: [{ chunkId: source.chunk_id, quote: source.content.slice(2), role: "location", target: "컵 및 뚜껑", targetRelation: "same" }] }] } }), rawGeneration: true, tracing: true });
+    const response = await correct.post(question);
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.status, "answered");
+    assert.equal(body.answer, "컵 및 뚜껑의 보관 위치는 창고 선반 2번입니다.");
+    assert.equal(correct.events.logs[0].status, "answered");
+    assert.deepEqual(correct.events.followUps, [{ storeId, escalate: false }]);
+
+    const modelSource = { ...source, title: "재고" };
+    const generation = (answer: string, quote: string) => JSON.stringify({ answerable: true, answer, coverage: "direct",
+      usedChunkIds: [source.chunk_id], supportAssessment: { requestedTarget: "컵이랑 뚜껑", requirements: [{ kind: "location",
+        support: "direct", evidence: [{ chunkId: source.chunk_id, quote, role: "location", target: "컵 및 뚜껑", targetRelation: "same" }] }] } });
+    for (const invalid of [
+      generation("컵과 뚜껑은 창고 선반 3번에 있어요.", modelSource.content.slice(2)),
+      generation("컵과 뚜껑은 창고 선반 3번에 있어요.", "컵 및 뚜껑: 창고 선반 3번"),
+    ]) {
+      const rejected = api({ results: [modelSource], generation: invalid, rawGeneration: true });
+      const failed = await rejected.post(question);
+      assert.equal(failed.status, 500);
+      assert.equal((await failed.json()).code, "GENERATION_UNPARSABLE");
+      assert.equal(rejected.events.logs.length, 0);
+      assert.equal(rejected.events.followUps.length, 0);
+    }
+  });
 
   test("actual generation payload requests strict per-question JSON schema rather than JSON mode", async () => {
     for (const question of ["유제품은 어떻게 보관해야 하나요?", "유제품 보관법", "물품 위치와 보관법", "마감 절차 알려줘", "마감 어케 해?"]) {
@@ -4001,7 +4447,7 @@ describe("라우트 연결부", () => {
   });
 
   test("구조화 출력을 요구한다", () => {
-    assert.match(source, /response_format: buildGroundedAnswerResponseFormat\(question, interpretation\?\.requirements\)/);
+    assert.match(source, /response_format: buildGroundedAnswerResponseFormat\(question, interpretation\?\.requirements, interpretation\?\.verifiedRecipeItem\)/);
     assert.match(source, /buildGroundedAnswerMessages\(question, chunks, familyPackVariant, interpretation\?\.requirements, interpretation\)/);
   });
 
