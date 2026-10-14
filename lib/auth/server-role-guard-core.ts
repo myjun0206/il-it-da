@@ -1,5 +1,4 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { deleteIncompleteStoreSignupAccount } from "@/lib/auth/incomplete-store-signup";
 
 export type ServerRole = "hq" | "owner" | "staff";
 
@@ -44,7 +43,7 @@ export interface RequireServerRoleDeps {
 }
 
 /**
- * 로그인 사용자와 profiles.role을 확인한 뒤 owner/staff는 활성 매장 멤버십도 확인한다.
+ * 로그인 사용자와 profiles.role만 확인한다.
  *
  * getSessionClient/getAdminClient는 항상 호출부(예: require-server-role.ts)에서 주입한다 —
  * 이 모듈은 실제 Supabase client를 직접 만들지 않으므로 Supabase 없이 단위 테스트할 수 있다.
@@ -89,29 +88,5 @@ export async function requireServerRole(
     return { status: "FORBIDDEN" };
   }
 
-  const roleAccess = decideServerRoleAccess(requiredRole, userId, profile?.role);
-  if (
-    !profile?.role &&
-    (requiredRole === "owner" || requiredRole === "staff") &&
-    user?.user_metadata?.role === requiredRole
-  ) {
-    const cleanup = await deleteIncompleteStoreSignupAccount(adminClient, userId, requiredRole);
-    if (cleanup.status === "DELETED") return { status: "INCOMPLETE_SIGNUP_DELETED" };
-    if (cleanup.status === "ERROR") {
-      deps.logAuthError?.("REQUIRE_SERVER_ROLE_INCOMPLETE_SIGNUP_CLEANUP_FAILED", new Error("Account cleanup failed"));
-      return { status: "FORBIDDEN" };
-    }
-  }
-
-  if (roleAccess.status !== "AUTHORIZED" || requiredRole === "hq") return roleAccess;
-
-  const signupState = await deleteIncompleteStoreSignupAccount(adminClient, userId, requiredRole);
-  if (signupState.status === "DELETED") return { status: "INCOMPLETE_SIGNUP_DELETED" };
-  if (signupState.status === "ERROR") {
-    deps.logAuthError?.("REQUIRE_SERVER_ROLE_MEMBERSHIP_LOOKUP_FAILED", new Error("Store membership lookup failed"));
-    return { status: "FORBIDDEN" };
-  }
-  if (signupState.status === "MEMBERSHIP" && signupState.access === "PENDING") return { status: "STORE_APPROVAL_PENDING" };
-
-  return roleAccess;
+  return decideServerRoleAccess(requiredRole, userId, profile?.role);
 }
