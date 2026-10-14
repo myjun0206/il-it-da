@@ -44,12 +44,12 @@
     "js-tiktoken": "1.0.21",
     "langchain": "^1.5.10",
     "lucide-react": "^1.40.0",
-    "next": "16.3.4",
+    "next": "16.3.8",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "simple-icons": "^16.34.0",
     "tailwind-merge": "^3.6.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.2/xlsx-0.20.2.tgz"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -57,7 +57,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.3.4",
+    "eslint-config-next": "16.3.8",
     "playwright": "^1.62.1",
     "tailwindcss": "^4",
     "typescript": "^5"
