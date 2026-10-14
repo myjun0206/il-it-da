@@ -1,12 +1,12 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useClientReady } from "@/lib/hq/use-client-ready";
-import { useRouter } from "next/navigation";
-import { AlertCircle, ArrowLeft, FileText, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, FileText, Pencil, Plus, RefreshCw, Search, Trash2, UploadCloud, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 import { ManualSearchReadinessPanel } from "@/components/manuals/ManualSearchReadinessPanel";
+import HQManualUpload from "@/components/manuals/HQManualUpload";
 import { manualSaveMessage } from "@/lib/manuals/manual-save-result";
 import type { ManualRecord } from "@/lib/types/manual";
 
@@ -98,7 +98,6 @@ function groupByCategory(manuals: ManualRecord[], groups: ManualGroup[]): Manual
 }
 
 export default function ManualDashboardPage() {
-  const router = useRouter();
   const isReady = useClientReady();
   const [manuals, setManuals] = useState<ManualRecord[]>([]);
   const [isLoadingManuals, setIsLoadingManuals] = useState(true);
@@ -115,6 +114,7 @@ export default function ManualDashboardPage() {
   const [categoryName, setCategoryName] = useState("");
   const [categoryError, setCategoryError] = useState("");
   const [isCreatingCategory, setIsCreatingCategory] = useState(false);
+  const categorySubmitPending = useRef(false);
   const [editingCategory, setEditingCategory] = useState<ManualCategory | null>(null);
   const [editCategoryName, setEditCategoryName] = useState("");
   const [editCategoryError, setEditCategoryError] = useState("");
@@ -147,6 +147,8 @@ export default function ManualDashboardPage() {
   const [toastMessage, setToastMessage] = useState("");
   const [saveNotice, setSaveNotice] = useState("");
   const [readinessRevision, setReadinessRevision] = useState(0);
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  const [showUploadPanel, setShowUploadPanel] = useState(false);
   useEffect(() => {
     try {
       const message = sessionStorage.getItem("ilitda:manual-upload-notice")
@@ -213,23 +215,16 @@ export default function ManualDashboardPage() {
     : null;
   const selectedTitle = selectedTitleId ? selectedCategory?.groups.find((group) => group.id === selectedTitleId) ?? null : null;
   const normalizedSearch = searchQuery.trim().toLowerCase();
-  const visibleCategories = normalizedSearch
-    ? categories.filter((category) => {
-        // Handle category filter (e.g., "category:고객응대")
-        if (normalizedSearch.startsWith("category:")) {
-          const filterCategory = normalizedSearch.substring(9); // Remove "category:" prefix
-          return category.category.toLowerCase().includes(filterCategory) ||
-                 getDisplayCategoryName(category.category).toLowerCase().includes(filterCategory);
-        }
-        // Handle text search across category and group content
-        const categoryText = getDisplayCategoryName(category.category).toLowerCase();
-        const groupText = category.groups
-          .flatMap((group) => [group.title, ...group.items.map((item) => item.content)])
-          .join(" ")
-          .toLowerCase();
-        return categoryText.includes(normalizedSearch) || groupText.includes(normalizedSearch);
-      })
-    : categories;
+  const visibleCategories = categories.filter((category) => {
+    if (categoryFilter !== null && category.category !== categoryFilter) return false;
+    if (!normalizedSearch) return true;
+    const categoryText = getDisplayCategoryName(category.category).toLowerCase();
+    const groupText = category.groups
+      .flatMap((group) => [group.title, ...group.items.map((item) => item.content)])
+      .join(" ")
+      .toLowerCase();
+    return categoryText.includes(normalizedSearch) || groupText.includes(normalizedSearch);
+  });
   const normalizedTitleSearch = titleSearchQuery.trim().toLowerCase();
   const visibleTitleGroups = selectedCategory
     ? normalizedTitleSearch
@@ -298,10 +293,10 @@ export default function ManualDashboardPage() {
     setItemError("");
   };
 
-  // 파일 업로드는 미리보기 화면이 공식 경로다. 이 화면에서 바로 저장하지 않는다.
-  const goToManualUpload = () => router.push("/hq/manuals/onboarding?from=manuals");
+  const goToManualUpload = () => setShowUploadPanel(true);
 
   const handleCreateCategory = async () => {
+    if (categorySubmitPending.current) return;
     const category = categoryName.trim();
     setCategoryError("");
 
@@ -309,30 +304,48 @@ export default function ManualDashboardPage() {
       setCategoryError("카테고리 이름을 입력해주세요.");
       return;
     }
+    if (categories.some((existing) => existing.category === category)) {
+      setCategoryError("이미 존재하는 카테고리 이름입니다.");
+      return;
+    }
 
+    categorySubmitPending.current = true;
     setIsCreatingCategory(true);
 
     try {
       const response = await fetch("/api/manuals", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ category, categoryOnly: true }),
       });
-      const data = (await response.json()) as { error?: string };
+      const data = (await response.json().catch(() => null)) as { manuals?: ManualRecord[]; error?: string } | null;
 
       if (!response.ok) {
-        throw new Error(data.error || "카테고리 저장 중 오류가 발생했습니다.");
+        throw new Error(data?.error || (response.status === 401 || response.status === 403
+          ? "본사 관리자 권한을 확인해주세요. 다시 로그인한 후 시도해주세요."
+          : "카테고리 저장 중 오류가 발생했습니다."));
+      }
+      if (!data || !Array.isArray(data.manuals) || !data.manuals.some((manual) => isCategoryPlaceholder(manual) && getManualCategory(manual) === category)) {
+        throw new Error("카테고리 저장 결과를 확인하지 못했습니다. 목록을 새로고침한 후 다시 확인해주세요.");
       }
 
+      const createdManuals = data.manuals;
+      setManuals((current) => [
+        ...current.filter((manual) => !createdManuals.some((created) => created.id === manual.id)),
+        ...createdManuals,
+      ]);
+      setSearchQuery("");
+      setCategoryFilter(null);
       resetCategoryForm();
       setShowCategoryModal(false);
-      await refetchManuals();
       showToast("카테고리가 추가되었습니다.");
-      setSaveNotice(manualSaveMessage(data));
-      setReadinessRevision((value) => value + 1);
     } catch (e) {
-      setCategoryError(e instanceof Error ? e.message : "카테고리 저장 중 오류가 발생했습니다.");
+      setCategoryError(e instanceof TypeError
+        ? "네트워크 연결을 확인한 후 다시 시도해주세요."
+        : e instanceof Error ? e.message : "카테고리 저장 중 오류가 발생했습니다.");
     } finally {
+      categorySubmitPending.current = false;
       setIsCreatingCategory(false);
     }
   };
@@ -372,6 +385,7 @@ export default function ManualDashboardPage() {
       if (selectedCategoryName === previousCategory) {
         setSelectedCategoryName(newCategory);
       }
+      if (categoryFilter === previousCategory) setCategoryFilter(newCategory);
       showToast("카테고리 이름이 변경되었습니다.");
       setSaveNotice(manualSaveMessage(data));
       setReadinessRevision((value) => value + 1);
@@ -411,6 +425,7 @@ export default function ManualDashboardPage() {
         setSelectedTitleId(null);
         setView("categories");
       }
+      if (categoryFilter === editingCategory.category) setCategoryFilter(null);
       closeEditCategoryModal();
       await refetchManuals();
       showToast("카테고리가 삭제되었습니다.");
@@ -825,10 +840,13 @@ export default function ManualDashboardPage() {
                 <div className="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:gap-2 shrink-0">
                   {/* 2. 매뉴얼 추가(등록) & 카테고리 추가 (모바일: 검색창 바로 아래 좌측 정렬 및 가로 나란히 배치, PC: 전체 삭제 우측에 위치) */}
                   <div className="flex flex-row items-center justify-start gap-2 sm:order-2">
-                    <Button variant="outline" className="h-12 shrink-0 px-3 text-sm sm:px-4 sm:text-base" onClick={goToManualUpload}>
-                      <Plus size={16} className="mr-1.5 sm:mr-2" aria-hidden="true" /> 매뉴얼 추가
+                    <Button variant="outline" className="px-3 text-sm sm:px-4 sm:text-base" onClick={goToManualUpload}>
+                      <UploadCloud size={16} className="mr-1.5 sm:mr-2" aria-hidden="true" /> 매뉴얼 등록
                     </Button>
-                    <Button variant="primary" className="h-12 shrink-0 px-3 text-sm sm:px-4 sm:text-base" onClick={() => setShowCategoryModal(true)}>
+                    <Button variant="primary" className="h-12 shrink-0 px-3 text-sm sm:px-4 sm:text-base" onClick={() => {
+                      resetCategoryForm();
+                      setShowCategoryModal(true);
+                    }}>
                       <Plus size={16} className="mr-1.5 sm:mr-2" aria-hidden="true" /> 카테고리 추가
                     </Button>
                   </div>
@@ -855,9 +873,10 @@ export default function ManualDashboardPage() {
                 <div className="mb-5 flex flex-wrap gap-2" role="group" aria-label="카테고리">
                   <button
                     type="button"
-                    onClick={() => setSearchQuery("")}
+                    onClick={() => setCategoryFilter(null)}
+                    aria-pressed={categoryFilter === null}
                     className={`min-h-9 rounded-full border px-3.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${
-                      !searchQuery
+                      categoryFilter === null
                         ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/40 text-[var(--color-primary)]"
                         : "border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]/50 hover:text-[var(--color-text-primary)]"
                     }`}
@@ -868,12 +887,10 @@ export default function ManualDashboardPage() {
                     <button
                       key={category.category}
                       type="button"
-                      onClick={() => {
-                        const categoryText = `category:${category.category}`;
-                        setSearchQuery(searchQuery === categoryText ? "" : categoryText);
-                      }}
+                      onClick={() => setCategoryFilter((current) => current === category.category ? null : category.category)}
+                      aria-pressed={categoryFilter === category.category}
                       className={`min-h-9 rounded-full border px-3.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${
-                        searchQuery === `category:${category.category}`
+                        categoryFilter === category.category
                           ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/40 text-[var(--color-primary)]"
                           : "border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]/50 hover:text-[var(--color-text-primary)]"
                       }`}
@@ -917,42 +934,39 @@ export default function ManualDashboardPage() {
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                      {visibleCategories.flatMap((category) =>
-                        category.groups.map((group) => (
-                          <div key={group.id} className="relative min-w-0">
+                      {visibleCategories.map((category) => (
+                          <article key={category.category} data-manual-category={category.category} className="relative min-w-0 rounded-lg border border-[var(--color-border)] bg-white shadow-sm">
                             <button
                               type="button"
                               onClick={() => {
-                                setSelectedCategoryName(group.category);
-                                setSelectedTitleId(group.id);
-                                setItemSearchQuery("");
-                                cancelEditItem();
-                                setView("items");
+                                setSelectedCategoryName(category.category);
+                                setSelectedTitleId(null);
+                                setTitleSearchQuery("");
+                                goToTitles();
                               }}
-                              className="flex h-full w-full flex-col items-start rounded-xl border border-[var(--color-border)] bg-white p-5 text-left transition-colors hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                              aria-label={`${getDisplayCategoryName(category.category)} 카테고리 열기`}
+                              className="flex h-full min-h-40 w-full flex-col items-start rounded-lg p-5 pr-16 text-left transition-colors hover:bg-[var(--color-primary-light)]/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                             >
-                              <span className="mb-3 inline-flex max-w-full truncate rounded-full bg-[var(--color-primary-light)]/40 px-2.5 py-0.5 text-xs font-semibold text-[var(--color-primary)]">
-                                {getDisplayCategoryName(group.category)}
-                              </span>
-                              <span className="w-full text-base font-semibold text-[var(--color-text-primary)] break-keep line-clamp-2">
-                                {group.title}
-                              </span>
-                              <span className="mt-auto pt-3 text-xs text-[var(--color-text-tertiary)]">세부 매뉴얼 {group.items.length}개</span>
+                              <FileText size={24} className="mb-3 shrink-0 text-[var(--color-primary)]" aria-hidden="true" />
+                              <h2 className="w-full break-words text-base font-semibold text-[var(--color-text-primary)]">
+                                {getDisplayCategoryName(category.category)}
+                              </h2>
+                              <span className="mt-auto pt-3 text-sm text-[var(--color-text-secondary)]">타이틀 {category.groups.length}개 · 세부 매뉴얼 {category.itemCount}개</span>
                             </button>
                             <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                openEditTitleModal(group);
+                                openEditCategoryModal(category);
                               }}
-                              aria-label={`${group.title} 타이틀 수정`}
+                              aria-label={`${getDisplayCategoryName(category.category)} 카테고리 수정`}
+                              title="카테고리 수정"
                               className="absolute right-3 top-3 inline-flex h-11 w-11 items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-default)] hover:text-[var(--color-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                             >
                               <Pencil size={16} aria-hidden="true" />
                             </button>
-                          </div>
-                        ))
-                      )}
+                          </article>
+                      ))}
                     </div>
                   )}
                 </>
@@ -1180,11 +1194,36 @@ export default function ManualDashboardPage() {
         </div>
       )}
 
+      {showUploadPanel && (
+        <HQManualUpload
+          onClose={() => setShowUploadPanel(false)}
+          onSaved={(data) => {
+            setShowUploadPanel(false);
+            setSearchQuery("");
+            setCategoryFilter(null);
+            void refetchManuals();
+            setSaveNotice(manualSaveMessage(data));
+            setReadinessRevision((current) => current + 1);
+          }}
+        />
+      )}
+
       {showCategoryModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="relative w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-category-title"
+            aria-busy={isCreatingCategory}
+            className="relative w-full max-w-md rounded-xl bg-white p-6 shadow-lg"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleCreateCategory();
+            }}
+          >
             <button
               type="button"
+              disabled={isCreatingCategory}
               onClick={() => {
                 setShowCategoryModal(false);
                 resetCategoryForm();
@@ -1194,20 +1233,32 @@ export default function ManualDashboardPage() {
             >
               <X size={20} />
             </button>
-            <h2 className="mb-6 text-lg font-bold text-[var(--color-text-primary)]">카테고리 추가</h2>
+            <h2 id="create-category-title" className="mb-6 text-lg font-bold text-[var(--color-text-primary)]">카테고리 추가</h2>
             <div className="space-y-4">
               <Input
                 label="카테고리 이름"
+                aria-label="카테고리 이름"
+                aria-invalid={Boolean(categoryError)}
+                aria-describedby={categoryError ? "create-category-error" : undefined}
+                autoFocus
+                disabled={isCreatingCategory}
                 placeholder="예: 오픈/마감"
                 value={categoryName}
-                onChange={(event) => setCategoryName(event.target.value)}
-                error={categoryError}
+                onChange={(event) => {
+                  setCategoryName(event.target.value);
+                  setCategoryError("");
+                }}
               />
-              <Button variant="primary" className="w-full" isLoading={isCreatingCategory} onClick={handleCreateCategory}>
+              {categoryError && (
+                <p id="create-category-error" role="alert" className="text-sm text-[var(--color-status-error)]">
+                  {categoryError}
+                </p>
+              )}
+              <Button type="submit" variant="primary" className="w-full" isLoading={isCreatingCategory} disabled={isCreatingCategory}>
                 추가
               </Button>
             </div>
-          </div>
+          </form>
         </div>
       )}
 

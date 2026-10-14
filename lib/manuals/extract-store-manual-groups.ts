@@ -4,13 +4,13 @@ import { extractCsvRows, extractSpreadsheetSheets, rowsToFlatText } from "@/lib/
 import { parseExcelTableGroups } from "@/lib/manuals/parse-excel-table";
 
 /**
- * 지점 매뉴얼 업로드 전용 추출기. 본사 경로(extractManualGroups)는 그대로 두고, 지점 파일에서
+ * HQ·지점 매뉴얼 업로드 공용 추출기. 지점 파일에서
  * 확인된 형식(넘버/카테고리/타이틀/매뉴얼, 타이틀이 첫 행에만 있는 이어지는 행)을 공용 파서가
  * 기대하는 "카테고리/타이틀/내용" 3열로 맞춘 뒤 같은 parseExcelTableGroups에 넘긴다.
  */
 
 export const STORE_MULTI_SHEET_ERROR =
-  "지점 매뉴얼은 시트가 1개인 파일로 올려 주세요. 여러 매장·본사 시트가 한 매장에 합쳐지는 것을 막기 위해 나눠서 올려야 해요.";
+  "매뉴얼은 시트가 1개인 파일로 올려 주세요. 여러 시트의 내용이 합쳐지는 것을 막기 위해 시트별로 나누어 올려주세요.";
 
 const CATEGORY_HEADERS = new Set(["카테고리", "category"]);
 const TITLE_HEADERS = new Set(["타이틀", "제목", "title"]);
