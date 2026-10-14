@@ -8,6 +8,7 @@
 import { applyEvidenceGate, scoreChunk, type EvidenceGateThresholds } from "@/lib/rag/evidence-gate";
 import { buildLocationReferenceAnswer } from "@/lib/rag/location-reference";
 import { findVerifiedQuote } from "@/lib/rag/verified-quote";
+import { isClearlyOutOfScopeQuestion } from "@/lib/rag/search-query";
 import { boundedQuestionContext, buildInterpretedSearchQuestion, parseQuestionInterpretation, shouldInterpretQuestion, type QuestionContext, type QuestionInterpretation } from "@/lib/rag/question-interpretation";
 import { buildMenuClarification, canUseFamilyPackHistory, isFamilyPackFollowUp, selectMenuCandidates } from "@/lib/rag/manual-menu-intent";
 import {
@@ -112,6 +113,14 @@ export async function resolveRagAnswer(
 ): Promise<RagAnswerOutcome> {
   let searchResults: ManualChunkMatch[];
   const trace = (event: { stage: string; [key: string]: unknown }) => { try { deps.onDiagnostic?.(event); } catch {} };
+  if (isClearlyOutOfScopeQuestion(input.question)) {
+    trace({ stage: "final", status: "insufficient", reason: "OUT_OF_SCOPE_QUESTION" });
+    return { kind: "resolved", escalate: false, response: {
+      responseKind: "out_of_scope",
+      answer: "매장 업무 매뉴얼을 바탕으로 답변하고 있어요. 매장 업무와 관련된 내용을 질문해 주세요.",
+      similarity: null, source: null, sources: [], status: "insufficient", matches: [],
+    } };
+  }
   if (shouldInterpretQuestion(input.question) && !hasExplicitSupportIntent(input.question)) {
     trace({ stage: "final", status: "insufficient", reason: "FOLLOW_UP_INTENT_AMBIGUOUS" });
     return { kind: "resolved", escalate: false, response: {
@@ -483,10 +492,25 @@ export async function resolveRagAnswer(
       ...(recipe ? { evidenceSupport: { ...recipe.support, outcome: "unknown" as const, reason: "RECIPE_PRIOR_SCOPE_NOT_FULL" } } : {}),
     } });
   }
-  const status = usedEvidenceScore >= input.thresholds.answered ? "answered" : "cautious";
+  const verifiedTargetScope = stateConditionCovered || Boolean(structured.supportAssessment?.requirements.every(item =>
+    item.evidence.some(entry => {
+      if (entry.role !== item.kind && !(item.kind === "referral" && entry.role === "referral_policy")) return false;
+      if (entry.targetRelation === "same") return true;
+      return entry.targetRelation === "covers_requested" && Boolean(structured.supportAssessment?.requestedTarget
+        && normalizeTargetText(entry.quote).includes(normalizeTargetText(structured.supportAssessment.requestedTarget)));
+    })));
+  const strictSupportValidation = input.requireSupportAssessment && input.requireEvidenceScope && !deterministic;
+  const verifiedFullSupport = strictSupportValidation && assessedCoverage === "direct" && supportCoverage === "direct"
+    && !scopeNotice && verifiedTargetScope && (!recipe || recipe.support.outcome === "full");
+  const status = strictSupportValidation ? verifiedFullSupport ? "answered" : "cautious"
+    : usedEvidenceScore >= input.thresholds.answered ? "answered" : "cautious";
   const scopedAnswer = supportedAnswer + scopeNotice;
-  const answer = status === "cautious" ? `${scopedAnswer}${input.cautionNotice}` : scopedAnswer;
-  trace({ stage: "final", status, reason: "SUPPORTED_ANSWER", classificationReason: status === "cautious" ? "CITED_EVIDENCE_BELOW_ANSWERED_THRESHOLD" : "CITED_EVIDENCE_AT_ANSWERED_THRESHOLD",
+  const scopeCheck = strictSupportValidation && !verifiedTargetScope && structured.coverage !== "clarification"
+    ? `\n\n확인할 사항: 인용된 근거의 대상과 적용 조건이 질문하신 ${structured.supportAssessment?.requestedTarget ?? "대상"}에도 해당하는지 매장 관리자에게 확인해 주세요.` : "";
+  const answer = status === "cautious" && structured.coverage !== "clarification" ? `${scopedAnswer}${scopeCheck || input.cautionNotice}` : scopedAnswer;
+  trace({ stage: "final", status, reason: "SUPPORTED_ANSWER", classificationReason: verifiedFullSupport ? "VERIFIED_FULL_SUPPORT"
+    : strictSupportValidation ? "FULL_SUPPORT_NOT_INDEPENDENTLY_VERIFIED"
+    : status === "cautious" ? "CITED_EVIDENCE_BELOW_ANSWERED_THRESHOLD" : "CITED_EVIDENCE_AT_ANSWERED_THRESHOLD",
     usedChunkIds: validChunkIds, evidenceScore: usedEvidenceScore, supportCoverage: supportCoverage ?? structured.coverage ?? null });
 
   return {

@@ -86,6 +86,18 @@ function isStoreName(keyword: string): boolean {
   return keyword.endsWith("점");
 }
 
+export function isClearlyOutOfScopeQuestion(question: string): boolean {
+  const text = question.trim().toLowerCase();
+  const hasStoreContext = /(?:매장|지점|가게|근무|출근|퇴근|영업|운영|오픈|마감|포스|pos|결제|환불|취소|영수증|주문|발주|재고|비품|위생|소독|청소|세척|레시피|음료|커피|라떼|아메리카노|원두|시럽|우유|얼음|제빙기|머신|테이블|의자|화장실|손님|고객|배송|입고|유통기한|폐기|알바|직원|점주|사장|기준|규정|방법|위치|절차)/u.test(text);
+  if (hasStoreContext) return false;
+  if (/(?:오늘\s*|내일\s*|지금\s*)?(?:날씨|기온|미세먼지|황사|일기예보)(?:가|는|은|도)?\s*(?:어때|어떻|알려|어떠|어떨|궁금)/u.test(text)
+    || /^(?:오늘\s*|내일\s*)?비\s*(?:와|올까|오니|오나요|내려)/u.test(text)) return true;
+  if (/(?:주식|비트코인|코인\s*시세|로또\s*번호|복권|운세|타로|사주|오늘의\s*운세)/u.test(text)) return true;
+  if (/^(?:너|당신|자기)?\s*(?:누구(?:야|예요|인가요)|이름이\s*뭐|몇\s*살이야|심심해|노래\s*불러|농담\s*해줘|영화\s*추천|맛집\s*추천)/u.test(text)
+    || /(?:심심해|놀아줘|심심한데)/u.test(text)) return true;
+  return /(?:영어\s*번역|일본어\s*번역|중국어\s*번역|수학\s*문제|코딩\s*해줘|파이썬\s*코드|자바스크립트\s*코드)/u.test(text);
+}
+
 export function expandSearchQuestion(question: string): string {
   const normalizedQuestion = question.trim();
   return [normalizedQuestion, ...getIntentExpansions(normalizedQuestion)].join(" ");

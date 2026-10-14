@@ -119,7 +119,8 @@ function answerFact(answer: string, ingredient: string): ExtractedFact | null {
     if (range) return { ingredient, quantity: `${range[1] ? "약 " : ""}${range[2]}~${range[3]}`, unit: "℃",
       numericFragment: range[0].slice(range[0].indexOf(range[1] || range[2])).trim() };
   }
-  const found = normalized.match(new RegExp(`${escaped(ingredient)}(?:량은|량|은|는|을|를|의|가|이)?\\s*(?:([가-힣A-Za-z]+)의\\s*)?(약\\s*)?(\\d+(?:\\.\\d+)?(?:\\s*[~～-]\\s*\\d+(?:\\.\\d+)?)?)\\s*(ml|g|℃|%)`, "iu"));
+  const found = normalized.match(new RegExp(`${escaped(ingredient)}(?:량은|량|은|는|을|를|의|가|이)?\\s*(?:([가-힣A-Za-z]+)의\\s*)?(약\\s*)?(\\d+(?:\\.\\d+)?(?:\\s*[~～-]\\s*\\d+(?:\\.\\d+)?)?)\\s*(ml|g|℃|%)`, "iu"))
+    ?? normalized.match(new RegExp(`(?:^|[\\s,;:])(?:([가-힣A-Za-z]+)의\\s*)?(약\\s*)?(\\d+(?:\\.\\d+)?(?:\\s*[~～-]\\s*\\d+(?:\\.\\d+)?)?)\\s*(ml|g|℃|%)(?:\\s*정도)?(?:의)?\\s*${escaped(ingredient)}(?=은|는|을|를|이|가|[\\s,.]|$)`, "iu"));
   return found ? { ingredient, quantity: `${found[2] ? "약 " : ""}${found[3].replace(/\s/gu, "")}`, unit: found[4].toLowerCase(),
     ...(found[1] ? { basis: found[1] } : {}), numericFragment: `${found[2] ?? ""}${found[3]}${found[4]}` } : null;
 }
@@ -129,6 +130,16 @@ function diagnosticValue(fact: Fact) {
   const values = fact.quantity.replace(/^약 /u, "").split(/[~～-]/u).map(Number);
   return { quantity: fact.quantity, unit: fact.unit, approximate, lower: values[0], upper: values[1] ?? values[0],
     ...(fact.basis ? { basis: fact.basis } : {}) };
+}
+
+function citationIdentifiesSection(section: Section, citation: { chunkId: string; quote: string }, parsed: readonly Section[]): boolean {
+  if (citation.chunkId !== section.chunkId || !normalize(section.text).includes(normalize(citation.quote))) return false;
+  if (compact(citation.quote).includes(compact(`${section.temperature} ${section.menu}`))) return true;
+  const criteria = section.text.split(/\r?\n/u).find(line => /^기본 기준\s*:/u.test(line.trim()));
+  const quoted = normalize(citation.quote);
+  return Boolean(criteria && normalize(criteria) === quoted
+    && parsed.filter(candidate => candidate.chunkId === section.chunkId
+      && candidate.text.split(/\r?\n/u).some(line => /^기본 기준\s*:/u.test(line.trim()) && normalize(line) === quoted)).length === 1);
 }
 
 export function verifyRecipeFacts(question: string, answer: string, candidates: readonly ManualChunkMatch[],
@@ -142,9 +153,7 @@ export function verifyRecipeFacts(question: string, answer: string, candidates: 
   const modes = temperature(question);
   if (menus.length !== 1 || modes.length !== 1) return unknown("RECIPE_REQUEST_STRUCTURE_UNVERIFIED");
   const relevant = parsed.filter(section => section.menu === menus[0] && section.temperature === modes[0]);
-  const cited = relevant.filter(section => citations.some(citation => citation.chunkId === section.chunkId
-    && normalize(section.text).includes(normalize(citation.quote))
-    && compact(citation.quote).includes(compact(`${section.temperature} ${section.menu}`))));
+  const cited = relevant.filter(section => citations.some(citation => citationIdentifiesSection(section, citation, parsed)));
   if (!cited.length) {
     const wrongSection = parsed.some(section => section.menu === menus[0] && section.temperature !== modes[0]
       && citations.some(citation => citation.chunkId === section.chunkId && normalize(section.text).includes(normalize(citation.quote))));
@@ -174,9 +183,7 @@ export function verifyRecipeFacts(question: string, answer: string, candidates: 
   if (expected.some(fact => fact.unit === "%" && !fact.basis)) return unknown("RECIPE_RATIO_BASIS_UNVERIFIED");
   if (expected.some(fact => !citations.some(citation => {
     const quoted = answerFact(citation.quote, fact.ingredient);
-    return citation.chunkId === reference.chunkId && quoted?.quantity === fact.quantity && quoted.unit === fact.unit
-      && normalize(reference.text).includes(normalize(citation.quote))
-      && compact(citation.quote).includes(compact(`${reference.temperature} ${reference.menu}`))
+    return citationIdentifiesSection(reference, citation, parsed) && quoted?.quantity === fact.quantity && quoted.unit === fact.unit
       && (!quoted.basis || quoted.basis === fact.basis);
   }))) return unknown("RECIPE_CITED_FACT_UNVERIFIED");
   const knownIngredients = ["우유", "바닐라 시럽", "초콜릿 소스", "딸기 베이스", "뜨거운 물", "차가운 물", "얼음", "스팀 온도"];
@@ -193,14 +200,16 @@ export function verifyRecipeFacts(question: string, answer: string, candidates: 
       ingredient: fact.ingredient, ...diagnosticValue(fact), originalText: fact.originalText,
       source: { manualId: reference.manualId, chunkId: reference.chunkId, title: reference.title, category: reference.category, scope: reference.scope,
         sectionStart: reference.sectionStart, factStart: fact.start, factEnd: fact.end,
-        citationQuote: citations.find(citation => citation.chunkId === reference.chunkId && normalize(reference.text).includes(normalize(citation.quote))
-          && compact(citation.quote).includes(compact(`${reference.temperature} ${reference.menu}`))
+        citationQuote: citations.find(citation => citationIdentifiesSection(reference, citation, parsed)
           && answerFact(citation.quote, fact.ingredient)?.quantity === fact.quantity)!.quote } }));
     return { contradiction: false, support: { version: 1, outcome: "full", verified: expected.map(fact => ({ ingredient: fact.ingredient, quantity: fact.quantity, unit: fact.unit,
       ...(fact.basis ? { basis: fact.basis } : {}) })), missing: [], reason: "RECIPE_BOUNDED_FACTS_VERIFIED" }, sourceFacts };
   }
   const answerModes = temperature(answer);
   if (answerModes.some(mode => mode !== modes[0])) return { contradiction: true, support: { version: 1, outcome: "unknown", verified: [], missing: [], reason: "RECIPE_ANSWER_TEMPERATURE_MISMATCH" } };
+  const answerServings = [...answer.matchAll(/\b\d+oz\b/giu)].map(match => match[0].toLowerCase());
+  if (answerServings.some(serving => serving !== reference.serving.toLowerCase())) return { contradiction: true,
+    support: { version: 1, outcome: "unknown", verified: [], missing: [], reason: "RECIPE_ANSWER_SERVING_MISMATCH" } };
   const declaredMenus = [...new Set(parsed.map(section => section.menu))].filter(menu => compact(answer).includes(compact(menu)));
   if (declaredMenus.some(menu => menu !== menus[0])) return { contradiction: true, support: { version: 1, outcome: "unknown", verified: [], missing: [], reason: "RECIPE_ANSWER_MENU_MISMATCH" } };
   const verified: Fact[] = [];
@@ -232,7 +241,7 @@ export function verifyRecipeFacts(question: string, answer: string, candidates: 
   if (/대신|말고|아니|않|금지|제외|넣지|안\s/u.test(answer)) return unknown("RECIPE_ANSWER_SEMANTICS_UNVERIFIED");
   if (!missing.length && compoundUnverified) return unknown("RECIPE_COMPOUND_OR_OPTION_UNVERIFIED");
   const temperatureCheckedAnswer = reference.facts.filter(fact => /온도$/u.test(fact.ingredient) && answerFact(answer, fact.ingredient))
-    .reduce((text, fact) => text.replace(new RegExp(`${escaped(fact.ingredient)}(?:은|는|을|를|의|가|이)?\\s*(?:약\\s*)?(?:섭씨\\s*)?\\d+(?:\\.\\d+)?\\s*(?:℃|°C|도)?\\s*(?:[~～–-]|에서)\\s*\\d+(?:\\.\\d+)?\\s*(?:℃|°C|도)`, "iu"), ""), normalize(answer));
+    .reduce((text, fact) => text.replace(new RegExp(`${escaped(fact.ingredient)}(?:은|는|을|를|의|가|이)?\\s*(?:약\\s*)?(?:섭씨\\s*)?\\d+(?:\\.\\d+)?\\s*(?:℃|°C|도)?\\s*(?:[~～–-]|에서)\\s*\\d+(?:\\.\\d+)?\\s*(?:℃|°C|도)`, "iu"), ""), normalize(answer)).replace(/\b\d+oz\b/giu, "");
   if (!missing.length && /\d+(?:\.\d+)?\s*(?:L\b|리터|샷|oz\b|개|잔|도\b)/iu.test(temperatureCheckedAnswer)) return unknown("RECIPE_EXTRA_AMOUNT_UNVERIFIED");
   const supportedAmounts = reference.facts.filter(fact => answerFact(answer, fact.ingredient)).length;
   const allAmounts = [...answer.matchAll(/\d+(?:\.\d+)?(?:\s*[~～-]\s*\d+(?:\.\d+)?)?\s*(?:ml|g|℃|%)/giu)].length;
