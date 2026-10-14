@@ -69,11 +69,11 @@ export default function StaffHeader() {
   }, []);
 
   return (
-    <header className="sticky top-0 z-20 bg-white border-b border-[var(--color-border)] h-16 shrink-0">
+    <header className="fixed inset-x-0 top-0 z-50 h-16 shrink-0 bg-white border-b border-[var(--color-border)] sm:sticky sm:inset-auto sm:top-0 sm:z-20">
       <div className="flex min-w-0 items-center justify-end gap-2 pl-16 pr-4 sm:pr-6 h-full lg:pl-6">
         {/* 알림 */}
         <div className="flex shrink-0 items-center">
-          <NotificationCenter notificationPageUrl="/staff/notifications" />
+          <NotificationCenter className="hidden sm:block" notificationPageUrl="/staff/notifications" />
         </div>
 
         <StoreSelector
@@ -92,6 +92,8 @@ export default function StaffHeader() {
             subtitle={roleLabel}
             roleLabel={roleLabel}
             avatarUrl={avatarUrl}
+            mobileContext={selectedStore ? { label: "근무 매장", value: selectedStore.name } : undefined}
+            notificationPageUrl="/staff/notifications"
           />
         </div>
       </div>

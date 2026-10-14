@@ -150,6 +150,7 @@ export default function NotificationCenter({ className = "", notificationPageUrl
       }
       setNotifications((prev) => prev.map((n) => (n.id === notification.id ? { ...n, isRead: true } : n)));
       setUnreadCount((count) => Math.max(0, count - 1));
+      window.dispatchEvent(new Event(NOTIFICATIONS_CHANGED_EVENT));
     }
 
     const action = resolveNotificationClick(notification);
@@ -168,6 +169,7 @@ export default function NotificationCenter({ className = "", notificationPageUrl
       setNotifications((prev) =>
         prev.map((n) => ({ ...n, isRead: true }))
       );
+      window.dispatchEvent(new Event(NOTIFICATIONS_CHANGED_EVENT));
     } catch {
       // 실패하면 기존 배지 상태를 유지한다.
     }
@@ -259,7 +261,7 @@ export default function NotificationCenter({ className = "", notificationPageUrl
             ) : notifications.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-8 px-4 gap-4">
                 <p className="text-center text-[var(--color-text-secondary)] text-sm">
-                  새로운 알림이 없습니다.
+                  알림 없음
                 </p>
                 <Link
                   href={notificationPageUrl}

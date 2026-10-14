@@ -130,7 +130,9 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
     });
   }
 
-  if (isSupabaseSessionInvalidationError(error) && request.nextUrl.pathname !== "/api/auth/login") {
+  const isDeletedAccountCleanup = request.nextUrl.pathname === "/api/auth/session" &&
+    request.nextUrl.searchParams.get("accountDeleted") === "1";
+  if (isSupabaseSessionInvalidationError(error) && request.nextUrl.pathname !== "/api/auth/login" && !isDeletedAccountCleanup) {
     try {
       await supabase.auth.signOut({ scope: "local" });
     } catch {

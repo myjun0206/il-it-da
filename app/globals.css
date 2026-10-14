@@ -154,6 +154,19 @@ body {
   min-height: 100vh;
 }
 
+@media (max-width: 639px) {
+  html:has([data-staff-chat="true"]) {
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  body:has([data-staff-chat="true"]) {
+    height: 100dvh;
+    min-height: 100dvh;
+    overflow: hidden;
+  }
+}
+
 button,
 a,
 input,

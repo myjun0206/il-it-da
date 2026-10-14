@@ -182,6 +182,48 @@ export default function StaffNoticesPage() {
     return options.find((opt) => opt.value === value)?.label || "최신순";
   };
 
+  const renderSortDropdown = (className: string) => (
+    <div data-sort-dropdown className={`relative shrink-0 ${className}`}>
+      <button
+        type="button"
+        onClick={() => setIsSortDropdownOpen(!isSortDropdownOpen)}
+        aria-label="공지 정렬"
+        aria-expanded={isSortDropdownOpen}
+        className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:border-[var(--color-primary)]/30 focus:outline-none focus:border-[var(--color-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/30"
+      >
+        <span>{getSortLabel(sortOrder)}</span>
+        <ChevronDown size={16} className={`flex-shrink-0 transition-transform ${isSortDropdownOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+      </button>
+
+      {isSortDropdownOpen && (
+        <div className="absolute right-0 top-full mt-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-surface)] shadow-md z-50 min-w-[120px] overflow-hidden">
+          {[
+            { value: "latest" as const, label: "최신순" },
+            { value: "oldest" as const, label: "오래된순" },
+            { value: "views" as const, label: "조회수순" },
+          ].map((option, index) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => {
+                setSortOrder(option.value);
+                setPage(DEFAULT_NOTICE_PAGE);
+                setIsSortDropdownOpen(false);
+              }}
+              className={`block w-full text-left px-4 py-2.5 text-sm font-medium transition-colors ${
+                sortOrder === option.value
+                  ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
+                  : "text-[var(--color-text-primary)] hover:bg-[var(--color-bg-default)]"
+              } border-b border-[var(--color-border)]/50`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
   // 상세 보기 시 해당 공지 찾기
   const selectedNotice = detail ? allNotices.find((notice) => notice.id === detail) ?? null : null;
 
@@ -228,9 +270,9 @@ export default function StaffNoticesPage() {
     <div className="p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
         {/* 페이지 헤더 */}
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">공지사항</h1>
-          <p className="text-base text-[var(--color-text-secondary)]">본사와 근무 매장에서 전달한 공지사항을 확인할 수 있습니다.</p>
+        <div className="mb-4 sm:mb-6">
+          <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-0 sm:mb-2">공지사항</h1>
+          <p className="hidden text-base text-[var(--color-text-secondary)] sm:block">본사와 근무 매장에서 전달한 공지사항을 확인할 수 있습니다.</p>
         </div>
 
         {isStoresLoading ? (
@@ -290,9 +332,12 @@ export default function StaffNoticesPage() {
         ) : (
           <>
             {/* 검색 영역 - 검색창 + 커스텀 정렬 드롭다운 */}
-            <div className="mb-4 flex flex-col sm:flex-row gap-3 sm:items-center">
+            <div className="mb-4 flex w-full flex-col gap-3">
+              {/* 커스텀 정렬 드롭다운 */}
+              {renderSortDropdown("hidden self-end sm:block")}
+
               {/* 검색 입력 */}
-              <div className="relative flex-1">
+              <div className="relative w-full min-w-0">
                 <Search
                   size={18}
                   className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]"
@@ -318,53 +363,13 @@ export default function StaffNoticesPage() {
                   </button>
                 )}
               </div>
-
-              {/* 커스텀 정렬 드롭다운 */}
-              <div data-sort-dropdown className="relative flex-shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setIsSortDropdownOpen(!isSortDropdownOpen)}
-                  aria-label="공지 정렬"
-                  aria-expanded={isSortDropdownOpen}
-                  className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:border-[var(--color-primary)]/30 focus:outline-none focus:border-[var(--color-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/30"
-                >
-                  <span>{getSortLabel(sortOrder)}</span>
-                  <ChevronDown size={16} className={`flex-shrink-0 transition-transform ${isSortDropdownOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
-                </button>
-
-                {isSortDropdownOpen && (
-                  <div className="absolute right-0 top-full mt-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-surface)] shadow-md z-50 min-w-[120px] overflow-hidden">
-                    {[
-                      { value: "latest" as const, label: "최신순" },
-                      { value: "oldest" as const, label: "오래된순" },
-                      { value: "views" as const, label: "조회수순" },
-                    ].map((option, index) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => {
-                          setSortOrder(option.value);
-                          setPage(DEFAULT_NOTICE_PAGE);
-                          setIsSortDropdownOpen(false);
-                        }}
-                        className={`block w-full text-left px-4 py-2.5 text-sm font-medium transition-colors ${
-                          sortOrder === option.value
-                            ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
-                            : "text-[var(--color-text-primary)] hover:bg-[var(--color-bg-default)]"
-                        } border-b border-[var(--color-border)]/50`}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
             </div>
 
             {/* 필터 행 - 한 줄 통합 */}
             <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
               {/* 왼쪽: 필터 버튼들 */}
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
+                <div className="flex flex-wrap items-center gap-2 sm:contents">
                 {/* 공지 유형 필터 */}
                 {(
                   [
@@ -393,23 +398,22 @@ export default function StaffNoticesPage() {
                     </button>
                   );
                 })}
+                </div>
 
-                {/* 구분선 */}
-                <div className="h-6 w-px bg-[var(--color-border)]" aria-hidden="true" />
+                <div className="flex w-full items-center justify-between gap-3 sm:contents">
                 <select
+                  aria-label="공지 대상"
                   value={targetFilter}
-                  aria-label="공지 대상 범위"
                   onChange={(event) => {
                     setTargetFilter(event.target.value as NoticeTargetFilter);
                     setPage(DEFAULT_NOTICE_PAGE);
                   }}
-                  className="min-h-[36px] rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 text-sm text-[var(--color-text-primary)]"
+                  className="min-h-[36px] rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 text-sm text-[var(--color-text-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                 >
                   <option value="all">전체 대상</option>
-                  <option value="franchise">전체 지점</option>
-                  <option value="store">특정 지점</option>
+                  <option value="franchise">전체 매장</option>
+                  <option value="store">특정 매장</option>
                 </select>
-
                 {/* 안 읽음 토글 버튼 */}
                 <button
                   type="button"
@@ -426,6 +430,8 @@ export default function StaffNoticesPage() {
                 >
                   안 읽음
                 </button>
+                {renderSortDropdown("sm:hidden")}
+                </div>
               </div>
 
               {/* 오른쪽: 공지 개수 */}

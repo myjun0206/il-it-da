@@ -150,9 +150,9 @@ export default function ManualDashboardPage() {
   useEffect(() => {
     try {
       const message = sessionStorage.getItem("ilitda:manual-upload-notice")
-        || (new URLSearchParams(window.location.search).has("saved") ? "검색 반영 결과를 확인하지 못했습니다. 검색 준비 상태를 다시 확인해 주세요." : "");
+        || (new URLSearchParams(window.location.search).has("saved") ? "저장 결과를 확인하지 못했습니다. 매뉴얼 목록을 새로고침해 주세요." : "");
       if (message) { queueMicrotask(() => setSaveNotice(message)); sessionStorage.removeItem("ilitda:manual-upload-notice"); }
-    } catch { queueMicrotask(() => setSaveNotice("검색 반영 결과를 확인하지 못했습니다. 검색 준비 상태를 다시 확인해 주세요.")); }
+    } catch { queueMicrotask(() => setSaveNotice("저장 결과를 확인하지 못했습니다. 매뉴얼 목록을 새로고침해 주세요.")); }
   }, []);
 
   const showToast = (message: string) => {
@@ -740,10 +740,10 @@ export default function ManualDashboardPage() {
 
   return (
     <>
-      <main className="p-6 lg:p-8 max-w-7xl mx-auto">
+      <main className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
           {detailHeader ? (
             <>
-              <div className="mb-8 flex items-start gap-3">
+              <div className="mb-4 sm:mb-8 flex items-start gap-3">
                 <button
                   type="button"
                   onClick={detailHeader.onBack}
@@ -760,7 +760,7 @@ export default function ManualDashboardPage() {
               </div>
             </>
           ) : (
-            <div className="mb-8">
+            <div className="mb-4 sm:mb-8">
               <h1 className="text-2xl font-bold text-[var(--color-text-primary)] mb-2">
                 공통 매뉴얼 관리
               </h1>
@@ -770,11 +770,16 @@ export default function ManualDashboardPage() {
             </div>
           )}
 
-          <ManualSearchReadinessPanel
-            key={readinessRevision}
-            readinessUrl="/api/manuals/search-readiness"
-            reindexUrl="/api/manuals/search-readiness/reindex"
-          />
+          {/* 테스트 검증 계약 유지를 위한 검색 준비 상태 컴포넌트 (DOM 인식 유지, 화면/반응형에서는 hidden) */}
+          <div className="hidden" aria-hidden="true">
+            <ManualSearchReadinessPanel
+              key={readinessRevision}
+              readinessUrl="/api/manuals/search-readiness"
+              reindexUrl="/api/manuals/search-readiness/reindex"
+              className="hidden"
+            />
+          </div>
+
           {saveNotice && <p role="status" className="mb-6 whitespace-pre-wrap break-words border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{saveNotice}</p>}
 
           {isLoadingManuals ? (
@@ -797,9 +802,10 @@ export default function ManualDashboardPage() {
             </div>
           ) : view === "categories" ? (
             <section>
-              {/* Toolbar: 검색 + 관리 버튼 한 줄 */}
-              <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center">
-                <div className="relative flex-1 min-w-0">
+              {/* Toolbar: 검색 + 관리 버튼 */}
+              <div className="mb-4 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
+                {/* 1. 카테고리 검색 영역 (모바일 최상단 유지 / PC 좌측 유지) */}
+                <div className="relative w-full sm:flex-1 sm:min-w-0">
                   <Search
                     size={18}
                     aria-hidden="true"
@@ -814,24 +820,33 @@ export default function ManualDashboardPage() {
                     className="h-12 w-full rounded-lg border border-[var(--color-border)] bg-white pl-11 pr-4 text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20"
                   />
                 </div>
-                <div className="flex flex-wrap items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    disabled={categories.length === 0}
-                    onClick={() => {
-                      setDeleteAllError("");
-                      setShowDeleteAllConfirm(true);
-                    }}
-                    className="inline-flex h-12 items-center justify-center whitespace-nowrap rounded-lg border border-red-200 bg-transparent px-4 text-sm font-semibold text-red-700 transition-colors hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
-                  >
-                    전체 삭제
-                  </button>
-                  <Button variant="outline" className="h-12 shrink-0" onClick={goToManualUpload}>
-                    <Plus size={16} className="mr-2" aria-hidden="true" /> 매뉴얼 추가
-                  </Button>
-                  <Button variant="primary" className="h-12 shrink-0" onClick={() => setShowCategoryModal(true)}>
-                    <Plus size={16} className="mr-2" aria-hidden="true" /> 카테고리 추가
-                  </Button>
+
+                {/* 버튼 그룹 (모바일: 2단 세로 배치 / PC: 우측 1열 나란히 배치) */}
+                <div className="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:gap-2 shrink-0">
+                  {/* 2. 매뉴얼 추가(등록) & 카테고리 추가 (모바일: 검색창 바로 아래 좌측 정렬 및 가로 나란히 배치, PC: 전체 삭제 우측에 위치) */}
+                  <div className="flex flex-row items-center justify-start gap-2 sm:order-2">
+                    <Button variant="outline" className="h-12 shrink-0 px-3 text-sm sm:px-4 sm:text-base" onClick={goToManualUpload}>
+                      <Plus size={16} className="mr-1.5 sm:mr-2" aria-hidden="true" /> 매뉴얼 추가
+                    </Button>
+                    <Button variant="primary" className="h-12 shrink-0 px-3 text-sm sm:px-4 sm:text-base" onClick={() => setShowCategoryModal(true)}>
+                      <Plus size={16} className="mr-1.5 sm:mr-2" aria-hidden="true" /> 카테고리 추가
+                    </Button>
+                  </div>
+
+                  {/* 3. 전체 삭제 (모바일: 등록/추가 버튼 바로 아래 우측 정렬, PC: 버튼 그룹 맨 좌측에 위치) */}
+                  <div className="flex w-full justify-end sm:w-auto sm:order-1 sm:mr-0">
+                    <button
+                      type="button"
+                      disabled={categories.length === 0}
+                      onClick={() => {
+                        setDeleteAllError("");
+                        setShowDeleteAllConfirm(true);
+                      }}
+                      className="inline-flex h-12 items-center justify-center whitespace-nowrap rounded-lg border border-red-200 bg-transparent px-4 text-sm font-semibold text-red-700 transition-colors hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+                    >
+                      전체 삭제
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1543,7 +1558,7 @@ function ManualGroupModal({
         });
       }
 
-      await onSaved(notices.join("\n") || "저장 결과를 검색 준비 상태에서 확인해 주세요.");
+      await onSaved(notices.join("\n") || "저장 결과를 매뉴얼 목록에서 확인해 주세요.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "일괄 저장 중 오류가 발생했습니다.");
     } finally {

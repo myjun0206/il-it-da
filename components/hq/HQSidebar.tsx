@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { usePathname } from "next/navigation";
 import {
   House,
   BookOpen,
@@ -11,6 +12,7 @@ import {
   Settings,
   LogOut,
   Menu,
+  X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -42,6 +44,15 @@ export default function HQSidebar({
   activeMenu = "home",
 }: HQSidebarProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const pathname = usePathname();
+  const [previousPathname, setPreviousPathname] = useState(pathname);
+
+  if (previousPathname !== pathname) {
+    setPreviousPathname(pathname);
+    setIsOpen(false);
+  }
+
+  const closeMenu = () => setIsOpen(false);
 
   const menuItems: HQSidebarMenuItem[] = [
     { id: "home", label: "홈", icon: House, href: "/hq" },
@@ -62,14 +73,14 @@ export default function HQSidebar({
 
   return (
     <>
-      {/* Mobile Menu Button */}
+      {/* Mobile Menu Button - 상단바 내 좌측 수직 중앙(top-2.5) 배치 */}
       {!isOpen && (
         <button
           type="button"
           onClick={() => setIsOpen(true)}
           aria-label="메뉴 열기"
           aria-expanded={isOpen}
-          className="fixed top-4 left-4 z-50 lg:hidden bg-white rounded-lg p-2 border border-(--color-border)"
+          className="fixed top-2.5 left-4 z-50 lg:hidden bg-white rounded-lg p-2 border border-(--color-border)"
         >
           <Menu size={24} />
         </button>
@@ -83,8 +94,8 @@ export default function HQSidebar({
         } lg:w-60 w-64 z-40`}
       >
         {/* Logo Section - aligned with header */}
-        <div className="flex shrink-0 items-center px-6 h-16 border-b border-(--color-border)">
-          <Link href="/hq" aria-label="홈으로 이동" onClick={() => setIsOpen(false)} className="min-w-0">
+        <div className="flex shrink-0 items-center justify-between gap-3 px-6 h-16 border-b border-(--color-border)">
+          <Link href="/hq" aria-label="홈으로 이동" onClick={closeMenu} className="min-w-0">
             <Image
               src="/logo/ilitda-wordmark.png"
               alt="일잉다"
@@ -93,6 +104,16 @@ export default function HQSidebar({
               className="h-8 w-auto max-w-full object-contain"
             />
           </Link>
+          <button
+            type="button"
+            onClick={closeMenu}
+            aria-label="메뉴 닫기"
+            aria-expanded={isOpen}
+            title="메뉴 닫기"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-(--color-border) bg-white lg:hidden"
+          >
+            <X size={24} aria-hidden="true" />
+          </button>
         </div>
 
         {/* Menu Section */}
@@ -116,7 +137,7 @@ export default function HQSidebar({
             return (
               <div key={item.id}>
                 {item.href ? (
-                  <Link href={item.href} className={buttonClass}>
+                  <Link href={item.href} onClick={closeMenu} className={buttonClass}>
                     <item.icon size={20} />
                     <span>{item.label}</span>
                   </Link>
@@ -139,7 +160,7 @@ export default function HQSidebar({
                       }`;
 
                       return sub.href ? (
-                        <Link key={sub.id} href={sub.href} className={subClass}>
+                        <Link key={sub.id} href={sub.href} onClick={closeMenu} className={subClass}>
                           {sub.label}
                         </Link>
                       ) : (
@@ -165,7 +186,7 @@ export default function HQSidebar({
             }`;
 
             return item.href ? (
-              <Link key={item.id} href={item.href} className={bottomClass}>
+              <Link key={item.id} href={item.href} onClick={closeMenu} className={bottomClass}>
                 <item.icon size={20} />
                 <span>{item.label}</span>
               </Link>
@@ -179,7 +200,10 @@ export default function HQSidebar({
 
           <button
             type="button"
-            onClick={onLogout}
+            onClick={() => {
+              closeMenu();
+              onLogout();
+            }}
             className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-base font-medium text-(--color-text-secondary) hover:text-red-600 transition-colors"
           >
             <LogOut size={20} />
@@ -192,7 +216,7 @@ export default function HQSidebar({
       {isOpen && (
         <div
           className="fixed inset-0 bg-black/20 z-30 lg:hidden"
-          onClick={() => setIsOpen(false)}
+          onClick={closeMenu}
         />
       )}
     </>

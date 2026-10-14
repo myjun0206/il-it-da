@@ -12,6 +12,7 @@ type Props = {
   reindexUrl: string;
   /** 지점 화면에서만 사용. 서버가 다시 검증하므로 화면 표시에는 쓰지 않는다. */
   storeId?: string;
+  className?: string;
 };
 
 const STATUS_ICONS = {
@@ -40,7 +41,7 @@ function StatusBadge({ manual }: { manual: ManualReadinessDetail }) {
   );
 }
 
-export function ManualSearchReadinessPanel({ readinessUrl, reindexUrl, storeId }: Props) {
+export function ManualSearchReadinessPanel({ readinessUrl, reindexUrl, storeId, className }: Props) {
   const [report, setReport] = useState<ManualReadinessReport | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -114,7 +115,7 @@ export function ManualSearchReadinessPanel({ readinessUrl, reindexUrl, storeId }
   return (
     <section
       aria-label="검색 준비 상태"
-      className="mb-6 rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-bg-surface)] p-5 shadow-sm"
+      className={`mb-6 rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-bg-surface)] p-5 shadow-sm ${className ?? ""}`.trim()}
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>

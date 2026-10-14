@@ -14,6 +14,18 @@ export default async function BossLayout({
 }) {
   const result = await requireServerRole("owner");
 
+  if (result.status === "INCOMPLETE_SIGNUP_DELETED") {
+    redirect("/api/auth/session?accountDeleted=1");
+  }
+
+  if (result.status === "STORE_MEMBERSHIP_REQUIRED") {
+    redirect("/signup/stores");
+  }
+
+  if (result.status === "STORE_APPROVAL_PENDING") {
+    redirect("/signup/approval-status");
+  }
+
   if (result.status !== "AUTHORIZED") {
     redirect("/");
   }

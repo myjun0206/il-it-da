@@ -1122,8 +1122,8 @@ export default function StoreManualsManagementPage() {
             </div>
           ) : view === "categories" ? (
             <section>
-              <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-                <div className="relative flex-1 min-w-0">
+              <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="relative w-full sm:flex-1 sm:min-w-0">
                   <Search
                     size={18}
                     aria-hidden="true"
@@ -1138,31 +1138,40 @@ export default function StoreManualsManagementPage() {
                     className="h-12 w-full rounded-lg border border-(--color-border) bg-white pl-11 pr-4 text-base text-(--color-text-primary) placeholder:text-(--color-text-tertiary) focus:border-(--color-primary) focus:outline-none focus:ring-2 focus:ring-(--color-primary)/20"
                   />
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {manuals.length > 0 && (
-                    <button
-                      type="button"
+                <div className="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
+                  <div className="flex flex-row items-center justify-start gap-2 sm:order-2">
+                    <Button
+                      variant="outline"
+                      className="px-3 text-sm sm:px-4 sm:text-base"
                       onClick={() => {
-                        setDeleteAllError("");
-                        setShowDeleteAllConfirm(true);
+                        setAnalyzeError("");
+                        setShowUploadPanel(true);
                       }}
-                      className="mr-2 inline-flex h-10 items-center justify-center whitespace-nowrap rounded-md border-2 border-red-200 bg-transparent px-4 text-base font-semibold text-red-700 transition-colors hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2"
                     >
-                      전체 삭제
-                    </button>
+                      <UploadCloud size={16} className="mr-1.5 sm:mr-2" aria-hidden="true" /> 매뉴얼 등록
+                    </Button>
+                    <Button
+                      variant="primary"
+                      className="px-3 text-sm sm:px-4 sm:text-base"
+                      onClick={() => setShowCategoryModal(true)}
+                    >
+                      <Plus size={16} className="mr-1.5 sm:mr-2" /> 카테고리 추가
+                    </Button>
+                  </div>
+                  {manuals.length > 0 && (
+                    <div className="flex w-full justify-end sm:w-auto sm:order-1 sm:mr-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDeleteAllError("");
+                          setShowDeleteAllConfirm(true);
+                        }}
+                        className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-md border-2 border-red-200 bg-transparent px-3 text-sm font-semibold text-red-700 transition-colors hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2 sm:h-10 sm:px-4 sm:text-base"
+                      >
+                        전체 삭제
+                      </button>
+                    </div>
                   )}
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setAnalyzeError("");
-                      setShowUploadPanel(true);
-                    }}
-                  >
-                    <UploadCloud size={16} className="mr-2" aria-hidden="true" /> 매뉴얼 등록
-                  </Button>
-                  <Button variant="primary" onClick={() => setShowCategoryModal(true)}>
-                    <Plus size={16} className="mr-2" /> 카테고리 추가
-                  </Button>
                 </div>
               </div>
 

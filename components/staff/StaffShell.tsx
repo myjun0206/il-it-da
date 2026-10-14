@@ -19,15 +19,20 @@ function resolveActiveMenu(pathname: string): string {
 function StaffAppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { logout } = useStaffShell();
+  const isChatPage = pathname === "/staff" || pathname === "/staff/";
 
   return (
-    <div className="h-screen overflow-hidden bg-[var(--color-bg-default)]">
+    <div
+      data-staff-shell
+      data-staff-chat={isChatPage ? "true" : undefined}
+      className={`bg-[var(--color-bg-default)] sm:h-screen sm:min-h-0 sm:overflow-hidden ${isChatPage ? "h-dvh overflow-hidden" : "min-h-dvh"}`}
+    >
       <StaffSidebar activeMenu={resolveActiveMenu(pathname)} onLogout={() => void logout()} />
 
-      {/* Header 높이(h-16) = Sidebar 로고 영역 높이 → 두 경계선이 한 줄로 이어진다. 스크롤은 main 안에서만. */}
-      <div className="lg:ml-[240px] h-screen flex flex-col overflow-hidden">
+      {/* Header 높이(h-16)는 Sidebar 로고 영역과 맞춘다. 모바일은 문서가, sm 이상은 main이 스크롤된다. */}
+      <div className={`lg:ml-[240px] flex flex-col sm:h-screen sm:min-h-0 sm:overflow-hidden ${isChatPage ? "h-dvh overflow-hidden" : "min-h-dvh"}`}>
         <StaffHeader />
-        <main className="flex-1 min-h-0 overflow-y-auto">{children}</main>
+        <main className={`mt-16 sm:mt-0 sm:h-auto sm:flex-1 sm:min-h-0 sm:overflow-x-hidden sm:overflow-y-auto sm:overscroll-y-auto ${isChatPage ? "h-[calc(100dvh-4rem)] flex-none overflow-hidden" : "flex-1 overflow-visible"}`}>{children}</main>
       </div>
     </div>
   );

@@ -581,7 +581,7 @@ export default function StaffSettingsPage() {
           <p className="mb-4 text-base text-[var(--color-text-primary)] opacity-70">내 프로필과 근무 정보를 확인하고 관리합니다.</p>
 
           {/* === 프로필 섹션 === */}
-          <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 mb-8">
+          <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-4 sm:flex sm:flex-row sm:gap-6 mb-8">
             {/* Avatar: 왼쪽 고정 */}
             <div className="flex-shrink-0">
               <ProfileAvatar
@@ -603,7 +603,7 @@ export default function StaffSettingsPage() {
             </div>
 
             {/* 사용자 정보 영역: 중앙 확장 */}
-            <div className="flex-1 flex flex-col gap-4">
+            <div className="col-span-2 row-start-2 flex-1 flex flex-col gap-4">
               {/* 이름 + 역할 배지 */}
               <div className="flex items-center gap-2">
                 <h3 className="text-lg font-bold text-[var(--color-text-primary)]">
@@ -627,7 +627,7 @@ export default function StaffSettingsPage() {
             </div>
 
             {/* 사진 변경 액션: 오른쪽 끝 고정 */}
-            <div className="flex-shrink-0 flex flex-col gap-1 items-end justify-start">
+            <div className="col-start-2 row-start-1 self-center sm:self-auto flex-shrink-0 flex flex-col gap-1 items-end justify-start">
               {avatarPreview ? (
                 <div className="flex gap-2">
                   <button
@@ -652,7 +652,7 @@ export default function StaffSettingsPage() {
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={isUploadingAvatar}
-                  className="inline-flex h-10 items-center gap-2 px-3 text-sm font-medium text-[var(--color-text-primary)] border-2 border-[var(--color-border)] bg-white transition-colors hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-bg-default)] rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex h-10 max-w-full sm:max-w-none items-center gap-2 px-3 text-sm font-medium text-[var(--color-text-primary)] border-2 border-[var(--color-border)] bg-white transition-colors hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-bg-default)] rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60"
                   aria-label="프로필 사진 변경"
                 >
                   <Camera size={18} aria-hidden="true" className="flex-shrink-0" />

@@ -113,7 +113,7 @@ export default function HQShell({ children, activeMenu: propActiveMenu }: HQShel
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-white">
+    <div className="flex h-screen overflow-hidden bg-white max-sm:h-auto max-sm:min-h-dvh max-sm:overflow-visible">
       {/* 사이드바 - 좌측 고정, 모바일에서는 오버레이 */}
       <div className="fixed left-0 top-0 h-screen z-40">
         <HQSidebar
@@ -125,7 +125,7 @@ export default function HQShell({ children, activeMenu: propActiveMenu }: HQShel
       </div>
 
       {/* 메인 컨텐츠 영역 */}
-      <div className="flex-1 flex flex-col overflow-hidden lg:ml-[240px]">
+      <div className="flex-1 flex flex-col overflow-hidden lg:ml-[240px] max-sm:min-w-0 max-sm:overflow-visible">
         {/* 헤더 - 상단 고정 */}
         <HQHeader
           userName={userName}
@@ -133,7 +133,7 @@ export default function HQShell({ children, activeMenu: propActiveMenu }: HQShel
         />
 
         {/* 콘텐츠 영역 - 스크롤 가능 */}
-        <main className="flex-1 overflow-y-auto bg-[var(--color-bg-default)]">
+        <main className="flex-1 overflow-y-auto bg-[var(--color-bg-default)] max-sm:overflow-visible">
           {children}
         </main>
       </div>
