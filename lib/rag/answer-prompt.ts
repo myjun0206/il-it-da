@@ -1,5 +1,6 @@
 import type { ManualChunkMatch } from "./types";
 import type { QuestionInterpretation } from "@/lib/rag/question-interpretation";
+import { extractLatteTargets } from "@/lib/rag/latte-target";
 import { COVERAGE_VALUES, isClosingOrderDecisionQuestion, requestedSupportKinds, type SupportKind } from "@/lib/rag/structured-answer";
 
 type AnswerPromptMessage = {
@@ -105,8 +106,11 @@ export function buildGroundedAnswerMessages(
   const closingOrderGuidance = isClosingOrderDecisionQuestion(question)
     ? " 이 질문은 최종 수락/거부 정책이 아니라 마감 전 주문을 판단하는 절차를 묻는다. POS에 표시된 주문 상태와 추가 주문이 가능한 시간을 안내하고, 매뉴얼에 없는 수락/거부 기준은 만들지 마라. 서버 지정 요구 항목을 procedure로 평가하고, evidence.target은 질문의 실제 대상인 주문, role은 procedure, targetRelation은 same으로 설정하라."
     : "";
+  const latteTargets = extractLatteTargets(question);
+  const exactLatteTarget = latteTargets.length === 1
+    ? `${latteTargets[0].temperature ? `${latteTargets[0].temperature} ` : ""}${latteTargets[0].name}` : null;
   return [
-    { role: "system", content: `${GROUNDED_ANSWER_SYSTEM_PROMPT} 서버 지정 요구 항목: ${(requirements ?? requestedSupportKinds(question)).join(", ")}.${closingOrderGuidance}${interpretation?.verifiedRecipeItem ? ` 현재 질문 대상은 서버가 검증한 재료 ${interpretation.verifiedRecipeItem}다. requestedTarget과 evidence.target은 이 재료명으로 지정하고 메뉴명을 대신 넣지 마라. 해당 메뉴·온도 섹션에서 이 재료의 사실을 실제 인용할 수 있을 때만 직접 지원으로 평가하라.` : ""}` },
+    { role: "system", content: `${GROUNDED_ANSWER_SYSTEM_PROMPT} 서버 지정 요구 항목: ${(requirements ?? requestedSupportKinds(question)).join(", ")}.${closingOrderGuidance}${exactLatteTarget ? ` 질문 원문에서 확인된 라떼 메뉴 entity는 '${exactLatteTarget}'다. 이 전체 이름과 온도 조건을 답변에 그대로 사용하고, 메뉴 안의 반복 음절이나 단어를 생략해 다른 메뉴명으로 줄이지 마라.` : ""}${interpretation?.verifiedRecipeItem ? ` 현재 질문 대상은 서버가 검증한 재료 ${interpretation.verifiedRecipeItem}다. requestedTarget과 evidence.target은 이 재료명으로 지정하고 메뉴명을 대신 넣지 마라. 해당 메뉴·온도 섹션에서 이 재료의 사실을 실제 인용할 수 있을 때만 직접 지원으로 평가하라.` : ""}` },
     {
       role: "user",
       content: `[참고 매뉴얼]\n${buildGroundedManualContext(chunks)}${familyPackVariant ? `\n\n[서버가 확인한 직전 사용자 질문의 종류]\n${familyPackVariant} 패밀리팩. 수량과 절차는 참고 매뉴얼로만 확인하세요.` : ""}${interpretation ? `\n\n[서버가 검증한 질문 해석]\n${JSON.stringify({ target: interpretation.target, contextTarget: interpretation.contextTarget, constraints: interpretation.constraints, requirements: interpretation.requirements })}\n이전 질문에서 대상만 이어받고 현재 조건과 요구 범위를 평가하세요. 이전 위치 의도를 자동으로 고정하지 마세요. 답변에서 대상과 현재 조건을 명시하고, 해당 조건의 기준이 없으면 그 범위의 부족을 안내하세요. 질문 해석은 매뉴얼 근거가 아니며 기간·온도·조건을 만들어내지 마세요.` : ""}\n\n[직원 질문]\n${question}`,

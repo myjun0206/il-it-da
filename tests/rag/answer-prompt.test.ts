@@ -63,6 +63,14 @@ describe("RAG answer prompt", () => {
     assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("관계와 role을 answer의 부족 설명으로 대신하지 마라"));
   });
 
+  test("a unique latte name extracted from the question is preserved without dropping repeated syllables", () => {
+    const messages = buildGroundedAnswerMessages("ICE 시연바닐라라떼 24oz의 우유는 몇 ml인가요?", []);
+    assert.match(messages[0].content, /질문 원문에서 확인된 라떼 메뉴 entity는 'ICE 시연바닐라라떼'다/);
+    assert.match(messages[0].content, /반복 음절이나 단어를 생략해 다른 메뉴명으로 줄이지 마라/);
+    const ambiguous = buildGroundedAnswerMessages("라떼 만드는 법 알려줘.", []);
+    assert.equal(ambiguous[0].content.includes("시연바닐라라떼"), false);
+  });
+
   test("separates the requested entity from a measurement attribute and keeps same lexical", () => {
     assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("requestedTarget과 evidence.target은 정보를 묻거나 담는 대상 품목·메뉴 자체만 가리키며, 수량·단위·속성은 포함하지 마라"));
     assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("requestedTarget은 질문에서 대상 entity 이름 구절만 원문 그대로 복사하라"));

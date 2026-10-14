@@ -127,6 +127,24 @@ function deps(options: {
 }
 
 describe("recipe overblocking development cases", () => {
+  test("a demo latte name containing vanilla latte does not match the vanilla source by substring", () => {
+    const demoQuote = "● ICE 시연바닐라라떼\n기본 기준: 24oz / 바닐라 시럽 13ml / 우유 225ml / 얼음 약 70%";
+    const vanillaQuote = "● ICE 바닐라라떼\n기본 기준: 20oz / 바닐라 시럽 20ml / 우유 220ml / 얼음 약 70%";
+    const demo = chunk("demo-vanilla-overlap", { content: demoQuote });
+    const vanilla = chunk("vanilla-canonical", { content: vanillaQuote });
+    const demoQuestion = "ICE 시연바닐라라떼 24oz의 우유는 몇 ml인가요?";
+    const demoResult = verifyRecipeFacts(demoQuestion, "ICE 시연바닐라라떼 24oz의 우유는 225ml예요.", [demo, vanilla],
+      [{ chunkId: demo.chunk_id, quote: demoQuote }]);
+    assert.equal(demoResult?.support.outcome, "full");
+    assert.deepEqual(demoResult?.support.verified.map(fact => [fact.ingredient, fact.quantity, fact.unit]), [["우유", "225", "ml"]]);
+
+    const vanillaQuestion = "ICE 바닐라라떼 20oz의 우유는 몇 ml인가요?";
+    const vanillaResult = verifyRecipeFacts(vanillaQuestion, "ICE 바닐라라떼 20oz의 우유는 220ml예요.", [demo, vanilla],
+      [{ chunkId: vanilla.chunk_id, quote: vanillaQuote }]);
+    assert.equal(vanillaResult?.support.outcome, "full");
+    assert.deepEqual(vanillaResult?.support.verified.map(fact => [fact.ingredient, fact.quantity, fact.unit]), [["우유", "220", "ml"]]);
+  });
+
   test("milk quantity particles and word order remain ingredient-bound and fail closed", () => {
     for (const quantity of [220, 185]) {
       const quote = `● ICE 바닐라라떼\n기본 기준: 20oz / 바닐라 시럽 20ml / 우유 ${quantity}ml`;

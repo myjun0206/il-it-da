@@ -1,4 +1,5 @@
 import type { ManualChunkMatch } from "@/lib/rag/types";
+import { extractLatteTargets, sameLatteTarget } from "@/lib/rag/latte-target";
 
 export type RecipeEvidenceSupport = {
   version: 1;
@@ -156,7 +157,10 @@ export function verifyRecipeFacts(question: string, answer: string, candidates: 
   options?: { sourceOnly?: boolean; renderingQualifierGate?: boolean }): { contradiction: boolean; support: RecipeEvidenceSupport; sourceFacts?: VerifiedRecipeSourceFact[] } | null {
   if (!/몇|얼마|정량|기준|양|량/u.test(question)) return null;
   const parsed = candidates.flatMap(sections);
-  const menus = [...new Set(parsed.map(section => section.menu))].filter(menu => compact(question).includes(compact(menu)));
+  const requestedLatteTargets = extractLatteTargets(question);
+  const menus = [...new Set(parsed.map(section => section.menu))].filter(menu => requestedLatteTargets.length
+    ? requestedLatteTargets.some(target => sameLatteTarget(target.name, menu))
+    : compact(question).includes(compact(menu)));
   if (!menus.length) return null;
   const unknown = (reason: string) => ({ contradiction: false, support: { version: 1 as const, outcome: "unknown" as const, verified: [], missing: [], reason } });
   const modes = temperature(question);
@@ -234,7 +238,10 @@ export function verifyRecipeFacts(question: string, answer: string, candidates: 
   const answerServings = [...answer.matchAll(/\b\d+oz\b/giu)].map(match => match[0].toLowerCase());
   if (answerServings.some(serving => serving !== reference.serving.toLowerCase())) return { contradiction: true,
     support: { version: 1, outcome: "unknown", verified: [], missing: [], reason: "RECIPE_ANSWER_SERVING_MISMATCH" } };
-  const declaredMenus = [...new Set(parsed.map(section => section.menu))].filter(menu => compact(answer).includes(compact(menu)));
+  const answerLatteTargets = extractLatteTargets(answer);
+  const declaredMenus = [...new Set(parsed.map(section => section.menu))].filter(menu => answerLatteTargets.length
+    ? answerLatteTargets.some(target => sameLatteTarget(target.name, menu))
+    : compact(answer).includes(compact(menu)));
   if (declaredMenus.some(menu => menu !== menus[0])) return { contradiction: true, support: { version: 1, outcome: "unknown", verified: [], missing: [], reason: "RECIPE_ANSWER_MENU_MISMATCH" } };
   const verified: Fact[] = [];
   const missing: string[] = [];
@@ -263,7 +270,10 @@ export function verifyRecipeFacts(question: string, answer: string, candidates: 
     }
   }
   missing.push(...sourceMissing);
-  if (!compact(answer).includes(compact(menus[0])) || answerModes.length !== 1) return unknown("RECIPE_ANSWER_IDENTITY_UNVERIFIED");
+  const answerIdentityVerified = answerLatteTargets.length
+    ? answerLatteTargets.some(target => sameLatteTarget(target.name, menus[0]))
+    : compact(answer).includes(compact(menus[0]));
+  if (!answerIdentityVerified || answerModes.length !== 1) return unknown("RECIPE_ANSWER_IDENTITY_UNVERIFIED");
   if (/대신|말고|아니|아닙|아닌|아님|않|금지|제외|넣지|필요\s*없|불필요|안\s*(?:넣|쓰|사용|돼|됩|됨)|안\s/u.test(answer)) return unknown("RECIPE_ANSWER_SEMANTICS_UNVERIFIED");
   if (!missing.length && compoundUnverified) return unknown("RECIPE_COMPOUND_OR_OPTION_UNVERIFIED");
   const temperatureCheckedAnswer = reference.facts.filter(fact => /온도$/u.test(fact.ingredient) && answerFact(answer, fact.ingredient))
