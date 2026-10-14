@@ -59,10 +59,11 @@ describe("components/manuals/ManualPreviewEditor.tsx (shared preview editor acce
 });
 
 describe("app/hq/manuals/onboarding/page.tsx (preview screen usability contract)", () => {
-  const source = readSource("app/hq/manuals/onboarding/page.tsx");
+  const source = readSource("components/manuals/HQManualUpload.tsx");
   const reviewModal = readSource("components/manuals/ManualUploadReviewModal.tsx");
 
   test("renders the preview in a centered, scrollable dialog with a close button", () => {
+    assert.match(readSource("app/hq/manuals/onboarding/page.tsx"), /<HQManualUpload/);
     assert.match(source, /<ManualUploadReviewModal/);
     assert.match(reviewModal, /className="fixed inset-0 z-50[^\"]*bg-black\/40/);
     assert.match(reviewModal, /role="dialog"/);
@@ -94,9 +95,9 @@ describe("app/hq/manuals/onboarding/page.tsx (preview screen usability contract)
     assert.match(reviewModal, /isLoading=\{isSaving\}/);
   });
 
-  test("handleSave has an in-flight guard (isSubmittingRef) in addition to the isSaving disabled state", () => {
-    assert.match(source, /isSubmittingRef\.current/);
-    assert.match(source, /if \(!preview \|\| !idempotencyKey \|\| isSubmittingRef\.current\) return;/);
+  test("save has a synchronous in-flight guard in addition to the isSaving disabled state", () => {
+    assert.match(source, /pending\.current/);
+    assert.match(source, /if \(!preview \|\| !idempotencyKey \|\| pending\.current\) return;/);
   });
 
   test("save success/failure feedback uses plain Korean sentences, and errors are announced (role=alert)", () => {

@@ -46,6 +46,7 @@ describe("app/api/manuals/preview/route.ts (preview never writes to Supabase)", 
 
   test("reuses the shared extraction module and preview builder instead of duplicating parsing logic", () => {
     assert.match(source, /from "@\/lib\/manuals\/extract-manual-groups"/);
+    assert.match(source, /extractStoreManualGroups as extractManualGroups.*from "@\/lib\/manuals\/extract-store-manual-groups"/);
     assert.match(source, /from "@\/lib\/manuals\/build-manual-preview"/);
     assert.match(source, /buildManualPreview\(groups\)/);
   });
@@ -114,6 +115,7 @@ describe("app/api/manuals/upload/route.ts (still the direct-save path, now reusi
 
   test("imports extractManualGroups from the shared module instead of defining its own copy", () => {
     assert.match(source, /from "@\/lib\/manuals\/extract-manual-groups"/);
+    assert.match(source, /extractStoreManualGroups as extractManualGroups.*from "@\/lib\/manuals\/extract-store-manual-groups"/);
     assert.equal(/async function extractManualGroups/.test(source), false);
   });
 });

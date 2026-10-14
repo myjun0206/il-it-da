@@ -151,6 +151,9 @@ export default function StoreSwitcher({
           if (event.key === "ArrowDown" || event.key === "ArrowUp") {
             event.preventDefault();
             open();
+          } else if (event.key === "Escape" && isOpen) {
+            event.preventDefault();
+            close();
           }
         }}
         className={

@@ -3,12 +3,15 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
+import { Script } from "node:vm";
+import ts from "typescript";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { claimManualUploadBatch, type ManualUploadBatchRow } from "../../lib/manuals/manual-upload-batch.ts";
 import { buildConfirmedManualsPayload, buildManualPreview } from "../../lib/manuals/build-manual-preview.ts";
 import { parseConfirmedManualGroups } from "../../lib/manuals/parse-confirmed-manual-groups.ts";
 import { buildManualContentFingerprint } from "../../lib/manuals/manual-content-fingerprint.ts";
+import { MAX_UPLOAD_FILE_SIZE_BYTES, isFileSizeWithinLimit } from "../../lib/manuals/upload-limits.ts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -18,6 +21,95 @@ function readSource(relativePath: string): string {
 
 const KEY = "11111111-1111-4111-8111-111111111111";
 const HQ_SCOPE = { scopeType: "hq" as const, franchiseId: "franchise-1", storeId: null, requestedBy: "hq-user" };
+
+test("shared HQ upload executes preview, leave cancellation and one idempotent save", async () => {
+  type Element = { type: string; props: {
+    children?: unknown; role?: string; onFileSelected?: (file: File) => void;
+    onClose?: () => void; onSave?: () => void; onClick?: () => void;
+    [key: string]: unknown;
+  } };
+  const states: unknown[] = [];
+  let cursor = 0;
+  let closed = 0;
+  const saved: unknown[] = [];
+  const requests: { url: string; options: RequestInit; resolve: (response: unknown) => void }[] = [];
+  const jsx = (type: string, props: Element["props"]) => ({ type, props });
+  const hooks = {
+    useState(initial: unknown) {
+      const index = cursor++;
+      if (!(index in states)) states[index] = initial;
+      return [states[index], (next: unknown) => { states[index] = typeof next === "function" ? next(states[index]) : next; }];
+    },
+    useRef(initial: unknown) {
+      const index = cursor++;
+      if (!(index in states)) states[index] = { current: initial };
+      return states[index];
+    },
+    useEffect() {},
+  };
+  const exports: Record<string, unknown> = {};
+  const modules: Record<string, unknown> = {
+    react: hooks,
+    "react/jsx-runtime": { jsx, jsxs: jsx },
+    "lucide-react": { X: "icon" },
+    "@/components/common/Button": { Button: "button" },
+    "@/components/manuals/ManualFileDropzone": { __esModule: true, default: "dropzone" },
+    "@/components/manuals/ManualUploadReviewModal": { __esModule: true, default: "review" },
+    "@/lib/manuals/build-manual-preview": { buildConfirmedManualsPayload },
+    "@/lib/manuals/upload-limits": { MAX_UPLOAD_FILE_SIZE_BYTES, isFileSizeWithinLimit },
+  };
+  const code = ts.transpileModule(readSource("components/manuals/HQManualUpload.tsx"), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },
+  }).outputText;
+  new Script(code).runInNewContext({ exports, module: { exports }, FormData,
+    require: (name: string) => {
+      assert.ok(name in modules, name);
+      return modules[name];
+    },
+    fetch: (url: string, options: RequestInit) => new Promise(resolve => requests.push({ url, options, resolve })),
+  });
+  const render = (): Element => {
+    cursor = 0;
+    const component = exports.default as (props: { onClose: () => void; onSaved: (data: unknown) => void }) => Element;
+    return component({ onClose: () => { closed++; }, onSaved: (data: unknown) => { saved.push(data); } });
+  };
+  const find = (tree: Element, predicate: (element: Element) => boolean): Element | undefined => {
+    if (predicate(tree)) return tree;
+    const children = [tree.props.children].flat(Infinity).filter(child => child && typeof child === "object");
+    for (const child of children) {
+      const result = find(child as Element, predicate);
+      if (result) return result;
+    }
+  };
+  const file = new File(["category,title,content"], "manual.csv", { type: "text/csv" });
+  const dropzone = find(render(), element => element.type === "dropzone")!;
+  dropzone.props.onFileSelected!(file);
+  dropzone.props.onFileSelected!(file);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "/api/manuals/preview");
+  const preview = buildManualPreview([{ category: "오픈/마감", topic: "오픈 준비", items: ["불 켜기"] }]);
+  requests[0].resolve({ ok: true, json: async () => ({ preview, idempotencyKey: KEY }) });
+  await new Promise(setImmediate);
+  render().props.onClose!();
+  const dialog = find(render(), element => element.props.role === "alertdialog")!;
+  assert.ok(dialog);
+  assert.equal(closed, 0);
+  find(dialog, element => element.type === "button" && element.props.children === "계속 작성하기")!.props.onClick!();
+  const review = render();
+  assert.equal(review.type, "review");
+  review.props.onSave!();
+  review.props.onSave!();
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].url, "/api/manuals/preview/confirm");
+  const body = JSON.parse(requests[1].options.body as string);
+  assert.deepEqual(Object.keys(body).sort(), ["idempotencyKey", "manuals"]);
+  assert.equal(body.idempotencyKey, KEY);
+  assert.equal(body.manuals.length, 1);
+  requests[1].resolve({ ok: true, json: async () => ({ manuals: [{ id: "synthetic-manual" }] }) });
+  await new Promise(setImmediate);
+  assert.equal(saved.length, 1);
+  assert.equal(closed, 0);
+});
 
 function fakeBatchClient(seed: ManualUploadBatchRow[] = []) {
   const rows = seed.map((row) => ({ ...row }));
@@ -172,10 +264,13 @@ describe("idempotency key 수명주기 (실제 함수 실행)", () => {
 describe("HQ 공통 매뉴얼 화면의 공식 업로드 경로", () => {
   const commonPage = readSource("app/hq/manuals/common/page.tsx");
   const onboardingPage = readSource("app/hq/manuals/onboarding/page.tsx");
+  const upload = readSource("components/manuals/HQManualUpload.tsx");
 
-  test("파일 추가 버튼이 미리보기 화면으로 이동한다", () => {
-    assert.match(commonPage, /router\.push\("\/hq\/manuals\/onboarding\?from=manuals"\)/);
+  test("파일 추가 버튼이 공통 미리보기 업로드를 연다", () => {
+    assert.match(commonPage, /const goToManualUpload = \(\) => setShowUploadPanel\(true\)/);
     assert.match(commonPage, /onClick=\{goToManualUpload\}/);
+    assert.match(commonPage, /<HQManualUpload/);
+    assert.match(onboardingPage, /<HQManualUpload/);
   });
 
   test("공통 화면이 더 이상 구식 즉시 저장 API를 직접 호출하지 않는다", () => {
@@ -193,33 +288,40 @@ describe("HQ 공통 매뉴얼 화면의 공식 업로드 경로", () => {
     assert.match(readSource("app/hq/manuals/page.tsx"), /\/hq\/manuals\/onboarding\?from=manuals/);
   });
 
-  test("미리보기 화면은 파일 선택 -> 내용 확인 -> 저장 완료 3단계를 보여준다", () => {
-    assert.match(onboardingPage, /const STEPS = \["파일 선택", "내용 확인", "저장 완료"\] as const;/);
+  test("공통 업로드는 파일 선택과 내용 확인 후 저장 성공을 호출부에 전달한다", () => {
+    assert.match(upload, /<ManualFileDropzone/);
+    assert.match(upload, /setPreview\(data\.preview\)/);
+    assert.match(upload, /if \(preview\) return/);
+    assert.match(upload, /<ManualUploadReviewModal/);
+    assert.ok(upload.indexOf("onSaved(data)") > upload.indexOf("!Array.isArray(data?.manuals)"));
+    assert.match(onboardingPage, /manualSaveMessage\(data\)/);
   });
 
   test("저장 진행 상태를 aria-live로 알리고 오류는 role=alert로 알린다", () => {
     const reviewModal = readSource("components/manuals/ManualUploadReviewModal.tsx");
-    assert.match(onboardingPage, /<ManualUploadReviewModal/);
-    assert.match(onboardingPage, /isSaving=\{isSaving\}/);
-    assert.match(onboardingPage, /error=\{error\}/);
+    assert.match(upload, /<ManualUploadReviewModal/);
+    assert.match(upload, /isSaving=\{isSaving\}/);
+    assert.match(upload, /error=\{error\}/);
     assert.match(reviewModal, /role="status" aria-live="polite"/);
     assert.match(reviewModal, /role="alert"/);
   });
 
   test("확인이 필요한 이동은 window.confirm이 아니라 기존 확인 UI를 쓴다", () => {
-    assert.equal(onboardingPage.includes("window.confirm"), false);
-    assert.match(onboardingPage, /role="alertdialog"|setPendingLeave/);
+    assert.equal(upload.includes("window.confirm"), false);
+    assert.match(upload, /if \(preview\) setPendingLeave\(true\)/);
+    assert.match(upload, /role="alertdialog"/);
+    assert.match(upload, /if \(pending\.current\) return;/);
   });
 
   test("저장 요청 본문에 범위 값을 넣지 않는다", () => {
-    assert.match(onboardingPage, /body: JSON\.stringify\(\{ manuals: payloadManuals, idempotencyKey \}\)/);
+    assert.match(upload, /body: JSON\.stringify\(\{ manuals, idempotencyKey \}\)/);
     for (const forbidden of ["franchiseId:", "brandName:", "scopeType:", "storeId:"]) {
-      assert.equal(onboardingPage.includes(forbidden), false, `sends ${forbidden}`);
+      assert.equal(upload.includes(forbidden), false, `sends ${forbidden}`);
     }
   });
 
   test("사용자 화면 문구에 기술 용어를 노출하지 않는다", () => {
-    for (const source of [commonPage, onboardingPage]) {
+    for (const source of [commonPage, onboardingPage, upload]) {
       const koreanLiterals = (source.match(/["'`][^"'`\n]*[가-힣][^"'`\n]*["'`]/g) ?? []).join(" ");
       for (const term of ["hash", "batch", "uuid", "embedding", "chunk", "idempotency"]) {
         assert.equal(koreanLiterals.toLowerCase().includes(term), false, `shows ${term}`);
