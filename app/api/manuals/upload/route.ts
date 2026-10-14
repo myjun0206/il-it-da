@@ -6,11 +6,11 @@ import { requireHqUser } from "@/lib/supabase/hq-auth";
 import { saveManualGroupsWithBatchGuard } from "@/lib/manuals/save-manuals-with-batch";
 import type { AnalyzedManualGroup } from "@/lib/manuals/analyze-manual-with-ai";
 import {
-  extractManualGroups,
   getFileExtension,
   TEXT_EXTENSIONS,
   XLSX_EXTENSIONS,
 } from "@/lib/manuals/extract-manual-groups";
+import { extractStoreManualGroups as extractManualGroups } from "@/lib/manuals/extract-store-manual-groups";
 import { isFileSizeWithinLimit, isPlausibleXlsxMimeType } from "@/lib/manuals/upload-limits";
 import type { ManualRecord } from "@/lib/types/manual";
 
