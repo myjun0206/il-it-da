@@ -10,7 +10,7 @@ import { NoticeDetailDialog } from "@/components/notices/NoticeDetailDialog";
 import { NoticeFilter, type NoticeFilterOption } from "@/components/notices/NoticeFilter";
 import { NoticePagination } from "@/components/notices/NoticePagination";
 import { getNoticeViewCountIncrement, markNoticeAsRead } from "@/lib/notices/mark-notice-read";
-import { toStaffNotice, type NoticeSourceFilter } from "@/lib/notices/notice-filters";
+import { toStaffNotice, type NoticeSourceFilter, type NoticeTargetFilter } from "@/lib/notices/notice-filters";
 import type { NoticeReadFilter } from "@/lib/notices/with-read-status";
 import type { NoticeTargetType } from "@/lib/notices/notice-authorization";
 import type { NoticeSortOrder } from "@/lib/notices/sort-notices";
@@ -74,6 +74,7 @@ export default function StaffNoticesPage() {
   const [page, setPage] = useState(DEFAULT_NOTICE_PAGE);
   const [pageStoreId, setPageStoreId] = useState(storeId);
   const [sourceFilter, setSourceFilter] = useState<NoticeSourceFilter>("all");
+  const [targetFilter, setTargetFilter] = useState<NoticeTargetFilter>("all");
   const [detail, setDetail] = useState<string | null>(null);
   const [readFilter, setReadFilter] = useState<NoticeReadFilter>("all");
   const [isSortDropdownOpen, setIsSortDropdownOpen] = useState(false);
@@ -82,7 +83,7 @@ export default function StaffNoticesPage() {
   const noticeDetailOpen = useRef(false);
 
   const requestKey = storeId
-    ? `${storeId}:${reloadToken}:${submittedQuery}:${sortOrder}:${sourceFilter}:${readFilter}:${page}`
+    ? `${storeId}:${reloadToken}:${submittedQuery}:${sortOrder}:${sourceFilter}:${targetFilter}:${readFilter}:${page}`
     : null;
 
   useEffect(() => {
@@ -104,7 +105,7 @@ export default function StaffNoticesPage() {
     params.set("page", String(page));
     params.set("limit", String(DEFAULT_NOTICE_LIMIT));
     params.set("source", sourceFilter);
-    params.set("target", "all");
+    params.set("target", targetFilter);
     params.set("read", readFilter);
     fetch(`/api/staff/notices?${params.toString()}`, {
       credentials: "include",
@@ -140,7 +141,7 @@ export default function StaffNoticesPage() {
       });
 
     return () => controller.abort();
-  }, [storeId, requestKey, router, submittedQuery, sortOrder, sourceFilter, readFilter, page]);
+  }, [storeId, requestKey, router, submittedQuery, sortOrder, sourceFilter, targetFilter, readFilter, page]);
 
   const currentResult = result && result.key === requestKey ? result : null;
   const allNotices = currentResult?.status === "ready" ? currentResult.notices : [];
@@ -400,6 +401,19 @@ export default function StaffNoticesPage() {
                 </div>
 
                 <div className="flex w-full items-center justify-between gap-3 sm:contents">
+                <select
+                  aria-label="공지 대상"
+                  value={targetFilter}
+                  onChange={(event) => {
+                    setTargetFilter(event.target.value as NoticeTargetFilter);
+                    setPage(DEFAULT_NOTICE_PAGE);
+                  }}
+                  className="min-h-[36px] rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 text-sm text-[var(--color-text-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                >
+                  <option value="all">전체 대상</option>
+                  <option value="franchise">전체 매장</option>
+                  <option value="store">특정 매장</option>
+                </select>
                 {/* 안 읽음 토글 버튼 */}
                 <button
                   type="button"
