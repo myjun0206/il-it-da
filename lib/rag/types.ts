@@ -1,4 +1,5 @@
 import type { RecipeEvidenceSupport } from "@/lib/rag/recipe-fact-verification";
+import type { ProviderSystemErrorCode } from "@/lib/rag/provider-error";
 
 export type RagStatus = "answered" | "cautious" | "insufficient";
 
@@ -37,7 +38,7 @@ export type RagQuerySuccessResponse = {
 
 export type RagQueryErrorResponse = {
   error: string;
-  code?: "SEARCH_FAILED" | "GENERATION_FAILED" | "GENERATION_UNPARSABLE" | "RAG_QUERY_FAILED" | "PROVIDER_AUTH_FAILED" | "PROVIDER_RATE_LIMITED";
+  code?: "SEARCH_FAILED" | "GENERATION_FAILED" | "GENERATION_UNPARSABLE" | "RAG_QUERY_FAILED" | ProviderSystemErrorCode;
 };
 
 export type RagQueryResponse = RagQuerySuccessResponse | RagQueryErrorResponse;

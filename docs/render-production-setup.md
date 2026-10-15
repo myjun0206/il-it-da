@@ -6,6 +6,16 @@ Deploy as a Node **Web Service**, not a Static Site. The application uses server
 
 As of the latest recorded check on 2026-10-15, the main deployment was Live. Correcting an environment authentication problem changed the observed embedding response from HTTP 401 to HTTP 429 (`PROVIDER_RATE_LIMITED`). Billing/credit exhaustion versus transient rate limiting remains unconfirmed; the deployed fresh-AI workflow is not yet verified successful. No repeated paid probes were used to hide the failure. Existing-account local workflows passed separately and do not establish Render AI success.
 
+## Provider Failure Triage
+
+- The inspected OpenAI console organization showed Free trial and $0.00 credit. Confirm privately that Render's key belongs to that organization/project before attributing the historical 429 to its balance. The old logs did not retain the upstream error body or request ID, so the exact historical `error.type`/`error.code` cannot be recovered from them.
+- The user must add payment details/usable API credits and confirm project/model permissions in OpenAI. ChatGPT subscription billing is separate. Never try to solve this with an application-auth bypass, a threshold change or repeated paid probes. If replacing a key, the user enters it privately in Render and waits for the environment deployment to become Live.
+- New `[RAG_PROVIDER_ERROR]` records contain bounded, redacted provider type/code/message, HTTP status, request ID and supplied retry/reset information. `[RAG_SYSTEM_ERROR]` correlates the provider request ID to the application trace. Do not log credentials, authorization/cookie headers or raw response bodies. Missing provider details remain unknown.
+- `insufficient_quota`/`billing_hard_limit_reached` maps to `PROVIDER_QUOTA_EXCEEDED`; explicit `rate_limit_exceeded` maps to `PROVIDER_RATE_LIMITED`. Provider 401 and 403 map to provider-auth and permission failures; an opaque 429 is `PROVIDER_UNAVAILABLE`, not proof of a temporary limit.
+- No automatic retries are enabled at client, interpreter, embedding or generation layers. Quota/auth/permission failures must not be retried automatically. A future bounded retry is appropriate only for confirmed transient limits following supplied guidance, with one retry owner and before any persistence. Existing failed-request details must be inspected first.
+- A staff API 401 means the user session could not be verified; it is separate from upstream OpenAI 401. A stale page with an employee name is not evidence of a current session. Reauthenticate through the normal login UI before deployed acceptance checks.
+- Free fixture tests cover duplicate-submit exclusion, failed-draft recovery, settled-request unlock, new/continued conversation IDs and distinct system/validation/storage outcomes. They do not establish deployed paid-AI success. Sequential deployed questions remain gated on billing/project readiness and a valid staff session.
+
 ## Commands
 
 - Branch: `main`, only after the release PR and required CI pass.
