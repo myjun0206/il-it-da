@@ -81,6 +81,41 @@ describe("lib/rag/search-manual-chunks.ts (static contract)", () => {
   });
 });
 
+test("live search distinguishes deleted, approved-unindexed and newly ready scopes without reusing old candidates", async () => {
+  const source = ts.transpileModule(readSource("lib/rag/search-manual-chunks.ts"), { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
+  } }).outputText;
+  const require = createRequire(import.meta.url);
+  let state: "deleted" | "indexing" | "ready" = "deleted";
+  const current = { chunk_id: "new-ready-chunk", manual_id: "new-ready-manual", title: "현재 지침", category: "매장운영",
+    content: "현재 승인 지침입니다.", raw_similarity_score: .8, keyword_boost: 0, similarity_score: .8 };
+  const database = {
+    rpc: async () => ({ data: state === "ready" ? [current] : [], error: null }),
+    from(table: string) {
+      assert.equal(table, "manuals");
+      const builder = { select: () => builder, eq: () => builder, is: () => builder,
+        limit: async () => ({ data: state === "indexing" ? [{ id: "new-pending-manual" }] : [], error: null }) };
+      return builder;
+    },
+  };
+  const deps: Record<string, unknown> = { "server-only": {}, "@/lib/supabase/admin": { createAdminClient: () => database },
+    "@/lib/rag/openai-embeddings": { createEmbedding: async () => [1, ...Array(1535).fill(0)] },
+    "@/lib/rag/search-query": require("../../lib/rag/search-query.ts"),
+    "@/lib/rag/structured-answer": require("../../lib/rag/structured-answer.ts") };
+  const loaded = { exports: {} as Record<string, unknown> };
+  new Script(source).runInNewContext({ module: loaded, exports: loaded.exports,
+    require: (name: string) => { assert.ok(Object.hasOwn(deps, name)); return deps[name]; },
+    console: { info: () => {}, error: () => {} } });
+  const search = loaded.exports.searchManualChunks as (question: string, store: string, brand: string) => Promise<{ chunk_id: string }[]>;
+  assert.equal((await search("현재 지침", "store", "brand")).length, 0);
+  state = "indexing";
+  await assert.rejects(search("현재 지침", "store", "brand"), { name: "ManualSearchNotReadyError" });
+  state = "ready";
+  assert.equal((await search("현재 지침", "store", "brand"))[0].chunk_id, current.chunk_id);
+  state = "deleted";
+  assert.equal((await search("현재 지침", "store", "brand")).length, 0);
+});
+
 test("closing-order lexical recall returns only approved store/same-brand phrase rows and ranks them with the request embedding", async () => {
   const searchSource = readSource("lib/rag/search-manual-chunks.ts");
   const compiled = ts.transpileModule(searchSource, { compilerOptions: {
@@ -147,7 +182,7 @@ test("closing-order lexical recall returns only approved store/same-brand phrase
   const search = loaded.exports.searchManualChunks as (question: string, storeId: string, franchiseId: string) => Promise<{
     chunk_id: string; manual_id: string; content: string; raw_similarity_score: number; similarity_score: number;
   }[]>;
-  const question = "마감 직전에 주문이 들어왔는데 받아도 돼요?";
+  const question = "마감 직전에 주문이 들어왔는데 받아도 돼?";
   const result = await search(question, "soongsil-store", "soongsil-brand");
   assert.equal(result.length, 11);
   assert.equal(result.filter(item => item.chunk_id === locationRow.id).length, 1);

@@ -172,21 +172,22 @@ export async function claimManualUploadBatch(
       .from("manual_upload_batches")
       .select(BATCH_COLUMNS)
       .eq("content_hash", contentHash)
-      .eq("scope_type", scope.scopeType)
-      .eq("status", "completed");
+      .eq("scope_type", scope.scopeType);
 
     if (completedLookupError) {
       throw new Error("MANUAL_UPLOAD_BATCH_DUPLICATE_LOOKUP_FAILED");
     }
 
     const completedBatch = (completedBatches as ManualUploadBatchRow[] | null)?.find((row) =>
-      contentScopeMatches(row, scope),
+      row.status === "completed" && contentScopeMatches(row, scope),
     );
     if (completedBatch) {
       return { kind: "already_completed", batchId: completedBatch.id };
     }
 
-    return { kind: "duplicate_content" };
+    const partialBatch = (completedBatches as ManualUploadBatchRow[] | null)?.find(row => row.status === "failed"
+      && row.manual_count > 0 && contentScopeMatches(row, scope));
+    return { kind: "duplicate_content", ...(partialBatch ? { batchId: partialBatch.id } : {}) };
   }
 
   if (conflict.includes(KEY_INDEX)) {
@@ -214,10 +215,11 @@ export async function completeManualUploadBatch(
   batchId: string,
   manualCount: number,
 ): Promise<void> {
-  await client
+  const { error } = await client
     .from("manual_upload_batches")
     .update({ status: "completed", manual_count: manualCount, completed_at: new Date().toISOString() })
     .eq("id", batchId);
+  if (error) throw new Error("MANUAL_UPLOAD_BATCH_COMPLETE_FAILED");
 }
 
 /**
@@ -251,13 +253,15 @@ export async function failManualUploadBatch(
   client: SupabaseClient,
   batchId: string,
 ): Promise<void> {
-  const { count } = await client
+  const { count, error: countError } = await client
     .from("manuals")
     .select("id", { count: "exact", head: true })
     .eq("upload_batch_id", batchId);
+  if (countError || count === null) throw new Error("MANUAL_UPLOAD_BATCH_RECOVERY_COUNT_FAILED");
 
-  await client
+  const { error } = await client
     .from("manual_upload_batches")
     .update({ status: "failed", manual_count: count ?? 0, completed_at: new Date().toISOString() })
     .eq("id", batchId);
+  if (error) throw new Error("MANUAL_UPLOAD_BATCH_RECOVERY_FAILED");
 }

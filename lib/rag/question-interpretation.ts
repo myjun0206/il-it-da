@@ -1,6 +1,7 @@
 import { SUPPORT_KINDS, StructuredAnswerParseError, explicitRequestedSupportKinds, hasExplicitSupportIntent, normalizeTargetText, type SupportKind } from "@/lib/rag/structured-answer";
 import { extractLatteTargets } from "@/lib/rag/latte-target";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { recordProviderUsage } from "@/lib/rag/provider-usage";
 
 export type QuestionContext = {
   userId: string;
@@ -166,10 +167,15 @@ export function createQuestionInterpreter(fetchImpl: typeof fetch, apiKey: strin
       body: JSON.stringify(buildQuestionInterpretationRequest(question, messages)), signal: AbortSignal.timeout(15_000),
     });
     emit({ stage: "external_api", service: "interpretation", httpStatus: response.status, reason: response.ok ? "RESPONSE_OK" : "REQUEST_FAILED" });
-    if (!response.ok) throw new StructuredAnswerParseError("interpretation.$", "service_http_error");
+    if (!response.ok) {
+      recordProviderUsage({ service: "interpretation", model: "gpt-4o", httpStatus: response.status, inputTokens: null, outputTokens: null });
+      throw Object.assign(new StructuredAnswerParseError("interpretation.$", "service_http_error"), { diagnosticHttpStatus: response.status });
+    }
     let body;
     try { body = await response.json(); } catch { throw new StructuredAnswerParseError("interpretation.$", "invalid_json"); }
     const choice = body.choices?.[0];
+    recordProviderUsage({ service: "interpretation", model: "gpt-4o", httpStatus: response.status,
+      inputTokens: body.usage?.prompt_tokens ?? null, outputTokens: body.usage?.completion_tokens ?? null });
     const finish = ["stop", "length", "content_filter"].includes(choice?.finish_reason) ? choice.finish_reason : "unknown";
     emit({ stage: "model_completion", service: "interpretation", finishReason: finish });
     if (finish === "length") throw new StructuredAnswerParseError("interpretation.$", "response_truncated");

@@ -38,6 +38,76 @@ const INPUT = {
   cautionNotice: CAUTION_NOTICE,
 };
 
+test("re-registered recipe evidence survives new IDs, reordered candidates and separate temperature chunks", async () => {
+  const quote = "● ICE 바닐라라떼\n기본 기준: 20oz / 우유 187ml\n우유 187ml를 넣는다.";
+  for (const split of [false, true]) {
+    const current = chunk(split ? "new-ice-chunk" : "replacement-combined-chunk", {
+      manual_id: split ? "new-recipe-manual" : "replacement-manual",
+      title: "음료 제조 및 레시피 관리",
+      content: split ? quote : `● HOT 바닐라라떼\n기본 기준: 16oz / 우유 211ml\n${quote}`,
+    });
+    const other = chunk("other-temperature", { manual_id: "other-manual", title: current.title,
+      content: "● HOT 바닐라라떼\n기본 기준: 16oz / 우유 211ml" });
+    const raw = JSON.stringify({ answerable: true, answer: "ICE 바닐라라떼는 우유 187ml를 넣어요.",
+      coverage: "direct", usedChunkIds: [current.chunk_id], supportAssessment: {
+        requestedTarget: "ICE 바닐라라떼", requirements: [{ kind: "facts", support: "direct", evidence: [{
+          chunkId: current.chunk_id, quote, role: "facts", target: "ICE 바닐라라떼", targetRelation: "same",
+        }] }],
+      } });
+    const input = { ...INPUT, question: "아이스 바닐라라떼 레시피 알려줘", requireCoverage: true,
+      requireSupportAssessment: true, requireEvidenceScope: true };
+    const result = await resolveRagAnswer(input, { search: async () => split ? [other, current] : [current, other], generate: async () => raw });
+    assert.equal(result.kind, "resolved");
+    if (result.kind !== "resolved") throw new Error("new recipe evidence failed");
+    assert.equal(result.response.status, "answered");
+    assert.equal(result.response.source?.manualId, current.manual_id);
+    const oldCitation = JSON.parse(raw);
+    oldCitation.usedChunkIds = ["deleted-chunk"];
+    oldCitation.supportAssessment.requirements[0].evidence[0].chunkId = "deleted-chunk";
+    const stale = await resolveRagAnswer(input, { search: async () => [current], generate: async () => JSON.stringify(oldCitation) });
+    assert.equal(stale.kind, "resolved");
+    if (stale.kind === "resolved") { assert.equal(stale.response.status, "insufficient"); assert.equal(stale.response.source, null); }
+    const empty = await resolveRagAnswer(input, { search: async () => [], generate: async () => { throw new Error("must not generate without live evidence"); } });
+    assert.equal(empty.kind, "resolved");
+    if (empty.kind === "resolved") { assert.equal(empty.response.status, "insufficient"); assert.equal(empty.response.source, null); }
+  }
+});
+
+test("approved but unindexed current manuals return preparation guidance without generation, old citations or escalation", async () => {
+  const result = await resolveRagAnswer(INPUT, {
+    search: async () => { throw Object.assign(new Error("indexing"), { name: "ManualSearchNotReadyError" }); },
+    generate: async () => { throw new Error("must not generate while current evidence is not ready"); },
+  });
+  assert.equal(result.kind, "resolved");
+  if (result.kind !== "resolved") throw new Error("preparation was misclassified as a system error");
+  assert.equal(result.escalate, false);
+  assert.equal(result.response.source, null);
+  assert.equal(result.response.responseKind, "clarification");
+  assert.match(result.response.answer, /검색 준비/u);
+});
+
+test("colloquial closing-order questions share recall and source-only procedure intent without inventing cutoff times", async () => {
+  const line = "- 마감시간 전 마지막 주문 여부는 POS에 표시된 주문 상태를 확인하고, 애매한 경우 담당자에게 확인한다.";
+  const current = chunk("new-store-closing-chunk", { manual_id: "new-store-closing-manual", title: "매장 운영 기준", content: line });
+  for (const question of ["마감 직전에 주문이 들어왔는데 받아도 돼?", "마감 직전에 주문 받아도 돼요?",
+    "영업 종료 직전 주문을 받아도 될까요?", "마감 직전에 주문 접수해도 돼?"]) {
+    assert.equal(isClosingOrderDecisionQuestion(question), true);
+    assert.deepEqual(requestedSupportKinds(question), ["procedure"]);
+    const result = await resolveRagAnswer({ ...INPUT, question, requireCoverage: true, requireSupportAssessment: true, requireEvidenceScope: true }, {
+      search: async () => [current], generate: async () => { throw new Error("must use verified current source procedure"); },
+    });
+    assert.equal(result.kind, "resolved");
+    if (result.kind !== "resolved") throw new Error("closing procedure rejected");
+    assert.equal(result.response.status, "answered");
+    assert.equal(result.response.answer, line.slice(2));
+    assert.equal(result.response.source?.manualId, current.manual_id);
+    assert.doesNotMatch(result.response.answer, /\d{1,2}:\d{2}|무조건|받아도 돼/u);
+  }
+  assert.equal(isClosingOrderDecisionQuestion("주문 받아도 돼?"), false);
+  assert.equal(isClosingOrderDecisionQuestion("마감 직전에 발주해도 돼?"), false);
+  assert.equal(buildClosingOrderProcedureAnswer("마감 직전에 주문 받아도 돼?", [chunk("general", { content: "추가 주문이 가능한 시간을 확인한다." })]), null);
+});
+
 test("published minimum numeric diagnostics reject personal/full-response fields and require development-only ignored storage", () => {
   const directory = mkdtempSync(path.join(tmpdir(), "ilitda-public-fact-privacy-"));
   const traceId = "11111111-1111-4111-8111-111111111111";
@@ -3072,6 +3142,7 @@ describe("actual query API POST handler with mocked external boundaries", () => 
       } },
       "node:path": path,
       "@/lib/rag/answer-prompt": { buildGroundedAnswerMessages },
+      "@/lib/rag/provider-usage": require("../../lib/rag/provider-usage.ts"),
       "@/lib/rag/search-query": require("../../lib/rag/search-query.ts"),
       "@/lib/rag/question-interpretation": require("../../lib/rag/question-interpretation.ts"),
       "@/lib/rag/trace-identifiers": require("../../lib/rag/trace-identifiers.ts"),
@@ -3564,7 +3635,8 @@ describe("actual query API POST handler with mocked external boundaries", () => 
     }
     const failed = api({ results: [], interpretationError: true });
     const response = await staffChat(failed).post("이거 써도 됨?", storeId);
-    assert.equal(response.status, 500);
+    assert.equal(response.status, 503);
+    assert.equal((await response.json()).code, "PROVIDER_RATE_LIMITED");
     assert.equal(failed.events.interpretationCalls.length, 1);
     assert.equal(failed.events.searchCalls.length, 0);
     assert.equal(failed.events.logs.length, 0);
@@ -4219,7 +4291,9 @@ describe("actual query API POST handler with mocked external boundaries", () => 
           embeddingStatus: service === "embedding" ? httpStatus : undefined, answerStatus: service === "answer" ? httpStatus : undefined });
         const response = await handler.post("B 패밀리팩 구성 알려줘");
         const body = await response.json();
-        assert.equal(response.status, 500);
+        assert.equal(response.status, httpStatus === 401 ? 502 : 503);
+        assert.equal(body.code, httpStatus === 401 ? "PROVIDER_AUTH_FAILED" : "PROVIDER_RATE_LIMITED");
+        assert.equal(body.failureLayer, "provider");
         assert.equal(body.answer, undefined);
         assert.equal(body.status, undefined);
         assert.equal(handler.events.logs.length, 0);

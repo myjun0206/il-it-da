@@ -187,6 +187,16 @@ export async function searchManualChunks(
   }
 
   const matches = parseChunkMatches(data);
+  if (matches.length === 0) {
+    const [storeRows, hqRows] = await Promise.all([
+      supabase.from("manuals").select("id").eq("status", "approved").eq("scope_type", "store").eq("store_id", storeId).limit(1),
+      supabase.from("manuals").select("id").eq("status", "approved").eq("scope_type", "hq").is("store_id", null).eq("franchise_id", franchiseId).limit(1),
+    ]);
+    if (storeRows.error || hqRows.error) throw new Error("Manual search preparation lookup failed.");
+    if ((storeRows.data?.length ?? 0) + (hqRows.data?.length ?? 0) > 0) {
+      throw Object.assign(new Error("Approved manuals are not yet searchable."), { name: "ManualSearchNotReadyError" });
+    }
+  }
   if (isClosingOrderDecisionQuestion(normalizedQuestion)) {
     const excluded = new Set(matches.map(match => match.chunk_id));
     const supplemental = await searchClosingOrderLexicalMatches(supabase, storeId, franchiseId,

@@ -1,12 +1,11 @@
-import type { StructuredAnswer } from "@/lib/rag/structured-answer";
+import { isClosingOrderDecisionQuestion, type StructuredAnswer } from "@/lib/rag/structured-answer";
 import type { ManualChunkMatch } from "@/lib/rag/types";
 
 export function buildClosingOrderProcedureAnswer(
   question: string,
   chunks: readonly ManualChunkMatch[],
 ): StructuredAnswer | null {
-  if (!/(?:마감|영업\s*종료).{0,24}(?:주문|받아|접수)|(?:주문|받아|접수).{0,24}(?:마감|영업\s*종료)/u.test(question)
-    || !/(?:받아도\s*(?:되나요|돼요|되|됨)|받을\s*수\s*있나요|접수.*가능|수락.*가능)/u.test(question)) return null;
+  if (!isClosingOrderDecisionQuestion(question)) return null;
 
   const instructions = chunks.flatMap(chunk => chunk.content.split(/\r?\n/u)
     .map(line => ({ chunk, line: line.trim() }))

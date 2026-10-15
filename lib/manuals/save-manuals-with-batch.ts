@@ -13,6 +13,7 @@ import { saveManualGroupsWithChunks, type ManualGroupInput } from "@/lib/rag/sav
 import type { HqAuthResult } from "@/lib/supabase/hq-auth";
 import type { ManualRecord } from "@/lib/types/manual";
 import { requireManualWriteContract, MANUAL_FEATURE_PENDING } from "@/lib/manuals/manual-write-contract";
+import { resolveManualReadinessStatus } from "@/lib/manuals/manual-search-readiness";
 
 export const MANUAL_SELECT_COLUMNS =
   "id, brand_name, franchise_id, store_id, parent_manual_id, title, category, content, status, created_at, updated_at";
@@ -80,6 +81,15 @@ export async function saveManualGroupsWithBatchGuard(
 
     claim = await claimManualUploadBatch(client, claimInput);
 
+    if (claim.kind === "duplicate_content" && claim.batchId) {
+      const remaining = await client.from("manuals").select("id", { count: "exact", head: true }).eq("upload_batch_id", claim.batchId);
+      if (remaining.error) throw new Error("MANUAL_UPLOAD_BATCH_RECOVERY_LOOKUP_FAILED");
+      if (remaining.count === 0) {
+        await failManualUploadBatch(client, claim.batchId);
+        claim = await claimManualUploadBatch(client, claimInput);
+      }
+    }
+
     if (claim.kind === "already_completed") {
       const { data: replayed, error: replayError } = await client
         .from("manuals")
@@ -92,7 +102,17 @@ export async function saveManualGroupsWithBatchGuard(
       }
 
       if ((replayed ?? []).length > 0) {
-        return { kind: "replayed", manuals: replayed as ManualRecord[] };
+        const manuals = replayed as ManualRecord[];
+        const chunks = await client.from("manual_chunks").select("manual_id,embedding").in("manual_id", manuals.map(manual => manual.id));
+        if (chunks.error) throw new Error("MANUAL_UPLOAD_BATCH_READINESS_LOOKUP_FAILED");
+        const parents = new Set(manuals.map(manual => manual.parent_manual_id).filter(Boolean));
+        for (const manual of manuals) {
+          const flags = (chunks.data ?? []).filter(chunk => chunk.manual_id === manual.id)
+            .map(chunk => ({ manual_id: chunk.manual_id, has_embedding: chunk.embedding !== null }));
+          const state = resolveManualReadinessStatus(manual, flags, parents.has(manual.id));
+          manual.search_status = state === "needs_reindex" ? "failed" : state;
+        }
+        return { kind: "replayed", manuals };
       }
 
       // 완료 기록만 남고 매뉴얼은 모두 삭제된 경우: 빈 결과를 성공으로 돌려주지 않고 새로 저장한다.
@@ -120,7 +140,8 @@ export async function saveManualGroupsWithBatchGuard(
     return { kind: "saved", manuals };
   } catch (e) {
     console.error("[MANUAL_SAVE_GUARD] save failed:", { name: e instanceof Error ? e.name : "UnknownError" });
-    await failManualUploadBatch(client, claim.batchId);
+    try { await failManualUploadBatch(client, claim.batchId); }
+    catch { console.error("[MANUAL_SAVE_GUARD] batch recovery status could not be recorded"); }
     // 예상치 못한 오류의 message는 DB 제약명/쿼리/네트워크 상세를 담을 수 있어 응답에 넣지 않는다.
     return { kind: "save_failed", error: "매뉴얼 저장 중 오류가 발생했습니다." };
   }

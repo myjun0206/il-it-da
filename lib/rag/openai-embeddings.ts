@@ -1,4 +1,5 @@
 import type { RecipeProviderUsage } from "@/lib/rag/private-recipe-fact-diagnostics";
+import { recordProviderUsage } from "@/lib/rag/provider-usage";
 
 const OPENAI_EMBEDDING_URL = "https://api.openai.com/v1/embeddings";
 const EMBEDDING_MODEL = "text-embedding-3-small";
@@ -164,6 +165,7 @@ export async function createEmbeddings(inputs: string[], onUsage?: (usage: Recip
     });
 
     if (!response.ok) {
+      recordProviderUsage({ service: "embedding", model: EMBEDDING_MODEL, httpStatus: response.status, inputTokens: null, outputTokens: null });
       try { onUsage?.({ service: "embedding", httpStatus: response.status, inputTokens: null, outputTokens: null }); } catch {}
       const guidance = response.status === 401 ? "Check OPENAI_API_KEY." : response.status === 429 ? "Check OpenAI quota and rate limits." : "Check OpenAI service availability.";
       throw Object.assign(new Error(`OpenAI Embeddings API request failed with status ${response.status}. ${guidance}`), {
@@ -174,6 +176,8 @@ export async function createEmbeddings(inputs: string[], onUsage?: (usage: Recip
     const payload: unknown = await response.json();
     const usage = (payload as { usage?: { prompt_tokens?: number; total_tokens?: number } } | null)?.usage;
     const inputTokens = usage?.prompt_tokens ?? usage?.total_tokens;
+    recordProviderUsage({ service: "embedding", model: EMBEDDING_MODEL, httpStatus: response.status,
+      inputTokens: typeof inputTokens === "number" ? inputTokens : null, outputTokens: 0 });
     try { onUsage?.({ service: "embedding", httpStatus: response.status,
       inputTokens: typeof inputTokens === "number" && Number.isSafeInteger(inputTokens) && inputTokens >= 0 ? inputTokens : null, outputTokens: 0 }); } catch {}
     return parseAndSortOpenAiEmbeddings(payload, normalizedInputs.length);

@@ -26,6 +26,7 @@ import {
   questionContainsTargetSequence,
   needsExplicitTarget,
   sameDeclaredSourceTarget,
+  sourceContainsDeclaredTarget,
   type SupportKind,
 } from "@/lib/rag/structured-answer";
 import { verifyRecipeFacts, extractVerifiedRecipeSourceFacts, verifyRecipeModelForSourceRendering, renderVerifiedRecipeSourceFacts, type RecipeFactDiagnostic, type VerifiedRecipeSourceFact } from "@/lib/rag/recipe-fact-verification";
@@ -82,7 +83,7 @@ export type RagAnswerInput = {
   requireEvidenceScope?: boolean;
 };
 
-export type RagSystemErrorCode = "SEARCH_FAILED" | "GENERATION_FAILED" | "GENERATION_UNPARSABLE";
+export type RagSystemErrorCode = "SEARCH_FAILED" | "GENERATION_FAILED" | "GENERATION_UNPARSABLE" | "PROVIDER_AUTH_FAILED" | "PROVIDER_RATE_LIMITED";
 
 const SUPPORT_LABELS = { procedure: "구체적인 작업 절차", method: "구체적인 수행 방법", timing: "적용 시점", permission: "허용 여부", facts: "요청한 구체 기준",
   location: "보관 또는 배치 위치", conditions: "요청한 조건", duration: "요청한 기간", referral: "문의 대상" };
@@ -94,7 +95,7 @@ export type RagAnswerOutcome =
       /** 최종 insufficient일 때만 true. 기존 점주 에스컬레이션 가드를 그대로 탄다. */
       escalate: boolean;
     }
-  | { kind: "system_error"; code: RagSystemErrorCode };
+  | { kind: "system_error"; code: RagSystemErrorCode; failureLayer?: string; fieldPath?: string; validationKind?: string };
 
 function toRagSource(match: ManualChunkMatch): RagSource {
   return { manualId: match.manual_id, title: match.title, category: match.category };
@@ -159,6 +160,11 @@ export async function resolveRagAnswer(
     && !(generalInterpretation && needsExplicitTarget(input.question)
       && !input.interpretationContext?.conversation)) {
     try { await interpretQuestion(); } catch (error) {
+      const providerStatus = (error as { diagnosticHttpStatus?: number })?.diagnosticHttpStatus;
+      if (providerStatus === 401 || providerStatus === 429) {
+        trace({ stage: "final", status: "system_error", reason: "GENERATION_FAILED", failureLayer: "provider", providerHttpStatus: providerStatus });
+        return { kind: "system_error", code: providerStatus === 401 ? "PROVIDER_AUTH_FAILED" : "PROVIDER_RATE_LIMITED", failureLayer: "provider" };
+      }
       const failure = error instanceof StructuredAnswerParseError ? error : new StructuredAnswerParseError("interpretation.$", "service_transport_error");
       trace({ stage: "interpretation_validation", service: "interpretation", validation: "rejected", failureLayer: "question_interpretation",
         fieldPath: failure.fieldPath, validationKind: failure.validationKind });
@@ -217,7 +223,19 @@ export async function resolveRagAnswer(
       const difference = scoreChunk(second).evidenceScore - scoreChunk(first).evidenceScore;
       return Math.abs(difference) > 1e-6 ? difference : second.raw_similarity_score - first.raw_similarity_score;
     }).slice(0, 5);
-  } catch {
+  } catch (error) {
+    const providerStatus = (error as { diagnosticHttpStatus?: number })?.diagnosticHttpStatus;
+    if (providerStatus === 401 || providerStatus === 429) {
+      trace({ stage: "final", status: "system_error", reason: "SEARCH_FAILED", failureLayer: "provider", providerHttpStatus: providerStatus });
+      return { kind: "system_error", code: providerStatus === 401 ? "PROVIDER_AUTH_FAILED" : "PROVIDER_RATE_LIMITED", failureLayer: "provider" };
+    }
+    if (error instanceof Error && error.name === "ManualSearchNotReadyError") {
+      trace({ stage: "final", status: "insufficient", reason: "MANUAL_SEARCH_NOT_READY" });
+      return { kind: "resolved", escalate: false, response: {
+        responseKind: "clarification", answer: "등록된 매뉴얼의 검색 준비가 아직 완료되지 않았습니다. 검색 준비 완료 후 다시 질문해 주세요.",
+        similarity: null, source: null, sources: [], status: "insufficient", matches: [],
+      } };
+    }
     trace({ stage: "search", reason: "SEARCH_FAILED" });
     trace({ stage: "final", status: "system_error", reason: "SEARCH_FAILED" });
     return { kind: "system_error", code: "SEARCH_FAILED" };
@@ -312,6 +330,11 @@ export async function resolveRagAnswer(
         failureLayer: interpretationFailure ? "question_interpretation" : "model_completion" });
       trace({ stage: "final", status: "system_error", reason: "GENERATION_UNPARSABLE" });
       return { kind: "system_error", code: "GENERATION_UNPARSABLE" };
+    }
+    const providerStatus = (error as { diagnosticHttpStatus?: number })?.diagnosticHttpStatus;
+    if (providerStatus === 401 || providerStatus === 429) {
+      trace({ stage: "final", status: "system_error", reason: "GENERATION_FAILED", failureLayer: "provider", providerHttpStatus: providerStatus });
+      return { kind: "system_error", code: providerStatus === 401 ? "PROVIDER_AUTH_FAILED" : "PROVIDER_RATE_LIMITED", failureLayer: "provider" };
     }
     trace({ stage: "final", status: "system_error", reason: "GENERATION_FAILED" });
     return { kind: "system_error", code: "GENERATION_FAILED" };
@@ -417,8 +440,8 @@ export async function resolveRagAnswer(
       const verifiedQuote = match ? findVerifiedQuote(match.content, entry.quote) : undefined;
       if (!match) failure = { fieldPath: `${field}.chunkId`, validationKind: "unprovided_evidence" };
       else if (verifiedQuote === undefined) failure = { fieldPath: `${field}.quote`, validationKind: "quote_mismatch" };
-      else if (entry.target && !normalizeTargetText(match.content).includes(normalizeTargetText(entry.target))
-        && !normalizeTargetText(match.title).includes(normalizeTargetText(entry.target))) failure = { fieldPath: `${field}.target`, validationKind: "source_target_mismatch" };
+      else if (entry.target && !sourceContainsDeclaredTarget(match.content, entry.target)
+        && !sourceContainsDeclaredTarget(match.title, entry.target)) failure = { fieldPath: `${field}.target`, validationKind: "source_target_mismatch" };
       else if (entry.targetRelation === "same" && !(target && sameDeclaredSourceTarget(target, entry.target!, entry.quote))) failure = {
         fieldPath: `${field}.targetRelation`, validationKind: "target_relation_mismatch", requestedTarget: target!, evidenceTarget: entry.target!, targetRelation: entry.targetRelation,
       };

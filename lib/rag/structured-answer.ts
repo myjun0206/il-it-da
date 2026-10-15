@@ -33,8 +33,14 @@ export function normalizeTargetText(value: string): string {
 
 export function questionContainsTargetSequence(question: string, target: string): boolean {
   const stripParticle = (word: string) => normalizeTargetText(word).replace(/(?:되었을|됐을|되었던|됐던|되었다|됐다|되는|된|되면|될|되어|돼|되|에서는|이라면|이라서|이면|에는|에서|으로|이랑|랑|과|와|로|은|는|이|가|을|를|에|의|도)$/u, "");
-  const questionWords = normalizeTargetText(question).split(/[^\p{L}\p{N}]+/u).map(stripParticle).filter(Boolean);
-  const targetWords = normalizeTargetText(target).split(/[^\p{L}\p{N}]+/u).map(stripParticle).filter(Boolean);
+  const normalizeWord = (word: string) => {
+    const stripped = stripParticle(word);
+    if (/^(?:아이스|ICE|ICED)$/iu.test(stripped)) return "ICE";
+    if (/^(?:핫|HOT)$/iu.test(stripped)) return "HOT";
+    return stripped;
+  };
+  const questionWords = normalizeTargetText(question).split(/[^\p{L}\p{N}]+/u).map(normalizeWord).filter(Boolean);
+  const targetWords = normalizeTargetText(target).split(/[^\p{L}\p{N}]+/u).map(normalizeWord).filter(Boolean);
   if (!targetWords.length) return false;
   let next = 0;
   for (const word of questionWords) {
@@ -66,6 +72,13 @@ export function sameDeclaredSourceTarget(requested: string, evidence: string, qu
     const names = declaration.slice(1).map(normalizeTargetText);
     return names.includes(requestedText) && names.includes(evidenceText);
   });
+}
+
+export function sourceContainsDeclaredTarget(source: string, target: string): boolean {
+  const anchored = normalizeTargetText(target).replace(/[.!?。？！]+$/u, "").trim();
+  if (!anchored) return false;
+  return normalizeTargetText(source).includes(anchored)
+    || anchored.split(/[^\p{L}\p{N}]+/u).filter(Boolean).length > 1 && questionContainsTargetSequence(source, anchored);
 }
 
 export type StructuredAnswer = {
@@ -256,7 +269,7 @@ export function hasExplicitSupportIntent(question: string): boolean {
 
 export function isClosingOrderDecisionQuestion(question: string): boolean {
   return /(?:마감|영업\s*종료).{0,24}(?:주문|접수)|(?:주문|접수).{0,24}(?:마감|영업\s*종료)/u.test(question)
-    && /(?:받아도\s*(?:되나요|돼요|되|됨)|받을\s*수\s*있나요|접수.*가능|수락.*가능)/u.test(question);
+    && /(?:(?:받아도|접수해도|수락해도)\s*(?:되나요|돼요|돼|되|됨|될까요)|받을\s*수\s*있나요|접수.*가능|수락.*가능)/u.test(question);
 }
 
 export function requestedSupportKinds(question: string): SupportKind[] {

@@ -37,7 +37,7 @@ export type RagQuerySuccessResponse = {
 
 export type RagQueryErrorResponse = {
   error: string;
-  code?: "SEARCH_FAILED" | "GENERATION_FAILED" | "GENERATION_UNPARSABLE" | "RAG_QUERY_FAILED";
+  code?: "SEARCH_FAILED" | "GENERATION_FAILED" | "GENERATION_UNPARSABLE" | "RAG_QUERY_FAILED" | "PROVIDER_AUTH_FAILED" | "PROVIDER_RATE_LIMITED";
 };
 
 export type RagQueryResponse = RagQuerySuccessResponse | RagQueryErrorResponse;
