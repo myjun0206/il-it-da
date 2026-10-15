@@ -1,3 +1,5 @@
+import { normalizeManualQuestion } from "@/lib/rag/normalize-manual-question";
+
 const INTENT_EXPANSIONS: ReadonlyArray<readonly [RegExp, readonly string[]]> = [
   [/몇\s*시|언제\s*열어|언제\s*닫아|언제부터\s*언제까지|문\s*여나요/u, ["영업시간", "운영시간", "오픈", "마감"]],
   [/어디(?:에|야)?/u, ["위치"]],
@@ -101,12 +103,12 @@ export function isClearlyOutOfScopeQuestion(question: string): boolean {
 }
 
 export function expandSearchQuestion(question: string): string {
-  const normalizedQuestion = question.trim();
+  const normalizedQuestion = normalizeManualQuestion(question);
   return [normalizedQuestion, ...getIntentExpansions(normalizedQuestion)].join(" ");
 }
 
 export function extractSearchKeywords(question: string): string[] {
-  const normalizedQuestion = question.trim();
+  const normalizedQuestion = normalizeManualQuestion(question);
   const tokens = normalizedQuestion
     .toLocaleLowerCase("ko-KR")
     .split(/[^\p{L}\p{N}]+/u)
@@ -124,7 +126,7 @@ export function extractSearchKeywords(question: string): string[] {
 }
 
 export function formatSearchEmbeddingInput(question: string): string {
-  const normalizedQuestion = question.trim();
+  const normalizedQuestion = normalizeManualQuestion(question);
   const expandedQuestion = expandSearchQuestion(normalizedQuestion);
 
   return `매뉴얼 검색 질문: ${expandedQuestion}`;
