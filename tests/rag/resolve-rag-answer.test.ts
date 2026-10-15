@@ -1689,6 +1689,29 @@ describe("근거가 충분한 질문", () => {
     assert.equal(/\d+\s*(?:일|시간|℃)/u.test(outcome.response.answer), false);
   });
 
+  test("explicit ingredient quantities after a recipe request load user menu context but never inherit storage or another topic", () => {
+    for (const prior of ["ICE 카페라떼 레시피 알려줘.", "HOT 바닐라라떼 만드는 방법 알려줘."]) {
+      const messages = [{ role: "user" as const, content: prior }, { role: "assistant" as const, content: "우유 정량은 현재 근거에서 다시 확인해야 합니다." }];
+      for (const question of ["그럼 우유는 몇 ml야?", "그러면 우유는 몇 밀리리터인가요?", "그럼 시럽은 몇 g인가요?", "그럼 우유는?"]) {
+        assert.equal(shouldInterpretQuestion(question), true);
+        const context = getLatteAmountFollowUpContext(question, messages);
+        assert.ok(context);
+        assert.equal(context.contextTarget, prior.startsWith("ICE") ? "ICE 카페라떼" : "HOT 바닐라라떼");
+        const request = buildQuestionInterpretationRequest(question, messages);
+        assert.deepEqual(request.response_format.json_schema.schema.properties.contextTarget.enum, [context.contextTarget]);
+        assert.deepEqual(request.response_format.json_schema.schema.properties.requirements.items.enum, ["facts"]);
+        const interpretation = parseQuestionInterpretation(JSON.stringify({ target: context.item, requirements: ["facts"], constraints: [],
+          contextTarget: context.contextTarget, clarification: false }), question, messages);
+        assert.equal(interpretation.contextTarget, context.contextTarget);
+      }
+      assert.equal(getLatteAmountFollowUpContext("우유는 어디에 보관해?", messages), null);
+      assert.equal(getLatteAmountFollowUpContext("그럼 우유는 몇 ml야?", [...messages, { role: "user", content: "오늘 마감 순서 알려줘." }]), null);
+      assert.equal(getLatteAmountFollowUpContext("그럼 우유는 몇 ml야?", [{ role: "assistant", content: prior }]), null);
+      assert.equal(getLatteAmountFollowUpContext("그럼 다른 메뉴 우유는 몇 ml야?", messages), null);
+    }
+    assert.equal(getLatteAmountFollowUpContext("그럼 우유는 몇 ml야?", [{ role: "user", content: "카페라떼 레시피 알려줘." }]), null);
+  });
+
   test("a short latte ingredient follow-up carries only the latest explicit user menu and temperature", async () => {
     const question = "그럼 우유는?";
     const previousQuestion = "바닐라라떼 아이스 시럽 얼마 넣음?";
@@ -1763,6 +1786,36 @@ describe("근거가 충분한 질문", () => {
     assert.ok(outcome.response.answer.includes("220ml"));
     assert.equal(outcome.response.source?.manualId, recipe.manual_id);
     assert.equal(events.find(event => event.stage === "interpretation_validation")?.validation, "accepted");
+  });
+
+  test("quantity follow-up after a recipe request searches the user menu and keeps strict current-source citations", async () => {
+    const question = "그러면 우유는 몇 ml인가요?";
+    const conversation = { userId: "staff", storeId: "store", messages: [
+      { role: "user" as const, content: "ICE 카페라떼 레시피 알려줘." },
+      { role: "assistant" as const, content: "이전 답변 자체는 정량 근거가 아닙니다." },
+    ] };
+    const quote = "기본 기준: 20oz / 우유 193ml";
+    const recipe = chunk("synthetic-recipe-quantity", { title: "음료 제조", content: `● ICE 카페라떼\n${quote}`, raw_similarity_score: .8 });
+    for (const validQuote of [true, false]) {
+      const outcome = await resolveRagAnswer({ ...INPUT, question, requireCoverage: true, requireSupportAssessment: true, requireEvidenceScope: true,
+        interpretationContext: { userId: "staff", storeId: "store", conversation } }, {
+        interpret: async () => ({ target: "우유", contextTarget: "ICE 카페라떼", requirements: ["facts"], constraints: [], clarification: false }),
+        search: async query => { assert.ok(query.includes("확인된 이전 질문 대상: ICE 카페라떼")); return [recipe]; },
+        generate: async (query, _chunks, _variant, interpretation) => {
+          assert.ok(query.includes("현재 이어서 묻는 항목: 우유 정량"));
+          assert.equal(interpretation?.verifiedRecipeItem, "우유");
+          return JSON.stringify({ answerable: true, answer: "ICE 카페라떼 우유는 193ml입니다.", coverage: "direct", usedChunkIds: [recipe.chunk_id],
+            supportAssessment: { requestedTarget: "우유", requirements: [{ kind: "facts", support: "direct", evidence: [{ chunkId: recipe.chunk_id,
+              quote: validQuote ? quote : "우유는 194ml를 사용한다.", role: "facts", target: "우유", targetRelation: "same" }] }] } });
+        },
+      });
+      assert.equal(outcome.kind, validQuote ? "resolved" : "system_error");
+      if (outcome.kind === "resolved") {
+        assert.equal(outcome.response.status, "answered");
+        assert.equal(outcome.response.source?.manualId, recipe.manual_id);
+        assert.ok(outcome.response.answer.includes("193ml"));
+      } else assert.equal(outcome.code, "GENERATION_UNPARSABLE");
+    }
   });
 
   test("explicit storage location after a latte amount turn does not inherit recipe context", async () => {
