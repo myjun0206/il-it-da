@@ -77,6 +77,10 @@ export function selectMenuCandidates(question: string, matches: readonly ManualC
   return { matches: selected, requestedMenus: active ? requestedMenus : [], requestedPackVariants, rejectedChunkIds };
 }
 
+export function buildRecipeTemperatureClarification(menu: string): string {
+  return `ICE와 HOT 중 어떤 온도 기준의 ${menu}를 말씀하시나요?`;
+}
+
 export function buildMenuClarification(question: string, provided: readonly ManualChunkMatch[]) {
   if (isFamilyPackOperation(question) && familyPackVariants(question).length === 0) {
     const packs = provided.filter((match) => /패밀리\s*팩/u.test(`${match.title}\n${match.content}`));
@@ -94,7 +98,7 @@ export function buildMenuClarification(question: string, provided: readonly Manu
       .filter((target) => target.name === requestedMenus[0] && target.temperature)
       .map((target) => target.temperature!)));
     if (modes.size === 1) return null;
-    return { answerable: true, answer: `ICE와 HOT 중 어떤 온도 기준의 ${requestedMenus[0]}를 말씀하시나요?`, usedChunkIds: identified.map((match) => match.chunk_id) };
+    return { answerable: true, answer: buildRecipeTemperatureClarification(requestedMenus[0]), usedChunkIds: identified.map((match) => match.chunk_id) };
   }
   const identified = provided.filter((match) => candidateMenuNames(match).length > 0 || /라떼/u.test(`${match.title}\n${match.content}`));
   if (identified.length === 0) return { answerable: false, answer: "", usedChunkIds: [] as string[] };
