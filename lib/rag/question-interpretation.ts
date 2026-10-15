@@ -1,5 +1,6 @@
 import { SUPPORT_KINDS, StructuredAnswerParseError, explicitRequestedSupportKinds, hasExplicitSupportIntent, normalizeTargetText, type SupportKind } from "@/lib/rag/structured-answer";
 import { extractLatteTargets } from "@/lib/rag/latte-target";
+import { buildRecipeTemperatureClarification } from "@/lib/rag/manual-menu-intent";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { recordProviderUsage } from "@/lib/rag/provider-usage";
 import { createProviderHttpError, createProviderTransportError, getProviderFailure } from "@/lib/rag/provider-error";
@@ -21,11 +22,39 @@ export type QuestionInterpretation = {
 
 export type LatteAmountFollowUpContext = { contextTarget: string; menuName: string; temperature: "HOT" | "ICE"; item: string };
 
-const SHORT_RECIPE_ITEM_FOLLOW_UP = /^(?:그럼|그러면)\s*(우유|바닐라\s*시럽|시럽|얼음|차가운\s*물|뜨거운\s*물)(?:은|는|이|가)?\s*(?:(?:몇\s*(?:ml|g|밀리리터|그램)|얼마(?:나)?)(?:야|인가요|예요|이에요|이지|죠|인가)?)?\s*[?？.!]*$/iu;
+const SHORT_RECIPE_ITEM_FOLLOW_UP = /^(?:그럼|그러면)\s*(우유|바닐라\s*시럽|시럽|에스프레소|얼음|차가운\s*물|뜨거운\s*물)(?:은|는|이|가)?\s*(?:(?:몇\s*(?:ml|g|밀리리터|그램)|얼마(?:나)?)(?:야|인가요|예요|이에요|이지|죠|인가)?)?\s*[?？.!]*$/iu;
+
+function recipeSelectionReply(question: string) {
+  const text = normalizeTargetText(question).replace(/[?？.!]+$/u, "").replace(/(?:이에요|입니다|예요|이야|야|요)$/u, "").trim();
+  if (/^(?:ICE(?:D)?|HOT|아이스|핫)$/iu.test(text)) return { text, menu: null };
+  const targets = extractLatteTargets(text);
+  if (targets.length !== 1 || !targets[0].temperature) return null;
+  const prefix = text.match(/^(?:ICE(?:D)?|HOT|아이스|핫)\s*/iu)?.[0];
+  return prefix && text.slice(prefix.length).replace(/\s+/gu, "") === targets[0].name ? { text, menu: targets[0].name } : null;
+}
+
+export function isRecipeSelectionReply(question: string): boolean {
+  return Boolean(recipeSelectionReply(question));
+}
+
+export function restoreRecipeSelectionQuestion(question: string, messages: readonly { role: "user" | "assistant"; content: string }[]): string | null {
+  const reply = recipeSelectionReply(question);
+  const clarification = messages.at(-1);
+  const request = messages.at(-2);
+  if (!reply || clarification?.role !== "assistant" || request?.role !== "user"
+    || !/(?:레시피|제조\s*(?:법|방법)|만드는\s*(?:법|방법))/u.test(request.content)) return null;
+  const menus = extractLatteTargets(request.content);
+  if (menus.length !== 1 || menus[0].temperature || reply.menu && reply.menu !== menus[0].name
+    || normalizeTargetText(clarification.content) !== buildRecipeTemperatureClarification(menus[0].name)) return null;
+  const temperature = reply.text.match(/^(?:ICE(?:D)?|HOT|아이스|핫)/iu)?.[0];
+  return temperature ? `${temperature} ${request.content}` : null;
+}
 
 function explicitLatteAmountContext(messages: readonly { role: "user" | "assistant"; content: string }[]) {
   for (let index = messages.length - 1; index >= 0; index--) {
-    const previous = messages[index];
+    const original = messages[index];
+    const restored = original.role === "user" ? restoreRecipeSelectionQuestion(original.content, messages.slice(0, index)) : null;
+    const previous = restored ? { ...original, content: restored } : original;
     if (previous.role !== "user" || !/(?:레시피|제조\s*(?:법|방법)|만드는\s*(?:법|방법)|얼마|정량|몇\s*(?:ml|g)|\d+(?:\.\d+)?\s*(?:ml|g))/u.test(previous.content)) continue;
     const targets = extractLatteTargets(previous.content);
     if (targets.length !== 1) continue;
@@ -69,8 +98,7 @@ export function isLatteAmountContextualFollowUp(
   contextTarget: string | null | undefined,
 ): boolean {
   const prior = getLatteAmountFollowUpContext(question, messages);
-  if (!prior || !contextTarget || normalizeTargetText(contextTarget) !== normalizeTargetText(prior.contextTarget)
-    || !messages.some(message => message.role === "user" && message.content.includes(contextTarget))) return false;
+  if (!prior || !contextTarget || normalizeTargetText(contextTarget) !== normalizeTargetText(prior.contextTarget)) return false;
   const targets = extractLatteTargets(contextTarget);
   if (targets.length !== 1 || targets[0].name !== prior.menuName) return false;
   const contextModes = [
@@ -90,6 +118,7 @@ export function boundedQuestionContext(context: QuestionContext | undefined, use
 export function shouldInterpretQuestion(question: string): boolean {
   if (/말고|다른\s*(?:대상|품목|메뉴)/u.test(question)) return false;
   return /^(?:(?:그럼|그러면)\s*)?(?:그거|이거|저거|개봉(?:한|\s*후)|남은|그것|이것)/u.test(question.trim())
+    || isRecipeSelectionReply(question)
     || SHORT_RECIPE_ITEM_FOLLOW_UP.test(question.trim())
     || /(?:그리고|동시에|조건.*기간|위치.*방법|위치.*보관법)/u.test(question);
 }
@@ -143,7 +172,8 @@ export function parseQuestionInterpretation(raw: string, question: string, messa
   });
   if (value.contextTarget !== null && (typeof value.contextTarget !== "string" || !value.contextTarget.trim()
     || value.contextTarget.length > 200 || !messages.some(message => message.role === "user"
-      && normalizeTargetText(message.content).includes(normalizeTargetText(value.contextTarget))))) return fail("interpretation.contextTarget", "context_target_mismatch");
+      && normalizeTargetText(message.content).includes(normalizeTargetText(value.contextTarget)))
+    && !isLatteAmountContextualFollowUp(question, messages, value.contextTarget))) return fail("interpretation.contextTarget", "context_target_mismatch");
   const explicitRequirements = explicitRequestedSupportKinds(question);
   const contextualRecipeAmountFollowUp = isLatteAmountContextualFollowUp(question, messages, value.contextTarget);
   if (!hasExplicitSupportIntent(question) && !value.clarification && !contextualRecipeAmountFollowUp) return fail("interpretation.clarification", "ambiguous_current_intent");

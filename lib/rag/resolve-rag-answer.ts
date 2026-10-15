@@ -11,7 +11,7 @@ import { buildLocationReferenceAnswer } from "@/lib/rag/location-reference";
 import { buildClosingOrderProcedureAnswer } from "@/lib/rag/closing-order-procedure";
 import { findVerifiedQuote } from "@/lib/rag/verified-quote";
 import { isClearlyOutOfScopeQuestion } from "@/lib/rag/search-query";
-import { boundedQuestionContext, buildInterpretedSearchQuestion, getLatteAmountFollowUpContext, isLatteAmountContextualFollowUp, parseQuestionInterpretation, shouldInterpretQuestion, type QuestionContext, type QuestionInterpretation } from "@/lib/rag/question-interpretation";
+import { boundedQuestionContext, buildInterpretedSearchQuestion, getLatteAmountFollowUpContext, isLatteAmountContextualFollowUp, isRecipeSelectionReply, restoreRecipeSelectionQuestion, parseQuestionInterpretation, shouldInterpretQuestion, type QuestionContext, type QuestionInterpretation } from "@/lib/rag/question-interpretation";
 import { buildMenuClarification, canUseFamilyPackHistory, isFamilyPackFollowUp, selectMenuCandidates } from "@/lib/rag/manual-menu-intent";
 import {
   StructuredAnswerParseError,
@@ -128,6 +128,14 @@ export async function resolveRagAnswer(
   }
   const recentContext = input.interpretationContext
     ? boundedQuestionContext(input.interpretationContext.conversation, input.interpretationContext.userId, input.interpretationContext.storeId, input.question) : [];
+  if (isRecipeSelectionReply(input.question)) {
+    const restored = restoreRecipeSelectionQuestion(input.question, recentContext);
+    if (restored) return resolveRagAnswer({ ...input, question: restored, interpretationContext: undefined }, deps);
+    return { kind: "resolved", escalate: false, response: {
+      responseKind: "clarification", answer: "어떤 메뉴의 레시피를 말씀하시나요? 메뉴명과 온도를 함께 알려주세요.",
+      similarity: null, source: null, sources: [], status: "insufficient", matches: [],
+    } };
+  }
   const recipeAmountFollowUp = deps.interpret ? getLatteAmountFollowUpContext(input.question, recentContext) : null;
   const hasRecipeAmountContext = Boolean(recipeAmountFollowUp);
   if (shouldInterpretQuestion(input.question) && !hasExplicitSupportIntent(input.question) && !hasRecipeAmountContext) {

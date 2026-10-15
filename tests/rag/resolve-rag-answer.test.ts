@@ -10,7 +10,7 @@ import { Script } from "node:vm";
 import ts from "typescript";
 import { conversationTraceTag, createRagDiagnosticTrace, annotateCandidateScopes } from "../../lib/rag/trace-identifiers.ts";
 import { buildGroundedAnswerResponseFormat, requestedSupportKinds, isClosingOrderDecisionQuestion, questionContainsTargetSequence, sameDeclaredSourceTarget, StructuredAnswerParseError } from "../../lib/rag/structured-answer.ts";
-import { boundedQuestionContext, buildQuestionInterpretationRequest, getLatteAmountFollowUpContext, parseQuestionInterpretation, createQuestionInterpreter, shouldInterpretQuestion } from "../../lib/rag/question-interpretation.ts";
+import { boundedQuestionContext, buildQuestionInterpretationRequest, getLatteAmountFollowUpContext, restoreRecipeSelectionQuestion, parseQuestionInterpretation, createQuestionInterpreter, shouldInterpretQuestion } from "../../lib/rag/question-interpretation.ts";
 import { createEmbedding } from "../../lib/rag/openai-embeddings.ts";
 import { chunkManualText } from "../../lib/rag/chunk-manual.ts";
 import { PRIVATE_RECIPE_FACT_PATH, PRIVATE_RECIPE_EXECUTION_PATH, recordPrivateRecipeFactDiagnostic, recordPrivateRecipeExecutionEvent } from "../../lib/rag/private-recipe-fact-diagnostics.ts";
@@ -1689,10 +1689,42 @@ describe("근거가 충분한 질문", () => {
     assert.equal(/\d+\s*(?:일|시간|℃)/u.test(outcome.response.answer), false);
   });
 
+  test("recipe clarification replies restore only the immediately pending owned user request and preserve subsequent quantities", async () => {
+    const messages = [{ role: "user" as const, content: "카페라떼 레시피 알려줘" },
+      { role: "assistant" as const, content: "ICE와 HOT 중 어떤 온도 기준의 카페라떼를 말씀하시나요?" }];
+    for (const reply of ["아이스 카페라떼야", "아이스", "ICE 카페라떼예요"]) {
+      assert.equal(shouldInterpretQuestion(reply), true);
+      const restored = restoreRecipeSelectionQuestion(reply, messages);
+      assert.ok(restored?.endsWith("카페라떼 레시피 알려줘"));
+      assert.equal(restoreRecipeSelectionQuestion(reply, []), null);
+      assert.equal(restoreRecipeSelectionQuestion(reply, [...messages, { role: "user", content: "오늘 마감 순서 알려줘" }]), null);
+      const conversation = { userId: "staff", storeId: "store", messages };
+      let searched = "";
+      const recipe = chunk("synthetic-clarified-recipe", { content: "● ICE 카페라떼\n우유 193ml", raw_similarity_score: .8 });
+      const result = await resolveRagAnswer({ ...INPUT, question: reply, interpretationContext: { userId: "staff", storeId: "store", conversation } }, {
+        search: async question => { searched = question; return [recipe]; },
+        generate: async () => JSON.stringify({ answerable: true, answer: recipe.content, usedChunkIds: [recipe.chunk_id] }),
+        interpret: async () => { throw new Error("confirmed selection must not need a model to recover intent"); },
+      });
+      assert.equal(result.kind, "resolved");
+      assert.ok(searched.includes("레시피"));
+      if (result.kind === "resolved") assert.equal(result.response.status, "answered");
+      const followupMessages = [...messages, { role: "user" as const, content: reply }, { role: "assistant" as const, content: "현재 근거를 다시 조회하세요." }];
+      const quantityContext = getLatteAmountFollowUpContext("그럼 우유는 몇 ml야?", followupMessages);
+      assert.ok(quantityContext);
+      const interpreted = parseQuestionInterpretation(JSON.stringify({ target: "우유", requirements: ["facts"], constraints: [],
+        contextTarget: quantityContext.contextTarget, clarification: false }), "그럼 우유는 몇 ml야?", followupMessages);
+      assert.equal(interpreted.contextTarget, quantityContext.contextTarget);
+    }
+    assert.equal(restoreRecipeSelectionQuestion("아이스 바닐라라떼야", messages), null);
+    assert.equal(restoreRecipeSelectionQuestion("아이스 카페라떼 24oz야", messages), null);
+    assert.equal(restoreRecipeSelectionQuestion("아이스", [{ role: "assistant", content: messages[0].content }, messages[1]]), null);
+  });
+
   test("explicit ingredient quantities after a recipe request load user menu context but never inherit storage or another topic", () => {
     for (const prior of ["ICE 카페라떼 레시피 알려줘.", "HOT 바닐라라떼 만드는 방법 알려줘."]) {
       const messages = [{ role: "user" as const, content: prior }, { role: "assistant" as const, content: "우유 정량은 현재 근거에서 다시 확인해야 합니다." }];
-      for (const question of ["그럼 우유는 몇 ml야?", "그러면 우유는 몇 밀리리터인가요?", "그럼 시럽은 몇 g인가요?", "그럼 우유는?"]) {
+      for (const question of ["그럼 우유는 몇 ml야?", "그러면 우유는 몇 밀리리터인가요?", "그럼 시럽은 몇 g인가요?", "그럼 에스프레소는 몇 ml야?", "그럼 우유는?"]) {
         assert.equal(shouldInterpretQuestion(question), true);
         const context = getLatteAmountFollowUpContext(question, messages);
         assert.ok(context);
