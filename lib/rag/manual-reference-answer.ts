@@ -1,5 +1,6 @@
 import { normalizeTargetText, type StructuredAnswer } from "@/lib/rag/structured-answer";
 import type { ManualChunkMatch } from "@/lib/rag/types";
+import { extractVerifiedRecipeSourceFacts, renderVerifiedRecipeSourceFacts } from "@/lib/rag/recipe-fact-verification";
 
 const compact = (text: string) => normalizeTargetText(text).replace(/\s+/gu, "").toLowerCase();
 
@@ -19,8 +20,24 @@ function menuIdentity(label: string) {
   return { menu: compact(prefix ? normalized.slice(prefix[0].length) : normalized), mode };
 }
 
-export function buildManualReferenceAnswer(question: string, chunks: readonly ManualChunkMatch[]): StructuredAnswer | null {
+export function buildManualReferenceAnswer(question: string, chunks: readonly ManualChunkMatch[], verifiedRecipeItem?: string): StructuredAnswer | null {
   const query = normalizeTargetText(question).replace(/[?？.!。！]+$/u, "").trim();
+  if (verifiedRecipeItem) {
+    const citations = chunks.flatMap(chunk => {
+      const headings = [...chunk.content.matchAll(/^\s*(?:●\s*)?(?:HOT|ICE)\s+[^\r\n]+\s*$/gmu)];
+      return headings.map((heading, index) => ({ chunkId: chunk.chunk_id,
+        quote: chunk.content.slice(heading.index, headings[index + 1]?.index ?? chunk.content.length).trim() }));
+    });
+    const verified = extractVerifiedRecipeSourceFacts(question, chunks, citations);
+    if (verified?.support.outcome === "full" && verified.sourceFacts?.length && verified.sourceFacts.every(fact => fact.source.citationQuote.length <= 1200)) {
+      return { answerable: true, answer: renderVerifiedRecipeSourceFacts(verified.sourceFacts), coverage: "direct",
+        usedChunkIds: [...new Set(verified.sourceFacts.map(fact => fact.source.chunkId))],
+        supportAssessment: { requestedTarget: verifiedRecipeItem, requirements: [{ kind: "facts", support: "direct",
+          evidence: verified.sourceFacts.map(fact => ({ chunkId: fact.source.chunkId, quote: fact.source.citationQuote,
+            role: "facts", target: verifiedRecipeItem, targetRelation: "same" })) }] } };
+    }
+    return null;
+  }
   const hours = compact(query).match(/^(평일|주말|공휴일)(?:의)?(?:운영|영업)시간(?:은|이)?(?:(?:알려줘|알려주세요|어떻게돼|몇시야|몇시인가요))?$/u);
   if (hours) {
     const rows = chunks.flatMap(chunk => chunk.content.split(/\r?\n/u).flatMap(line => {

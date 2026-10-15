@@ -33,7 +33,7 @@ export function buildLocationReferenceAnswer(question: string, chunks: readonly 
       const requestedTarget = normalizedQuestion.startsWith(target) ? target : compoundQuestionTarget;
       if (!requestedTarget || !sameDeclaredSourceTarget(requestedTarget, target, line.trim())) return;
       const rest = normalizedQuestion.slice(requestedTarget.length);
-      const direct = /^(?:은|는|이|가)?\s*(?:재고\s*)?어디(?:에|에서)?\s*(?:보관(?:하나요|해요|하죠|합니까|해야\s*하나요)|있(?:나요|어요|어|습니까)|두(?:나요|어요|어|죠)|둬(?:요)?|놓(?:나요|아요)|찾(?:나요|아요)|배치(?:하나요|합니까))$/u.test(rest);
+      const direct = /^(?:은|는|이|가)?\s*(?:재고\s*)?어디(?:에|에서)?\s*(?:보관(?:하나요|해요|해|하죠|합니까|해야\s*하나요)|있(?:나요|어요|어|습니까)|두(?:나요|어요|어|죠)|둬(?:요)?|놓(?:나요|아요)|찾(?:나요|아요)|배치(?:하나요|합니까))$/u.test(rest);
       const scoped = rest.match(/^(?:은|는|이|가)?\s*([^\s?？.!]{2,40})\s+어디(?:에)?\s*(?:칸|선반|자리)(?:임|이야|인가요|야)$/u);
       if (!direct && !(scoped && normalizeTargetText(row[2]).includes(scoped[1]))) return;
       references.push({ id: `${chunk.chunk_id}:${index}`, target, requestedTarget,
