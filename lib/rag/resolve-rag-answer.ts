@@ -9,6 +9,7 @@ import { applyEvidenceGate, scoreChunk, type EvidenceGateThresholds } from "@/li
 import { getProviderFailure, type ProviderSystemErrorCode } from "@/lib/rag/provider-error";
 import { buildLocationReferenceAnswer } from "@/lib/rag/location-reference";
 import { buildClosingOrderProcedureAnswer } from "@/lib/rag/closing-order-procedure";
+import { buildRecipeOptionQuantityAnswer } from "@/lib/rag/recipe-option-quantity";
 import { findVerifiedQuote } from "@/lib/rag/verified-quote";
 import { isClearlyOutOfScopeQuestion } from "@/lib/rag/search-query";
 import { boundedQuestionContext, buildInterpretedSearchQuestion, getLatteAmountFollowUpContext, isLatteAmountContextualFollowUp, isRecipeSelectionReply, restoreRecipeSelectionQuestion, parseQuestionInterpretation, shouldInterpretQuestion, type QuestionContext, type QuestionInterpretation } from "@/lib/rag/question-interpretation";
@@ -306,7 +307,8 @@ export async function resolveRagAnswer(
     const locationAnswer = requestedSupportKinds(input.question).length === 1 && requestedSupportKinds(input.question)[0] === "location"
       ? buildLocationReferenceAnswer(input.question, providedChunks) : null;
     const closingOrderAnswer = buildClosingOrderProcedureAnswer(input.question, providedChunks);
-    if (!clarification && !locationAnswer && !closingOrderAnswer && deps.interpret && deferredInterpretation) {
+    const optionQuantityAnswer = buildRecipeOptionQuantityAnswer(input.question, providedChunks);
+    if (!clarification && !locationAnswer && !closingOrderAnswer && !optionQuantityAnswer && deps.interpret && deferredInterpretation) {
       await interpretQuestion();
       if (interpretation?.clarification) return { kind: "resolved", escalate: false, response: {
         responseKind: "clarification",
@@ -317,20 +319,21 @@ export async function resolveRagAnswer(
     }
     locationConflictAnswer = locationAnswer?.answerable === false ? locationAnswer.answer : undefined;
     deterministicSourceAnswer = Boolean(!clarification && (locationAnswer?.answerable || closingOrderAnswer));
-    deterministic = Boolean(clarification || locationAnswer || closingOrderAnswer);
-    if (!clarification && !locationAnswer && !closingOrderAnswer) trace({ stage: "prompt_delivery", candidates: searchResults.map((match, index) => ({
+    deterministic = Boolean(clarification || locationAnswer || closingOrderAnswer || optionQuantityAnswer);
+    if (!clarification && !locationAnswer && !closingOrderAnswer && !optionQuantityAnswer) trace({ stage: "prompt_delivery", candidates: searchResults.map((match, index) => ({
       manualId: match.manual_id, chunkId: match.chunk_id, rank: index + 1, scopeKind: match.diagnostic_scope ?? "unknown",
       rpcScore: match.similarity_score, evidenceScore: scoreChunk(match).evidenceScore,
       promptIncluded: providedChunks.some(provided => provided.chunk_id === match.chunk_id),
     })) });
-    if (interpretation && !clarification && !locationAnswer && !closingOrderAnswer) trace({ stage: "condition_delivery", mode: "answer",
+    if (interpretation && !clarification && !locationAnswer && !closingOrderAnswer && !optionQuantityAnswer) trace({ stage: "condition_delivery", mode: "answer",
       conditionCount: interpretation.constraints.length, contextTargetPresent: Boolean(interpretation.contextTarget),
       conditionsIncluded: interpretation.constraints.every(value => contextualQuestion.includes(value)), expectedRequirementKinds: interpretation.requirements });
     trace({ stage: "generation", mode: clarification ? clarification.answerable ? "menu_clarification" : "unresolved_menu_abstention"
-      : locationAnswer ? "location_reference" : closingOrderAnswer ? "closing_order_procedure" : "model" });
+      : locationAnswer ? "location_reference" : closingOrderAnswer ? "closing_order_procedure" : optionQuantityAnswer ? "recipe_option_quantity" : "model" });
     rawGeneration = clarification ? JSON.stringify({ ...clarification, coverage: "clarification" }) : locationAnswer
       ? JSON.stringify(locationAnswer) : closingOrderAnswer
-        ? JSON.stringify(closingOrderAnswer) : await deps.generate(contextualQuestion, providedChunks, familyPackVariant, interpretation);
+        ? JSON.stringify(closingOrderAnswer) : optionQuantityAnswer
+          ? JSON.stringify(optionQuantityAnswer) : await deps.generate(contextualQuestion, providedChunks, familyPackVariant, interpretation);
   } catch (error) {
     if (error instanceof StructuredAnswerParseError) {
       const interpretationFailure = error.fieldPath.startsWith("interpretation.");

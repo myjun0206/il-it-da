@@ -20,6 +20,7 @@ import { verifyRecipeFacts, extractVerifiedRecipeSourceFacts, renderVerifiedReci
 import { finalizeRagQueryResponse } from "../../lib/rag/finalize-rag-query-response.ts";
 import { buildLocationReferenceAnswer } from "../../lib/rag/location-reference.ts";
 import { buildClosingOrderProcedureAnswer } from "../../lib/rag/closing-order-procedure.ts";
+import { buildRecipeOptionQuantityAnswer } from "../../lib/rag/recipe-option-quantity.ts";
 import { validateQueryRequest } from "../../lib/rag/validate-query-request.ts";
 import { extractSearchKeywords, formatSearchEmbeddingInput } from "../../lib/rag/search-query.ts";
 import { buildGroundedAnswerMessages } from "../../lib/rag/answer-prompt.ts";
@@ -333,6 +334,31 @@ describe("recipe overblocking development cases", () => {
   const steam = chunk("steam-development", { content: steamQuote });
   const iceQuote = "● ICE 아메리카노\n기본 기준: 20oz / 차가운 물 250ml / 얼음 약 70%";
   const ice = chunk("ice-development", { content: `${iceQuote}\n1. 컵에 얼음을 약 70%까지 넣는다.` });
+  test("option quantity requests render only explicit current option rows without model target declarations or baseline-shot confusion", async () => {
+    const source = chunk("synthetic-option-quantity", { title: "제조 옵션", content: "기본 옵션 기준:\n* 샷 추가: 에스프레소 3샷(약 74ml)\n* 바닐라 시럽 추가: 13ml\n1. 주문 옵션을 확인한다.", raw_similarity_score: .8 });
+    for (const question of ["샷 추가시 몇 ml 넣으면 돼?", "샷 추가 시 에스프레소는 몇 ml 추가하나요?", "샷을 추가할 때 몇 ml인가요?"]) {
+      const answer = buildRecipeOptionQuantityAnswer(question, [source]);
+      assert.equal(answer?.answer, "샷 추가: 에스프레소 3샷(약 74ml)");
+      const result = await resolveRagAnswer({ ...INPUT, question, requireCoverage: true, requireSupportAssessment: true, requireEvidenceScope: true }, {
+        search: async () => [source], generate: async () => { throw new Error("explicit option quantity must not need model metadata"); },
+      });
+      assert.equal(result.kind, "resolved");
+      if (result.kind === "resolved") {
+        assert.equal(result.response.status, "answered");
+        assert.equal(result.response.answer, answer?.answer);
+        assert.equal(result.response.source?.manualId, source.manual_id);
+        assert.equal(result.escalate, false);
+      }
+    }
+    assert.equal(buildRecipeOptionQuantityAnswer("바닐라 시럽 추가시 몇 ml 넣으면 돼?", [source])?.answer, "바닐라 시럽 추가: 13ml");
+    for (const question of ["샷 추가해도 돼?", "샷 2개 추가시 몇 ml 넣으면 돼?", "아이스 카페라떼 샷 추가시 몇 ml 넣으면 돼?", "샷 추가시 몇 ml 넣으면 돼? 그리고 우유는?"]) {
+      assert.equal(buildRecipeOptionQuantityAnswer(question, [source]), null);
+    }
+    const baseline = { ...source, content: "기본 기준:\n* 에스프레소 1샷: 약 25ml\n* 기본 에스프레소 사용량: 2샷(약 50ml)" };
+    assert.equal(buildRecipeOptionQuantityAnswer("샷 추가시 몇 ml 넣으면 돼?", [baseline]), null);
+    assert.equal(buildRecipeOptionQuantityAnswer("샷 추가시 몇 ml 넣으면 돼?", [source, { ...source, chunk_id: "conflict", content: source.content.replace("74ml", "75ml") }])?.coverage, "clarification");
+  });
+
   test("shot volume is grounded only in explicit matching same-section count and volume without implicit conversion", () => {
     const recentUserAnchor = [{ role: "user" as const, content: "아이스 카페라떼야" },
       { role: "assistant" as const, content: "이전 답변은 정량 근거로 사용하지 않는다." },
