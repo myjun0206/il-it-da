@@ -10,6 +10,7 @@ import { getProviderFailure, type ProviderSystemErrorCode } from "@/lib/rag/prov
 import { buildLocationReferenceAnswer } from "@/lib/rag/location-reference";
 import { buildClosingOrderProcedureAnswer } from "@/lib/rag/closing-order-procedure";
 import { buildRecipeOptionQuantityAnswer } from "@/lib/rag/recipe-option-quantity";
+import { buildManualReferenceAnswer } from "@/lib/rag/manual-reference-answer";
 import { findVerifiedQuote } from "@/lib/rag/verified-quote";
 import { isClearlyOutOfScopeQuestion } from "@/lib/rag/search-query";
 import { boundedQuestionContext, buildInterpretedSearchQuestion, getLatteAmountFollowUpContext, isLatteAmountContextualFollowUp, isRecipeSelectionReply, restoreRecipeSelectionQuestion, parseQuestionInterpretation, shouldInterpretQuestion, type QuestionContext, type QuestionInterpretation } from "@/lib/rag/question-interpretation";
@@ -226,9 +227,13 @@ export async function resolveRagAnswer(
     });
     const exactClosingOrderIds = isClosingOrderDecisionQuestion(input.question)
       ? new Set(buildClosingOrderProcedureAnswer(input.question, searchResults)?.usedChunkIds ?? []) : new Set<string>();
+    const exactReferenceIds = new Set([
+      ...buildLocationReferenceAnswer(input.question, searchResults)?.usedChunkIds ?? [],
+      ...buildManualReferenceAnswer(input.question, searchResults)?.usedChunkIds ?? [],
+    ]);
     searchResults = searchResults.sort((first, second) => {
-      const firstExactProcedure = exactClosingOrderIds.has(first.chunk_id);
-      const secondExactProcedure = exactClosingOrderIds.has(second.chunk_id);
+      const firstExactProcedure = exactClosingOrderIds.has(first.chunk_id) || exactReferenceIds.has(first.chunk_id);
+      const secondExactProcedure = exactClosingOrderIds.has(second.chunk_id) || exactReferenceIds.has(second.chunk_id);
       if (firstExactProcedure !== secondExactProcedure) return firstExactProcedure ? -1 : 1;
       const difference = scoreChunk(second).evidenceScore - scoreChunk(first).evidenceScore;
       return Math.abs(difference) > 1e-6 ? difference : second.raw_similarity_score - first.raw_similarity_score;
@@ -267,6 +272,7 @@ export async function resolveRagAnswer(
   trace({ stage: "evidence_gate", providedCount: gate.usableChunks.length, status: gate.searchStatus, topEvidenceScore: gate.topEvidenceScore,
     providedChunkIds: gate.usableChunks.map((chunk) => chunk.match.chunk_id), answeredThreshold: input.thresholds.answered, cautiousThreshold: input.thresholds.cautious });
 
+  let sourceReferencePolicy = false;
   const insufficient = (similarity: number | null): RagAnswerOutcome => ({
     kind: "resolved",
     escalate: true,
@@ -281,6 +287,7 @@ export async function resolveRagAnswer(
   });
   const addShortageScope = (outcome: RagAnswerOutcome): RagAnswerOutcome => {
     if (outcome.kind !== "resolved" || outcome.response.status !== "insufficient" || outcome.response.responseKind === "clarification") return outcome;
+    if (sourceReferencePolicy && outcome.response.source) return outcome;
     const target = interpretation?.contextTarget || interpretation?.target;
     const context = target ? `확인할 대상: ${target}. ` : "";
     const conditions = interpretation?.constraints.length ? `현재 질문 조건: ${interpretation.constraints.join(" / ")}. ` : "";
@@ -308,7 +315,10 @@ export async function resolveRagAnswer(
       ? buildLocationReferenceAnswer(input.question, providedChunks) : null;
     const closingOrderAnswer = buildClosingOrderProcedureAnswer(input.question, providedChunks);
     const optionQuantityAnswer = buildRecipeOptionQuantityAnswer(input.question, providedChunks);
-    if (!clarification && !locationAnswer && !closingOrderAnswer && !optionQuantityAnswer && deps.interpret && deferredInterpretation) {
+    const manualReferenceAnswer = !clarification && !locationAnswer && !closingOrderAnswer && !optionQuantityAnswer
+      ? buildManualReferenceAnswer(input.question, providedChunks) : null;
+    sourceReferencePolicy = manualReferenceAnswer?.coverage === "policy_only";
+    if (!clarification && !locationAnswer && !closingOrderAnswer && !optionQuantityAnswer && !manualReferenceAnswer && deps.interpret && deferredInterpretation) {
       await interpretQuestion();
       if (interpretation?.clarification) return { kind: "resolved", escalate: false, response: {
         responseKind: "clarification",
@@ -319,21 +329,22 @@ export async function resolveRagAnswer(
     }
     locationConflictAnswer = locationAnswer?.answerable === false ? locationAnswer.answer : undefined;
     deterministicSourceAnswer = Boolean(!clarification && (locationAnswer?.answerable || closingOrderAnswer));
-    deterministic = Boolean(clarification || locationAnswer || closingOrderAnswer || optionQuantityAnswer);
-    if (!clarification && !locationAnswer && !closingOrderAnswer && !optionQuantityAnswer) trace({ stage: "prompt_delivery", candidates: searchResults.map((match, index) => ({
+    deterministic = Boolean(clarification || locationAnswer || closingOrderAnswer || optionQuantityAnswer || manualReferenceAnswer);
+    if (!clarification && !locationAnswer && !closingOrderAnswer && !optionQuantityAnswer && !manualReferenceAnswer) trace({ stage: "prompt_delivery", candidates: searchResults.map((match, index) => ({
       manualId: match.manual_id, chunkId: match.chunk_id, rank: index + 1, scopeKind: match.diagnostic_scope ?? "unknown",
       rpcScore: match.similarity_score, evidenceScore: scoreChunk(match).evidenceScore,
       promptIncluded: providedChunks.some(provided => provided.chunk_id === match.chunk_id),
     })) });
-    if (interpretation && !clarification && !locationAnswer && !closingOrderAnswer && !optionQuantityAnswer) trace({ stage: "condition_delivery", mode: "answer",
+    if (interpretation && !clarification && !locationAnswer && !closingOrderAnswer && !optionQuantityAnswer && !manualReferenceAnswer) trace({ stage: "condition_delivery", mode: "answer",
       conditionCount: interpretation.constraints.length, contextTargetPresent: Boolean(interpretation.contextTarget),
       conditionsIncluded: interpretation.constraints.every(value => contextualQuestion.includes(value)), expectedRequirementKinds: interpretation.requirements });
     trace({ stage: "generation", mode: clarification ? clarification.answerable ? "menu_clarification" : "unresolved_menu_abstention"
-      : locationAnswer ? "location_reference" : closingOrderAnswer ? "closing_order_procedure" : optionQuantityAnswer ? "recipe_option_quantity" : "model" });
+      : locationAnswer ? "location_reference" : closingOrderAnswer ? "closing_order_procedure" : optionQuantityAnswer ? "recipe_option_quantity" : manualReferenceAnswer ? "manual_reference" : "model" });
     rawGeneration = clarification ? JSON.stringify({ ...clarification, coverage: "clarification" }) : locationAnswer
       ? JSON.stringify(locationAnswer) : closingOrderAnswer
         ? JSON.stringify(closingOrderAnswer) : optionQuantityAnswer
-          ? JSON.stringify(optionQuantityAnswer) : await deps.generate(contextualQuestion, providedChunks, familyPackVariant, interpretation);
+          ? JSON.stringify(optionQuantityAnswer) : manualReferenceAnswer
+            ? JSON.stringify(manualReferenceAnswer) : await deps.generate(contextualQuestion, providedChunks, familyPackVariant, interpretation);
   } catch (error) {
     if (error instanceof StructuredAnswerParseError) {
       const interpretationFailure = error.fieldPath.startsWith("interpretation.");

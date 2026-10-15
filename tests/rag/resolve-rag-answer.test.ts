@@ -21,6 +21,7 @@ import { finalizeRagQueryResponse } from "../../lib/rag/finalize-rag-query-respo
 import { buildLocationReferenceAnswer } from "../../lib/rag/location-reference.ts";
 import { buildClosingOrderProcedureAnswer } from "../../lib/rag/closing-order-procedure.ts";
 import { buildRecipeOptionQuantityAnswer } from "../../lib/rag/recipe-option-quantity.ts";
+import { buildManualReferenceAnswer } from "../../lib/rag/manual-reference-answer.ts";
 import { validateQueryRequest } from "../../lib/rag/validate-query-request.ts";
 import { extractSearchKeywords, formatSearchEmbeddingInput } from "../../lib/rag/search-query.ts";
 import { buildGroundedAnswerMessages } from "../../lib/rag/answer-prompt.ts";
@@ -161,9 +162,15 @@ test("re-registered recipe evidence survives new IDs, reordered candidates and s
     const oldCitation = JSON.parse(raw);
     oldCitation.usedChunkIds = ["deleted-chunk"];
     oldCitation.supportAssessment.requirements[0].evidence[0].chunkId = "deleted-chunk";
-    const stale = await resolveRagAnswer(input, { search: async () => [current], generate: async () => JSON.stringify(oldCitation) });
+    let staleGenerationCalls = 0;
+    const stale = await resolveRagAnswer(input, { search: async () => [current], generate: async () => { staleGenerationCalls++; return JSON.stringify(oldCitation); } });
     assert.equal(stale.kind, "resolved");
-    if (stale.kind === "resolved") { assert.equal(stale.response.status, "insufficient"); assert.equal(stale.response.source, null); }
+    if (stale.kind === "resolved") { assert.equal(stale.response.status, "answered"); assert.equal(stale.response.source?.manualId, current.manual_id); }
+    assert.equal(staleGenerationCalls, 0);
+    const modelOnlySource = { ...current, content: current.content.replaceAll("●", "") };
+    const staleModel = await resolveRagAnswer(input, { search: async () => [modelOnlySource], generate: async () => JSON.stringify(oldCitation) });
+    assert.equal(staleModel.kind, "resolved");
+    if (staleModel.kind === "resolved") { assert.equal(staleModel.response.status, "insufficient"); assert.equal(staleModel.response.source, null); }
     const empty = await resolveRagAnswer(input, { search: async () => [], generate: async () => { throw new Error("must not generate without live evidence"); } });
     assert.equal(empty.kind, "resolved");
     if (empty.kind === "resolved") { assert.equal(empty.response.status, "insufficient"); assert.equal(empty.response.source, null); }
@@ -932,6 +939,61 @@ test("verified close-order source survives the top-five cutoff without changing 
   assert.equal(result.response.status, "answered");
   assert.equal(result.response.answer, content.slice(2));
   assert.equal(result.response.similarity, .58);
+});
+
+test("manual reference answers preserve exact hours, recipe sections, PoC qualifiers and cleaning-policy limits", async () => {
+  const hours = chunk("synthetic-hours", { title: "운영 기준", content: "- 평일 운영시간: 07:15 ~ 20:45\n- 주말 운영시간: 09:30 ~ 19:15", raw_similarity_score: .8 });
+  const recipe = chunk("synthetic-manual-recipe", { title: "제조 기준", content: "● HOT 테스트라떼\n기본 기준: 12oz / 우유 171ml\n1. 우유를 스팀한다.\n● ICE 테스트라떼\n기본 기준: 18oz / 우유 183ml\n1. 우유 183ml를 넣는다.", raw_similarity_score: .8 });
+  const smoothie = chunk("synthetic-poc-smoothie", { title: "제조 기준", content: "● 기본 제조 절차\n1. 주문을 확인한다.\n● 테스트 스무디\nPoC 기본 기준:\n* 베이스: 137g\n* 액상 재료: 91ml\n* 블렌딩: 27초", raw_similarity_score: .8 });
+  const policy = chunk("synthetic-equipment-policy", { title: "장비 세척 및 관리", content: "- 테스트머신: 사용 및 마감 후 등록된 세척 기준을 따른다.", raw_similarity_score: .8 });
+  for (const [question, sources, expected] of [
+    ["평일 운영시간", [hours], "07:15 ~ 20:45"],
+    ["아이스 테스트라떼 레시피 알려줘", [recipe], "우유 183ml"],
+    ["테스트 스무디 레시피", [smoothie], "PoC 기본 기준"],
+    ["테스트머신 세척법", [policy], "구체적인 세척 순서·세제 종류·사용량이 명시돼 있지 않습니다"],
+  ] as const) {
+    const direct = buildManualReferenceAnswer(question, sources);
+    assert.ok(direct?.answer.includes(expected));
+    const result = await resolveRagAnswer({ ...INPUT, question, requireCoverage: true, requireSupportAssessment: true, requireEvidenceScope: true }, {
+      search: async () => [...sources], generate: async () => { throw new Error("exact source reference must not depend on model metadata"); },
+    });
+    assert.equal(result.kind, "resolved");
+    if (result.kind === "resolved") {
+      assert.ok(result.response.answer.includes(expected));
+      assert.ok(result.response.source);
+      assert.equal(result.response.answer.includes(NO_MANUAL_ANSWER), false);
+      if (question === "테스트머신 세척법") assert.equal(result.response.answer.startsWith("확인된 장비 관리 기준"), true);
+    }
+  }
+  assert.equal(buildManualReferenceAnswer("공휴일 운영시간", [hours]), null);
+  assert.equal(buildManualReferenceAnswer("아이스 다른라떼 레시피", [recipe]), null);
+  assert.equal(buildManualReferenceAnswer("HOT 테스트라떼 24oz 레시피", [recipe]), null);
+  assert.equal(buildManualReferenceAnswer("평일 운영시간", [hours, { ...hours, chunk_id: "other-hours", content: "- 평일 운영시간: 08:00 ~ 20:00" }])?.coverage, "clarification");
+  const detailed = chunk("synthetic-detailed-cleaning", { title: "테스트머신 세척", content: "1. 등록된 도구를 확인한다.\n2. 등록된 순서로 세척한다.", raw_similarity_score: .8 });
+  assert.equal(buildManualReferenceAnswer("테스트머신 세척법", [policy, detailed]), null);
+});
+
+test("multiple named location requests join only complete current source rows without model metadata or guessed locations", async () => {
+  const stock = chunk("synthetic-stock-locations", { title: "재고 및 비품 보관 위치", content: "- 원두: 준비대 아래 보관함\n- 딸기청: 냉장고 아래 선반", raw_similarity_score: .8 });
+  const equipment = chunk("synthetic-equipment-locations", { title: "장비 및 기기 위치", content: "- 제빙기: 준비대 옆", raw_similarity_score: .8 });
+  const question = "원두, 제빙기, 딸기청의 위치";
+  const direct = buildLocationReferenceAnswer(question, [equipment, stock]);
+  assert.equal(direct?.answer, "원두: 준비대 아래 보관함\n제빙기: 준비대 옆\n딸기청: 냉장고 아래 선반");
+  assert.equal(buildLocationReferenceAnswer(question, [stock]), null);
+  const conflict = { ...equipment, chunk_id: "conflicting-location", content: "- 제빙기: 창고 안쪽" };
+  assert.equal(buildLocationReferenceAnswer(question, [stock, equipment, conflict])?.answerable, false);
+  const result = await resolveRagAnswer({ ...INPUT, question, requireCoverage: true, requireSupportAssessment: true, requireEvidenceScope: true }, {
+    search: async () => [
+      ...Array.from({ length: 6 }, (_, index) => chunk(`unrelated-location-noise-${index}`, { title: "일반 운영 안내", content: "등록된 업무 기준을 확인한다.", raw_similarity_score: .95 })),
+      stock, equipment,
+    ], generate: async () => { throw new Error("complete source location rows must not need model target declarations"); },
+  });
+  assert.equal(result.kind, "resolved");
+  if (result.kind === "resolved") {
+    assert.equal(result.response.status, "answered");
+    assert.equal(result.response.sources?.length, 2);
+    assert.equal(result.escalate, false);
+  }
 });
 
 test("joined inventory location requests resolve from exact source rows without model generation", async () => {
