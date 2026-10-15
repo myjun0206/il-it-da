@@ -974,6 +974,7 @@ test("manual reference answers preserve exact hours, recipe sections, PoC qualif
 });
 
 test("multiple named location requests join only complete current source rows without model metadata or guessed locations", async () => {
+  assert.ok(buildLocationReferenceAnswer("우유는 어디에 보관해?", [chunk("synthetic-colloquial-location", { title: "재고 보관 위치", content: "- 우유: 냉장고 아래 선반" })]));
   const stock = chunk("synthetic-stock-locations", { title: "재고 및 비품 보관 위치", content: "- 원두: 준비대 아래 보관함\n- 딸기청: 냉장고 아래 선반", raw_similarity_score: .8 });
   const equipment = chunk("synthetic-equipment-locations", { title: "장비 및 기기 위치", content: "- 제빙기: 준비대 옆", raw_similarity_score: .8 });
   const question = "원두, 제빙기, 딸기청의 위치";
@@ -1803,6 +1804,60 @@ describe("근거가 충분한 질문", () => {
     assert.equal(/\d+\s*(?:일|시간|℃)/u.test(outcome.response.answer), false);
   });
 
+  test("spaced recipe names and a bounded selection typo resume the pending user recipe without inventing another menu", async () => {
+    const messages = [{ role: "user" as const, content: "바닐라 라떼 레시피 알려줘" },
+      { role: "assistant" as const, content: "ICE와 HOT 중 어떤 온도 기준의 바닐라라떼를 말씀하시나요?" }];
+    for (const reply of ["아이스 바닐라 라때야", "아이스 바닐라 라떼야", "아이스 바닐라라떼야"]) {
+      assert.equal(shouldInterpretQuestion(reply), true);
+      assert.equal(restoreRecipeSelectionQuestion(reply, messages), "아이스 바닐라 라떼 레시피 알려줘");
+      const source = chunk("synthetic-spaced-recipe", { content: "● ICE 바닐라라떼\n기본 기준: 18oz / 우유 193ml\n1. 우유 193ml를 넣는다.", raw_similarity_score: .8 });
+      const result = await resolveRagAnswer({ ...INPUT, question: reply, requireCoverage: true, requireSupportAssessment: true, requireEvidenceScope: true,
+        interpretationContext: { userId: "staff", storeId: "store", conversation: { userId: "staff", storeId: "store", messages } } }, {
+        search: async question => { assert.ok(question.includes("바닐라 라떼 레시피")); return [source]; },
+        generate: async () => { throw new Error("known user selection and current source recipe must not need generated target labels"); },
+      });
+      assert.equal(result.kind, "resolved");
+      if (result.kind === "resolved") {
+        assert.equal(result.response.status, "answered");
+        assert.equal(result.response.source?.manualId, source.manual_id);
+        assert.ok(result.response.answer.includes("193ml"));
+      }
+      const followup = [...messages, { role: "user" as const, content: reply }, { role: "assistant" as const, content: "이전 답변의 수치는 현재 근거로 다시 확인합니다." }];
+      const context = getLatteAmountFollowUpContext("그럼 우유는 몇 ml야?", followup);
+      assert.equal(context?.contextTarget, "아이스 바닐라 라떼");
+      assert.doesNotThrow(() => parseQuestionInterpretation(JSON.stringify({ target: "우유", requirements: ["facts"], constraints: [],
+        contextTarget: context?.contextTarget, clarification: false }), "그럼 우유는 몇 ml야?", followup));
+    }
+    assert.equal(restoreRecipeSelectionQuestion("아이스 카페 라때야", messages), null);
+    assert.equal(restoreRecipeSelectionQuestion("아이스 바닐라 라때 24oz야", messages), null);
+    assert.equal(restoreRecipeSelectionQuestion("아이스 바닐라 라때야", []), null);
+    assert.equal(restoreRecipeSelectionQuestion("아이스 바닐라 라때야", [...messages, { role: "user", content: "커피머신 청소법 알려줘" }]), null);
+  });
+
+  test("verified recipe quantities render from current source after a spaced clarification without model completion", async () => {
+    const messages = [{ role: "user" as const, content: "바닐라 라떼 레시피 알려줘" },
+      { role: "assistant" as const, content: "ICE와 HOT 중 어떤 온도 기준의 바닐라라떼를 말씀하시나요?" },
+      { role: "user" as const, content: "아이스 바닐라 라때야" }, { role: "assistant" as const, content: "이전 답변의 숫자는 근거가 아닙니다." }];
+    const source = chunk("synthetic-verified-followup", { content: "● ICE 바닐라라떼\n기본 기준: 18oz / 우유 193ml / 바닐라 시럽 17ml / 에스프레소 3샷\n1. 에스프레소 3샷(약 74ml)을 추출한다.", raw_similarity_score: .55 });
+    for (const [item, quantity] of [["우유", "193ml"], ["바닐라 시럽", "17ml"], ["에스프레소", "약 74ml"]]) {
+      const result = await resolveRagAnswer({ ...INPUT, question: `그럼 ${item}은 몇 ml야?`, requireCoverage: true, requireSupportAssessment: true, requireEvidenceScope: true,
+        interpretationContext: { userId: "staff", storeId: "store", conversation: { userId: "staff", storeId: "store", messages } } }, {
+        interpret: async () => ({ target: item, requirements: ["facts"], constraints: [], contextTarget: "아이스 바닐라 라떼", clarification: false }),
+        search: async () => [source], generate: async () => { throw new Error("verified current source quantities need no model completion"); },
+      });
+      assert.equal(result.kind, "resolved");
+      if (result.kind === "resolved") {
+        assert.equal(result.response.status, "answered");
+        assert.ok(result.response.answer.includes(quantity));
+        assert.equal(result.response.source?.manualId, source.manual_id);
+        assert.equal(result.escalate, false);
+      }
+    }
+    assert.equal(buildManualReferenceAnswer("ICE 바닐라라떼 24oz 우유 몇 ml?", [source], "우유"), null);
+    assert.equal(buildManualReferenceAnswer("HOT 바닐라라떼 우유 몇 ml?", [source], "우유"), null);
+    assert.equal(buildManualReferenceAnswer("ICE 바닐라라떼 초콜릿 소스 몇 ml?", [source], "초콜릿 소스"), null);
+  });
+
   test("recipe clarification replies restore only the immediately pending owned user request and preserve subsequent quantities", async () => {
     const messages = [{ role: "user" as const, content: "카페라떼 레시피 알려줘" },
       { role: "assistant" as const, content: "ICE와 HOT 중 어떤 온도 기준의 카페라떼를 말씀하시나요?" }];
@@ -1926,7 +1981,7 @@ describe("근거가 충분한 질문", () => {
       },
       onDiagnostic: event => events.push(event),
     }));
-    assert.equal(generated, 1);
+    assert.equal(generated, 0);
     assert.ok(searched.includes("바닐라라떼 아이스"));
     assert.equal(outcome.response.status, "answered");
     assert.ok(outcome.response.answer.includes("220ml"));
@@ -1946,7 +2001,7 @@ describe("근거가 충분한 질문", () => {
       const outcome = await resolveRagAnswer({ ...INPUT, question, requireCoverage: true, requireSupportAssessment: true, requireEvidenceScope: true,
         interpretationContext: { userId: "staff", storeId: "store", conversation } }, {
         interpret: async () => ({ target: "우유", contextTarget: "ICE 카페라떼", requirements: ["facts"], constraints: [], clarification: false }),
-        search: async query => { assert.ok(query.includes("확인된 이전 질문 대상: ICE 카페라떼")); return [recipe]; },
+        search: async query => { assert.ok(query.includes("확인된 이전 질문 대상: ICE 카페라떼")); return [validQuote ? recipe : { ...recipe, content: recipe.content.replace("기본 기준:", "참고:") }]; },
         generate: async (query, _chunks, _variant, interpretation) => {
           assert.ok(query.includes("현재 이어서 묻는 항목: 우유 정량"));
           assert.equal(interpretation?.verifiedRecipeItem, "우유");

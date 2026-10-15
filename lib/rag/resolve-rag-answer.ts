@@ -316,7 +316,7 @@ export async function resolveRagAnswer(
     const closingOrderAnswer = buildClosingOrderProcedureAnswer(input.question, providedChunks);
     const optionQuantityAnswer = buildRecipeOptionQuantityAnswer(input.question, providedChunks);
     const manualReferenceAnswer = !clarification && !locationAnswer && !closingOrderAnswer && !optionQuantityAnswer
-      ? buildManualReferenceAnswer(input.question, providedChunks) : null;
+      ? buildManualReferenceAnswer(contextualQuestion, providedChunks, interpretation?.verifiedRecipeItem) : null;
     sourceReferencePolicy = manualReferenceAnswer?.coverage === "policy_only";
     if (!clarification && !locationAnswer && !closingOrderAnswer && !optionQuantityAnswer && !manualReferenceAnswer && deps.interpret && deferredInterpretation) {
       await interpretQuestion();
@@ -328,7 +328,7 @@ export async function resolveRagAnswer(
       if (interpretation) contextualQuestion = buildInterpretedSearchQuestion(input.question, interpretation);
     }
     locationConflictAnswer = locationAnswer?.answerable === false ? locationAnswer.answer : undefined;
-    deterministicSourceAnswer = Boolean(!clarification && (locationAnswer?.answerable || closingOrderAnswer));
+    deterministicSourceAnswer = Boolean(!clarification && (locationAnswer?.answerable || closingOrderAnswer || manualReferenceAnswer?.coverage === "direct"));
     deterministic = Boolean(clarification || locationAnswer || closingOrderAnswer || optionQuantityAnswer || manualReferenceAnswer);
     if (!clarification && !locationAnswer && !closingOrderAnswer && !optionQuantityAnswer && !manualReferenceAnswer) trace({ stage: "prompt_delivery", candidates: searchResults.map((match, index) => ({
       manualId: match.manual_id, chunkId: match.chunk_id, rank: index + 1, scopeKind: match.diagnostic_scope ?? "unknown",

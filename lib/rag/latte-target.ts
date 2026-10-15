@@ -33,11 +33,15 @@ function sameLatteIdentity(left: LatteTarget, right: LatteTarget): boolean {
     && (!left.temperature || !right.temperature || left.temperature === right.temperature);
 }
 
-export function extractLatteTargets(text: string): LatteTarget[] {
+export function extractLatteTargetMentions(text: string): (LatteTarget & { text: string })[] {
   return [...text.matchAll(LATTE_LABEL)].flatMap(match => {
     const target = parseLatteTarget(match[0]);
-    return target ? [target] : [];
+    return target ? [{ ...target, text: match[0] }] : [];
   });
+}
+
+export function extractLatteTargets(text: string): LatteTarget[] {
+  return extractLatteTargetMentions(text).map(({ name, temperature }) => ({ name, temperature }));
 }
 
 export function sameLatteEntityTarget(left: string, right: string): boolean {
