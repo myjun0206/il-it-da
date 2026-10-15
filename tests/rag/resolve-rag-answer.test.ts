@@ -334,6 +334,12 @@ describe("recipe overblocking development cases", () => {
   const iceQuote = "● ICE 아메리카노\n기본 기준: 20oz / 차가운 물 250ml / 얼음 약 70%";
   const ice = chunk("ice-development", { content: `${iceQuote}\n1. 컵에 얼음을 약 70%까지 넣는다.` });
   test("shot volume is grounded only in explicit matching same-section count and volume without implicit conversion", () => {
+    const recentUserAnchor = [{ role: "user" as const, content: "아이스 카페라떼야" },
+      { role: "assistant" as const, content: "이전 답변은 정량 근거로 사용하지 않는다." },
+      { role: "user" as const, content: "그럼 우유는 몇 ml야?" },
+      { role: "assistant" as const, content: "이전 수치는 현재 근거로 다시 검증한다." }];
+    assert.equal(getLatteAmountFollowUpContext("그럼 에스프레소는 몇 ml야?", recentUserAnchor)?.contextTarget, "아이스 카페라떼");
+    assert.equal(getLatteAmountFollowUpContext("그럼 에스프레소는 몇 ml야?", recentUserAnchor.slice(1)), null);
     const content = "● ICE 카페라떼\n기본 기준: 20oz / 에스프레소 4샷 / 우유 193ml\n1. 에스프레소 4샷(약 92ml)을 추출한다.\n● HOT 카페라떼\n기본 기준: 16oz / 에스프레소 3샷 / 우유 177ml\n1. 에스프레소 3샷(약 78ml)을 추출한다.";
     const source = chunk("synthetic-explicit-shot-volume", { content });
     const quote = "● ICE 카페라떼\n기본 기준: 20oz / 에스프레소 4샷 / 우유 193ml\n1. 에스프레소 4샷(약 92ml)을 추출한다.";

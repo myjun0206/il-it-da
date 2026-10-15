@@ -55,7 +55,8 @@ function explicitLatteAmountContext(messages: readonly { role: "user" | "assista
     const original = messages[index];
     const restored = original.role === "user" ? restoreRecipeSelectionQuestion(original.content, messages.slice(0, index)) : null;
     const previous = restored ? { ...original, content: restored } : original;
-    if (previous.role !== "user" || !/(?:레시피|제조\s*(?:법|방법)|만드는\s*(?:법|방법)|얼마|정량|몇\s*(?:ml|g)|\d+(?:\.\d+)?\s*(?:ml|g))/u.test(previous.content)) continue;
+    if (previous.role !== "user" || !isRecipeSelectionReply(previous.content)
+      && !/(?:레시피|제조\s*(?:법|방법)|만드는\s*(?:법|방법)|얼마|정량|몇\s*(?:ml|g)|\d+(?:\.\d+)?\s*(?:ml|g))/u.test(previous.content)) continue;
     const targets = extractLatteTargets(previous.content);
     if (targets.length !== 1) continue;
     const modes: { value: "ICE" | "HOT"; pattern: RegExp }[] = [
