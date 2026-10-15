@@ -44,6 +44,7 @@ const TRACE_VALUES = new Set([
   "requirement_mismatch", "question_target_mismatch", "unprovided_evidence", "quote_mismatch", "source_target_mismatch", "target_relation_mismatch",
   "model_completion", "json_parse", "response_schema", "support_semantics",
   "location_reference",
+  "recipe_option_quantity",
   "QUESTION_TARGET_UNRESOLVED",
   "FOLLOW_UP_INTENT_AMBIGUOUS",
   "interpretation",
