@@ -333,6 +333,32 @@ describe("recipe overblocking development cases", () => {
   const steam = chunk("steam-development", { content: steamQuote });
   const iceQuote = "● ICE 아메리카노\n기본 기준: 20oz / 차가운 물 250ml / 얼음 약 70%";
   const ice = chunk("ice-development", { content: `${iceQuote}\n1. 컵에 얼음을 약 70%까지 넣는다.` });
+  test("shot volume is grounded only in explicit matching same-section count and volume without implicit conversion", () => {
+    const recentUserAnchor = [{ role: "user" as const, content: "아이스 카페라떼야" },
+      { role: "assistant" as const, content: "이전 답변은 정량 근거로 사용하지 않는다." },
+      { role: "user" as const, content: "그럼 우유는 몇 ml야?" },
+      { role: "assistant" as const, content: "이전 수치는 현재 근거로 다시 검증한다." }];
+    assert.equal(getLatteAmountFollowUpContext("그럼 에스프레소는 몇 ml야?", recentUserAnchor)?.contextTarget, "아이스 카페라떼");
+    assert.equal(getLatteAmountFollowUpContext("그럼 에스프레소는 몇 ml야?", recentUserAnchor.slice(1)), null);
+    const content = "● ICE 카페라떼\n기본 기준: 20oz / 에스프레소 4샷 / 우유 193ml\n1. 에스프레소 4샷(약 92ml)을 추출한다.\n● HOT 카페라떼\n기본 기준: 16oz / 에스프레소 3샷 / 우유 177ml\n1. 에스프레소 3샷(약 78ml)을 추출한다.";
+    const source = chunk("synthetic-explicit-shot-volume", { content });
+    const quote = "● ICE 카페라떼\n기본 기준: 20oz / 에스프레소 4샷 / 우유 193ml\n1. 에스프레소 4샷(약 92ml)을 추출한다.";
+    const citations = [{ chunkId: source.chunk_id, quote }];
+    const question = "ICE 카페라떼 에스프레소는 몇 ml인가요?";
+    assert.ok(buildGroundedAnswerMessages(question, [source])[0].content.includes("해당 샷 수와 ml가 함께 직접 명시된 원문 구절"));
+    const facts = extractVerifiedRecipeSourceFacts(question, [source], citations);
+    assert.equal(facts?.support.outcome, "full");
+    assert.equal(facts?.sourceFacts?.[0].quantity, "약 92");
+    assert.equal(verifyRecipeFacts(question, "ICE 카페라떼 에스프레소 4샷(약 92ml)", [source], citations)?.support.outcome, "full");
+    assert.equal(verifyRecipeFacts(question, "ICE 카페라떼 에스프레소 1샷(약 92ml)", [source], citations)?.contradiction, true);
+    assert.equal(verifyRecipeFacts(question, "ICE 카페라떼 에스프레소 약 23ml", [source], citations)?.contradiction, true);
+    for (const replacement of ["1. 에스프레소 1샷(약 23ml)을 추출한다.", "1. 옵션 추가 시 에스프레소 4샷(약 92ml)을 넣는다.",
+      "1. 에스프레소 4샷(약 92ml)을 추출한다.\n2. 에스프레소 4샷(약 93ml)을 추출한다."]) {
+      const altered = { ...source, content: source.content.replace("1. 에스프레소 4샷(약 92ml)을 추출한다.", replacement) };
+      assert.notEqual(extractVerifiedRecipeSourceFacts(question, [altered], [{ chunkId: altered.chunk_id, quote: altered.content }])?.support.outcome, "full");
+    }
+  });
+
   test("equivalent Celsius range spellings do not change the requested temperature fact", () => {
     for (const spelling of ["60~65℃", "60–65도", "섭씨 60도에서 65도"]) {
       const result = verifyRecipeFacts("HOT 바닐라라떼의 스팀 온도는 몇 ℃인가요?", `HOT 바닐라라떼의 스팀 온도는 ${spelling}입니다.`, [steam], [{ chunkId: steam.chunk_id, quote: steamQuote }]);
