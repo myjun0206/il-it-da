@@ -22,6 +22,7 @@ import { buildLocationReferenceAnswer } from "../../lib/rag/location-reference.t
 import { buildClosingOrderProcedureAnswer } from "../../lib/rag/closing-order-procedure.ts";
 import { buildRecipeOptionQuantityAnswer } from "../../lib/rag/recipe-option-quantity.ts";
 import { buildManualReferenceAnswer } from "../../lib/rag/manual-reference-answer.ts";
+import { normalizeManualQuestion } from "../../lib/rag/normalize-manual-question.ts";
 import { validateQueryRequest } from "../../lib/rag/validate-query-request.ts";
 import { extractSearchKeywords, formatSearchEmbeddingInput } from "../../lib/rag/search-query.ts";
 import { buildGroundedAnswerMessages } from "../../lib/rag/answer-prompt.ts";
@@ -1804,16 +1805,48 @@ describe("근거가 충분한 질문", () => {
     assert.equal(/\d+\s*(?:일|시간|℃)/u.test(outcome.response.answer), false);
   });
 
+  test("common spelling and spacing normalize recipe intent without changing numbers, negations, temperature or menu identity", async () => {
+    const source = chunk("synthetic-strawberry-recipe", { title: "제조 기준", content: "● ICE 딸기라떼\n기본 기준: 18oz / 딸기 베이스 137g / 우유 193ml\n1. 딸기 베이스 137g과 우유 193ml를 넣는다.", raw_similarity_score: .8 });
+    let baselineAnswer: string | undefined;
+    for (const question of ["딸기라떼 레시피 알려줘", "딸기라때 래시피", "딸기 라떼 레시피", "딸 기 라 때 래 시 피", "딸기라때래시피"]) {
+      const input = { ...INPUT, question, requireCoverage: true, requireSupportAssessment: true, requireEvidenceScope: true };
+      let searched = "";
+      const result = await resolveRagAnswer(input, {
+        search: async value => { searched = value; return [source]; },
+        generate: async () => { throw new Error("known spelling variants must use the same grounded recipe"); },
+      });
+      assert.equal(input.question, question);
+      assert.ok(searched.startsWith("딸기라떼 레시피"));
+      assert.equal(result.kind, "resolved");
+      if (result.kind === "resolved") {
+        assert.equal(result.response.status, "answered");
+        assert.equal(result.response.source?.manualId, source.manual_id);
+        baselineAnswer ??= result.response.answer;
+        assert.equal(result.response.answer, baselineAnswer);
+      }
+      assert.equal(normalizeManualQuestion(normalizeManualQuestion(question)), normalizeManualQuestion(question));
+    }
+    const guarded = "HOT 딸기라때 24oz 우유 193ml 말고 191ml 넣지 마";
+    assert.equal(normalizeManualQuestion(guarded), "HOT 딸기라떼 24oz 우유 193ml 말고 191ml 넣지 마");
+    assert.equal(normalizeManualQuestion("우 유 는 3 0ml가 아니라 30ml"), "우유 는 3 0ml가 아니라 30ml");
+    assert.equal(normalizeManualQuestion("고구마라때 래시피"), "고구마라떼 레시피");
+    assert.equal(normalizeManualQuestion("내일 날씨 어때?"), "내일 날씨 어때?");
+    assert.equal(formatSearchEmbeddingInput("딸기라때 래시피"), formatSearchEmbeddingInput("딸기라떼 레시피"));
+    assert.deepEqual(extractSearchKeywords("딸기라때 래시피"), extractSearchKeywords("딸기라떼 레시피"));
+    assert.equal(restoreRecipeSelectionQuestion("아 이 스 바 닐 라 라 때 야", [{ role: "user", content: "바닐라라때 래시피" },
+      { role: "assistant", content: "ICE와 HOT 중 어떤 온도 기준의 바닐라라떼를 말씀하시나요?" }]), "아이스 바닐라라떼 레시피");
+  });
+
   test("spaced recipe names and a bounded selection typo resume the pending user recipe without inventing another menu", async () => {
     const messages = [{ role: "user" as const, content: "바닐라 라떼 레시피 알려줘" },
       { role: "assistant" as const, content: "ICE와 HOT 중 어떤 온도 기준의 바닐라라떼를 말씀하시나요?" }];
     for (const reply of ["아이스 바닐라 라때야", "아이스 바닐라 라떼야", "아이스 바닐라라떼야"]) {
       assert.equal(shouldInterpretQuestion(reply), true);
-      assert.equal(restoreRecipeSelectionQuestion(reply, messages), "아이스 바닐라 라떼 레시피 알려줘");
+      assert.equal(restoreRecipeSelectionQuestion(reply, messages), "아이스 바닐라라떼 레시피 알려줘");
       const source = chunk("synthetic-spaced-recipe", { content: "● ICE 바닐라라떼\n기본 기준: 18oz / 우유 193ml\n1. 우유 193ml를 넣는다.", raw_similarity_score: .8 });
       const result = await resolveRagAnswer({ ...INPUT, question: reply, requireCoverage: true, requireSupportAssessment: true, requireEvidenceScope: true,
         interpretationContext: { userId: "staff", storeId: "store", conversation: { userId: "staff", storeId: "store", messages } } }, {
-        search: async question => { assert.ok(question.includes("바닐라 라떼 레시피")); return [source]; },
+        search: async question => { assert.ok(question.includes("바닐라라떼 레시피")); return [source]; },
         generate: async () => { throw new Error("known user selection and current source recipe must not need generated target labels"); },
       });
       assert.equal(result.kind, "resolved");
@@ -1824,7 +1857,7 @@ describe("근거가 충분한 질문", () => {
       }
       const followup = [...messages, { role: "user" as const, content: reply }, { role: "assistant" as const, content: "이전 답변의 수치는 현재 근거로 다시 확인합니다." }];
       const context = getLatteAmountFollowUpContext("그럼 우유는 몇 ml야?", followup);
-      assert.equal(context?.contextTarget, "아이스 바닐라 라떼");
+      assert.equal(context?.contextTarget, "아이스 바닐라라떼");
       assert.doesNotThrow(() => parseQuestionInterpretation(JSON.stringify({ target: "우유", requirements: ["facts"], constraints: [],
         contextTarget: context?.contextTarget, clarification: false }), "그럼 우유는 몇 ml야?", followup));
     }

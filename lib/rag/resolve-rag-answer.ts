@@ -11,6 +11,7 @@ import { buildLocationReferenceAnswer } from "@/lib/rag/location-reference";
 import { buildClosingOrderProcedureAnswer } from "@/lib/rag/closing-order-procedure";
 import { buildRecipeOptionQuantityAnswer } from "@/lib/rag/recipe-option-quantity";
 import { buildManualReferenceAnswer } from "@/lib/rag/manual-reference-answer";
+import { normalizeManualQuestion } from "@/lib/rag/normalize-manual-question";
 import { findVerifiedQuote } from "@/lib/rag/verified-quote";
 import { isClearlyOutOfScopeQuestion } from "@/lib/rag/search-query";
 import { boundedQuestionContext, buildInterpretedSearchQuestion, getLatteAmountFollowUpContext, isLatteAmountContextualFollowUp, isRecipeSelectionReply, restoreRecipeSelectionQuestion, parseQuestionInterpretation, shouldInterpretQuestion, type QuestionContext, type QuestionInterpretation } from "@/lib/rag/question-interpretation";
@@ -118,6 +119,8 @@ export async function resolveRagAnswer(
   input: RagAnswerInput,
   deps: RagAnswerDeps,
 ): Promise<RagAnswerOutcome> {
+  const normalizedQuestion = normalizeManualQuestion(input.question);
+  if (normalizedQuestion !== input.question) return resolveRagAnswer({ ...input, question: normalizedQuestion }, deps);
   let searchResults: ManualChunkMatch[];
   const trace = (event: { stage: string; [key: string]: unknown }) => { try { deps.onDiagnostic?.(event); } catch {} };
   if (isClearlyOutOfScopeQuestion(input.question)) {
