@@ -45,6 +45,7 @@ const TRACE_VALUES = new Set([
   "model_completion", "json_parse", "response_schema", "support_semantics",
   "location_reference",
   "recipe_option_quantity",
+  "manual_reference",
   "QUESTION_TARGET_UNRESOLVED",
   "FOLLOW_UP_INTENT_AMBIGUOUS",
   "interpretation",
