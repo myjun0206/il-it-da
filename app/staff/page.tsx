@@ -141,6 +141,7 @@ export default function StaffPage() {
     selectStore: selectShellStore,
   } = useStaffShell();
   const restoreCheckedRef = useRef(false);
+  const requestInFlightRef = useRef(false);
   const previousStoreIdRef = useRef(selectedStore?.id ?? null);
   const [toastMessage, setToastMessage] = useState("");
   // 대화: 첫 질문에 서버가 만든 ID. null이면 아직 저장되지 않은 새 대화.
@@ -187,7 +188,7 @@ export default function StaffPage() {
 
   /** + 새 대화: 화면만 초기화한다. DB row는 첫 질문 때 서버가 만든다. */
   function startNewConversation() {
-    if (isBusy) return;
+    if (isBusy || requestInFlightRef.current) return;
     resetConversation();
   }
 
@@ -199,7 +200,7 @@ export default function StaffPage() {
 
   async function openConversation(summary: ConversationSummaryDto) {
     setIsHistoryOpen(false);
-    if (isBusy || summary.id === conversationId) return;
+    if (isBusy || requestInFlightRef.current || summary.id === conversationId) return;
 
     setIsConversationLoading(true);
     setErrorMessage("");
@@ -316,7 +317,7 @@ export default function StaffPage() {
 
   async function submitQuestion(rawQuestion: string) {
     const question = rawQuestion.trim();
-    if (!question || isBusy) return;
+    if (!question || isBusy || requestInFlightRef.current) return;
     if (readOnlyStoreName !== null) {
       setErrorMessage("이 대화는 열람만 할 수 있습니다. 새 질문은 새 대화에서 시작해 주세요.");
       return;
@@ -329,6 +330,7 @@ export default function StaffPage() {
       );
       return;
     }
+    requestInFlightRef.current = true;
     setInput("");
     setErrorMessage("");
     setMessages(current => [...current, { from: "me", text: question, time: formatMessageTime(new Date()) }]);
@@ -350,12 +352,14 @@ export default function StaffPage() {
         // 다른 탭에서 삭제된 대화: 새 대화로 돌린다.
         setConversationId(null);
         writeStaffConversationId(null);
+        setInput(current => current || question);
         setErrorMessage("이 대화를 찾을 수 없어 새 대화로 전환했습니다. 질문을 다시 보내 주세요.");
         return;
       }
       if (payload.code === "STORE_FORBIDDEN") {
         // 점주가 소속을 해제했을 수 있다: 승인 매장 목록을 다시 불러와 다른 매장 또는 매장 관리로 안내한다.
         resetConversation();
+        setInput(question);
         setErrorMessage("이 매장의 근무 권한이 확인되지 않아 답변할 수 없습니다. 근무 매장 목록을 새로 불러왔습니다.");
         reloadStores();
         return;
@@ -365,7 +369,7 @@ export default function StaffPage() {
       const error = typeof payload.error === "string" ? payload.error : "답변을 받지 못했어요.";
       if (!response.ok || !answer) {
         const requestError = new Error(error) as Error & { code?: unknown };
-        requestError.code = payload.code;
+        requestError.code = response.status === 401 ? "SESSION_EXPIRED" : payload.code;
         throw requestError;
       }
 
@@ -400,14 +404,24 @@ export default function StaffPage() {
     } catch (error) {
       if (previousStoreIdRef.current !== selectedStore.id) return;
       const code = error instanceof Error ? (error as Error & { code?: unknown }).code : undefined;
+      setInput(current => current || question);
       setErrorMessage(code === "GENERATION_UNPARSABLE"
         ? "답변 형식을 검증하지 못해 이 질문은 처리되지 않았어요. 자동 재요청하지 않았으니 매장 관리자에게 확인해 주세요."
+        : code === "PROVIDER_QUOTA_EXCEEDED"
+          ? "답변 제공 서비스의 결제 또는 크레딧 확인이 필요해요. 자동 재요청하지 않았으니 관리자에게 문의해 주세요."
+        : code === "PROVIDER_PERMISSION_DENIED"
+          ? "답변 제공 서비스의 프로젝트 또는 모델 접근 권한을 확인해야 해요. 관리자에게 문의해 주세요."
+        : code === "PROVIDER_UNAVAILABLE"
+          ? "답변 제공 서비스에 문제가 있어요. 자동 재요청하지 않았으니 관리자에게 문의해 주세요."
+        : code === "SESSION_EXPIRED"
+          ? "로그인 세션을 확인하지 못했어요. 다시 로그인한 뒤 질문해 주세요."
         : code === "PROVIDER_RATE_LIMITED"
           ? "답변 제공 서비스의 요청 한도에 걸렸어요. 잠시 후 다시 질문해 주세요."
           : code === "PROVIDER_AUTH_FAILED"
             ? "답변 제공 서비스의 인증 설정에 문제가 있어요. 관리자에게 문의해 주세요."
         : "답변을 불러오지 못했어요. 잠시 후 다시 시도해주세요.");
     } finally {
+      requestInFlightRef.current = false;
       setIsLoading(false);
     }
   }

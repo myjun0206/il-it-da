@@ -1,5 +1,6 @@
 import type { RecipeProviderUsage } from "@/lib/rag/private-recipe-fact-diagnostics";
 import { recordProviderUsage } from "@/lib/rag/provider-usage";
+import { createProviderHttpError, createProviderTransportError } from "@/lib/rag/provider-error";
 
 const OPENAI_EMBEDDING_URL = "https://api.openai.com/v1/embeddings";
 const EMBEDDING_MODEL = "text-embedding-3-small";
@@ -167,10 +168,7 @@ export async function createEmbeddings(inputs: string[], onUsage?: (usage: Recip
     if (!response.ok) {
       recordProviderUsage({ service: "embedding", model: EMBEDDING_MODEL, httpStatus: response.status, inputTokens: null, outputTokens: null });
       try { onUsage?.({ service: "embedding", httpStatus: response.status, inputTokens: null, outputTokens: null }); } catch {}
-      const guidance = response.status === 401 ? "Check OPENAI_API_KEY." : response.status === 429 ? "Check OpenAI quota and rate limits." : "Check OpenAI service availability.";
-      throw Object.assign(new Error(`OpenAI Embeddings API request failed with status ${response.status}. ${guidance}`), {
-        diagnosticService: "embedding", diagnosticHttpStatus: response.status,
-      });
+      throw await createProviderHttpError(response, "embedding", EMBEDDING_MODEL);
     }
 
     const payload: unknown = await response.json();
@@ -183,10 +181,10 @@ export async function createEmbeddings(inputs: string[], onUsage?: (usage: Recip
     return parseAndSortOpenAiEmbeddings(payload, normalizedInputs.length);
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`OpenAI Embeddings API request timed out after ${TIMEOUT_MS / 1000} seconds.`);
+      throw createProviderTransportError("embedding");
     }
     if (error instanceof TypeError) {
-      throw new Error("OpenAI Embeddings request or response failed. Check network, DNS, proxy and TLS settings, then retry.");
+      throw createProviderTransportError("embedding");
     }
     throw error;
   } finally {

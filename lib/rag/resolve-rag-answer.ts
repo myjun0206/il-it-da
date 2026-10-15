@@ -6,6 +6,7 @@
  * 돌려주므로, 호출부가 이를 insufficient로 위장해 점주에게 알리지 않는다.
  */
 import { applyEvidenceGate, scoreChunk, type EvidenceGateThresholds } from "@/lib/rag/evidence-gate";
+import { getProviderFailure, type ProviderSystemErrorCode } from "@/lib/rag/provider-error";
 import { buildLocationReferenceAnswer } from "@/lib/rag/location-reference";
 import { buildClosingOrderProcedureAnswer } from "@/lib/rag/closing-order-procedure";
 import { findVerifiedQuote } from "@/lib/rag/verified-quote";
@@ -83,7 +84,7 @@ export type RagAnswerInput = {
   requireEvidenceScope?: boolean;
 };
 
-export type RagSystemErrorCode = "SEARCH_FAILED" | "GENERATION_FAILED" | "GENERATION_UNPARSABLE" | "PROVIDER_AUTH_FAILED" | "PROVIDER_RATE_LIMITED";
+export type RagSystemErrorCode = "SEARCH_FAILED" | "GENERATION_FAILED" | "GENERATION_UNPARSABLE" | ProviderSystemErrorCode;
 
 const SUPPORT_LABELS = { procedure: "구체적인 작업 절차", method: "구체적인 수행 방법", timing: "적용 시점", permission: "허용 여부", facts: "요청한 구체 기준",
   location: "보관 또는 배치 위치", conditions: "요청한 조건", duration: "요청한 기간", referral: "문의 대상" };
@@ -95,7 +96,7 @@ export type RagAnswerOutcome =
       /** 최종 insufficient일 때만 true. 기존 점주 에스컬레이션 가드를 그대로 탄다. */
       escalate: boolean;
     }
-  | { kind: "system_error"; code: RagSystemErrorCode; failureLayer?: string; fieldPath?: string; validationKind?: string };
+  | { kind: "system_error"; code: RagSystemErrorCode; failureLayer?: string; fieldPath?: string; validationKind?: string; providerRequestId?: string };
 
 function toRagSource(match: ManualChunkMatch): RagSource {
   return { manualId: match.manual_id, title: match.title, category: match.category };
@@ -160,10 +161,10 @@ export async function resolveRagAnswer(
     && !(generalInterpretation && needsExplicitTarget(input.question)
       && !input.interpretationContext?.conversation)) {
     try { await interpretQuestion(); } catch (error) {
-      const providerStatus = (error as { diagnosticHttpStatus?: number })?.diagnosticHttpStatus;
-      if (providerStatus === 401 || providerStatus === 429) {
-        trace({ stage: "final", status: "system_error", reason: "GENERATION_FAILED", failureLayer: "provider", providerHttpStatus: providerStatus });
-        return { kind: "system_error", code: providerStatus === 401 ? "PROVIDER_AUTH_FAILED" : "PROVIDER_RATE_LIMITED", failureLayer: "provider" };
+      const provider = getProviderFailure(error);
+      if (provider) {
+        trace({ stage: "final", status: "system_error", reason: provider.code, failureLayer: "provider", providerRequestId: provider.providerRequestId });
+        return { kind: "system_error", ...provider, failureLayer: "provider" };
       }
       const failure = error instanceof StructuredAnswerParseError ? error : new StructuredAnswerParseError("interpretation.$", "service_transport_error");
       trace({ stage: "interpretation_validation", service: "interpretation", validation: "rejected", failureLayer: "question_interpretation",
@@ -224,10 +225,10 @@ export async function resolveRagAnswer(
       return Math.abs(difference) > 1e-6 ? difference : second.raw_similarity_score - first.raw_similarity_score;
     }).slice(0, 5);
   } catch (error) {
-    const providerStatus = (error as { diagnosticHttpStatus?: number })?.diagnosticHttpStatus;
-    if (providerStatus === 401 || providerStatus === 429) {
-      trace({ stage: "final", status: "system_error", reason: "SEARCH_FAILED", failureLayer: "provider", providerHttpStatus: providerStatus });
-      return { kind: "system_error", code: providerStatus === 401 ? "PROVIDER_AUTH_FAILED" : "PROVIDER_RATE_LIMITED", failureLayer: "provider" };
+    const provider = getProviderFailure(error);
+    if (provider) {
+      trace({ stage: "final", status: "system_error", reason: provider.code, failureLayer: "provider", providerRequestId: provider.providerRequestId });
+      return { kind: "system_error", ...provider, failureLayer: "provider" };
     }
     if (error instanceof Error && error.name === "ManualSearchNotReadyError") {
       trace({ stage: "final", status: "insufficient", reason: "MANUAL_SEARCH_NOT_READY" });
@@ -331,10 +332,10 @@ export async function resolveRagAnswer(
       trace({ stage: "final", status: "system_error", reason: "GENERATION_UNPARSABLE" });
       return { kind: "system_error", code: "GENERATION_UNPARSABLE" };
     }
-    const providerStatus = (error as { diagnosticHttpStatus?: number })?.diagnosticHttpStatus;
-    if (providerStatus === 401 || providerStatus === 429) {
-      trace({ stage: "final", status: "system_error", reason: "GENERATION_FAILED", failureLayer: "provider", providerHttpStatus: providerStatus });
-      return { kind: "system_error", code: providerStatus === 401 ? "PROVIDER_AUTH_FAILED" : "PROVIDER_RATE_LIMITED", failureLayer: "provider" };
+    const provider = getProviderFailure(error);
+    if (provider) {
+      trace({ stage: "final", status: "system_error", reason: provider.code, failureLayer: "provider", providerRequestId: provider.providerRequestId });
+      return { kind: "system_error", ...provider, failureLayer: "provider" };
     }
     trace({ stage: "final", status: "system_error", reason: "GENERATION_FAILED" });
     return { kind: "system_error", code: "GENERATION_FAILED" };
