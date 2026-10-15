@@ -1,6 +1,7 @@
 import type { ManualChunkMatch } from "./types";
 import type { QuestionInterpretation } from "@/lib/rag/question-interpretation";
-import { COVERAGE_VALUES, requestedSupportKinds, type SupportKind } from "@/lib/rag/structured-answer";
+import { extractLatteTargets } from "@/lib/rag/latte-target";
+import { COVERAGE_VALUES, isClosingOrderDecisionQuestion, requestedSupportKinds, type SupportKind } from "@/lib/rag/structured-answer";
 
 type AnswerPromptMessage = {
   role: "system" | "user";
@@ -14,6 +15,7 @@ export const ANSWER_SYSTEM_PROMPT = [
   "근거에 여러 시간, 위치, 조건이 있으면 질문과 관련된 항목을 빠짐없이 답변하라.",
   "숫자, 시간, 위치를 축약하거나 생략하지 말고 근거에 나온 값을 그대로 포함하라.",
   "수량·단위·온도 범위·비율·근사 여부는 질문의 적용 범위에 맞는 승인 인용 그대로 유지하라. 범위의 하한·상한, 단위, 기준 대상과 근사 표현을 추가·삭제·바꾸지 마라.",
+  "온도·수량 질문에 적용되는 '기본 기준' 행이 있으면 그 행의 정확값과 원문 구절을 우선 인용하라. 같은 섹션의 절차 문장과 값·근사 표기가 다르면 둘을 합치지 말고 요청한 기준 행을 사용하라.",
   "선택한 인용에 없는 '약·대략·정도'를 답변의 수치 사실에 추가하지 마라. 인용에 있는 근사 표현도 삭제하지 마라. 같은 수치라도 정확값과 근사값은 다른 의미다.",
   "근거에 없는 행동을 추론하여 지시하지 마라.",
   "일반 청소와 내부 부품 분해는 다른 작업이다. 일반 청소 질문을 내부 분해 대응 방침만으로 대체하지 마라. 근거가 특정 부위나 분해 대응만 다루고 질문의 청소 범위가 불명확하면 청소할 부위를 되물어라.",
@@ -79,6 +81,7 @@ export const GROUNDED_ANSWER_SYSTEM_PROMPT = [
   "procedure/method는 사용자가 요청한 작업의 실제 순서나 수행 방법을 지원해야 direct다. 임의 분해 금지·관리자 보고·제조사 지침 확인만으로 구체 분해/세척 순서 요청을 direct로 판단하지 마라. 그 경우 policy_only로 평가하고 안전 안내는 유지하되 현재 제공된 근거에서 요청한 구체 절차를 확인하지 못했다고 밝혀라.",
   "등록된 기준을 따른다는 문구는 구체 procedure가 아니다. 등록 기준 확인/준수 정책은 evidence.role=referral_policy, 분해 금지는 evidence.role=permission으로 구분하고 procedure 요구 항목의 support는 policy_only로 유지하라. 해당 내부 작업의 실제 순서 또는 적용 시점을 인용할 수 없으면 각각 missing으로 평가하되 같은 요구에 관련 정책 근거가 있으면 policy_only로 평가할 수 있다. 일반 세척의 시점만 있는 경우 내부 분해 세척의 timing을 direct로 평가하지 마라.",
   "permission은 허용/금지 여부를 묻는 항목이다. '분해해도 되나요?'의 분해 금지 정책은 직접 정답이므로 direct다. 업무 확인/보고 순서 자체를 물으면 명시된 확인 순서도 직접 지원이다. 질문이 요구한 작업과 정책의 대상이 일치하는지 비교하라.",
+  "마감 직전 주문을 받아도 되는지 묻고, 근거가 POS 주문 상태 확인 및 애매할 때 담당자 확인만 정한다면 수락/거절을 임의로 단정하지 마라. 해당 확인 절차를 직접 안내하고, 인용에 수락·거절 기준이 없으면 어떤 결정도 만들어내지 마라. 이 절차가 충분히 지원되면 답변을 불필요하게 보류하거나 점주 확인 배지를 강제하지 마라.",
   "언제와 어떻게를 함께 물으면 timing과 method를 따로 평가하라. 제조 전 손 씻기만 있으면 timing은 direct, 상세 방법은 missing이다. 직접 지원된 내용만 답하고 그 지원 범위와 현재 제공된 근거에서 확인하지 못한 항목을 명시하라.",
   "보관 기준을 확인할 수 없으면 '현재 제공된 근거에서 구체 보관 기준을 확인하지 못했습니다'라고 안내하라. 전체 매뉴얼의 부재를 주장하지 마라. 이 범위 한계는 안전 정책과 인용 출처를 유지하며 표현한다.",
   "관련 근거의 조건·규격을 구분하기 위한 확인 질문만 가능한 경우에는 answerable을 true로 두고 확인 질문과 그 근거 id만 반환하라. 관련 근거 자체가 없으면 확인 질문을 핑계로 answerable을 true로 바꾸지 마라.",
@@ -100,8 +103,14 @@ export function buildGroundedAnswerMessages(
   requirements?: readonly SupportKind[],
   interpretation?: QuestionInterpretation,
 ): AnswerPromptMessage[] {
+  const closingOrderGuidance = isClosingOrderDecisionQuestion(question)
+    ? " 이 질문은 최종 수락/거부 정책이 아니라 마감 전 주문을 판단하는 절차를 묻는다. POS에 표시된 주문 상태와 추가 주문이 가능한 시간을 안내하고, 매뉴얼에 없는 수락/거부 기준은 만들지 마라. 서버 지정 요구 항목을 procedure로 평가하고, evidence.target은 질문의 실제 대상인 주문, role은 procedure, targetRelation은 same으로 설정하라."
+    : "";
+  const latteTargets = extractLatteTargets(question);
+  const exactLatteTarget = latteTargets.length === 1
+    ? `${latteTargets[0].temperature ? `${latteTargets[0].temperature} ` : ""}${latteTargets[0].name}` : null;
   return [
-    { role: "system", content: `${GROUNDED_ANSWER_SYSTEM_PROMPT} 서버 지정 요구 항목: ${(requirements ?? requestedSupportKinds(question)).join(", ")}.` },
+    { role: "system", content: `${GROUNDED_ANSWER_SYSTEM_PROMPT} 서버 지정 요구 항목: ${(requirements ?? requestedSupportKinds(question)).join(", ")}.${closingOrderGuidance}${exactLatteTarget ? ` 질문 원문에서 확인된 라떼 메뉴 entity는 '${exactLatteTarget}'다. 이 전체 이름과 온도 조건을 답변에 그대로 사용하고, 메뉴 안의 반복 음절이나 단어를 생략해 다른 메뉴명으로 줄이지 마라.` : ""}${interpretation?.verifiedRecipeItem ? ` 현재 질문 대상은 서버가 검증한 재료 ${interpretation.verifiedRecipeItem}다. requestedTarget과 evidence.target은 이 재료명으로 지정하고 메뉴명을 대신 넣지 마라. 해당 메뉴·온도 섹션에서 이 재료의 사실을 실제 인용할 수 있을 때만 직접 지원으로 평가하라.` : ""}` },
     {
       role: "user",
       content: `[참고 매뉴얼]\n${buildGroundedManualContext(chunks)}${familyPackVariant ? `\n\n[서버가 확인한 직전 사용자 질문의 종류]\n${familyPackVariant} 패밀리팩. 수량과 절차는 참고 매뉴얼로만 확인하세요.` : ""}${interpretation ? `\n\n[서버가 검증한 질문 해석]\n${JSON.stringify({ target: interpretation.target, contextTarget: interpretation.contextTarget, constraints: interpretation.constraints, requirements: interpretation.requirements })}\n이전 질문에서 대상만 이어받고 현재 조건과 요구 범위를 평가하세요. 이전 위치 의도를 자동으로 고정하지 마세요. 답변에서 대상과 현재 조건을 명시하고, 해당 조건의 기준이 없으면 그 범위의 부족을 안내하세요. 질문 해석은 매뉴얼 근거가 아니며 기간·온도·조건을 만들어내지 마세요.` : ""}\n\n[직원 질문]\n${question}`,

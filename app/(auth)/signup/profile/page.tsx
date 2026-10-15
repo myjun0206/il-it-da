@@ -265,8 +265,9 @@ function HQSignupProfile() {
     try {
       const response = await fetch("/api/auth/send-verification", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: formData.companyEmail }),
+        body: JSON.stringify({ email: normalizedEmail }),
       });
       const data = (await response.json()) as { sent?: boolean; error?: string };
 
@@ -277,8 +278,8 @@ function HQSignupProfile() {
       setEmailVerificationSent(true);
       setEmailVerified(false);
       setVerificationCode("");
-    } catch {
-      setVerificationError("인증번호 발송 중 오류가 발생했습니다.");
+    } catch (error) {
+      setVerificationError(error instanceof Error ? error.message : "인증번호 발송 중 오류가 발생했습니다.");
     } finally {
       setIsSendingVerification(false);
     }
@@ -352,8 +353,9 @@ function HQSignupProfile() {
     try {
       const response = await fetch("/api/auth/verify-code", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: formData.companyEmail, code: verificationCode }),
+        body: JSON.stringify({ email: normalizedEmail, code: normalizedCode }),
       });
       const data = (await response.json()) as { verified?: boolean; error?: string };
 
@@ -1186,6 +1188,7 @@ function OwnerStaffSignupProfile() {
   const postOtpApi = async (path: string, body: Record<string, unknown>) => {
     const response = await fetch(path, {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });

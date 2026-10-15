@@ -3,6 +3,7 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 
 import { buildGroundedAnswerMessages } from "@/lib/rag/answer-prompt";
+import { recordProviderUsage } from "@/lib/rag/provider-usage";
 import {
   authorizeRagStoreAccessForRequest,
   resolveRagStoreFranchiseForRequest,
@@ -15,7 +16,7 @@ import { StructuredAnswerParseError, buildGroundedAnswerResponseFormat, requeste
 import { saveQuestionLog } from "@/lib/rag/save-question-log";
 import { createQuestionLogFollowUp } from "@/lib/notifications/notify-repeated-question";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { searchManualChunks } from "@/lib/rag/search-manual-chunks";
+import { DEFAULT_SEARCH_CANDIDATE_COUNT, searchManualChunks } from "@/lib/rag/search-manual-chunks";
 import { validateQueryRequest } from "@/lib/rag/validate-query-request";
 import { canUseFamilyPackHistory, priorFamilyPackVariant } from "@/lib/rag/manual-menu-intent";
 import { createClient } from "@/lib/supabase/server";
@@ -199,7 +200,7 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
             searchInputLength: userQuestion.length, confirmedTargetIncluded: Boolean(familyPackVariant && userQuestion.includes(`${familyPackVariant} 패밀리팩`)),
             includesBFamilyPack: /B\s*패밀리\s*팩/u.test(userQuestion), franchiseId: franchiseScope.franchiseId });
           try {
-            const matches = await searchManualChunks(userQuestion, storeId, franchiseScope.franchiseId, 5,
+            const matches = await searchManualChunks(userQuestion, storeId, franchiseScope.franchiseId, DEFAULT_SEARCH_CANDIDATE_COUNT,
               usage => { collectExecution({ stage: "provider_usage", ...usage }); });
             return development && matches.length ? await annotateCandidateScopes(matches, storeId, franchiseScope.franchiseId,
               async ids => await createAdminClient().from("manuals").select("id, status, scope_type, store_id, franchise_id").in("id", ids)) : matches;
@@ -221,7 +222,14 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
             throw error;
           }
         },
-        onDiagnostic: development ? trace : undefined,
+        onDiagnostic: event => {
+          if (development) trace(event);
+          if (event.validation === "rejected" || event.stage === "final") {
+            console.info("[RAG_VALIDATION]", JSON.stringify({ traceId: trace.traceId, stage: event.stage,
+              status: event.status, reason: event.reason, failureLayer: event.failureLayer,
+              fieldPath: event.fieldPath, validationKind: event.validationKind }));
+          }
+        },
         onPrivateDecisionReview: development ? review => { privateDecision = review; } : undefined,
         onPrivateRecipeFactDiagnostic: development ? diagnostic => {
           recordPrivateRecipeFactDiagnostic(trace.traceId, diagnostic, { development });
@@ -243,7 +251,11 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
     if (outcome.kind === "system_error") {
       for (const stage of ["question_log", "escalation", "repeated_alert"]) trace({ stage, status: "skipped", reason: "SYSTEM_ERROR" });
       console.error(`RAG query failed: ${outcome.code}`);
-      return NextResponse.json({ error: "Unable to answer the question.", code: outcome.code }, { status: 500, headers: diagnosticHeaders });
+      console.error("[RAG_SYSTEM_ERROR]", JSON.stringify({ traceId: trace.traceId, code: outcome.code,
+        failureLayer: outcome.failureLayer, fieldPath: outcome.fieldPath, validationKind: outcome.validationKind }));
+      return NextResponse.json({ error: "Unable to answer the question.", code: outcome.code,
+        failureLayer: outcome.failureLayer, fieldPath: outcome.fieldPath, validationKind: outcome.validationKind },
+      { status: outcome.code === "PROVIDER_RATE_LIMITED" ? 503 : outcome.code === "PROVIDER_AUTH_FAILED" ? 502 : 500, headers: diagnosticHeaders });
     }
 
     collectExecution({ stage: "final_output", answer: outcome.response.answer, status: outcome.response.status, similarity: outcome.response.similarity });
@@ -294,7 +306,7 @@ async function createGroundedAnswer(question: string, chunks: ManualChunkMatch[]
   try {
     const requestBody = {
       model: "gpt-4o", temperature: 0.2, max_tokens: GPT_MAX_OUTPUT_TOKENS,
-      response_format: buildGroundedAnswerResponseFormat(question, interpretation?.requirements),
+      response_format: buildGroundedAnswerResponseFormat(question, interpretation?.requirements, interpretation?.verifiedRecipeItem),
       messages: buildGroundedAnswerMessages(question, chunks, familyPackVariant, interpretation?.requirements, interpretation),
     };
     const response = await fetch("https://api.openai.com/v1/chat/completions", { // gpt-4o 모델에 system/user 프롬프트 전달
@@ -309,12 +321,15 @@ async function createGroundedAnswer(question: string, chunks: ManualChunkMatch[]
 
     trace?.({ stage: "external_api", service: "answer", httpStatus: response.status, reason: response.ok ? "RESPONSE_OK" : "REQUEST_FAILED" });
     if (!response.ok) {
+      recordProviderUsage({ service: "generation", model: "gpt-4o", httpStatus: response.status, inputTokens: null, outputTokens: null });
       // 응답 body/헤더는 포함하지 않고 status만 기록해 API 키 등 민감정보 노출 방지
       const guidance = response.status === 401 ? "Check OPENAI_API_KEY." : response.status === 429 ? "Check OpenAI quota and rate limits." : "Check OpenAI service availability and model access.";
-      throw new Error(`OpenAI chat request failed with status ${response.status}. ${guidance}`);
+      throw Object.assign(new Error(`OpenAI chat request failed with status ${response.status}. ${guidance}`), { diagnosticHttpStatus: response.status });
     }
 
     const payload = (await response.json()) as OpenAiChatResponse;
+    recordProviderUsage({ service: "generation", model: "gpt-4o", httpStatus: response.status,
+      inputTokens: payload.usage?.prompt_tokens ?? null, outputTokens: payload.usage?.completion_tokens ?? null });
     try { onUsage?.({ service: "generation", httpStatus: response.status,
       inputTokens: typeof payload.usage?.prompt_tokens === "number" && Number.isSafeInteger(payload.usage.prompt_tokens) && payload.usage.prompt_tokens >= 0 ? payload.usage.prompt_tokens : null,
       outputTokens: typeof payload.usage?.completion_tokens === "number" && Number.isSafeInteger(payload.usage.completion_tokens) && payload.usage.completion_tokens >= 0 ? payload.usage.completion_tokens : null }); } catch {}

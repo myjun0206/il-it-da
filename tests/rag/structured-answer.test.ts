@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { recordProviderUsage } from "../../lib/rag/provider-usage.ts";
 import { describe, test } from "node:test";
 
 import {
@@ -15,9 +16,39 @@ import {
   EVIDENCE_ROLES,
   TARGET_RELATIONS,
   sameDeclaredSourceTarget,
+  questionContainsTargetSequence,
+  sourceContainsDeclaredTarget,
 } from "../../lib/rag/structured-answer.ts";
 
 describe("parseStructuredAnswer", () => {
+  test("usage recording tolerates a broken logging sink and never invents missing token counts", () => {
+    const original = console.info;
+    console.info = () => { throw new Error("synthetic logging unavailable"); };
+    try {
+      const recorded = recordProviderUsage({ service: "generation", model: "gpt-4o", httpStatus: 200, inputTokens: 100, outputTokens: 10 });
+      assert.equal(recorded.estimatedUsd, .00035);
+      const unknown = recordProviderUsage({ service: "generation", model: "gpt-4o", httpStatus: 429, inputTokens: null, outputTokens: null });
+      assert.equal(unknown.usageVerified, false);
+      assert.equal(unknown.estimatedUsd, null);
+    } finally { console.info = original; }
+  });
+  test("source targets tolerate terminal punctuation and known temperature spelling without allowing other entities", () => {
+    assert.equal(sourceContainsDeclaredTarget("마감 전 확인 사항\n현재 주문 상태를 확인한다.", "마감 전 확인 사항."), true);
+    assert.equal(sourceContainsDeclaredTarget("아이스 바닐라라떼\n우유 187ml", "ICE 바닐라라떼"), true);
+    assert.equal(sourceContainsDeclaredTarget("ICE 바닐라라떼", "HOT 바닐라라떼"), false);
+    assert.equal(sourceContainsDeclaredTarget("ICE 시연라떼", "ICE 바닐라라떼"), false);
+    assert.equal(sourceContainsDeclaredTarget("수", "수은."), false);
+  });
+  test("temperature spelling aliases preserve exact menu and mode in requested targets", () => {
+    assert.equal(questionContainsTargetSequence("아이스 바닐라라떼 레시피 알려줘", "ICE 바닐라라떼"), true);
+    assert.equal(questionContainsTargetSequence("ICED 바닐라라떼 레시피", "아이스 바닐라라떼"), true);
+    assert.equal(questionContainsTargetSequence("핫 바닐라라떼 레시피", "HOT 바닐라라떼"), true);
+    assert.equal(questionContainsTargetSequence("아이스 바닐라라떼 레시피", "HOT 바닐라라떼"), false);
+    assert.equal(questionContainsTargetSequence("아이스 바닐라라떼 레시피", "ICE 카페라떼"), false);
+    assert.equal(questionContainsTargetSequence("아이스 시연라떼 레시피", "ICE 바닐라라떼"), false);
+    assert.equal(questionContainsTargetSequence("아이스 바닐라라떼 레시피", "ICE 시연바닐라라떼"), false);
+  });
+
   test("particle equivalence remains narrow and does not collapse a one-character substance target", () => {
     assert.equal(sameDeclaredSourceTarget("우유는", "우유", "우유를 냉장 보관한다."), true);
     assert.equal(sameDeclaredSourceTarget("수은", "수", "수은을 사용하지 않는다."), false);

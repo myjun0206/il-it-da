@@ -7,8 +7,6 @@ import { Check } from "lucide-react";
 import { siApple } from "simple-icons/icons";
 import { Button } from "@/components/common/Button";
 import { Input, PasswordInput } from "@/components/common/Input";
-import { createClient } from "@/lib/supabase/client";
-import { getAuthenticatedProfile } from "@/lib/auth/client-profile";
 import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
 import { getOAuthErrorMessage } from "@/lib/auth/auth-callback";
 
@@ -44,12 +42,37 @@ function LoginPageContent() {
           setErrors({ email: getOAuthErrorMessage(oauthError) });
         }
 
-        const supabase = createClient();
-        const profile = await getAuthenticatedProfile(supabase);
-        
-        if (profile) {
+        const response = await fetch("/api/auth/session?checkIncompleteSignup=1", { cache: "no-store" });
+        const profile = await response.json() as {
+          authenticated?: boolean;
+          code?: string;
+          redirectTo?: string;
+          role?: string;
+          approvalStatus?: "pending" | "approved" | "rejected";
+          needsStoreMembership?: boolean;
+          email?: string;
+          name?: string;
+          phone?: string;
+        };
+
+        if (profile.code === "SIGNUP_CANCELLED" && profile.redirectTo) {
+          router.replace(profile.redirectTo);
+          return;
+        }
+
+        if (response.ok && profile.authenticated && profile.role) {
           const role = profile.role;
-          
+          if (profile.needsStoreMembership && (role === "owner" || role === "staff")) {
+            sessionStorage.setItem("signupRole", role);
+            sessionStorage.setItem("signupProfile", JSON.stringify({
+              email: profile.email ?? "",
+              name: profile.name ?? "",
+              phone: profile.phone ?? "",
+              role,
+            }));
+            router.push("/signup/stores");
+            return;
+          }
           // Redirect based on role
           if (role === "hq") {
             router.push("/hq");
@@ -99,8 +122,12 @@ function LoginPageContent() {
           mustChangePassword?: boolean;
           role?: string;
           approvalStatus?: "pending" | "approved" | "rejected";
+          needsStoreMembership?: boolean;
+          name?: string;
+          phone?: string;
         };
         code?: string;
+        redirectTo?: string;
         signup?: { role: "owner" | "staff"; email: string; name: string; phone: string };
         error?: string;
       } =
@@ -121,6 +148,11 @@ function LoginPageContent() {
         return;
       }
 
+      if (result.code === "SIGNUP_CANCELLED" && result.redirectTo) {
+        router.replace(result.redirectTo);
+        return;
+      }
+
       if (!response.ok || !result.user) {
         setIsLoading(false);
         setErrors((prev) => ({
@@ -132,6 +164,18 @@ function LoginPageContent() {
 
       if (result.user.mustChangePassword === true) {
         router.push("/change-password");
+        return;
+      }
+
+      if (result.user.needsStoreMembership && (result.user.role === "owner" || result.user.role === "staff")) {
+        sessionStorage.setItem("signupRole", result.user.role);
+        sessionStorage.setItem("signupProfile", JSON.stringify({
+          email: result.user.email,
+          name: result.user.name ?? "",
+          phone: result.user.phone ?? "",
+          role: result.user.role,
+        }));
+        router.push("/signup/stores");
         return;
       }
 

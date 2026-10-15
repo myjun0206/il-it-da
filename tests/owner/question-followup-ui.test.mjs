@@ -18,7 +18,7 @@ const modules = new Map();
 const mocks = {
   "next/link": "const React=require('react'); exports.default=({href,children,...props})=>React.createElement('a',{...props,href},children);",
   "next/image": "const React=require('react'); exports.default=({priority,fill,...props})=>React.createElement('img',props);",
-  "next/navigation": "exports.useRouter=()=>({push:(href)=>window.fixture.navigation.push(href)});",
+  "next/navigation": "exports.useRouter=()=>({push:(href)=>window.fixture.navigation.push(href)}); exports.usePathname=()=>'/boss/questions/question';",
   "@/lib/owner/current-store": `exports.resolveOwnerCurrentStore=async()=>({status:'ready',stores:[${JSON.stringify(store)}],current:${JSON.stringify(store)},pending:[]}); exports.persistSelectedStore=()=>{};`,
   "@/lib/supabase/client": "exports.createClient=()=>({auth:{getSession:async()=>({data:{session:{user:{user_metadata:{name:'점주'}}}}}),signOut:async()=>{}}});",
   "@/lib/manuals/store-manual-auth": "exports.requireStoreOwner=()=>{throw Error('DB access forbidden in UI fixture');};",

@@ -23,7 +23,7 @@ export type RagSearchMatch = {
 
 export type RagQuerySuccessResponse = {
   evidenceSupport?: RecipeEvidenceSupport | null;
-  responseKind?: "answer" | "clarification";
+  responseKind?: "answer" | "clarification" | "out_of_scope";
   answer: string;
   similarity: number | null;
   /** 하위 호환용 대표 출처. sources[0]과 같다. */
@@ -37,7 +37,7 @@ export type RagQuerySuccessResponse = {
 
 export type RagQueryErrorResponse = {
   error: string;
-  code?: "SEARCH_FAILED" | "GENERATION_FAILED" | "GENERATION_UNPARSABLE" | "RAG_QUERY_FAILED";
+  code?: "SEARCH_FAILED" | "GENERATION_FAILED" | "GENERATION_UNPARSABLE" | "RAG_QUERY_FAILED" | "PROVIDER_AUTH_FAILED" | "PROVIDER_RATE_LIMITED";
 };
 
 export type RagQueryResponse = RagQuerySuccessResponse | RagQueryErrorResponse;

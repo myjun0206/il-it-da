@@ -140,7 +140,7 @@ export default function StaffAddStorePage() {
     <div className="p-6 lg:p-8">
       {/* 지도 기반 작업 화면이라 일반 페이지(max-w-7xl)보다 조금 넓게 쓴다. (점주 운영 매장 추가와 동일) */}
       <div className="max-w-[1440px] mx-auto">
-        <StoreRequestFlow copy={STAFF_COPY} memberships={memberships} onSubmit={submitRequest} />
+        <StoreRequestFlow copy={STAFF_COPY} memberships={memberships} onSubmit={submitRequest} elevateMobileActionBar />
       </div>
     </div>
   );

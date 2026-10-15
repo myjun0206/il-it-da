@@ -69,7 +69,7 @@ export default function HQHeader({
         {/* 오른쪽 액션 영역 - 알림과 프로필 */}
         <div className="ml-auto flex items-center gap-2 sm:gap-4">
           {/* 알림 */}
-          <NotificationCenter notificationPageUrl="/hq/notifications" />
+          <NotificationCenter className="hidden sm:block" notificationPageUrl="/hq/notifications" />
 
           {/* 프로필 메뉴 (HQ용) */}
           <ProfileMenu
@@ -77,6 +77,8 @@ export default function HQHeader({
             subtitle="본사 관리자"
             roleLabel="본사 관리자"
             avatarUrl={avatarUrl}
+            mobileContext={{ label: "소속", value: franchiseName }}
+            notificationPageUrl="/hq/notifications"
           />
         </div>
       </div>

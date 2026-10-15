@@ -9,6 +9,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { upsertSignupProfile, submitStoreMembershipRequest } from "@/lib/signup/store-membership-service";
 import { logSafeAuthError } from "@/lib/auth/safe-auth-log";
 import { hasRequiredSignupTerms, validateOwnerStaffSignupProfile } from "@/lib/auth/owner-staff-signup";
+import { getStoreMembershipAccess } from "@/lib/auth/store-membership-access";
+import { clearDeletedAccountCookies, deleteIncompleteStoreSignupAccount } from "@/lib/auth/incomplete-store-signup";
 import type { User } from "@supabase/supabase-js";
 import type { UserRole } from "@/lib/types/user";
 
@@ -169,19 +171,19 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
   const isSocialUser = userData.user.identities?.some((identity) => identity.provider !== "email");
   const requestedNext = requestUrl.searchParams.get("next");
+  let safeNext: string | null = null;
   if (requestedNext && !isSocialUser) {
-    const safeNext = getSafeAuthNextPath(requestedNext);
+    safeNext = getSafeAuthNextPath(requestedNext);
 
     if (safeNext === "/signup/approval" || safeNext === "/signup/approval-status") {
       if (await autoSubmitPendingStoreMemberships(userData.user)) {
         return NextResponse.redirect(new URL("/signup/approval-status", requestUrl.origin));
       }
     }
-
-    return NextResponse.redirect(new URL(safeNext, requestUrl.origin));
   }
 
-  const { data: profile, error: profileError } = await createAdminClient()
+  const adminClient = createAdminClient();
+  const { data: profile, error: profileError } = await adminClient
     .from("profiles")
     .select("role, approval_status")
     .eq("id", userData.user.id)
@@ -192,12 +194,45 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.redirect(loginErrorUrl(requestUrl.origin, "profile_failed"));
   }
 
+  const isInitialEmailSignup = verificationType === "signup";
+  const accountRole = profile?.role ?? userData.user.user_metadata?.role;
+  if (!isInitialEmailSignup && (accountRole === "owner" || accountRole === "staff")) {
+    const cleanup = await deleteIncompleteStoreSignupAccount(adminClient, userData.user.id, accountRole);
+    if (cleanup.status === "DELETED") {
+      const response = NextResponse.redirect(new URL("/signup/start?notice=signup-cancelled", requestUrl.origin));
+      return clearDeletedAccountCookies(response, cookieStore.getAll().map(({ name }) => name));
+    }
+    if (cleanup.status === "ERROR") {
+      logSafeAuthError("AUTH_CALLBACK_INCOMPLETE_SIGNUP_CLEANUP_FAILED", new Error("Account cleanup failed"));
+      await supabase.auth.signOut({ scope: "local" });
+      return NextResponse.redirect(loginErrorUrl(requestUrl.origin, "account_cleanup_failed"));
+    }
+  }
+
+  if (safeNext) {
+    return NextResponse.redirect(new URL(safeNext, requestUrl.origin));
+  }
+
   if (!profile) {
     return NextResponse.redirect(new URL("/signup/role?auth=oauth", requestUrl.origin));
   }
 
   if (!isUserRole(profile.role)) {
     return NextResponse.redirect(loginErrorUrl(requestUrl.origin, "invalid_role"));
+  }
+
+  if (profile.role === "owner" || profile.role === "staff") {
+    const membershipAccess = await getStoreMembershipAccess(adminClient, userData.user.id);
+    if (membershipAccess === "ERROR") {
+      logSafeAuthError("AUTH_CALLBACK_MEMBERSHIP_FAILED", new Error("Store membership lookup failed"));
+      return NextResponse.redirect(loginErrorUrl(requestUrl.origin, "profile_failed"));
+    }
+    if (membershipAccess === "PENDING") {
+      return NextResponse.redirect(new URL("/signup/approval-status", requestUrl.origin));
+    }
+    if (membershipAccess === "UNLINKED") {
+      return NextResponse.redirect(new URL("/signup/stores", requestUrl.origin));
+    }
   }
 
   if (profile.role !== "hq" && profile.approval_status !== "approved") {

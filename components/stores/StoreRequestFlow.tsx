@@ -63,13 +63,14 @@ interface StoreRequestFlowProps {
   /** 본인의 해당 역할 membership (검색 결과 배지·중복 안내용. 최종 판단은 서버) */
   memberships: StoreRequestMembership[];
   onSubmit: (store: Store) => Promise<StoreRequestOutcome>;
+  elevateMobileActionBar?: boolean;
 }
 
 /**
  * 매장 검색(NAVER) + 지도 + 선택 매장 고정 Action Bar + 신청 완료 화면.
  * 직원 근무 매장 추가(/staff/stores/add)와 점주 운영 매장 추가(/boss/stores/add)가 함께 쓰는 UI.
  */
-export default function StoreRequestFlow({ copy, memberships, onSubmit }: StoreRequestFlowProps) {
+export default function StoreRequestFlow({ copy, memberships, onSubmit, elevateMobileActionBar = false }: StoreRequestFlowProps) {
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState<SearchState>({ status: "idle" });
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
@@ -343,7 +344,7 @@ export default function StoreRequestFlow({ copy, memberships, onSubmit }: StoreR
 
             <section
               aria-label="매장 위치 지도"
-              className="relative h-[260px] overflow-hidden rounded-xl border border-[var(--color-border)] bg-white md:h-[360px] lg:h-[540px]"
+              className={`relative h-[260px] overflow-hidden rounded-xl border border-[var(--color-border)] bg-white md:h-[360px] lg:h-[540px] ${elevateMobileActionBar ? "isolate z-0 sm:isolation-auto sm:z-auto" : ""}`}
             >
               {showMapResults ? (
                 <StoreMap
@@ -368,7 +369,7 @@ export default function StoreRequestFlow({ copy, memberships, onSubmit }: StoreR
               ref={actionBarRef}
               aria-label={copy.selectedLabel}
               style={sidebarFooterHeight ? { minHeight: sidebarFooterHeight } : undefined}
-              className="fixed bottom-0 left-0 right-0 z-20 flex items-center border-t border-[var(--color-border)] bg-white px-6 py-4 lg:left-[240px] lg:px-8"
+              className={`fixed bottom-0 left-0 right-0 flex items-center border-t border-[var(--color-border)] bg-white px-6 py-4 lg:left-[240px] lg:px-8 ${elevateMobileActionBar ? "isolate z-50 shadow-[0_-4px_12px_rgba(0,0,0,0.08)] sm:isolation-auto sm:z-20 sm:shadow-none" : "z-20"}`}
             >
               <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div className="min-w-0">

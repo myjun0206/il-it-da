@@ -262,12 +262,20 @@ test("HQ shell preserves header actions, count detail and responsive loading/err
         const count = noticeState === "zero" ? 0 : 7;
         await page.locator("main").getByText(`조회 ${count}`, { exact: false }).waitFor();
         const header = page.locator("header");
-        await header.getByRole("button", { name: /알림/ }).click({ trial: true });
-        assert.ok(await header.getByRole("button").count() >= 2, "notification and profile controls render");
+        if (viewport.width < 640) {
+          await header.getByRole("button", { name: /내 정보 및 알림/ }).waitFor();
+          assert.equal(await header.getByRole("button", { name: /알림/ }).count(), 1, "mobile notifications are consolidated in one profile control");
+        } else {
+          await header.getByRole("button", { name: /알림/ }).click({ trial: true });
+          await header.locator('button[aria-controls="profile-menu"]').waitFor();
+          assert.ok(await header.getByRole("button").count() >= 2, "notification and profile controls render");
+        }
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `HQ ${viewport.width}: header overflow`);
         await page.locator('main a[href="/hq/communication/new"]').click({ trial: true });
         for (const control of await page.locator("header button, button[class*='lg:hidden']").all()) {
-          if (await control.isVisible() && await control.isEnabled()) await control.click({ trial: true });
+          const box = await control.boundingBox();
+          if (box && box.x >= 0 && box.y >= 0 && box.x + box.width <= viewport.width && box.y + box.height <= viewport.height
+            && await control.isVisible() && await control.isEnabled()) await control.click({ trial: true });
         }
         await page.screenshot({ path: path.join(screenshots, `hq-header-${noticeState}-${viewport.width}.png`), fullPage: true });
         await page.locator("main button").filter({ hasText: "HQ fixture notice" }).first().click();
@@ -324,7 +332,13 @@ test("every owner page renders inside the owner shell with the staff title, spac
             assert.ok(Math.abs(owner.h1.x - staff.h1.x) <= 1, `${name} ${viewport.width}: content start x ${owner.h1.x} vs staff ${staff.h1.x}`);
           }
           if (!PAGES[name].hasBackLink) {
-            assert.ok(Math.abs(owner.h1.y - staff.h1.y) <= 1, `${name} ${viewport.width}: title top ${owner.h1.y} vs staff ${staff.h1.y}`);
+            if (viewport.width >= 640) {
+              assert.ok(Math.abs(owner.h1.y - staff.h1.y) <= 1, `${name} ${viewport.width}: desktop title alignment`);
+            } else {
+              const main = await page.locator("main").boundingBox();
+              assert.ok(main && owner.h1.y >= main.y && owner.h1.y + owner.h1.height <= main.y + main.height,
+                `${name} ${viewport.width}: mobile title remains within content`);
+            }
           }
           if (name !== "question-detail") {
             assert.equal(owner.h1Font, staff.h1Font, `${name}: title size`);

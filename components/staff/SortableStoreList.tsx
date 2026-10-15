@@ -25,6 +25,8 @@ interface SortableStoreListProps<T extends SortableItem> {
 
 interface DragState {
   id: string;
+  isMobile: boolean;
+  pointerId: number;
   startIndex: number;
   overIndex: number;
   pointerStartY: number;
@@ -51,14 +53,17 @@ export default function SortableStoreList<T extends SortableItem>({
   renderItem,
 }: SortableStoreListProps<T>) {
   const listRef = useRef<HTMLUListElement>(null);
+  const mobileDragRef = useRef<DragState | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [announcement, setAnnouncement] = useState("");
 
   const ids = items.map((item) => item.id);
 
-  const startDrag = (event: PointerEvent<HTMLButtonElement>, index: number) => {
+  const startDrag = (event: PointerEvent<HTMLElement>, index: number) => {
     if (disabled || items.length < 2 || !listRef.current) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
+    const isMobile = !window.matchMedia("(min-width: 40rem)").matches;
+    if (isMobile && (!event.isPrimary || mobileDragRef.current)) return;
     event.preventDefault();
     try {
       // 포인터가 핸들 밖으로 나가도 이동/놓기 이벤트를 계속 받는다.
@@ -73,33 +78,61 @@ export default function SortableStoreList<T extends SortableItem>({
     const heights = rects.map((rect) => rect.height);
     const gap = rects.length > 1 ? Math.max(0, tops[1] - (tops[0] + heights[0])) : 0;
 
-    setDrag({ id: items[index].id, startIndex: index, overIndex: index, pointerStartY: event.clientY, deltaY: 0, tops, heights, gap });
+    const nextDrag = { id: items[index].id, isMobile, pointerId: event.pointerId, startIndex: index, overIndex: index, pointerStartY: event.clientY, deltaY: 0, tops, heights, gap };
+    if (isMobile) mobileDragRef.current = nextDrag;
+    setDrag(nextDrag);
   };
 
-  const moveDrag = (event: PointerEvent<HTMLButtonElement>) => {
-    if (!drag) return;
-    const { startIndex, tops, heights } = drag;
+  const moveDrag = (event: PointerEvent<HTMLElement>) => {
+    const activeDrag = mobileDragRef.current ?? drag;
+    if (!activeDrag || (activeDrag.isMobile && event.pointerId !== activeDrag.pointerId)) return;
+    const { startIndex, tops, heights } = activeDrag;
     const lastIndex = tops.length - 1;
     // 목록 밖으로 나가지 않게 제한
     const minDelta = tops[0] - tops[startIndex];
     const maxDelta = tops[lastIndex] + heights[lastIndex] - (tops[startIndex] + heights[startIndex]);
-    const deltaY = Math.min(maxDelta, Math.max(minDelta, event.clientY - drag.pointerStartY));
+    const deltaY = Math.min(maxDelta, Math.max(minDelta, event.clientY - activeDrag.pointerStartY));
 
-    // 끌고 있는 카드의 중심보다 위에 있는 다른 카드 수 = 새 위치
-    const draggedCenter = tops[startIndex] + heights[startIndex] / 2 + deltaY;
-    let overIndex = 0;
-    for (let index = 0; index <= lastIndex; index += 1) {
-      if (index === startIndex) continue;
-      if (tops[index] + heights[index] / 2 < draggedCenter) overIndex += 1;
+    let overIndex = startIndex;
+    if (activeDrag.isMobile) {
+      if (deltaY > 0) {
+        const draggedBottom = tops[startIndex] + heights[startIndex] + deltaY;
+        for (let index = startIndex + 1; index <= lastIndex; index += 1) {
+          const targetThreshold = tops[index] + heights[index] / 2 - heights[index] * 0.3;
+          if (draggedBottom >= targetThreshold) overIndex = index;
+        }
+      } else if (deltaY < 0) {
+        const draggedTop = tops[startIndex] + deltaY;
+        for (let index = startIndex - 1; index >= 0; index -= 1) {
+          if (draggedTop <= tops[index] + heights[index] / 2) overIndex = index;
+        }
+      }
+      overIndex = Math.min(lastIndex, Math.max(0, overIndex));
+    } else {
+      // 끌고 있는 카드의 중심보다 위에 있는 다른 카드 수 = 새 위치
+      const draggedCenter = tops[startIndex] + heights[startIndex] / 2 + deltaY;
+      overIndex = 0;
+      for (let index = 0; index <= lastIndex; index += 1) {
+        if (index === startIndex) continue;
+        if (tops[index] + heights[index] / 2 < draggedCenter) overIndex += 1;
+      }
     }
 
-    setDrag({ ...drag, deltaY, overIndex });
+    const nextDrag = { ...activeDrag, deltaY, overIndex };
+    if (activeDrag.isMobile) mobileDragRef.current = nextDrag;
+    setDrag(nextDrag);
   };
 
   const endDrag = (commit: boolean) => {
-    if (!drag) return;
-    const { startIndex, overIndex } = drag;
+    const activeDrag = mobileDragRef.current ?? drag;
+    if (!activeDrag) return;
+    const startIndex = activeDrag.isMobile ? ids.indexOf(activeDrag.id) : activeDrag.startIndex;
+    const overIndex = activeDrag.isMobile
+      ? Math.min(ids.length - 1, Math.max(0, activeDrag.overIndex))
+      : activeDrag.overIndex;
+    mobileDragRef.current = null;
     setDrag(null);
+    if (activeDrag.isMobile && (startIndex < 0 || overIndex < 0)) return;
     if (commit && overIndex !== startIndex) {
       onReorder(moveId(ids, startIndex, overIndex));
       setAnnouncement(`${getItemLabel(items[startIndex])}, ${items.length}개 중 ${overIndex + 1}번째로 이동했습니다.`);
@@ -153,8 +186,22 @@ export default function SortableStoreList<T extends SortableItem>({
           return (
             <li
               key={item.id}
+              onPointerDown={(event) => {
+                if (window.matchMedia("(min-width: 40rem)").matches) return;
+                if ((event.target as HTMLElement).closest("button, a, input, select, textarea, [role='button'], [contenteditable='true']")) return;
+                startDrag(event, index);
+              }}
+              onPointerMove={(event) => {
+                if (mobileDragRef.current) moveDrag(event);
+              }}
+              onPointerUp={(event) => {
+                if (mobileDragRef.current?.pointerId === event.pointerId) endDrag(true);
+              }}
+              onPointerCancel={(event) => {
+                if (mobileDragRef.current?.pointerId === event.pointerId) endDrag(false);
+              }}
               style={{ transform: drag ? `translateY(${offsetFor(index)}px)` : undefined }}
-              className={`flex items-center gap-3 min-h-[52px] rounded-xl border bg-white ${
+              className={`flex touch-none items-center gap-3 min-h-[52px] rounded-xl border bg-white pl-4 sm:touch-auto sm:pl-0 ${
                 isDragging
                   ? "relative z-10 border-[var(--color-primary)] shadow-lg"
                   : `border-[var(--color-border)] ${drag ? "motion-safe:transition-transform motion-safe:duration-200" : ""}`
@@ -170,7 +217,7 @@ export default function SortableStoreList<T extends SortableItem>({
                 onPointerUp={() => endDrag(true)}
                 onPointerCancel={() => endDrag(false)}
                 onKeyDown={(event) => handleKeyDown(event, index)}
-                className={`ml-4 flex w-11 shrink-0 touch-none items-center justify-center rounded-l-xl text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-default)] hover:text-[var(--color-text-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-40 ${
+                className={`ml-4 hidden w-11 shrink-0 touch-none items-center justify-center rounded-l-xl text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-default)] hover:text-[var(--color-text-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-40 sm:flex ${
                   isDragging ? "cursor-grabbing" : "cursor-grab"
                 }`}
               >

@@ -48,7 +48,7 @@ test("support badges are never inferred from status, source, score or answer wor
       const html = renderEvidenceMessage({ status, similarity, text: "검증된 답변처럼 보이는 문장" });
       assert.equal(html.includes("매뉴얼 근거 확인"), false);
       assert.equal(html.includes("추가 확인 필요"), false);
-      assert.ok(html.includes("정답 확률이나 답변의 완전성을 뜻하지 않습니다"));
+      assert.equal(html.includes("정답 확률이나 답변의 완전성을 뜻하지 않습니다"), false);
       if (status === "cautious") assert.ok(html.includes("확인 권장"));
     }
   }
@@ -103,6 +103,7 @@ function loadLocalTs(relative) {
 function createStaffFixtureHandler(options = {}) {
   const fixture = JSON.parse(readFileSync(new URL("../rag/synthetic-support-cases.json", import.meta.url), "utf8")).dairySupport;
   if (options.clarification) fixture.question = "그럼 개봉한 건?";
+  if (options.outOfScope) fixture.question = "오늘 날씨 어때?";
   if (options.shortage) fixture.question = "우유의 개봉 후 보관 기간이 궁금해";
   if (options.escalationFlow) {
     fixture.question = "검증표식 Z의 확인 문자열 알려줘";
@@ -267,7 +268,7 @@ test("source-rendered recipe facts preserve exact text and source through respon
     body: JSON.stringify({ question: handler.fixture.question, storeId: "store-fixture" }) }));
   const body = await response.json();
   assert.equal(response.status, 200);
-  assert.equal(body.status, "cautious");
+  assert.equal(body.status, "answered");
   assert.ok(body.answer.includes("HOT 테스트음료 (16oz)"));
   assert.ok(body.answer.includes("스팀 온도 60~65℃"));
   for (const unwanted of ["약 60~65℃", "AI 설명", "우유 220ml"]) assert.equal(body.answer.includes(unwanted), false);
@@ -293,8 +294,8 @@ test("source-rendered recipe facts preserve exact text and source through respon
   for (const message of [immediate, restored]) {
     const html = renderToStaticMarkup(createElement(pageModule.exports.MessageBubble, { message }));
     assert.ok(html.includes("스팀 온도 60~65℃"));
-    assert.ok(html.includes("확인 권장"));
-    assert.ok(html.includes("정답 확률이나 답변의 완전성을 뜻하지 않습니다"));
+    assert.ok(html.includes("매뉴얼 기반 답변"));
+    assert.equal(html.includes("정답 확률이나 답변의 완전성을 뜻하지 않습니다"), false);
     assert.equal(html.includes("매뉴얼 근거 확인"), false);
   }
 });
@@ -316,7 +317,8 @@ test("synthetic dairy fixture travels through staff API to the live UI and reloa
   assert.ok(answer.text.includes("질문의 대상 범위 전체에 적용할 수 없습니다"));
   assert.equal(answer.similarity, handler.fixture.expectedEvidenceScore);
   const markup = renderToStaticMarkup(createElement(pageModule.exports.MessageBubble, { message: answer }));
-  for (const text of ["재고 및 비품 보관 위치", `인용 근거 관련도 ${handler.fixture.expectedEvidenceScore.toFixed(2)}`, "정답 확률이나 답변의 완전성을 뜻하지 않습니다", "관리자 확인 필요"]) assert.ok(markup.includes(text));
+  for (const text of ["재고 및 비품 보관 위치", "관리자 확인 필요"]) assert.ok(markup.includes(text));
+  assert.equal(markup.includes("인용 근거 관련도"), false);
   assert.equal(markup.includes("63%"), false);
   assert.equal(handler.state.conversations.length, 1);
   assert.equal(handler.state.conversations[0].store_id, "store-fixture");
@@ -407,12 +409,12 @@ test("synthetic expired-state permission retains a direct sourced answer through
     return response;
   } });
   const answer = rendered.messages.at(-1);
-  assert.equal(answer.status, "cautious");
+  assert.equal(answer.status, "answered");
   assert.ok(answer.text.includes("우유"));
   assert.ok(answer.text.includes("사용하면 안 돼요"));
   assert.equal(answer.text.includes("7일"), false);
   assert.equal(answer.text.includes("요청 범위 전체를 확인하지 못했습니다"), false);
-  assert.equal(handler.state.logs[0].status, "cautious");
+  assert.equal(handler.state.logs[0].status, "answered");
   assert.equal(handler.state.notifications.length, 0);
   const { getStaffConversationDetail } = loadLocalTs("lib/staff/conversations.ts");
   const rows = handler.state.messages.map((row, index) => ({ ...row, id: `permission-message-${index}` }));
@@ -558,31 +560,32 @@ test("simultaneous persistence failures are preserved and successful responses d
   }
 });
 
-test("staff live and reloaded history share decimal evidence relevance and non-probability explanation", () => {
+test("staff live and reloaded history hide scores while preserving source and response state", () => {
   const live = renderEvidenceMessage();
   const saved = renderEvidenceMessage(JSON.parse(JSON.stringify({ similarity: 0.559292845030823, status: "cautious" })));
   assert.equal(live, saved);
-  assert.ok(live.includes("인용 근거 관련도 0.56"));
-  assert.ok(live.includes("정답 확률이나 답변의 완전성을 뜻하지 않습니다"));
+  assert.equal(live.includes("인용 근거 관련도"), false);
+  assert.equal(live.includes("정답 확률이나 답변의 완전성을 뜻하지 않습니다"), false);
+  assert.ok(live.includes("테스트 인용 근거"));
   assert.ok(live.includes("확인 권장"));
   assert.equal(live.includes("56%"), false);
   const boundary = renderEvidenceMessage({ similarity: 0.596382245618982, status: "cautious" });
-  assert.ok(boundary.includes("인용 근거 관련도 0.60"));
+  assert.equal(boundary.includes("인용 근거 관련도"), false);
   assert.ok(boundary.includes("확인 권장"));
 });
 
 test("high relevance cannot override the persisted manager-confirmation status", () => {
   const markup = renderEvidenceMessage({ similarity: 0.634530957650396, status: "insufficient" });
   assert.ok(markup.includes("관리자 확인 필요"));
-  assert.ok(markup.includes("인용 근거 관련도 0.63"));
+  assert.equal(markup.includes("인용 근거 관련도"), false);
   assert.equal(markup.includes("매뉴얼 기반 답변"), false);
 });
 
 test("missing/nonfinite evidence and missing source never show fabricated relevance", () => {
   for (const similarity of [undefined, NaN, Infinity, -Infinity]) assert.equal(renderEvidenceMessage({ similarity }).includes("인용 근거 관련도"), false);
   assert.equal(renderEvidenceMessage({ source: undefined }).includes("인용 근거 관련도"), false);
-  assert.ok(renderEvidenceMessage({ similarity: 2 }).includes("인용 근거 관련도 1.00"));
-  assert.ok(renderEvidenceMessage({ similarity: -1 }).includes("인용 근거 관련도 0.00"));
+  assert.equal(renderEvidenceMessage({ similarity: 2 }).includes("인용 근거 관련도"), false);
+  assert.equal(renderEvidenceMessage({ similarity: -1 }).includes("인용 근거 관련도"), false);
 });
 
 function conversationReadFixture(rows, options = {}) {
@@ -654,7 +657,7 @@ test("recipe metadata opt-in preserves response, stored row, DTO and UI while fu
     assert.ok(opted.includes("매뉴얼 근거 확인"));
     assert.ok(opted.includes("정답을 보장하지 않습니다"));
     assert.ok(opted.includes("확인 권장"));
-    assert.ok(opted.includes("정답 확률이나 답변의 완전성을 뜻하지 않습니다"));
+    assert.equal(opted.includes("정답 확률이나 답변의 완전성을 뜻하지 않습니다"), false);
     assert.equal(render({ ...message, evidenceSupport: { ...full, missing: ["우유"] } }).includes("매뉴얼 근거 확인"), false);
     assert.equal(render({ ...message, responseKind: "clarification" }).includes("매뉴얼 근거 확인"), false);
   } finally {
@@ -664,6 +667,44 @@ test("recipe metadata opt-in preserves response, stored row, DTO and UI while fu
   const response = await handler.post(new Request("http://localhost/api/staff/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: handler.fixture.question, storeId: "store-fixture" }) }));
   assert.equal((await response.json()).evidenceSupport, undefined);
   assert.equal(handler.state.messages[1].evidence_support, undefined);
+});
+
+test("explicit out-of-scope API and read-only stored history use scope badges while shortage remains unchanged", async () => {
+  const handler = createStaffFixtureHandler({ outOfScope: true });
+  const response = await handler.post(new Request("http://localhost:3000/api/staff/chat", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question: handler.fixture.question, storeId: "store-fixture" }) }));
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.responseKind, "out_of_scope");
+  assert.equal(body.status, "insufficient");
+  assert.equal(body.historyAvailable, true);
+  assert.equal(handler.state.generations, 0);
+  assert.equal(handler.state.searchCalls.length, 0);
+  assert.equal(handler.state.notifications.length, 0);
+  assert.equal(handler.state.messages[1].response_kind, null);
+  const immediate = await submitWithFakeResponse(body);
+  assert.equal(immediate.messages.at(-1).responseKind, "out_of_scope");
+  assert.ok(renderEvidenceMessage(immediate.messages.at(-1)).includes("업무 범위 안내"));
+  assert.equal(renderEvidenceMessage(immediate.messages.at(-1)).includes("관리자 확인 필요"), false);
+  const { getStaffConversationDetail } = loadLocalTs("lib/staff/conversations.ts");
+  const rows = handler.state.messages.map((row, index) => ({ ...row, id: `scope-${index}` }));
+  const before = JSON.stringify(rows);
+  for (const legacy of [false, true]) {
+    const detail = await getStaffConversationDetail(conversationReadFixture(rows, { legacy }).client, "user-fixture", "owned-conversation");
+    assert.equal(detail.ok, true);
+    assert.equal(detail.messages[1].responseKind, "out_of_scope");
+    assert.equal(detail.messages[1].status, "insufficient");
+    const html = renderEvidenceMessage(pageModule.exports.toChatMessages(detail.messages)[1]);
+    assert.ok(html.includes("업무 범위 안내"));
+    assert.equal(html.includes("관리자 확인 필요"), false);
+    assert.equal(html.includes("매뉴얼 기반 답변"), false);
+  }
+  assert.equal(JSON.stringify(rows), before);
+  const shortageRows = rows.map((row, index) => index === 0 ? { ...row, content: "직원 식대 영수증 정산 기한이 언제인가요?" } : row);
+  const shortage = await getStaffConversationDetail(conversationReadFixture(shortageRows).client, "user-fixture", "owned-conversation");
+  assert.notEqual(shortage.messages[1].responseKind, "out_of_scope");
+  assert.ok(renderEvidenceMessage(pageModule.exports.toChatMessages(shortage.messages)[1]).includes("관리자 확인 필요"));
+  assert.ok(renderEvidenceMessage({ status: "insufficient", text: body.answer }).includes("관리자 확인 필요"));
 });
 
 test("response kind survives actual conversation DTO and UI; NULL and old DB rows keep legacy badges", async () => {

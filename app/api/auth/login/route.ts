@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { checkEmailSignupConfirmation } from "@/lib/auth/owner-staff-signup";
 import { fetchAuthEmailSettings } from "@/lib/auth/auth-email-settings";
+import { clearDeletedAccountCookies, deleteIncompleteStoreSignupAccount } from "@/lib/auth/incomplete-store-signup";
 
 export const runtime = "nodejs";
 
@@ -20,8 +22,12 @@ type LoginResponseBody = {
     mustChangePassword?: boolean;
     role?: string;
     approvalStatus?: "pending" | "approved" | "rejected";
+    needsStoreMembership?: boolean;
+    name?: string;
+    phone?: string;
   };
-  code?: "EMAIL_NOT_CONFIRMED" | "SIGNUP_INCOMPLETE";
+  code?: "EMAIL_NOT_CONFIRMED" | "SIGNUP_INCOMPLETE" | "SIGNUP_CANCELLED";
+  redirectTo?: string;
   signup?: { role: "owner" | "staff"; email: string; name: string; phone: string };
   error?: string;
 };
@@ -29,6 +35,9 @@ type LoginResponseBody = {
 type ProfileRoleRow = {
   role: string;
   approval_status: string | null;
+  full_name: string | null;
+  email: string | null;
+  phone: string | null;
 };
 
 function getString(value: unknown): string | undefined {
@@ -95,17 +104,31 @@ export async function POST(request: Request): Promise<NextResponse<LoginResponse
   const adminClient = createAdminClient();
   const { data: profile, error: profileError } = await adminClient
     .from("profiles")
-    .select("role, approval_status")
+    .select("role, approval_status, full_name, email, phone")
     .eq("id", authData.user.id)
     .maybeSingle<ProfileRoleRow>();
 
   const metadataRole = authData.user.user_metadata?.role;
-  const isOwnerStaffEmailSignup =
-    authData.user.app_metadata?.provider === "email" &&
-    Boolean(authData.user.email_confirmed_at) &&
-    (metadataRole === "owner" || metadataRole === "staff");
+  const isOwnerStaffSignup = metadataRole === "owner" || metadataRole === "staff";
 
-  if (!profileError && !profile && isOwnerStaffEmailSignup) {
+  if (!profileError && !profile && isOwnerStaffSignup) {
+    const cleanup = await deleteIncompleteStoreSignupAccount(adminClient, authData.user.id, metadataRole);
+    if (cleanup.status === "DELETED") {
+      const response = NextResponse.json<LoginResponseBody>(
+        {
+          code: "SIGNUP_CANCELLED",
+          redirectTo: "/signup/start?notice=signup-cancelled",
+          error: "매장 신청이 완료되지 않아 가입이 취소되었습니다. 다시 회원가입을 진행해주세요.",
+        },
+        { status: 410, headers: { "Cache-Control": "no-store" } },
+      );
+      return clearDeletedAccountCookies(response, (await cookies()).getAll().map(({ name }) => name));
+    }
+    if (cleanup.status === "ERROR") {
+      await supabase.auth.signOut({ scope: "local" });
+      return NextResponse.json({ error: "미완료 가입 계정을 정리하지 못했습니다. 잠시 후 다시 시도해주세요." }, { status: 500 });
+    }
+
     const confirmation = await checkEmailSignupConfirmation(authData.user, { hasProfile: false, getSettings: fetchAuthEmailSettings });
     if (!confirmation.ok) {
       await supabase.auth.signOut({ scope: "local" });
@@ -135,11 +158,29 @@ export async function POST(request: Request): Promise<NextResponse<LoginResponse
     );
   }
 
+  const signupState = await deleteIncompleteStoreSignupAccount(adminClient, authData.user.id, profile.role);
+  if (signupState.status === "DELETED") {
+    const response = NextResponse.json<LoginResponseBody>(
+      {
+        code: "SIGNUP_CANCELLED",
+        redirectTo: "/signup/start?notice=signup-cancelled",
+        error: "매장 신청이 완료되지 않아 가입이 취소되었습니다. 다시 회원가입을 진행해주세요.",
+      },
+      { status: 410, headers: { "Cache-Control": "no-store" } },
+    );
+    return clearDeletedAccountCookies(response, (await cookies()).getAll().map(({ name }) => name));
+  }
+  if (signupState.status === "ERROR") {
+    return NextResponse.json({ error: "매장 소속 정보를 확인할 수 없습니다." }, { status: 500 });
+  }
   return NextResponse.json({
     user: {
       id: authData.user.id,
       email: authData.user.email ?? email,
       role: profile.role,
+      needsStoreMembership: false,
+      name: profile.full_name ?? (typeof authData.user.user_metadata?.name === "string" ? authData.user.user_metadata.name : ""),
+      phone: profile.phone ?? (typeof authData.user.user_metadata?.phone === "string" ? authData.user.user_metadata.phone : ""),
       approvalStatus: profile.approval_status === "approved" || profile.approval_status === "rejected"
         ? profile.approval_status
         : "pending",

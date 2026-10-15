@@ -135,6 +135,20 @@ describe("Korean RAG search query expansion", () => {
     assert.ok(extractSearchKeywords(question).includes("주말"));
   });
 
+  test("closing-time last-order questions retrieve POS order status guidance, not cleaning intent", () => {
+    for (const question of ["마감 직전에 주문이 들어왔는데 받아도 돼요?", "마감 전에 주문을 받아도 될까요?", "마감시간 전 마지막 주문 여부를 확인해요"]) {
+      const keywords = extractSearchKeywords(question);
+      for (const keyword of ["마감시간 전 마지막 주문 여부", "POS에 표시된 주문 상태", "추가 주문이 가능한 시간", "담당자에게 확인"])
+        assert.ok(keywords.includes(keyword), `${question}: ${keyword}`);
+      for (const unrelated of ["청소", "위생", "점검"]) assert.equal(keywords.includes(unrelated), false, `${question}: ${unrelated}`);
+      assert.ok(formatSearchEmbeddingInput(question).includes(question));
+    }
+    const general = extractSearchKeywords("오늘 마감 순서 알려줘");
+    assert.ok(general.includes("청소")); assert.ok(general.includes("위생"));
+    assert.equal(general.includes("POS"), false);
+    assert.equal(general.includes("마지막 주문"), false);
+  });
+
   test("expands strawberry syrup storage location intent", () => {
     const question = "딸기청은 어디 보관되어 있나요?";
     const keywords = extractSearchKeywords(question);

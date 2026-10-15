@@ -83,7 +83,7 @@ async function handleChat(request: Request): Promise<NextResponse> {
   );
   const ragBody = (await ragResponse.json()) as {
     evidenceSupport?: RecipeEvidenceSupport | null;
-    responseKind?: "answer" | "clarification";
+    responseKind?: "answer" | "clarification" | "out_of_scope";
     answer?: string;
     status?: "answered" | "cautious" | "insufficient";
     source?: { title?: string; category?: string } | null;
@@ -99,7 +99,7 @@ async function handleChat(request: Request): Promise<NextResponse> {
     ? { "X-RAG-Trace-ID": traceId } : undefined;
 
   if (!ragResponse.ok || !ragBody.answer) {
-    const safeCode = ["SEARCH_FAILED", "GENERATION_FAILED", "GENERATION_UNPARSABLE", "RAG_QUERY_FAILED"].includes(ragBody.code ?? "") ? ragBody.code : undefined;
+    const safeCode = ["SEARCH_FAILED", "GENERATION_FAILED", "GENERATION_UNPARSABLE", "RAG_QUERY_FAILED", "PROVIDER_AUTH_FAILED", "PROVIDER_RATE_LIMITED"].includes(ragBody.code ?? "") ? ragBody.code : undefined;
     return NextResponse.json(
       { error: ragBody.error ?? "답변을 받지 못했어요.", code: ragResponse.status === 403 ? "STORE_FORBIDDEN" : safeCode },
       { status: ragResponse.status, headers: diagnosticHeaders },
@@ -183,7 +183,7 @@ async function handleChat(request: Request): Promise<NextResponse> {
       storeId, historyAvailable, newConversation: isNewConversation, status: ragBody.status, traceId: diagnosticHeaders ? traceId : null });
   }
   return NextResponse.json({
-    responseKind: ["answer", "clarification"].includes(ragBody.responseKind ?? "") ? ragBody.responseKind : undefined,
+    responseKind: ["answer", "clarification", "out_of_scope"].includes(ragBody.responseKind ?? "") ? ragBody.responseKind : undefined,
     ...(recipeSupportStorageEnabled() && !saveError ? { evidenceSupport } : {}),
     answer: ragBody.answer,
     status: ragBody.status,

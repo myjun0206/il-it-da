@@ -5,7 +5,10 @@ export type ServerRole = "hq" | "owner" | "staff";
 export type ServerRoleCheckResult =
   | { status: "AUTHORIZED"; userId: string; role: ServerRole }
   | { status: "UNAUTHENTICATED" }
-  | { status: "FORBIDDEN" };
+  | { status: "FORBIDDEN" }
+  | { status: "INCOMPLETE_SIGNUP_DELETED" }
+  | { status: "STORE_MEMBERSHIP_REQUIRED" }
+  | { status: "STORE_APPROVAL_PENDING" };
 
 export function isServerRole(value: unknown): value is ServerRole {
   return value === "hq" || value === "owner" || value === "staff";
@@ -40,9 +43,7 @@ export interface RequireServerRoleDeps {
 }
 
 /**
- * 로그인 여부 + public.profiles.role만으로 서버 측 역할을 판정한다.
- * store_memberships.status(pending/rejected)는 의도적으로 검사하지 않는다 — 매장 단위
- * 승인 여부는 기존 API(예: /api/staff/stores, /api/rag/query)가 계속 담당한다.
+ * 로그인 사용자와 profiles.role만 확인한다.
  *
  * getSessionClient/getAdminClient는 항상 호출부(예: require-server-role.ts)에서 주입한다 —
  * 이 모듈은 실제 Supabase client를 직접 만들지 않으므로 Supabase 없이 단위 테스트할 수 있다.

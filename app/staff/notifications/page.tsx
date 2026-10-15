@@ -281,11 +281,11 @@ export default function StaffNotificationsPage() {
               </div>
 
               {/* Right: Action buttons */}
-              <div className="flex gap-3 sm:ml-auto">
+              <div className="flex w-full justify-end gap-3 sm:ml-auto sm:w-auto sm:justify-start">
                 <button
                   onClick={handleMarkAllRead}
                   disabled={unreadCount === 0}
-                  className="px-4 py-2 rounded-lg font-medium text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-[var(--color-primary)] hover:enabled:opacity-80"
+                  className="hidden px-4 py-2 rounded-lg font-medium text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-[var(--color-primary)] hover:enabled:opacity-80 sm:block"
                 >
                   모두 읽음
                 </button>

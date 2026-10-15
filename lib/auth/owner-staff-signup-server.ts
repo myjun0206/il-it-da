@@ -83,7 +83,24 @@ export function createEphemeralAuthClient() {
 
 /** 같은 출처에서 온 요청만 허용한다(CSRF 방지). */
 export function isSameOriginRequest(request: Request): boolean {
-  return request.headers.get("origin") === new URL(request.url).origin;
+  const origin = request.headers.get("origin");
+  if (!origin || origin === "null") return false;
+  const fetchSite = request.headers.get("sec-fetch-site");
+  if (fetchSite === "cross-site" || fetchSite === "same-site") return false;
+
+  try {
+    const originUrl = new URL(origin);
+    if (!["http:", "https:"].includes(originUrl.protocol) || origin !== originUrl.origin) return false;
+    const requestUrl = new URL(request.url);
+    if (origin === requestUrl.origin) return true;
+
+    const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+    const protocol = request.headers.get("x-forwarded-proto") ?? requestUrl.protocol.slice(0, -1);
+    if (!host || /[\s,\/@?#\\]/.test(host) || (protocol !== "http" && protocol !== "https")) return false;
+    return origin === new URL(`${protocol}://${host}`).origin;
+  } catch {
+    return false;
+  }
 }
 
 export function signupEmailRedirectTo(request: Request): string {
