@@ -31,6 +31,102 @@ const THRESHOLDS = { answered: 0.6, cautious: 0.4 };
 const NO_MANUAL_ANSWER = "해당 질문에 관한 매뉴얼 내용을 찾지 못했습니다. 매장 관리자에게 문의해 주세요.";
 const CAUTION_NOTICE = "\n\n※ 검색 신뢰도가 낮은 답변입니다.";
 
+test("provider failure diagnostics distinguish quota, rate and authentication without retries or secret exposure", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousError = console.error;
+  const secret = "sk-synthetic-private-provider-diagnostic-key";
+  const records: string[] = [];
+  process.env.OPENAI_API_KEY = secret;
+  console.error = (...values) => { records.push(values.join(" ")); };
+  try {
+    for (const [status, errorCode, expected] of [
+      [429, "insufficient_quota", "PROVIDER_QUOTA_EXCEEDED"],
+      [429, "rate_limit_exceeded", "PROVIDER_RATE_LIMITED"],
+      [401, "invalid_api_key", "PROVIDER_AUTH_FAILED"],
+      [403, "permission_denied", "PROVIDER_PERMISSION_DENIED"],
+      [429, "unknown_limit", "PROVIDER_UNAVAILABLE"],
+    ] as const) {
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls += 1;
+        return Response.json({ error: { type: errorCode, code: errorCode, message: `Failure ${secret}` } }, {
+          status, headers: { "x-request-id": "req_synthetic_diagnostic", "retry-after": "2.5",
+            "x-ratelimit-reset-requests": "1s", "x-ratelimit-reset-tokens": "250ms" },
+        });
+      };
+      let providerError: unknown;
+      await assert.rejects(createEmbedding("synthetic input"), error => {
+        providerError = error;
+        assert.equal((error as { diagnosticProviderCode?: string }).diagnosticProviderCode, expected);
+        return true;
+      });
+      assert.equal(calls, 1);
+      const record = JSON.parse(records.at(-1)!.replace("[RAG_PROVIDER_ERROR] ", ""));
+      assert.equal(record.errorCode, errorCode);
+      assert.equal(record.requestId, "req_synthetic_diagnostic");
+      assert.equal(record.retryAfterMs, 2500);
+      assert.equal(record.resetRequests, "1s");
+      assert.equal(record.resetTokens, "250ms");
+      assert.ok(!records.join("\n").includes(secret));
+      await assert.rejects(createQuestionInterpreter(globalThis.fetch, secret)("synthetic input", []), error => {
+        assert.equal((error as { diagnosticProviderCode?: string }).diagnosticProviderCode, expected);
+        return true;
+      });
+      assert.equal(calls, 2);
+      for (const phase of ["interpretation", "search", "generation"]) {
+        const result = await resolveRagAnswer({ ...INPUT, interpretationMode: "general" }, {
+          interpret: phase === "interpretation" ? async () => { throw providerError; } : undefined,
+          search: async () => {
+            if (phase === "search") throw providerError;
+            return [chunk("synthetic-provider", { content: "환불은 담당자 확인 후 처리한다.", raw_similarity_score: .9 })];
+          },
+          generate: async () => { throw providerError; },
+        });
+        assert.equal(result.kind, "system_error");
+        if (result.kind !== "system_error") throw new Error("Provider failure became a normal answer");
+        assert.equal(result.code, expected);
+        assert.equal(result.failureLayer, "provider");
+        assert.equal(result.providerRequestId, "req_synthetic_diagnostic");
+        assert.equal("escalate" in result, false);
+      }
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+    console.error = previousError;
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previousKey;
+  }
+});
+
+test("provider transport exceptions remain provider failures without retries or raw error disclosure", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousKey = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "synthetic-transport-key";
+  try {
+    for (const kind of ["network", "abort"]) {
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls++;
+        const error = new TypeError("private transport payload");
+        if (kind === "abort") error.name = "AbortError";
+        throw error;
+      };
+      for (const operation of [() => createEmbedding("synthetic input"),
+        () => createQuestionInterpreter(globalThis.fetch, "synthetic-key")("synthetic input", [])]) {
+        await assert.rejects(operation(), error => {
+          assert.equal((error as { diagnosticProviderCode?: string }).diagnosticProviderCode, "PROVIDER_UNAVAILABLE");
+          assert.equal(String(error).includes("private transport payload"), false);
+          return true;
+        });
+      }
+      assert.equal(calls, 2);
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previousKey;
+  }
+});
+
 const INPUT = {
   question: "환불은 어떻게 하나요?",
   thresholds: THRESHOLDS,
@@ -3143,6 +3239,7 @@ describe("actual query API POST handler with mocked external boundaries", () => 
       "node:path": path,
       "@/lib/rag/answer-prompt": { buildGroundedAnswerMessages },
       "@/lib/rag/provider-usage": require("../../lib/rag/provider-usage.ts"),
+      "@/lib/rag/provider-error": require("../../lib/rag/provider-error.ts"),
       "@/lib/rag/search-query": require("../../lib/rag/search-query.ts"),
       "@/lib/rag/question-interpretation": require("../../lib/rag/question-interpretation.ts"),
       "@/lib/rag/trace-identifiers": require("../../lib/rag/trace-identifiers.ts"),
@@ -3636,7 +3733,7 @@ describe("actual query API POST handler with mocked external boundaries", () => 
     const failed = api({ results: [], interpretationError: true });
     const response = await staffChat(failed).post("이거 써도 됨?", storeId);
     assert.equal(response.status, 503);
-    assert.equal((await response.json()).code, "PROVIDER_RATE_LIMITED");
+    assert.equal((await response.json()).code, "PROVIDER_UNAVAILABLE");
     assert.equal(failed.events.interpretationCalls.length, 1);
     assert.equal(failed.events.searchCalls.length, 0);
     assert.equal(failed.events.logs.length, 0);
@@ -3673,9 +3770,10 @@ describe("actual query API POST handler with mocked external boundaries", () => 
       const failed = createQuestionInterpreter(async () => status === 429 ? new Response("private service detail", { status })
         : new Response(JSON.stringify({ choices: [{ finish_reason: "length", message: { content: "private incomplete content" } }] })),
       "fixture-key", event => safe.push(event));
-      await assert.rejects(failed("그럼 개봉한 건?", []), error => error instanceof StructuredAnswerParseError
-        && error.fieldPath === "interpretation.$" && error.validationKind === expectedKind);
-      assert.equal(safe.at(-1)?.stage, "interpretation_validation");
+      await assert.rejects(failed("그럼 개봉한 건?", []), error => status === 429
+        ? (error as { diagnosticProviderCode?: string }).diagnosticProviderCode === "PROVIDER_UNAVAILABLE"
+        : error instanceof StructuredAnswerParseError && error.fieldPath === "interpretation.$" && error.validationKind === expectedKind);
+      assert.equal(safe.at(-1)?.stage, status === 429 ? "external_api" : "interpretation_validation");
       assert.equal(JSON.stringify(safe).includes("private"), false);
     }
   });
@@ -4292,14 +4390,14 @@ describe("actual query API POST handler with mocked external boundaries", () => 
         const response = await handler.post("B 패밀리팩 구성 알려줘");
         const body = await response.json();
         assert.equal(response.status, httpStatus === 401 ? 502 : 503);
-        assert.equal(body.code, httpStatus === 401 ? "PROVIDER_AUTH_FAILED" : "PROVIDER_RATE_LIMITED");
+        assert.equal(body.code, httpStatus === 401 ? "PROVIDER_AUTH_FAILED" : "PROVIDER_UNAVAILABLE");
         assert.equal(body.failureLayer, "provider");
         assert.equal(body.answer, undefined);
         assert.equal(body.status, undefined);
         assert.equal(handler.events.logs.length, 0);
         assert.equal(handler.events.followUps.length, 0);
         assert.ok(handler.events.trace.some((event) => event.stage === "external_api" && event.service === service && event.httpStatus === httpStatus));
-        assert.ok(handler.events.trace.some((event) => event.reason === (service === "embedding" ? "SEARCH_FAILED" : "GENERATION_FAILED")));
+        assert.ok(handler.events.trace.some((event) => event.reason === body.code));
         assert.equal(handler.events.trace.filter((event) => event.stage === "final").length, 1);
         assert.equal(handler.events.trace.find((event) => event.stage === "final")?.status, "system_error");
         assert.ok(handler.events.trace.some((event) => event.stage === "escalation" && event.reason === "SYSTEM_ERROR"));

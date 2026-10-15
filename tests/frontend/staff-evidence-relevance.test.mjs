@@ -12,7 +12,7 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 const localModules = new Map();
 const fixtureEnvironment = {};
 const source = readFileSync(new URL("../../app/staff/page.tsx", import.meta.url), "utf8");
-const compiled = ts.transpileModule(`${source}\nexport { MessageBubble, normalizeSource, toChatMessages };`, {
+const compiled = ts.transpileModule(`${source}\nexport { MessageBubble, normalizeSource, toChatMessages, buildNewChatMessages };`, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },
 }).outputText;
 const pageModule = { exports: {} };
@@ -57,30 +57,89 @@ test("support badges are never inferred from status, source, score or answer wor
 async function submitWithFakeResponse(payload, conversationId = "conversation-fixture", options = {}) {
   const parsed = ts.createSourceFile("page.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   let submit;
+  const lifecycle = [];
   function findSubmit(node) {
     if (ts.isFunctionDeclaration(node) && node.name?.text === "submitQuestion") submit = node;
+    if (ts.isFunctionDeclaration(node) && ["resetConversation", "startNewConversation"].includes(node.name?.text)) lifecycle.push(node.getText(parsed));
     ts.forEachChild(node, findSubmit);
   }
   findSubmit(parsed);
   assert.ok(submit);
-  const code = ts.transpileModule(`${submit.getText(parsed)}\nsubmitQuestion(${JSON.stringify(options.question ?? "fixture-question")});`, {
+  const code = ts.transpileModule(`${lifecycle.join("\n")}\n${submit.getText(parsed)}\n${options.exercise ?? `submitQuestion(${JSON.stringify(options.question ?? "fixture-question")});`}`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022 },
   }).outputText;
   let messages = [];
+  let input = "";
+  let loading = false;
+  const storedIds = [];
   const warnings = [];
-  await new Script(code).runInNewContext({
+  const context = {
     isBusy: false, readOnlyStoreName: null, selectedStore: { id: "store-fixture" }, stores: [], conversationId,
+    requestInFlightRef: { current: false },
     previousStoreIdRef: { current: "store-fixture" },
     fetch: options.fetchImpl ?? (async () => ({ ok: true, json: async () => payload })),
-    setInput: () => {}, setIsLoading: () => {}, setConversationId: () => {}, writeStaffConversationId: () => {},
+    setInput: value => { input = typeof value === "function" ? value(input) : value; },
+    setIsLoading: value => { loading = value; }, setConversationId: value => { context.conversationId = value; },
+    writeStaffConversationId: value => { storedIds.push(value); },
+    setReadOnlyStoreName: value => { context.readOnlyStoreName = value; }, setDateLabel: () => {},
+    buildNewChatMessages: pageModule.exports.buildNewChatMessages,
     setErrorMessage: value => { if (value) warnings.push(value); },
-    setMessages: update => { messages = update(messages); }, formatMessageTime: () => "",
+    setMessages: update => { messages = typeof update === "function" ? update(messages) : update; }, formatMessageTime: () => "",
     isRecord: value => value !== null && typeof value === "object",
     isRagStatus: value => ["answered", "cautious", "insufficient"].includes(value), normalizeSource: pageModule.exports.normalizeSource,
     parseRecipeEvidenceSupport: loadLocalTs("lib/rag/recipe-fact-verification.ts").parseRecipeEvidenceSupport,
-  });
-  return { messages, warnings };
+  };
+  await new Script(code).runInNewContext(context);
+  return { messages, warnings, input, loading, storedIds, conversationId: context.conversationId, locked: context.requestInFlightRef.current };
 }
+
+test("staff submit blocks same-tick duplicates, unlocks after failure, continues and starts a separate new conversation", async () => {
+  const requests = [];
+  const result = await submitWithFakeResponse({}, null, {
+    exercise: `(async () => {
+      const first = submitQuestion('failed-first');
+      await Promise.all([first, submitQuestion('same-tick-duplicate')]);
+      await submitQuestion('next-question');
+      await submitQuestion('connected-follow-up');
+      startNewConversation();
+      await submitQuestion('separate-new-question');
+    })();`,
+    fetchImpl: async (url, init) => {
+      const body = JSON.parse(init.body);
+      requests.push(body);
+      if (requests.length === 1) return { ok: false, status: 503, json: async () => ({ code: "PROVIDER_QUOTA_EXCEEDED" }) };
+      return { ok: true, status: 200, json: async () => ({ answer: "synthetic answer", status: "answered", historyAvailable: true,
+        conversationId: requests.length === 4 ? "separate-fixture" : "first-fixture" }) };
+    },
+  });
+  assert.deepEqual(requests.map(request => [request.question, request.conversationId]), [
+    ["failed-first", null], ["next-question", null], ["connected-follow-up", "first-fixture"], ["separate-new-question", null],
+  ]);
+  assert.equal(result.loading, false);
+  assert.equal(result.locked, false);
+  assert.equal(result.conversationId, "separate-fixture");
+  assert.ok(result.storedIds.includes(null));
+  assert.ok(result.warnings[0].includes("크레딧"));
+});
+
+test("staff failure retains the draft and separates user sessions from provider auth and internal validation", async () => {
+  for (const [status, code, expected] of [[503, "PROVIDER_QUOTA_EXCEEDED", "크레딧"],
+    [502, "PROVIDER_AUTH_FAILED", "인증 설정"], [502, "PROVIDER_PERMISSION_DENIED", "접근 권한"],
+    [503, "PROVIDER_RATE_LIMITED", "요청 한도"], [503, "PROVIDER_UNAVAILABLE", "자동 재요청하지"],
+    [500, "GENERATION_UNPARSABLE", "형식을 검증"], [401, undefined, "로그인 세션"]]) {
+    let calls = 0;
+    const result = await submitWithFakeResponse({}, null, { question: "preserved-question", fetchImpl: async () => {
+      calls++;
+      return { ok: false, status, json: async () => ({ code }) };
+    } });
+    assert.equal(calls, 1);
+    assert.equal(result.input, "preserved-question");
+    assert.equal(result.messages.at(-1).text, "preserved-question");
+    assert.equal(result.loading, false);
+    assert.equal(result.locked, false);
+    assert.ok(result.warnings.at(-1).includes(expected));
+  }
+});
 
 function loadLocalTs(relative) {
   const filename = path.resolve(root, relative);

@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 
 import { buildGroundedAnswerMessages } from "@/lib/rag/answer-prompt";
 import { recordProviderUsage } from "@/lib/rag/provider-usage";
+import { createProviderHttpError, createProviderTransportError } from "@/lib/rag/provider-error";
 import {
   authorizeRagStoreAccessForRequest,
   resolveRagStoreFranchiseForRequest,
@@ -252,10 +253,10 @@ export async function POST(request: Request): Promise<NextResponse<RagQueryRespo
       for (const stage of ["question_log", "escalation", "repeated_alert"]) trace({ stage, status: "skipped", reason: "SYSTEM_ERROR" });
       console.error(`RAG query failed: ${outcome.code}`);
       console.error("[RAG_SYSTEM_ERROR]", JSON.stringify({ traceId: trace.traceId, code: outcome.code,
-        failureLayer: outcome.failureLayer, fieldPath: outcome.fieldPath, validationKind: outcome.validationKind }));
+        failureLayer: outcome.failureLayer, fieldPath: outcome.fieldPath, validationKind: outcome.validationKind, providerRequestId: outcome.providerRequestId }));
       return NextResponse.json({ error: "Unable to answer the question.", code: outcome.code,
         failureLayer: outcome.failureLayer, fieldPath: outcome.fieldPath, validationKind: outcome.validationKind },
-      { status: outcome.code === "PROVIDER_RATE_LIMITED" ? 503 : outcome.code === "PROVIDER_AUTH_FAILED" ? 502 : 500, headers: diagnosticHeaders });
+      { status: outcome.failureLayer === "provider" ? ["PROVIDER_AUTH_FAILED", "PROVIDER_PERMISSION_DENIED"].includes(outcome.code) ? 502 : 503 : 500, headers: diagnosticHeaders });
     }
 
     collectExecution({ stage: "final_output", answer: outcome.response.answer, status: outcome.response.status, similarity: outcome.response.similarity });
@@ -322,9 +323,7 @@ async function createGroundedAnswer(question: string, chunks: ManualChunkMatch[]
     trace?.({ stage: "external_api", service: "answer", httpStatus: response.status, reason: response.ok ? "RESPONSE_OK" : "REQUEST_FAILED" });
     if (!response.ok) {
       recordProviderUsage({ service: "generation", model: "gpt-4o", httpStatus: response.status, inputTokens: null, outputTokens: null });
-      // 응답 body/헤더는 포함하지 않고 status만 기록해 API 키 등 민감정보 노출 방지
-      const guidance = response.status === 401 ? "Check OPENAI_API_KEY." : response.status === 429 ? "Check OpenAI quota and rate limits." : "Check OpenAI service availability and model access.";
-      throw Object.assign(new Error(`OpenAI chat request failed with status ${response.status}. ${guidance}`), { diagnosticHttpStatus: response.status });
+      throw await createProviderHttpError(response, "generation", "gpt-4o");
     }
 
     const payload = (await response.json()) as OpenAiChatResponse;
@@ -346,10 +345,10 @@ async function createGroundedAnswer(question: string, chunks: ManualChunkMatch[]
     return answer;
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("OpenAI chat request timed out.");
+      throw createProviderTransportError("generation");
     }
     if (error instanceof TypeError) {
-      throw new Error("OpenAI chat request or response failed. Check network, DNS, proxy and TLS settings, then retry.");
+      throw createProviderTransportError("generation");
     }
     throw error;
   } finally {

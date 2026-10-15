@@ -2,6 +2,7 @@ import { SUPPORT_KINDS, StructuredAnswerParseError, explicitRequestedSupportKind
 import { extractLatteTargets } from "@/lib/rag/latte-target";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { recordProviderUsage } from "@/lib/rag/provider-usage";
+import { createProviderHttpError, createProviderTransportError, getProviderFailure } from "@/lib/rag/provider-error";
 
 export type QuestionContext = {
   userId: string;
@@ -169,7 +170,7 @@ export function createQuestionInterpreter(fetchImpl: typeof fetch, apiKey: strin
     emit({ stage: "external_api", service: "interpretation", httpStatus: response.status, reason: response.ok ? "RESPONSE_OK" : "REQUEST_FAILED" });
     if (!response.ok) {
       recordProviderUsage({ service: "interpretation", model: "gpt-4o", httpStatus: response.status, inputTokens: null, outputTokens: null });
-      throw Object.assign(new StructuredAnswerParseError("interpretation.$", "service_http_error"), { diagnosticHttpStatus: response.status });
+      throw await createProviderHttpError(response, "interpretation", "gpt-4o");
     }
     let body;
     try { body = await response.json(); } catch { throw new StructuredAnswerParseError("interpretation.$", "invalid_json"); }
@@ -186,7 +187,9 @@ export function createQuestionInterpreter(fetchImpl: typeof fetch, apiKey: strin
     emit({ stage: "interpretation_validation", service: "interpretation", validation: "accepted" });
     return parsed;
     } catch (error) {
-      const failure = error instanceof StructuredAnswerParseError ? error : new StructuredAnswerParseError("interpretation.$", "service_transport_error");
+      if (getProviderFailure(error)) throw error;
+      if (!(error instanceof StructuredAnswerParseError)) throw createProviderTransportError("interpretation");
+      const failure = error;
       emit({ stage: "interpretation_validation", service: "interpretation", validation: "rejected", failureLayer: "question_interpretation",
         fieldPath: failure.fieldPath, validationKind: failure.validationKind });
       throw failure;
