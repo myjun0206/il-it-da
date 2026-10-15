@@ -9,7 +9,7 @@ export type RecipeEvidenceSupport = {
   reason: string;
 };
 
-type Fact = { ingredient: string; quantity: string; unit: string; basis?: string };
+type Fact = { ingredient: string; quantity: string; unit: string; basis?: string; shotCount?: string };
 type SourceFact = Fact & { originalText: string; start: number; end: number };
 export type VerifiedRecipeSourceFact = {
   menu: string; temperature: string; serving: string; ingredient: string; quantity: string; unit: string;
@@ -76,6 +76,22 @@ function ratioBasis(text: string, fact: Fact): string | undefined {
   return bases.length === 1 ? bases[0] : undefined;
 }
 
+function explicitShotVolume(part: string, text: string, sectionStart: number): SourceFact | null {
+  const declared = normalize(part).match(/^(.+?)\s+(\d+(?:\.\d+)?)\s*샷(?:\s*\(\s*(?:약\s*)?\d+(?:\.\d+)?\s*ml\s*\))?$/iu);
+  if (!declared) return null;
+  const pattern = new RegExp(`${escaped(declared[1])}\\s+${escaped(declared[2])}\\s*샷\\s*\\(\\s*(약\\s*)?(\\d+(?:\\.\\d+)?)\\s*ml\\s*\\)`, "giu");
+  const values = [...text.matchAll(pattern)].filter(found => {
+    const lineStart = text.lastIndexOf("\n", found.index) + 1;
+    const lineEnd = text.indexOf("\n", found.index);
+    return !/추가|대신|변경|경우|옵션/u.test(text.slice(lineStart, lineEnd < 0 ? text.length : lineEnd));
+  });
+  if (!values.length || new Set(values.map(found => `${found[1] ? "약 " : ""}${found[2]}`)).size !== 1) return null;
+  const found = values[0];
+  const start = sectionStart + found.index!;
+  return { ingredient: declared[1], quantity: `${found[1] ? "약 " : ""}${found[2]}`, unit: "ml", shotCount: declared[2],
+    originalText: found[0], start, end: start + found[0].length };
+}
+
 function sections(match: ManualChunkMatch): Section[] {
   const headings = [...match.content.matchAll(/^\s*(?:●\s*)?(HOT|ICE)\s+([^\r\n:]+)\s*$/gmu)];
   return headings.flatMap((heading, index) => {
@@ -86,7 +102,10 @@ function sections(match: ManualChunkMatch): Section[] {
     const serving = parts.find(part => /^\d+oz$/iu.test(part)) ?? "";
     const facts = parts.flatMap(part => {
       const found = normalize(part).match(amountPattern);
-      if (!found) return [];
+      if (!found) {
+        const explicit = explicitShotVolume(part, text, heading.index!);
+        return explicit ? [explicit] : [];
+      }
       const start = heading.index! + text.indexOf(criteria) + criteria.indexOf(part);
       const fact: SourceFact = { ingredient: found[1], quantity: `${found[2] ? "약 " : ""}${found[3].replace(/\s/gu, "")}`, unit: found[4].toLowerCase(),
         originalText: part, start, end: start + part.length };
@@ -115,6 +134,8 @@ function requestedFact(question: string, ingredient: string): boolean {
 
 function answerFact(answer: string, ingredient: string): ExtractedFact | null {
   const normalized = normalize(answer);
+  const shotVolume = normalized.match(new RegExp(`${escaped(ingredient)}(?:은|는|을|를)?\\s+(\\d+(?:\\.\\d+)?)\\s*샷\\s*\\(\\s*(약\\s*)?(\\d+(?:\\.\\d+)?)\\s*ml\\s*\\)`, "iu"));
+  if (shotVolume) return { ingredient, shotCount: shotVolume[1], quantity: `${shotVolume[2] ? "약 " : ""}${shotVolume[3]}`, unit: "ml", numericFragment: shotVolume[0] };
   if (/온도$/u.test(ingredient)) {
     const prefix = `${escaped(ingredient)}(?:은|는|을|를|의|가|이)?\\s*`;
     const numeric = "\\d+(?:\\.\\d+)?";
@@ -214,7 +235,7 @@ export function verifyRecipeFacts(question: string, answer: string, candidates: 
     return citationIdentifiesSection(reference, citation, parsed) && quoted?.quantity === (expectedQuantityByFact.get(fact) ?? fact.quantity) && quoted.unit === fact.unit
       && (!quoted.basis || quoted.basis === fact.basis);
   }))) return unknown("RECIPE_CITED_FACT_UNVERIFIED");
-  const knownIngredients = ["우유", "바닐라 시럽", "초콜릿 소스", "딸기 베이스", "뜨거운 물", "차가운 물", "얼음", "스팀 온도"];
+  const knownIngredients = ["우유", "바닐라 시럽", "초콜릿 소스", "딸기 베이스", "뜨거운 물", "차가운 물", "얼음", "스팀 온도", "에스프레소"];
   const sourceMissing: string[] = [];
   for (const ingredient of knownIngredients) if (compact(request).includes(compact(ingredient)) && !reference.facts.some(fact => compact(fact.ingredient).includes(compact(ingredient)))) sourceMissing.push(ingredient);
   const namedRequests = [...request.matchAll(/([가-힣]{2,})(?:과|와|량|양)(?=\s|은|는|을|를|[?])/gu)].map(match => match[1].replace(/(?:량|양)$/u, ""));
@@ -249,6 +270,8 @@ export function verifyRecipeFacts(question: string, answer: string, candidates: 
     const expectedQuantity = expectedQuantityByFact.get(fact) ?? fact.quantity;
     const extracted = answerFact(answer, fact.ingredient);
     const supplied = extracted && (expected.includes(fact) || extracted.unit === fact.unit) ? extracted : null;
+    if (supplied?.shotCount && fact.shotCount !== supplied.shotCount) return { contradiction: true,
+      support: { version: 1, outcome: "unknown", verified: [], missing: [], reason: "RECIPE_ANSWER_AMOUNT_OR_UNIT_MISMATCH" } };
     if (expected.includes(fact) || supplied) {
       const expectedValue = diagnosticValue({ ...fact, quantity: expectedQuantity });
       const extractedValue = supplied ? diagnosticValue(supplied) : null;
@@ -276,11 +299,16 @@ export function verifyRecipeFacts(question: string, answer: string, candidates: 
   if (!answerIdentityVerified || answerModes.length !== 1) return unknown("RECIPE_ANSWER_IDENTITY_UNVERIFIED");
   if (/대신|말고|아니|아닙|아닌|아님|않|금지|제외|넣지|필요\s*없|불필요|안\s*(?:넣|쓰|사용|돼|됩|됨)|안\s/u.test(answer)) return unknown("RECIPE_ANSWER_SEMANTICS_UNVERIFIED");
   if (!missing.length && compoundUnverified) return unknown("RECIPE_COMPOUND_OR_OPTION_UNVERIFIED");
+  const shotCheckedAnswer = reference.facts.reduce((text, fact) => {
+    const supplied = answerFact(answer, fact.ingredient);
+    return fact.shotCount && supplied?.shotCount === fact.shotCount && supplied.numericFragment
+      ? text.replace(supplied.numericFragment, `${fact.ingredient} ${supplied.quantity}${supplied.unit}`) : text;
+  }, normalize(answer));
   const temperatureCheckedAnswer = reference.facts.filter(fact => /온도$/u.test(fact.ingredient) && answerFact(answer, fact.ingredient))
     .reduce((text, fact) => {
       const supplied = answerFact(answer, fact.ingredient);
       return supplied?.numericFragment ? text.replace(supplied.numericFragment, "") : text;
-    }, normalize(answer)).replace(/\b\d+oz\b/giu, "");
+    }, shotCheckedAnswer).replace(/\b\d+oz\b/giu, "");
   if (!missing.length && /\d+(?:\.\d+)?\s*(?:L\b|리터|샷|oz\b|개|잔|도\b)/iu.test(temperatureCheckedAnswer)) return unknown("RECIPE_EXTRA_AMOUNT_UNVERIFIED");
   const supportedAmounts = reference.facts.filter(fact => {
     const extracted = answerFact(answer, fact.ingredient);
