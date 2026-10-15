@@ -1,5 +1,5 @@
 import { SUPPORT_KINDS, StructuredAnswerParseError, explicitRequestedSupportKinds, hasExplicitSupportIntent, normalizeTargetText, type SupportKind } from "@/lib/rag/structured-answer";
-import { extractLatteTargets } from "@/lib/rag/latte-target";
+import { extractLatteTargets, extractLatteTargetMentions } from "@/lib/rag/latte-target";
 import { buildRecipeTemperatureClarification } from "@/lib/rag/manual-menu-intent";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { recordProviderUsage } from "@/lib/rag/provider-usage";
@@ -25,7 +25,7 @@ export type LatteAmountFollowUpContext = { contextTarget: string; menuName: stri
 const SHORT_RECIPE_ITEM_FOLLOW_UP = /^(?:그럼|그러면)\s*(우유|바닐라\s*시럽|시럽|에스프레소|얼음|차가운\s*물|뜨거운\s*물)(?:은|는|이|가)?\s*(?:(?:몇\s*(?:ml|g|밀리리터|그램)|얼마(?:나)?)(?:야|인가요|예요|이에요|이지|죠|인가)?)?\s*[?？.!]*$/iu;
 
 function recipeSelectionReply(question: string) {
-  const text = normalizeTargetText(question).replace(/[?？.!]+$/u, "").replace(/(?:이에요|입니다|예요|이야|야|요)$/u, "").trim();
+  const text = normalizeTargetText(question).replace(/[?？.!]+$/u, "").replace(/(?:이에요|입니다|예요|이야|야|요)$/u, "").trim().replace(/라때$/u, "라떼");
   if (/^(?:ICE(?:D)?|HOT|아이스|핫)$/iu.test(text)) return { text, menu: null };
   const targets = extractLatteTargets(text);
   if (targets.length !== 1 || !targets[0].temperature) return null;
@@ -66,8 +66,9 @@ function explicitLatteAmountContext(messages: readonly { role: "user" | "assista
     if (modes.length !== 1 || targets[0].temperature && targets[0].temperature !== modes[0].value) continue;
     const interveningUserTurns = messages.slice(index + 1).filter(message => message.role === "user");
     if (!interveningUserTurns.every(message => SHORT_RECIPE_ITEM_FOLLOW_UP.test(message.content.trim()))) continue;
+    const mention = extractLatteTargetMentions(previous.content).find(target => target.name === targets[0].name && target.temperature === modes[0].value);
     const modeWords = modes[0].value === "ICE" ? ["ICE", "아이스", "차가운"] : ["HOT", "핫", "따뜻한", "따듯한", "뜨거운"];
-    const contextTarget = modeWords.flatMap(mode => [`${mode} ${targets[0].name}`, `${targets[0].name} ${mode}`])
+    const contextTarget = mention?.text ?? modeWords.flatMap(mode => [`${mode} ${targets[0].name}`, `${targets[0].name} ${mode}`])
       .find(value => previous.content.includes(value));
     if (!contextTarget) continue;
     return { previous, contextTarget, menuName: targets[0].name, temperature: modes[0].value };
