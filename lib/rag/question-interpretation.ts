@@ -21,12 +21,12 @@ export type QuestionInterpretation = {
 
 export type LatteAmountFollowUpContext = { contextTarget: string; menuName: string; temperature: "HOT" | "ICE"; item: string };
 
-const SHORT_RECIPE_ITEM_FOLLOW_UP = /^(?:그럼|그러면)\s*(우유|바닐라\s*시럽|시럽|얼음|차가운\s*물|뜨거운\s*물)(?:은|는|이|가)?\s*[?？.!]*$/u;
+const SHORT_RECIPE_ITEM_FOLLOW_UP = /^(?:그럼|그러면)\s*(우유|바닐라\s*시럽|시럽|얼음|차가운\s*물|뜨거운\s*물)(?:은|는|이|가)?\s*(?:(?:몇\s*(?:ml|g|밀리리터|그램)|얼마(?:나)?)(?:야|인가요|예요|이에요|이지|죠|인가)?)?\s*[?？.!]*$/iu;
 
 function explicitLatteAmountContext(messages: readonly { role: "user" | "assistant"; content: string }[]) {
   for (let index = messages.length - 1; index >= 0; index--) {
     const previous = messages[index];
-    if (previous.role !== "user" || !/(?:얼마|정량|몇\s*(?:ml|g)|\d+(?:\.\d+)?\s*(?:ml|g))/u.test(previous.content)) continue;
+    if (previous.role !== "user" || !/(?:레시피|제조\s*(?:법|방법)|만드는\s*(?:법|방법)|얼마|정량|몇\s*(?:ml|g)|\d+(?:\.\d+)?\s*(?:ml|g))/u.test(previous.content)) continue;
     const targets = extractLatteTargets(previous.content);
     if (targets.length !== 1) continue;
     const modes: { value: "ICE" | "HOT"; pattern: RegExp }[] = [
