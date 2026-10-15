@@ -775,7 +775,7 @@ describe("계약 및 소스 검증 (시나리오 D, I, 프론트엔드 연결)",
 
     const chatSource = read("app/api/staff/chat/route.ts");
     assert.match(chatSource, /code: ragResponse\.status === 403 \? "STORE_FORBIDDEN" : safeCode/);
-    assert.match(chatSource, /const safeCode = \["SEARCH_FAILED", "GENERATION_FAILED", "GENERATION_UNPARSABLE", "RAG_QUERY_FAILED"\]\.includes/);
+    assert.match(chatSource, /const safeCode = \["SEARCH_FAILED", "GENERATION_FAILED", "GENERATION_UNPARSABLE", "RAG_QUERY_FAILED", "PROVIDER_AUTH_FAILED", "PROVIDER_RATE_LIMITED"\]\.includes/);
 
     const noticesSource = read("app/api/staff/notices/route.ts");
     assert.match(noticesSource, /\.eq\("role", "staff"\)/);

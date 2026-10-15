@@ -81,6 +81,7 @@ function fakeClient(
     from(table: string) {
       if (table === "manual_chunks") {
         return {
+          select: () => ({ in: async (_column: string, ids: string[]) => ({ data: chunks.filter(row => ids.includes(row.manual_id as string)), error: null }) }),
           insert: (rows: Record<string, unknown>[]) => {
             chunks.push(...rows);
             return Promise.resolve({ error: null });
@@ -248,6 +249,43 @@ const HQ_SCOPE = { scopeType: "hq" as const, franchiseId: "franchise-1", storeId
 const STORE_SCOPE = { scopeType: "store" as const, franchiseId: "franchise-1", storeId: "store-1" };
 
 describe("saveManualGroupsWithBatchGuard (실제 함수 실행)", () => {
+  test("another same-brand user can re-register after a failed partial batch's manuals were deleted", async () => {
+    const { client, manuals, batches } = fakeClient({ modelCompletedLookup: true });
+    const indexManual = async () => {};
+    await saveManualGroupsWithBatchGuard(client, { auth: HQ_AUTH, groups: GROUPS, scope: HQ_SCOPE, idempotencyKey: "old-user-key", indexManual });
+    const oldIds = manuals.map(row => row.id);
+    batches[0].status = "failed";
+    manuals.splice(0);
+    const result = await saveManualGroupsWithBatchGuard(client, { auth: { ...HQ_AUTH, userId: "other-approved-hq" }, groups: GROUPS,
+      scope: HQ_SCOPE, idempotencyKey: "new-user-key", indexManual });
+    assert.equal(result.kind, "saved");
+    assert.equal(batches[0].manual_count, 0);
+    assert.equal(batches[0].status, "failed");
+    assert.equal(batches.length, 2);
+    assert.equal(batches[1].requested_by, "other-approved-hq");
+    assert.equal(manuals.length, 3);
+    assert.ok(manuals.every(row => !oldIds.includes(row.id)));
+  });
+
+  test("replayed registration reads current chunk readiness without inserting duplicates or calling the indexer", async () => {
+    const { client, manuals, chunks } = fakeClient();
+    let calls = 0;
+    const input = { auth: HQ_AUTH, groups: GROUPS, scope: HQ_SCOPE, idempotencyKey: "replay-ready", indexManual: async () => { calls++; } };
+    assert.equal((await saveManualGroupsWithBatchGuard(client, input)).kind, "saved");
+    const replay = await saveManualGroupsWithBatchGuard(client, input);
+    assert.equal(replay.kind, "replayed");
+    if (replay.kind !== "replayed") throw new Error("Expected replay");
+    assert.equal(replay.manuals.filter(row => row.search_status === "failed").length, 2);
+    for (const row of manuals.filter(row => row.parent_manual_id)) chunks.push({ manual_id: row.id, embedding: [1] });
+    const ready = await saveManualGroupsWithBatchGuard(client, input);
+    assert.equal(ready.kind, "replayed");
+    if (ready.kind !== "replayed") throw new Error("Expected ready replay");
+    assert.equal(ready.manuals.filter(row => row.search_status === "ready").length, 2);
+    assert.equal(ready.manuals.filter(row => row.search_status === "parent_only").length, 1);
+    assert.equal(manuals.length, 3);
+    assert.equal(calls, 2);
+  });
+
   test("정상 저장은 부모·자식 행을 만들고 모두 batch에 연결한다", async () => {
     const { client, manuals, batches } = fakeClient();
     const result = await saveManualGroupsWithBatchGuard(client, { auth: HQ_AUTH, groups: GROUPS, scope: HQ_SCOPE });

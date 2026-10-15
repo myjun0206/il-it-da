@@ -363,7 +363,11 @@ export default function StaffPage() {
 
       const answer = typeof payload.answer === "string" ? payload.answer.trim() : "";
       const error = typeof payload.error === "string" ? payload.error : "답변을 받지 못했어요.";
-      if (!response.ok || !answer) throw new Error(error);
+      if (!response.ok || !answer) {
+        const requestError = new Error(error) as Error & { code?: unknown };
+        requestError.code = payload.code;
+        throw requestError;
+      }
 
       const message: Message = { from: "ai", text: answer, time: formatMessageTime(new Date()) };
       if (payload.responseKind === "answer" || payload.responseKind === "clarification" || payload.responseKind === "out_of_scope") message.responseKind = payload.responseKind;
@@ -393,9 +397,16 @@ export default function StaffPage() {
         saveWarnings.push(saveErr);
       }
       if (saveWarnings.length) setErrorMessage(saveWarnings.join(" "));
-    } catch {
+    } catch (error) {
       if (previousStoreIdRef.current !== selectedStore.id) return;
-      setErrorMessage("답변을 불러오지 못했어요. 잠시 후 다시 시도해주세요.");
+      const code = error instanceof Error ? (error as Error & { code?: unknown }).code : undefined;
+      setErrorMessage(code === "GENERATION_UNPARSABLE"
+        ? "답변 형식을 검증하지 못해 이 질문은 처리되지 않았어요. 자동 재요청하지 않았으니 매장 관리자에게 확인해 주세요."
+        : code === "PROVIDER_RATE_LIMITED"
+          ? "답변 제공 서비스의 요청 한도에 걸렸어요. 잠시 후 다시 질문해 주세요."
+          : code === "PROVIDER_AUTH_FAILED"
+            ? "답변 제공 서비스의 인증 설정에 문제가 있어요. 관리자에게 문의해 주세요."
+        : "답변을 불러오지 못했어요. 잠시 후 다시 시도해주세요.");
     } finally {
       setIsLoading(false);
     }

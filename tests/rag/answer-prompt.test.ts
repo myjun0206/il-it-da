@@ -20,6 +20,7 @@ describe("RAG answer prompt", () => {
       assert.ok(prompt.includes("하한·상한"));
       assert.ok(prompt.includes("없는 '약·대략·정도'"));
       assert.ok(prompt.includes("인용에 있는 근사 표현도 삭제하지 마라"));
+      assert.ok(prompt.includes("'기본 기준' 행이 있으면 그 행의 정확값과 원문 구절을 우선 인용하라"));
       assert.ok(prompt.includes("주변 설명과 문장 끝에만"));
       assert.equal(prompt.includes("60~65"), false);
     }
@@ -60,6 +61,14 @@ describe("RAG answer prompt", () => {
     assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("오픈·마감 같은 운영 제목은 장비 entity가 아니다"));
     assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("등록된 기준을 따른다는 문구는 구체 procedure가 아니다"));
     assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("관계와 role을 answer의 부족 설명으로 대신하지 마라"));
+  });
+
+  test("a unique latte name extracted from the question is preserved without dropping repeated syllables", () => {
+    const messages = buildGroundedAnswerMessages("ICE 시연바닐라라떼 24oz의 우유는 몇 ml인가요?", []);
+    assert.match(messages[0].content, /질문 원문에서 확인된 라떼 메뉴 entity는 'ICE 시연바닐라라떼'다/);
+    assert.match(messages[0].content, /반복 음절이나 단어를 생략해 다른 메뉴명으로 줄이지 마라/);
+    const ambiguous = buildGroundedAnswerMessages("라떼 만드는 법 알려줘.", []);
+    assert.equal(ambiguous[0].content.includes("시연바닐라라떼"), false);
   });
 
   test("separates the requested entity from a measurement attribute and keeps same lexical", () => {

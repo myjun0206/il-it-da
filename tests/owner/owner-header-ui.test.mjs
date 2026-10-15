@@ -169,20 +169,28 @@ test("owner store switcher sits right of notifications and left of profile, matc
       const { page, errors } = await openShell(role, viewport);
       try {
         const header = page.locator("header").first();
-        const bell = header.getByRole("button").first();
-        const profile = header.locator('button[aria-controls="profile-menu"]');
+        const bell = header.locator("button").first();
+        const profile = viewport.width < 640
+          ? header.getByRole("button", { name: /^내 정보 및 알림/ })
+          : header.locator('button[aria-controls="profile-menu"]');
         const store = role === "owner"
           ? header.getByRole("button", { name: /현재 운영 매장/ })
           : header.locator('button[aria-controls="store-selector-menu"]');
         await store.waitFor();
         await page.waitForFunction(() => !document.body.textContent.includes("불러오는 중"));
         const [headerBox, bellBox, storeBox, profileBox] = await Promise.all([header, bell, store, profile].map((locator) => locator.boundingBox()));
-        assert.ok(headerBox && bellBox && storeBox && profileBox);
+        assert.ok(headerBox && storeBox && profileBox);
         // 순서: 알림 → 매장 → 프로필, 겹침 없음, 모두 헤더 안에 있다.
-        assert.ok(bellBox.x + bellBox.width <= storeBox.x + 1, `${role} ${viewport.width}: store must be right of notifications`);
+        if (viewport.width >= 640) {
+          assert.ok(bellBox);
+          assert.ok(bellBox.x + bellBox.width <= storeBox.x + 1, `${role} ${viewport.width}: store must be right of notifications`);
+        } else {
+          assert.equal(bellBox, null, "mobile notification entry is consolidated into the visible profile control");
+          assert.match(await profile.getAttribute("aria-label"), /알림/);
+        }
         assert.ok(storeBox.x + storeBox.width <= profileBox.x + 1, `${role} ${viewport.width}: store must be left of profile`);
         assert.ok(profileBox.x + profileBox.width <= viewport.width, `${role} ${viewport.width}: profile must stay in view`);
-        for (const [name, box] of [["notification", bellBox], ["store", storeBox], ["profile", profileBox]]) {
+        for (const [name, box] of [["notification", bellBox], ["store", storeBox], ["profile", profileBox]].filter(([, box]) => box)) {
           assert.ok(box.y >= headerBox.y && box.y + box.height <= headerBox.y + headerBox.height + 1,
             `${role} ${viewport.width} ${name} exceeds header bounds: ${JSON.stringify({ headerBox, box })}`);
         }
@@ -208,7 +216,7 @@ test("staff header distinguishes active session store from saved default without
     const trigger = header.getByRole("button", { name: new RegExp(`현재 업무 매장 ${LONG_STORE}`) });
     await trigger.waitFor();
     const triggerText = await trigger.innerText();
-    assert.match(triggerText, /현재 업무 매장/);
+    assert.match(triggerText, /업무 매장/);
     assert.match(triggerText, /아주아주 긴 이름/);
     await trigger.click();
 
@@ -260,8 +268,9 @@ test("selecting another approved store by keyboard persists it, reloads and refl
       const panel = listbox.locator("xpath=..");
       const panelBox = await panel.boundingBox();
       assert.ok(panelBox && panelBox.x >= 0 && panelBox.x + panelBox.width <= viewport.width, `${viewport.width}: dropdown must stay in view`);
-      const profileBox = await page.locator('button[aria-controls="profile-menu"]').boundingBox();
-      assert.ok(panelBox.y >= profileBox.y + profileBox.height - 1, "dropdown opens below the header controls");
+      const triggerBox = await trigger.boundingBox();
+      assert.ok(triggerBox);
+      assert.ok(panelBox.y >= triggerBox.y + triggerBox.height - 1, "dropdown opens below the visible store control");
       assert.equal(await page.getByRole("option", { name: /서울 중앙점/ }).getAttribute("aria-selected"), "true");
       assert.equal(await noHorizontalOverflow(page), true);
       await page.screenshot({ path: path.join(screenshots, `owner-store-open-${viewport.width}.png`) });
@@ -288,10 +297,12 @@ test("store menu closes with Escape and outside click; manage and pending entrie
     await trigger.click();
     await page.getByRole("listbox").waitFor();
     await page.keyboard.press("Escape");
+    await page.getByRole("listbox").waitFor({ state: "detached" });
     assert.equal(await page.getByRole("listbox").count(), 0);
     assert.equal(await trigger.evaluate((element) => element === document.activeElement), true, "focus returns to trigger");
     await trigger.click();
     await page.getByRole("heading", { level: 1 }).click();
+    await page.getByRole("listbox").waitFor({ state: "detached" });
     assert.equal(await page.getByRole("listbox").count(), 0);
     await trigger.click();
     await page.getByRole("button", { name: "승인 대기 1건" }).click();
@@ -301,6 +312,7 @@ test("store menu closes with Escape and outside click; manage and pending entrie
     // 매장 메뉴와 알림 패널은 동시에 열리지 않는다.
     await trigger.click();
     await page.locator("header").getByRole("button").first().click();
+    await page.getByRole("listbox").waitFor({ state: "detached" });
     assert.equal(await page.getByRole("listbox").count(), 0);
   } finally { await page.close(); }
 });

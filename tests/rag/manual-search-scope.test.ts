@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { Script } from "node:vm";
 import { describe, test } from "node:test";
+import ts from "typescript";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -76,6 +79,198 @@ describe("lib/rag/search-manual-chunks.ts (static contract)", () => {
     assert.match(source, /target_store_id:\s*storeId/);
     assert.match(source, /target_franchise_id:\s*franchiseId/);
   });
+});
+
+test("live search distinguishes deleted, approved-unindexed and newly ready scopes without reusing old candidates", async () => {
+  const source = ts.transpileModule(readSource("lib/rag/search-manual-chunks.ts"), { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
+  } }).outputText;
+  const require = createRequire(import.meta.url);
+  let state: "deleted" | "indexing" | "ready" = "deleted";
+  const current = { chunk_id: "new-ready-chunk", manual_id: "new-ready-manual", title: "현재 지침", category: "매장운영",
+    content: "현재 승인 지침입니다.", raw_similarity_score: .8, keyword_boost: 0, similarity_score: .8 };
+  const database = {
+    rpc: async () => ({ data: state === "ready" ? [current] : [], error: null }),
+    from(table: string) {
+      assert.equal(table, "manuals");
+      const builder = { select: () => builder, eq: () => builder, is: () => builder,
+        limit: async () => ({ data: state === "indexing" ? [{ id: "new-pending-manual" }] : [], error: null }) };
+      return builder;
+    },
+  };
+  const deps: Record<string, unknown> = { "server-only": {}, "@/lib/supabase/admin": { createAdminClient: () => database },
+    "@/lib/rag/openai-embeddings": { createEmbedding: async () => [1, ...Array(1535).fill(0)] },
+    "@/lib/rag/search-query": require("../../lib/rag/search-query.ts"),
+    "@/lib/rag/structured-answer": require("../../lib/rag/structured-answer.ts") };
+  const loaded = { exports: {} as Record<string, unknown> };
+  new Script(source).runInNewContext({ module: loaded, exports: loaded.exports,
+    require: (name: string) => { assert.ok(Object.hasOwn(deps, name)); return deps[name]; },
+    console: { info: () => {}, error: () => {} } });
+  const search = loaded.exports.searchManualChunks as (question: string, store: string, brand: string) => Promise<{ chunk_id: string }[]>;
+  assert.equal((await search("현재 지침", "store", "brand")).length, 0);
+  state = "indexing";
+  await assert.rejects(search("현재 지침", "store", "brand"), { name: "ManualSearchNotReadyError" });
+  state = "ready";
+  assert.equal((await search("현재 지침", "store", "brand"))[0].chunk_id, current.chunk_id);
+  state = "deleted";
+  assert.equal((await search("현재 지침", "store", "brand")).length, 0);
+});
+
+test("closing-order lexical recall returns only approved store/same-brand phrase rows and ranks them with the request embedding", async () => {
+  const searchSource = readSource("lib/rag/search-manual-chunks.ts");
+  const compiled = ts.transpileModule(searchSource, { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true,
+  } }).outputText;
+  const require = createRequire(import.meta.url);
+  const queryEmbedding = [1, ...Array(1535).fill(0)];
+  const currentStore = { id: "soongsil-store-manual", title: "매장 운영 기준", category: "매장운영" };
+  const hqManual = { id: "soongsil-hq-manual", title: "매장 운영 기준", category: "매장운영" };
+  const foreignStore = { id: "foreign-store-manual", title: "매장 운영 기준", category: "매장운영" };
+  const locationRow = { id: "soongsil-closing-order-row", manual_id: currentStore.id,
+    content: "- 마감시간 전 마지막 주문 여부는 POS에 표시된 주문 상태를 확인하고, 애매한 경우 담당자에게 확인한다.",
+    embedding: JSON.stringify(queryEmbedding) };
+  const rpcMatches = Array.from({ length: 10 }, (_, index) => ({ chunk_id: `rpc-${index}`, manual_id: `rpc-manual-${index}`,
+    title: "마감 운영", category: "매장운영", content: `마감 전 일반 정리 안내 ${index}`,
+    raw_similarity_score: .4 + index / 100, keyword_boost: .25, similarity_score: .65 + index / 100 }));
+  const manualQueries: Array<{ scope_type?: unknown; store_id?: unknown; franchise_id?: unknown }> = [];
+  const chunkManualIds: string[][] = [];
+  const fakeDatabase = {
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      assert.equal(name, "match_manual_chunks_hybrid_scoped");
+      assert.equal(args.match_count, 10);
+      assert.equal(args.target_store_id, "soongsil-store");
+      assert.equal(args.target_franchise_id, "soongsil-brand");
+      return { data: rpcMatches, error: null };
+    },
+    from(table: string) {
+      const filters: Record<string, unknown> = {};
+      const builder: Record<string, unknown> = {
+        select: () => builder,
+        eq: (key: string, value: unknown) => { filters[key] = value; return builder; },
+        is: (key: string, value: unknown) => { filters[key] = value; return builder; },
+        not: () => builder,
+        in: (_key: string, ids: string[]) => { chunkManualIds.push(ids); return builder; },
+        then: (resolve: (result: unknown) => unknown, reject: (error: unknown) => unknown) => {
+          if (table === "manuals") {
+            manualQueries.push({ scope_type: filters.scope_type, store_id: filters.store_id, franchise_id: filters.franchise_id });
+            const rows = filters.scope_type === "store"
+              ? filters.store_id === "soongsil-store" ? [currentStore] : [foreignStore]
+              : filters.franchise_id === "soongsil-brand" ? [hqManual] : [];
+            return Promise.resolve({ data: rows, error: null }).then(resolve, reject);
+          }
+          assert.equal(table, "manual_chunks");
+          assert.equal(JSON.stringify(Array.from(chunkManualIds.at(-1) ?? [])), JSON.stringify([currentStore.id, hqManual.id]));
+          return Promise.resolve({ data: [locationRow], error: null }).then(resolve, reject);
+        },
+      };
+      return builder;
+    },
+  };
+  const dependencies: Record<string, unknown> = {
+    "server-only": {},
+    "@/lib/supabase/admin": { createAdminClient: () => fakeDatabase },
+    "@/lib/rag/openai-embeddings": { createEmbedding: async () => queryEmbedding },
+    "@/lib/rag/search-query": require("../../lib/rag/search-query.ts"),
+    "@/lib/rag/structured-answer": require("../../lib/rag/structured-answer.ts"),
+  };
+  const loaded = { exports: {} as Record<string, unknown> };
+  new Script(compiled, { filename: "manual-search-closing-order.cjs" }).runInNewContext({
+    module: loaded, exports: loaded.exports,
+    require: (name: string) => { assert.ok(Object.hasOwn(dependencies, name), `Unmocked dependency: ${name}`); return dependencies[name]; },
+    console: { info: () => {}, error: () => {} },
+  });
+  const search = loaded.exports.searchManualChunks as (question: string, storeId: string, franchiseId: string) => Promise<{
+    chunk_id: string; manual_id: string; content: string; raw_similarity_score: number; similarity_score: number;
+  }[]>;
+  const question = "마감 직전에 주문이 들어왔는데 받아도 돼?";
+  const result = await search(question, "soongsil-store", "soongsil-brand");
+  assert.equal(result.length, 11);
+  assert.equal(result.filter(item => item.chunk_id === locationRow.id).length, 1);
+  assert.equal(result[0].chunk_id, locationRow.id);
+  assert.equal(result[0].raw_similarity_score, 1);
+  assert.ok(manualQueries.some(query => query.scope_type === "store" && query.store_id === "soongsil-store"));
+  assert.ok(manualQueries.some(query => query.scope_type === "hq" && query.store_id === null && query.franchise_id === "soongsil-brand"));
+
+  const ordinary = await search("오늘 마감 순서 알려줘", "soongsil-store", "soongsil-brand");
+  assert.equal(ordinary.length, 10);
+  assert.equal(chunkManualIds.length, 1);
+});
+
+test("near-close recall supplements only exact approved store-scope rows with same-query cosine ranking", async () => {
+  const source = readSource("lib/rag/search-manual-chunks.ts");
+  const compiled = ts.transpileModule(source, { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true,
+  } }).outputText;
+  const require = createRequire(import.meta.url);
+  const embedding = Array.from({ length: 1536 }, (_, index) => index === 0 ? 1 : 0);
+  const phrase = "마감시간 전 마지막 주문 여부는 POS에 표시된 주문 상태를 확인하고, 애매한 경우 담당자에게 확인한다.";
+  const storeManual = { id: "soongsil-manual", title: "매장 운영 기준", category: "매장운영" };
+  const hqManual = { id: "hq-manual", title: "주문·결제 처리", category: "매장운영" };
+  const row = { id: "soongsil-closing", manual_id: storeManual.id, content: `- ${phrase}`, embedding: JSON.stringify(embedding) };
+  const rpcRows = Array.from({ length: 10 }, (_, index) => ({ chunk_id: `rpc-${index}`, manual_id: `manual-${index}`,
+    title: "일반 안내", category: "매장운영", content: `무관한 일반 마감 안내 ${index}`,
+    raw_similarity_score: .6 - index / 100, keyword_boost: .2, similarity_score: .8 - index / 100 }));
+  const manualQueries: Array<{ scope_type?: unknown; store_id?: unknown; franchise_id?: unknown }> = [];
+  const chunkQueries: { manualIds: string[] }[] = [];
+  const db = {
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      assert.equal(name, "match_manual_chunks_hybrid_scoped");
+      assert.equal(args.target_store_id, "soongsil-store"); assert.equal(args.target_franchise_id, "soongsil-brand");
+      assert.equal(args.match_count, 10);
+      return { data: rpcRows, error: null };
+    },
+    from(table: string) {
+      const filters: Record<string, unknown> = {};
+      const builder: Record<string, unknown> = {
+        select: () => builder,
+        eq: (key: string, value: unknown) => { filters[key] = value; return builder; },
+        is: (key: string, value: unknown) => { filters[key] = value; return builder; },
+        in: (_key: string, values: string[]) => { chunkQueries.push({ manualIds: values }); filters.manualIds = values; return builder; },
+        not: () => builder,
+        then: (resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) => {
+          if (table === "manuals") {
+            manualQueries.push({ scope_type: filters.scope_type, store_id: filters.store_id, franchise_id: filters.franchise_id });
+            const manuals = filters.scope_type === "store" ? [storeManual] : [hqManual];
+            return Promise.resolve({ data: manuals, error: null }).then(resolve, reject);
+          }
+          assert.equal(table, "manual_chunks");
+          assert.deepEqual(Array.from(filters.manualIds as string[]), [storeManual.id, hqManual.id]);
+          return Promise.resolve({ data: [row], error: null }).then(resolve, reject);
+        },
+      };
+      return builder;
+    },
+  };
+  const dependencies: Record<string, unknown> = {
+    "server-only": {},
+    "@/lib/supabase/admin": { createAdminClient: () => db },
+    "@/lib/rag/openai-embeddings": { createEmbedding: async (input: string) => {
+      assert.ok(input.includes("마감 직전에 주문이 들어왔는데 받아도 돼요?"));
+      return embedding;
+    } },
+    "@/lib/rag/search-query": require("../../lib/rag/search-query.ts"),
+    "@/lib/rag/structured-answer": require("../../lib/rag/structured-answer.ts"),
+  };
+  const loaded = { exports: {} as Record<string, (...args: unknown[]) => Promise<unknown>> };
+  new Script(compiled, { filename: "scoped-manual-search.cjs" }).runInNewContext({
+    module: loaded, exports: loaded.exports,
+    require: (name: string) => { assert.ok(Object.hasOwn(dependencies, name), `Unmocked dependency: ${name}`); return dependencies[name]; },
+    console: { info: () => {}, error: () => {} },
+  });
+  const search = loaded.exports.searchManualChunks as (question: string, storeId: string, brandId: string, count?: number) => Promise<{
+    chunk_id: string; manual_id: string; content: string; raw_similarity_score: number; keyword_boost: number;
+  }[]>;
+  const result = await search("마감 직전에 주문이 들어왔는데 받아도 돼요?", "soongsil-store", "soongsil-brand");
+  const supplement = result.filter(candidate => candidate.chunk_id === row.id);
+  assert.equal(result.length, 11);
+  assert.equal(supplement.length, 1);
+  assert.equal(supplement[0].manual_id, storeManual.id);
+  assert.equal(supplement[0].raw_similarity_score, 1);
+  assert.equal(supplement[0].keyword_boost, .2);
+  assert.ok(manualQueries.some(query => query.scope_type === "store" && query.store_id === "soongsil-store"));
+  assert.ok(manualQueries.some(query => query.scope_type === "hq" && query.store_id === null && query.franchise_id === "soongsil-brand"));
+  assert.equal(chunkQueries.length, 1);
+  assert.equal(JSON.stringify(Array.from(chunkQueries[0].manualIds)), JSON.stringify([storeManual.id, hqManual.id]));
 });
 
 describe("app/api/rag/query/route.ts (static contract)", () => {

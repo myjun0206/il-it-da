@@ -31,11 +31,38 @@ export function normalizeTargetText(value: string): string {
   return value.normalize("NFC").replace(/\s+/gu, " ").trim();
 }
 
+export function questionContainsTargetSequence(question: string, target: string): boolean {
+  const stripParticle = (word: string) => normalizeTargetText(word).replace(/(?:되었을|됐을|되었던|됐던|되었다|됐다|되는|된|되면|될|되어|돼|되|에서는|이라면|이라서|이면|에는|에서|으로|이랑|랑|과|와|로|은|는|이|가|을|를|에|의|도)$/u, "");
+  const normalizeWord = (word: string) => {
+    const stripped = stripParticle(word);
+    if (/^(?:아이스|ICE|ICED)$/iu.test(stripped)) return "ICE";
+    if (/^(?:핫|HOT)$/iu.test(stripped)) return "HOT";
+    return stripped;
+  };
+  const questionWords = normalizeTargetText(question).split(/[^\p{L}\p{N}]+/u).map(normalizeWord).filter(Boolean);
+  const targetWords = normalizeTargetText(target).split(/[^\p{L}\p{N}]+/u).map(normalizeWord).filter(Boolean);
+  if (!targetWords.length) return false;
+  let next = 0;
+  for (const word of questionWords) {
+    if (word === targetWords[next]) next++;
+    if (next === targetWords.length) return true;
+  }
+  return false;
+}
+
 export function sameDeclaredSourceTarget(requested: string, evidence: string, quote: string): boolean {
   const requestedText = normalizeTargetText(requested);
   const evidenceText = normalizeTargetText(evidence);
   if (requestedText === evidenceText) return true;
   if (sameLatteEntityTarget(requestedText, evidenceText)) return true;
+  const targetItems = (value: string): string[] => value
+    .split(/(?:이랑|랑|및|[,&·])|(?<=\S)(?:과|와)(?=\s)/u)
+    .map(item => normalizeTargetText(item).replace(/(?:은|는|을|를)$/u, ""))
+    .filter(Boolean);
+  const requestedItems = targetItems(requestedText);
+  const evidenceItems = targetItems(evidenceText);
+  if (requestedItems.length > 1 && requestedItems.length === evidenceItems.length
+    && requestedItems.every(item => evidenceItems.includes(item))) return true;
   const withoutParticle = (value: string) => value.replace(/(?:은|는|을|를)$/u, "");
   if (withoutParticle(requestedText).length >= 2 && withoutParticle(requestedText) === withoutParticle(evidenceText)
     && normalizeTargetText(quote).includes(withoutParticle(requestedText))) return true;
@@ -45,6 +72,13 @@ export function sameDeclaredSourceTarget(requested: string, evidence: string, qu
     const names = declaration.slice(1).map(normalizeTargetText);
     return names.includes(requestedText) && names.includes(evidenceText);
   });
+}
+
+export function sourceContainsDeclaredTarget(source: string, target: string): boolean {
+  const anchored = normalizeTargetText(target).replace(/[.!?。？！]+$/u, "").trim();
+  if (!anchored) return false;
+  return normalizeTargetText(source).includes(anchored)
+    || anchored.split(/[^\p{L}\p{N}]+/u).filter(Boolean).length > 1 && questionContainsTargetSequence(source, anchored);
 }
 
 export type StructuredAnswer = {
@@ -233,7 +267,13 @@ export function hasExplicitSupportIntent(question: string): boolean {
   return kinds.some(kind => kind !== "conditions") || hasExplicitConditionQuestion(question);
 }
 
+export function isClosingOrderDecisionQuestion(question: string): boolean {
+  return /(?:마감|영업\s*종료).{0,24}(?:주문|접수)|(?:주문|접수).{0,24}(?:마감|영업\s*종료)/u.test(question)
+    && /(?:(?:받아도|접수해도|수락해도)\s*(?:되나요|돼요|돼|되|됨|될까요)|받을\s*수\s*있나요|접수.*가능|수락.*가능)/u.test(question);
+}
+
 export function requestedSupportKinds(question: string): SupportKind[] {
+  if (isClosingOrderDecisionQuestion(question)) return ["procedure"];
   const kinds = explicitRequestedSupportKinds(question);
   return hasExplicitSupportIntent(question) ? kinds : ["facts"];
 }
@@ -242,20 +282,21 @@ export function needsExplicitTarget(question: string): boolean {
   return /^(?:이거|그거|저거|이것|그것|저것)(?:은|는|을|를|이|가)?\s*(?:(?:지금|그냥|바로)\s*)?(?:써도|사용해도|해도)\s*(?:되(?:나요|나|니)?|돼(?:요)?|됨)[?？.!\s]*$/u.test(normalizeTargetText(question));
 }
 
-export function buildGroundedAnswerResponseFormat(question: string, requirements?: readonly SupportKind[]) {
+export function buildGroundedAnswerResponseFormat(question: string, requirements?: readonly SupportKind[], verifiedRecipeItem?: string) {
   const kinds = requirements ? [...requirements] : requestedSupportKinds(question);
   const evidence = {
     type: "object",
     properties: {
       chunkId: { type: "string" }, quote: { type: "string" }, role: { type: "string", enum: [...EVIDENCE_ROLES] },
-      target: { type: "string" }, targetRelation: { type: "string", enum: [...TARGET_RELATIONS] },
+      target: { type: "string", ...(verifiedRecipeItem ? { enum: [verifiedRecipeItem] } : {}) },
+      targetRelation: { type: "string", enum: [...TARGET_RELATIONS] },
     },
     required: ["chunkId", "quote", "role", "target", "targetRelation"], additionalProperties: false,
   };
   const assessment = {
     type: "object",
     properties: {
-      requestedTarget: { type: "string" },
+      requestedTarget: { type: "string", ...(verifiedRecipeItem ? { enum: [verifiedRecipeItem] } : {}) },
       requirements: {
         type: "array", minItems: kinds.length, maxItems: kinds.length,
         items: {
