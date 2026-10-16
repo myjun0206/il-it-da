@@ -548,6 +548,38 @@ describe("recipe overblocking development cases", () => {
     assert.equal(sameDeclaredSourceTarget("아이스 아메리카노", "HOT 아메리카노", quote), false);
     assert.equal(sameDeclaredSourceTarget("아이스 아메리카노", "ICE 바닐라라떼", quote), false);
   });
+  test("employee stock-order permission uses only explicit inventory prohibition and reporting evidence", async () => {
+    const question = "재고가 떨어지면 내가 주문해야 해?";
+    const content = [
+      "특정 재료나 물품의 재고가 부족하다고 판단되면 다음과 같이 행동한다.",
+      "3. 사장님 또는 담당자에게 부족한 품목을 알린다.",
+      "4. 직원이 임의로 재료를 주문하지 않는다.",
+    ].join("\n");
+    const source = chunk("stock-procurement-policy", { title: "재고 관리", category: "재고·발주", content });
+    assert.deepEqual(requestedSupportKinds(question), ["permission"]);
+    const events: Record<string, unknown>[] = [];
+    const outcome = await resolveRagAnswer({ ...INPUT, question, requireCoverage: true,
+      requireSupportAssessment: true, requireEvidenceScope: true }, {
+      search: async () => [source],
+      generate: async () => { throw new Error("explicit inventory order policy should render from its source without generation"); },
+      onDiagnostic: event => events.push(event),
+    });
+    assert.equal(outcome.kind, "resolved", JSON.stringify(events.slice(-4)));
+    if (outcome.kind !== "resolved") return;
+    const result = outcome;
+    assert.equal(result.response.status, "answered");
+    assert.equal(result.response.source?.manualId, source.manual_id);
+    assert.equal(result.escalate, false);
+    assert.match(result.response.answer, /임의로 발주하지 말고/u);
+    assert.match(result.response.answer, /점주 또는 담당자에게 보고/u);
+    assert.equal(buildManualReferenceAnswer(question, [chunk("stock-report-only", {
+      title: "재고 관리", category: "재고·발주", content: "사장님 또는 담당자에게 부족 품목을 알린다.",
+    })]), null);
+    assert.equal(buildManualReferenceAnswer(question, [chunk("stock-prohibition-only", {
+      title: "재고 관리", category: "재고·발주", content: "직원이 임의로 재료를 주문하지 않는다.",
+    })]), null);
+    assert.equal(buildManualReferenceAnswer("재고가 떨어졌는데 위치가 어디야?", [source]), null);
+  });
   test("ratio linking is not hard-coded to ice, cups or 70 percent", () => {
     const quote = "● ICE 테스트음료\n기본 기준: 20oz / 소스 그릇의 약 35%";
     const source = chunk("generic-ratio", { content: quote });

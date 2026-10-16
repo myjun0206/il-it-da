@@ -261,7 +261,7 @@ export function isLinkedStateUseProhibition(question: string, requestedTarget: s
 
 export function explicitRequestedSupportKinds(question: string): SupportKind[] {
   const kinds: SupportKind[] = [];
-  if (/(?:해도|써도)\s*(?:되|돼|됨)|(?:분해|사용|주문|발주).*?(?:가능|허용)|(?:금지|허용).*?(?:인가|인가요|되나요)/u.test(question)) kinds.push("permission");
+  if (/(?:해도|써도)\s*(?:되|돼|됨)|(?:분해|사용|주문|발주).*?(?:가능|허용)|(?:금지|허용).*?(?:인가|인가요|되나요)|(?:내가|제가|직원(?:이|은|는)?|알바(?:가|는)?).{0,20}(?:주문|발주).{0,12}(?:해야|해도|하면|할까요)|(?:주문|발주).{0,12}(?:해야|해도|하면|할까요).{0,20}(?:내가|제가|직원|알바)/u.test(question)) kinds.push("permission");
   if (/누구|누가|문의\s*(?:대상|담당)|확인.*?(?:담당자|연락처)/u.test(question)) kinds.push("referral");
   if (/어디|위치|장소|곳/u.test(question)) kinds.push("location");
   if (hasExplicitConditionQuestion(question) || recognizedStateConditions(question).length) kinds.push("conditions");
