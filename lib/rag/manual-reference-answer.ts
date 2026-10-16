@@ -20,8 +20,39 @@ function menuIdentity(label: string) {
   return { menu: compact(prefix ? normalized.slice(prefix[0].length) : normalized), mode };
 }
 
+function buildStockProcurementAnswer(question: string, chunks: readonly ManualChunkMatch[]): StructuredAnswer | null {
+  const asksWhetherStaffShouldOrder = /(?:내가|제가|직원(?:이|은|는)?|알바(?:가|는)?).{0,20}(?:주문|발주).{0,12}(?:해야|해도|하면|할까요)|(?:주문|발주).{0,12}(?:해야|해도|하면|할까요).{0,20}(?:내가|제가|직원|알바)/u.test(question);
+  if (!/재고/u.test(question) || !asksWhetherStaffShouldOrder) return null;
+
+  const policies = chunks.flatMap(chunk => {
+    if (!/재고|발주/u.test(`${chunk.title} ${chunk.category}`)) return [];
+    const lines = chunk.content.split(/\r?\n/u).map(line => line.trim()).filter(Boolean);
+    const noOrder = lines.find(line => /직원.{0,50}(?:주문|발주).{0,50}(?:않|지\s*않|하지\s*말|안\s|금지)/u.test(line));
+    const report = lines.find(line => /(?:점주|사장님|담당자|발주 담당자).{0,35}(?:보고|알리|알린|알려|문의)|품목.{0,35}(?:점주|사장님|담당자|발주 담당자).{0,20}(?:보고|알리|알린|알려|문의)/u.test(line));
+    if (!noOrder || !report) return [];
+    return [{ chunk, noOrder, report }];
+  });
+  if (!policies.length) return null;
+
+  return {
+    answerable: true,
+    answer: "직원이 임의로 발주하지 말고, 부족한 품목을 점주 또는 담당자에게 보고하세요.",
+    coverage: "direct",
+    usedChunkIds: [...new Set(policies.map(item => item.chunk.chunk_id))],
+    supportAssessment: {
+      requestedTarget: "재고",
+      requirements: [{ kind: "permission", support: "direct", evidence: policies.flatMap(({ chunk, noOrder, report }) => [
+        { chunkId: chunk.chunk_id, quote: noOrder, role: "permission", target: "재고", targetRelation: "same" },
+        { chunkId: chunk.chunk_id, quote: report, role: "referral_policy", target: "재고", targetRelation: "same" },
+      ]) }],
+    },
+  };
+}
+
 export function buildManualReferenceAnswer(question: string, chunks: readonly ManualChunkMatch[], verifiedRecipeItem?: string): StructuredAnswer | null {
   const query = normalizeTargetText(question).replace(/[?？.!。！]+$/u, "").trim();
+  const stockProcurement = buildStockProcurementAnswer(query, chunks);
+  if (stockProcurement) return stockProcurement;
   if (verifiedRecipeItem) {
     const citations = chunks.flatMap(chunk => {
       const headings = [...chunk.content.matchAll(/^\s*(?:●\s*)?(?:HOT|ICE)\s+[^\r\n]+\s*$/gmu)];
