@@ -55,6 +55,7 @@ const STOCK_SHORTAGE_PATTERN = /부족|(?:재고|재료|물품|소모품|비품)
 const PROCUREMENT_REQUEST_PATTERN = /발주|주문(?:을|은)?\s*(?:(?:바로|직접|먼저|좀)\s*)?(?:넣|해|하|할)/u;
 const BUNDLE_PATTERN = /세트|팩|묶음|콤보/u;
 const QUANTITY_INTENT_PATTERN = /구성|수량|몇\s*(?:개|잔|인분)|개씩|얼마나\s*(?:챙|담)/u;
+const DELIVERY_OMISSION_PATTERN = /(?:배달(?:\s*앱)?).{0,20}(?:누락|빠지(?:었|는|고|면)?|빠졌|빠진|빠짐|미접수|안\s*오)|(?:누락|빠지(?:었|는|고|면)?|빠졌|빠진|빠짐|미접수|안\s*오).{0,20}배달/u;
 
 function getIntentExpansions(question: string): string[] {
   const closingOrderQuestion = /마감.{0,24}(?:주문|받아|접수)|(?:주문|받아|접수).{0,24}마감/u.test(question);
@@ -71,6 +72,9 @@ function getIntentExpansions(question: string): string[] {
   }
   if (BUNDLE_PATTERN.test(question) && QUANTITY_INTENT_PATTERN.test(question)) {
     contextualExpansions.push("구성", "수량");
+  }
+  if (DELIVERY_OMISSION_PATTERN.test(question)) {
+    contextualExpansions.push("배달 주문 누락", "배달앱 주문", "미접수 주문", "주문 누락 확인", "주문·포장 오류");
   }
   const beverageRecipe = /라떼|우유|음료/u.test(question) && /양|얼마|몇|온도|스팀|데우|데워|제조|만들/u.test(question);
   const contrasted = /말고|아니|않|금지|안\s|하지\s*마/u.test(question);

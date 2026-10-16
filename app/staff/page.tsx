@@ -406,7 +406,7 @@ export default function StaffPage() {
       const code = error instanceof Error ? (error as Error & { code?: unknown }).code : undefined;
       setInput(current => current || question);
       setErrorMessage(code === "GENERATION_UNPARSABLE"
-        ? "답변 형식을 검증하지 못해 이 질문은 처리되지 않았어요. 자동 재요청하지 않았으니 매장 관리자에게 확인해 주세요."
+        ? "현재 검색된 매뉴얼 근거를 안전하게 검증하지 못해 답변을 보류했어요. 매뉴얼에 해당 절차가 없거나 검색된 근거가 부족할 수 있으니 매장 관리자에게 확인해 주세요."
         : code === "PROVIDER_QUOTA_EXCEEDED"
           ? "답변 제공 서비스의 결제 또는 크레딧 확인이 필요해요. 자동 재요청하지 않았으니 관리자에게 문의해 주세요."
         : code === "PROVIDER_PERMISSION_DENIED"

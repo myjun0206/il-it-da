@@ -34,7 +34,7 @@ const CAUTIOUS_THRESHOLD = 0.40;
 const GPT_TIMEOUT_MS = 30_000;
 const GPT_MAX_OUTPUT_TOKENS = 2000;
 const NO_MANUAL_ANSWER =
-  "해당 질문에 관한 매뉴얼 내용을 찾지 못했습니다. 매장 관리자에게 문의해 주세요.";
+  "현재 등록된 매뉴얼에서 이 질문에 대한 답을 찾지 못했습니다. 해당 절차가 매뉴얼에 등록되어 있는지 매장 관리자에게 확인해 주세요.";
 const CAUTION_NOTICE =
   "\n\n※ 검색 신뢰도가 낮은 답변이니, 정확한 확인을 위해 매장 관리자에게 다시 문의해 주세요.";
 
