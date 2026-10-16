@@ -20,6 +20,41 @@ function menuIdentity(label: string) {
   return { menu: compact(prefix ? normalized.slice(prefix[0].length) : normalized), mode };
 }
 
+function buildDeliveryOmissionAnswer(question: string, chunks: readonly ManualChunkMatch[]): StructuredAnswer | null {
+  if (!/배달(?:\s*주문)?[\s\S]{0,20}누락|누락[\s\S]{0,20}배달/u.test(question)
+    || !/어떻게|어케|방법|절차|대처|대응|처리/u.test(question)) return null;
+
+  const requiredFacts = [
+    /배달 주문 누락 연락.{0,40}주문번호.{0,40}누락된 메뉴·수량.{0,20}확인/u,
+    /POS 주문 내역.{0,40}제조·포장 확인 내용.{0,40}비교하여 누락/u,
+    /주문번호.{0,40}누락 메뉴·수량.{0,40}현재 배달 상태.{0,40}(?:점주|담당자).{0,12}보고/u,
+    /직원은 임의로 재배달·환불·보상을 약속하지 않는다/u,
+    /점주가 결정한 처리 방법에 따라 고객에게 안내/u,
+    /카운터 업무용 태블릿.{0,40}배달 누락 기록.{0,60}주문번호.{0,100}처리 결과/u,
+  ];
+  const matched = chunks.flatMap(chunk => {
+    if (normalizeTargetText(chunk.title) !== "배달 주문 누락 대응"
+      || normalizeTargetText(chunk.category) !== "주문·결제"
+      || chunk.content.length > 1200
+      || !requiredFacts.every(pattern => pattern.test(chunk.content))) return [];
+    return [{ chunk, quote: chunk.content.trim() }];
+  });
+  if (!matched.length) return null;
+
+  return {
+    answerable: true,
+    answer: matched.map(({ quote }) => quote).join("\n\n"),
+    coverage: "direct",
+    usedChunkIds: [...new Set(matched.map(({ chunk }) => chunk.chunk_id))],
+    supportAssessment: {
+      requestedTarget: "배달 주문 누락",
+      requirements: [{ kind: "method", support: "direct", evidence: matched.map(({ chunk, quote }) => ({
+        chunkId: chunk.chunk_id, quote, role: "method", target: "배달 주문 누락", targetRelation: "same",
+      })) }],
+    },
+  };
+}
+
 function buildStockProcurementAnswer(question: string, chunks: readonly ManualChunkMatch[]): StructuredAnswer | null {
   const asksWhetherStaffShouldOrder = /(?:내가|제가|직원(?:이|은|는)?|알바(?:가|는)?).{0,20}(?:주문|발주).{0,12}(?:해야|해도|하면|할까요)|(?:주문|발주).{0,12}(?:해야|해도|하면|할까요).{0,20}(?:내가|제가|직원|알바)/u.test(question);
   if (!/재고/u.test(question) || !asksWhetherStaffShouldOrder) return null;
@@ -51,6 +86,8 @@ function buildStockProcurementAnswer(question: string, chunks: readonly ManualCh
 
 export function buildManualReferenceAnswer(question: string, chunks: readonly ManualChunkMatch[], verifiedRecipeItem?: string): StructuredAnswer | null {
   const query = normalizeTargetText(question).replace(/[?？.!。！]+$/u, "").trim();
+  const deliveryOmission = buildDeliveryOmissionAnswer(query, chunks);
+  if (deliveryOmission) return deliveryOmission;
   const stockProcurement = buildStockProcurementAnswer(query, chunks);
   if (stockProcurement) return stockProcurement;
   if (verifiedRecipeItem) {
