@@ -78,6 +78,12 @@ describe("RAG answer prompt", () => {
     assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("메뉴명 아래 재료·수량 행은 인용한 메뉴명에 적용되는 근거다"));
   });
 
+  test("requires delivery-specific evidence for delivery-order omission handling", () => {
+    assert.ok(ANSWER_SYSTEM_PROMPT.includes("배달 전용 절차를 확인할 수 없으면"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("일반 주문·포장 안내는 배달 누락 처리 절차를 입증하지 않는다"));
+    assert.ok(GROUNDED_ANSWER_SYSTEM_PROMPT.includes("취소·재접수·환불이나 앱 조작 순서를 만들지 마라"));
+  });
+
   test("preserves disassembly prohibitions, unknown variants and missing pump volume", () => {
     assert.match(ANSWER_SYSTEM_PROMPT, /일반 청소와 내부 부품 분해는 다른 작업/);
     assert.match(ANSWER_SYSTEM_PROMPT, /청소할 부위를 되물어라/);
