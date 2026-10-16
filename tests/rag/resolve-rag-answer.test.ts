@@ -83,6 +83,32 @@ test("complete delivery omission manual renders a high-confidence cited answer w
   assert.equal(buildManualReferenceAnswer(question, [{ ...source, content: content.split("\n").slice(0, 5).filter((_, index) => index !== 2).join("\n") }]), null);
 });
 
+test("method questions accept a procedure-role citation when the full delivery steps are source-backed", async () => {
+  const question = "배달 주문 누락되었을 때 어떻게 해?";
+  const content = [
+    "1. 배달 주문 누락 연락을 받으면 주문번호와 누락된 메뉴·수량을 확인한다.",
+    "2. POS 주문 내역과 제조·포장 확인 내용을 비교하여 누락 내용을 확인한다.",
+    "3. 주문번호, 누락 메뉴·수량, 현재 배달 상태를 점주 또는 담당자에게 보고한다.",
+    "4. 직원은 임의로 재배달·환불·보상을 약속하지 않는다. 점주가 결정한 처리 방법에 따라 고객에게 안내한다.",
+    "5. 카운터 업무용 태블릿의 ‘배달 누락 기록’에 주문번호, 누락 메뉴·수량, 보고 시각과 처리 결과를 남긴다.",
+  ].join("\n");
+  const source = chunk("delivery-procedure-role", { title: "배달 주문 누락 대응", category: "주문·결제", content });
+  const result = await resolveRagAnswer({ ...INPUT, question, requireCoverage: true,
+    requireSupportAssessment: true, requireEvidenceScope: true }, {
+    search: async () => [source],
+    generate: async () => JSON.stringify({ answerable: true, answer: content, coverage: "direct", usedChunkIds: [source.chunk_id],
+      supportAssessment: { requestedTarget: "배달 주문 누락", requirements: [{ kind: "method", support: "direct", evidence: [
+        { chunkId: source.chunk_id, quote: content, role: "procedure", target: "배달 주문 누락", targetRelation: "same" },
+      ] }] } }),
+  });
+  assert.equal(result.kind, "resolved");
+  if (result.kind !== "resolved") return;
+  assert.equal(result.response.status, "answered");
+  assert.equal(result.response.source?.manualId, source.manual_id);
+  assert.equal(result.escalate, false);
+  assert.equal(result.response.answer, content);
+});
+
 test("provider failure diagnostics distinguish quota, rate and authentication without retries or secret exposure", async () => {
   const previousFetch = globalThis.fetch;
   const previousKey = process.env.OPENAI_API_KEY;
