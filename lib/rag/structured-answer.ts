@@ -50,11 +50,21 @@ export function questionContainsTargetSequence(question: string, target: string)
   return false;
 }
 
+function explicitModeMenuTarget(value: string): string | null {
+  const match = normalizeTargetText(value).match(/^(ICE|ICED|HOT|아이스|차가운|핫|따뜻한|따듯한|뜨거운)\s+(.+)$/iu);
+  if (!match) return null;
+  const mode = /^(?:ICE|ICED|아이스|차가운)$/iu.test(match[1]) ? "ICE" : "HOT";
+  const menu = normalizeTargetText(match[2]).replace(/\s+/gu, "").toLocaleLowerCase("ko-KR");
+  return menu.length >= 2 ? `${mode}:${menu}` : null;
+}
+
 export function sameDeclaredSourceTarget(requested: string, evidence: string, quote: string): boolean {
   const requestedText = normalizeTargetText(requested);
   const evidenceText = normalizeTargetText(evidence);
   if (requestedText === evidenceText) return true;
   if (sameLatteEntityTarget(requestedText, evidenceText)) return true;
+  const requestedMenuTarget = explicitModeMenuTarget(requestedText);
+  if (requestedMenuTarget && requestedMenuTarget === explicitModeMenuTarget(evidenceText)) return true;
   const targetItems = (value: string): string[] => value
     .split(/(?:이랑|랑|및|[,&·])|(?<=\S)(?:과|와)(?=\s)/u)
     .map(item => normalizeTargetText(item).replace(/(?:은|는|을|를)$/u, ""))

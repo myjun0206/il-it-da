@@ -126,7 +126,7 @@ test("staff failure retains the draft and separates user sessions from provider 
   for (const [status, code, expected] of [[503, "PROVIDER_QUOTA_EXCEEDED", "크레딧"],
     [502, "PROVIDER_AUTH_FAILED", "인증 설정"], [502, "PROVIDER_PERMISSION_DENIED", "접근 권한"],
     [503, "PROVIDER_RATE_LIMITED", "요청 한도"], [503, "PROVIDER_UNAVAILABLE", "자동 재요청하지"],
-    [500, "GENERATION_UNPARSABLE", "형식을 검증"], [401, undefined, "로그인 세션"]]) {
+    [500, "GENERATION_UNPARSABLE", "매뉴얼 근거를 안전하게 검증하지 못해"], [401, undefined, "로그인 세션"]]) {
     let calls = 0;
     const result = await submitWithFakeResponse({}, null, { question: "preserved-question", fetchImpl: async () => {
       calls++;

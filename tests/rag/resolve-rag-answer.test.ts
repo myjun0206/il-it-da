@@ -31,8 +31,26 @@ import { diagnoseRagCase, redactDiagnostic, runDiagnostic } from "../../scripts/
 import type { ManualChunkMatch } from "../../lib/rag/types.ts";
 
 const THRESHOLDS = { answered: 0.6, cautious: 0.4 };
-const NO_MANUAL_ANSWER = "해당 질문에 관한 매뉴얼 내용을 찾지 못했습니다. 매장 관리자에게 문의해 주세요.";
+const NO_MANUAL_ANSWER = "현재 등록된 매뉴얼에서 이 질문에 대한 답을 찾지 못했습니다. 해당 절차가 매뉴얼에 등록되어 있는지 매장 관리자에게 확인해 주세요.";
 const CAUTION_NOTICE = "\n\n※ 검색 신뢰도가 낮은 답변입니다.";
+
+test("delivery order omission with no manual match clearly reports that no manual answer was found", async () => {
+  let generationCalls = 0;
+  const question = "배달 주문이 누락이 되었을 때 어떻게 해?";
+  const outcome = await resolveRagAnswer({ question, thresholds: THRESHOLDS, noManualAnswer: NO_MANUAL_ANSWER,
+    cautionNotice: CAUTION_NOTICE, requireCoverage: true, requireSupportAssessment: true, requireEvidenceScope: true }, {
+    search: async () => [],
+    generate: async () => { generationCalls += 1; return ""; },
+  });
+  assert.equal(outcome.kind, "resolved");
+  if (outcome.kind !== "resolved") return;
+  assert.equal(outcome.response.status, "insufficient");
+  assert.ok(outcome.response.answer.includes(NO_MANUAL_ANSWER));
+  assert.ok(outcome.response.answer.includes("현재 제공된 근거에서 이 질문의 요청 범위에 맞는 답을 확인하지 못했습니다."));
+  assert.equal(outcome.response.source, null);
+  assert.equal(generationCalls, 0);
+  assert.equal(outcome.escalate, true);
+});
 
 test("provider failure diagnostics distinguish quota, rate and authentication without retries or secret exposure", async () => {
   const previousFetch = globalThis.fetch;
@@ -510,6 +528,25 @@ describe("recipe overblocking development cases", () => {
     assert.equal(verifyRecipeFacts(question, answer, [unavailable], citations)?.support.outcome, "unknown");
     const ambiguous = { ...ice, content: `${ice.content}\n2. 그릇에 얼음을 약 70%까지 넣는다.` };
     assert.equal(verifyRecipeFacts(question, answer, [ambiguous], citations)?.support.outcome, "unknown");
+  });
+  test("Korean iced menu names match their explicit ICE source target without weakening menu or temperature checks", async () => {
+    const question = "아이스 아메리카노에 물이랑 얼음 얼마나 넣어?";
+    const quote = "● ICE 아메리카노\n기본 기준: 20oz / 차가운 물 250ml / 얼음 약 70%";
+    const source = chunk("iced-americano-alias", { title: "음료 제조 및 레시피 관리", content: `${quote}\n컵에 얼음을 약 70%까지 넣는다.` });
+    const result = expectResolved(await resolveRagAnswer({ ...INPUT, question, requireCoverage: true,
+      requireSupportAssessment: true, requireEvidenceScope: true }, {
+      search: async () => [source],
+      generate: async () => JSON.stringify({ answerable: true,
+        answer: "아이스 아메리카노에는 차가운 물 250ml와 컵의 약 70% 얼음을 넣어요.", coverage: "direct", usedChunkIds: [source.chunk_id],
+        supportAssessment: { requestedTarget: "아이스 아메리카노", requirements: [{ kind: "facts", support: "direct", evidence: [
+          { chunkId: source.chunk_id, quote, role: "facts", target: "ICE 아메리카노", targetRelation: "same" },
+        ] }] } }),
+    }));
+    assert.equal(result.response.status, "answered");
+    assert.equal(result.response.evidenceSupport?.outcome, "full");
+    assert.equal(sameDeclaredSourceTarget("아이스 아메리카노", "ICE 아메리카노", quote), true);
+    assert.equal(sameDeclaredSourceTarget("아이스 아메리카노", "HOT 아메리카노", quote), false);
+    assert.equal(sameDeclaredSourceTarget("아이스 아메리카노", "ICE 바닐라라떼", quote), false);
   });
   test("ratio linking is not hard-coded to ice, cups or 70 percent", () => {
     const quote = "● ICE 테스트음료\n기본 기준: 20oz / 소스 그릇의 약 35%";

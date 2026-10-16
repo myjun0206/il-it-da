@@ -149,6 +149,21 @@ describe("Korean RAG search query expansion", () => {
     assert.equal(general.includes("마지막 주문"), false);
   });
 
+  test("delivery order omission expands related terms only for omission queries", () => {
+    for (const question of ["배달 주문이 누락이 되었을 때 어떻게 해?", "배달앱 주문이 빠졌으면 어떻게 처리해요?", "배달 주문 미접수 확인 방법"]) {
+      const expanded = expandSearchQuestion(question);
+      const keywords = extractSearchKeywords(question);
+      for (const term of ["배달 주문 누락", "배달앱 주문", "미접수 주문", "주문 누락 확인", "주문·포장 오류"]) {
+        assert.ok(expanded.includes(term), `${question}: ${term}`);
+        assert.ok(keywords.includes(term), `${question}: ${term}`);
+      }
+      assert.ok(expanded.startsWith(question));
+      for (const invented of ["재접수", "환불", "앱에서 취소"]) assert.equal(expanded.includes(invented), false);
+    }
+    const unrelated = extractSearchKeywords("배달 주문 예상 시간은?");
+    assert.equal(unrelated.includes("배달 주문 누락"), false);
+  });
+
   test("expands strawberry syrup storage location intent", () => {
     const question = "딸기청은 어디 보관되어 있나요?";
     const keywords = extractSearchKeywords(question);
