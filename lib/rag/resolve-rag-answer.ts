@@ -92,6 +92,11 @@ export type RagSystemErrorCode = "SEARCH_FAILED" | "GENERATION_FAILED" | "GENERA
 const SUPPORT_LABELS = { procedure: "구체적인 작업 절차", method: "구체적인 수행 방법", timing: "적용 시점", permission: "허용 여부", facts: "요청한 구체 기준",
   location: "보관 또는 배치 위치", conditions: "요청한 조건", duration: "요청한 기간", referral: "문의 대상" };
 
+function evidenceRoleMatchesRequirement(kind: string, role: string | undefined): boolean {
+  return role === undefined || role === kind || kind === "referral" && role === "referral_policy"
+    || kind === "method" && role === "procedure";
+}
+
 export type RagAnswerOutcome =
   | {
       kind: "resolved";
@@ -499,9 +504,8 @@ export async function resolveRagAnswer(
       trace({ stage: "final", status: "system_error", reason: "GENERATION_UNPARSABLE", failureLayer: "support_semantics" });
       return { kind: "system_error", code: "GENERATION_UNPARSABLE" };
     }
-    const roleMatches = (kind: string, role: string | undefined) => role === undefined || role === kind || kind === "referral" && role === "referral_policy";
     const coversTarget = (relation: string | undefined) => relation === undefined || relation === "same" || relation === "covers_requested";
-    const direct = requirements.filter((item) => item.support === "direct" && item.evidence.some((entry) => roleMatches(item.kind, entry.role) && coversTarget(entry.targetRelation)));
+    const direct = requirements.filter((item) => item.support === "direct" && item.evidence.some((entry) => evidenceRoleMatchesRequirement(item.kind, entry.role) && coversTarget(entry.targetRelation)));
     const condition = requirements.find(item => item.kind === "conditions");
     const permission = requirements.find(item => item.kind === "permission");
     const states = recognizedStateConditions(input.question);
@@ -586,7 +590,7 @@ export async function resolveRagAnswer(
   }
   const verifiedTargetScope = stateConditionCovered || Boolean(structured.supportAssessment?.requirements.every(item =>
     item.evidence.some(entry => {
-      if (entry.role !== item.kind && !(item.kind === "referral" && entry.role === "referral_policy")) return false;
+      if (!evidenceRoleMatchesRequirement(item.kind, entry.role)) return false;
       if (entry.targetRelation === "same") return true;
       return entry.targetRelation === "covers_requested" && Boolean(structured.supportAssessment?.requestedTarget
         && normalizeTargetText(entry.quote).includes(normalizeTargetText(structured.supportAssessment.requestedTarget)));
